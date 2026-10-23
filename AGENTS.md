@@ -125,3 +125,26 @@ standard-library features, or meta-questions about the project.
   boilerplate.
 - A bug fix ships with its regression test — a fix without a test that
   failed first is an incomplete fix.
+
+## Environment
+
+- Manifest: `pyproject.toml`
+- Language: `python`
+- CI workflows: `.github/workflows/ci.yml`
+
+
+## Commands
+
+| kind | command |
+| --- | --- |
+| test | `pytest` |
+| lint | `ruff check .` |
+
+
+## Quality Gates
+
+Run these before pushing. All must pass locally:
+
+- **pytest** — `pytest`
+- **ruff** — `ruff check .`
+

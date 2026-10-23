@@ -75,9 +75,10 @@ not a legitimate operator decision.
 git log -1 --format=%an -- noni/decisions/<id>.json
 ```
 
-not from the file body. A forged `by` in the file body does not change what the
-census reports: it reads the author from git, so the body and the commit must
-agree or the record is flagged. The default posture is signed commits;
+not from the file body. A forged `by` in the file body never reaches the
+census report: it reports `by` from git, so a body value the commit does not
+carry is simply not what appears in the report — the census does not flag a
+mismatch between body and commit. The default posture is signed commits;
 stranger-detection is advisory until forge-verified pushes. This mirrors the
 precedent that a reply edited by a non-allowed account voids the reply — the
 author is the legitimacy check, and it is the commit author, not the body.

@@ -38,9 +38,11 @@ cannot disagree.
 ## What each check reads
 
 - **`0` (clean):** every `noni/decisions/*.json` parses, has all eight fields,
-  the `questions` array has 1-4 entries each with 2-4 options, the `by` field
-  matches the git author of the record's commit, and the supersede chain
-  resolves to exactly one live record per chain.
+  the `questions` array has 1-4 entries each with 2-4 options, and the
+  supersede chain resolves to exactly one live record per chain. The `by` field
+  is only schema-checked (non-empty string): the report takes `by` from git
+  when available, so a body value that disagrees with the commit is reported
+  as the git author, not flagged.
 - **`3` (jq missing):** `command -v jq` fails. The script cannot validate
   without jq and exits honestly rather than reporting a false clean.
 - **`10` (schema violation):** a record is missing one of the eight fields, a

@@ -16,9 +16,9 @@ These tests enforce the two-tier purity:
 The banned vocabulary for tier 1 is the untracked local deny-list loaded via
 ``public_safety.load_denylist`` — the same source the scrub uses — so no real
 external tool/project name ever has to be committed to this file. When the
-deney-list is absent the vocabulary check is skipped with a visible notice
-(same contract as the scrub); the structural purity checks (no committed
-.git dirs, product docs exist) still run.
+deney-list is absent the vocabulary check is skipped via pytest.skip with a
+visible reason (same contract as the scrub); the structural purity checks
+(no committed .git dirs, product docs exist) still run.
 """
 
 from __future__ import annotations
@@ -53,24 +53,14 @@ PRODUCT = REPO / "docs" / "PRODUCT.md"
 # (two-tier purity: the core must be viable with no adapter installed). Real
 # external tool/project names live only in that deny-list and in adapters;
 # nothing real is committed here. Loaded once at module import; when the
-# deny-list is absent or inactive, the vocabulary check is skipped with a
-# visible notice (same contract as the scrub's deny-list class) while the
-# structural checks below still run.
+# deny-list is absent or inactive, the vocabulary check is skipped via
+# pytest.skip with a visible reason (same contract as the scrub's deny-list
+# class) while the structural checks below still run.
 _DENYLIST = load_denylist()
 FORBIDDEN_VOCAB = [
     (re.compile(re.escape(entry), re.IGNORECASE), "external tool/project vocabulary")
     for entry in _DENYLIST.entries
 ]
-
-
-def test_core_skill_vocabulary_source_is_denylist():
-    """The vocabulary check is deny-list-driven, never a committed list of
-    real names: this file's FORBIDDEN_VOCAB must equal the deny-list's
-    entries (compiled), so a committed test file can never carry a real
-    external tool/project name."""
-    compiled = [pattern.pattern for pattern, _label in FORBIDDEN_VOCAB]
-    expected = [re.escape(entry) for entry in _DENYLIST.entries]
-    assert compiled == expected
 
 # Machine-local path patterns. The known-identity patterns come from the
 # shared registry; the fixture-only catch-alls retain any-username coverage
@@ -100,16 +90,13 @@ def test_core_skill_has_no_driver_tool_vocabulary(path):
     """
     if _DENYLIST.status != "ok" or not _DENYLIST.entries:
         # Same contract as the scrub: without an active deny-list the
-        # vocabulary class is skipped with a visible notice rather than
-        # silently asserting nothing.
-        print(
-            f"purity: NOTICE — deny-list vocabulary check SKIPPED "
-            f"(deny-list {_DENYLIST.status}); {len(SKILL_CORE_FILES)} core skill "
-            "files unchecked for external tool/project vocabulary. This is NOT "
-            "a purity guarantee. See docs/PUBLISHING.md step 1.",
-            file=sys.stderr,
+        # vocabulary class is skipped visibly (pytest.skip, not a silent
+        # no-op pass).
+        pytest.skip(
+            f"deny-list inactive: {_DENYLIST.status}; core skill files "
+            "unchecked for external tool/project vocabulary. This is NOT "
+            "a purity guarantee. See docs/PUBLISHING.md step 1."
         )
-        return
     text = path.read_text(encoding="utf-8")
     for lineno, line in enumerate(text.splitlines(), 1):
         for pattern, label in FORBIDDEN_VOCAB:

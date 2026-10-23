@@ -241,6 +241,48 @@ def test_scrub_exemption_does_not_hide_planted_secret(clean_repo):
     )
 
 
+def test_scrub_exemption_does_not_hide_planted_denylist_entry(clean_repo, monkeypatch):
+    """The per-pattern self-file exemption never exempts the deny-list
+    class: a deny-list entry planted into a copy of an exempted file path in
+    the throwaway fixture repo (an exact match of a _SELF_FILES relative
+    path) is still flagged."""
+    denylist = clean_repo / ".denylist"
+    denylist.write_text("synthetic-planted-name\n", encoding="utf-8")
+    monkeypatch.setenv(public_safety.DENYLIST_ENV_VAR, denylist.as_posix())
+
+    (clean_repo / "scripts").mkdir()
+    (clean_repo / "scripts" / "public_safety.py").write_text(
+        "helper = \"synthetic-planted-name\"\n", encoding="utf-8"
+    )
+    _git(clean_repo, "add", "scripts/public_safety.py")
+    _git(clean_repo, "commit", "-q", "-m", "plant denylist entry in exempt path")
+
+    violations, _, _ = public_safety.scrub_tracked_files(clean_repo)
+    assert any(
+        v.startswith("scripts/public_safety.py:1:") and "deny-list entry" in v for v in violations
+    ), (f"a deny-list entry in an exempt file path must be caught: {violations}")
+
+
+def test_scrub_exemption_does_not_hide_planted_secret_in_exempt_file(clean_repo):
+    """A secret-shaped token planted into a copy of an exempted file path in
+    the throwaway fixture repo is still flagged: only the built-in patterns
+    whose fixture literals live in the self files (home-path patterns and
+    the ghp_ pattern) are exempted; the AKIA secret-shape pattern is not in
+    the exempt set and is therefore still active on self files."""
+    (clean_repo / "tests").mkdir()
+    token = "AKIA" + "ABCDEFGHIJKLMNOP"
+    (clean_repo / "tests" / "test_public_safety.py").write_text(
+        f"TOKEN = \"{token}\"\n", encoding="utf-8"
+    )
+    _git(clean_repo, "add", "tests/test_public_safety.py")
+    _git(clean_repo, "commit", "-q", "-m", "plant secret in exempt path")
+
+    violations, _, _ = public_safety.scrub_tracked_files(clean_repo)
+    assert any(
+        v.startswith("tests/test_public_safety.py:1:") and "AWS access key" in v for v in violations
+    ), (f"a secret-shaped token in an exempt file path must be caught: {violations}")
+
+
 def test_denylist_corrupt_file_degrades_gracefully(clean_repo, tmp_path, monkeypatch):
     """A non-UTF-8 deny-list file is classified as corrupt (status "corrupt",
     entries empty), so the scrub degrades instead of crashing and the CLI's

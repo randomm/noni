@@ -46,8 +46,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-_self_path = Path(__file__).resolve()
-REPO = _self_path.parent.parent
+REPO = Path(__file__).resolve().parent.parent
 
 # Default location of the untracked local deny-list. The path is in .gitignore
 # so the file can never be committed; the deny-list env var names an
@@ -103,34 +102,49 @@ SECRET_PATTERNS: tuple[tuple[re.Pattern, str], ...] = (
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"), "private key block"),
 )
 
+# Self-file exemption: which built-in patterns are skipped on _SELF_FILES.
+#
+# The self files carry the built-in pattern literals (this file defines the
+# home-path regexes and token prefixes; tests/test_public_safety.py plants
+# them as fixture strings). Those fixture literals are not real violations,
+# so the patterns whose fixture literals live in the self files are exempted
+# there. In practice: all home-path patterns (the test file plants
+# /home/admin/ etc.) and the ghp_ GitHub classic token pattern (the test
+# file plants ghp_synthsynth...). The deny-list class is never exempted: a
+# deny-list name planted in a self file IS a violation. Secret-shape
+# patterns other than ghp_ are not exempted: a gho_, github_pat_, sk-, AKIA
+# or private-key literal planted in a self file IS a violation (see
+# test_scrub_exemption_does_not_hide_planted_secret_in_exempt_file).
+_EXEMPT_BUILTIN_PATTERNS: frozenset[re.Pattern] = frozenset(
+    p for p, _ in HOME_PATH_PATTERNS + SECRET_PATTERNS[:1]
+)
+
+
+def _is_self_file_exempt_pattern(pattern: re.Pattern) -> bool:
+    """True when the pattern is a built-in pattern that is exempted on
+    self files. The deny-list class is never exempted."""
+    return pattern in _EXEMPT_BUILTIN_PATTERNS
+
+
 BUILTIN_PATTERNS: tuple[tuple[re.Pattern, str], ...] = HOME_PATH_PATTERNS + SECRET_PATTERNS
 
-# Files exempt from the scrub, because they carry built-in pattern literals
-# that would otherwise be flagged by their own patterns. Two distinct classes:
-#   - scripts/public_safety.py defines the built-in pattern literals
-#     (home-path regexes, token prefixes, the private key block marker);
-#   - tests/test_public_safety.py plants those literals as fixture strings
-#     to verify the scrub flags them.
-# No tracked file may carry real external tool/project names — that is
-# exactly what the scrub enforces (see issue #8), so no file is exempted for
-# *name* literals: the purity vocabulary check loads its banned vocabulary
-# from the untracked deny-list instead, and every planted name in the tests
-# is synthetic. Exempting the files above is safe: they contain no real
-# secrets or machine-local paths, only the literals that make them
-# self-match. A planted violation in any *other* tracked file is still caught
-# (see test_scrub_exemption_does_not_hide_planted_secret).
+# Self files: files whose built-in pattern checks are narrowed (per-pattern
+# exemption, see _EXEMPT_BUILTIN_PATTERNS above). They carry the built-in
+# pattern literals (this file defines the home-path regexes and token
+# prefixes; tests/test_public_safety.py plants them as fixture strings). The
+# fixture literals are not real violations, so the patterns whose fixtures
+# live here are exempted on these files. The deny-list class and all other
+# secret-shape patterns are NOT exempted: a deny-list name or a real
+# secret-shaped token planted in a self file IS a violation.
 #
 # Exemptions are matched against the repository-relative path from
-# `git ls-files` (plus this module's own __file__), so no per-file path
-# resolution is needed and symlinked worktrees cannot change the decision.
+# `git ls-files` only (exact path match), so no per-file path resolution is
+# needed and symlinked worktrees cannot change the decision.
 _SELF_FILES = frozenset({"scripts/public_safety.py", "tests/test_public_safety.py"})
 
 
 def _is_self_file(rel: str) -> bool:
-    # The relative paths from `git ls-files` match _SELF_FILES directly; the
-    # __file__ fallback covers being invoked with the module's own absolute
-    # path (not expected, but cheap to check).
-    return rel in _SELF_FILES or _self_path == REPO / rel
+    return rel in _SELF_FILES
 
 
 def _read_text_lenient(path: Path) -> list[str] | None:
@@ -230,13 +244,14 @@ def _scan_tracked_files(repo: Path, patterns: list[tuple[re.Pattern, str]]) -> l
         rel = rel.strip()
         if not rel:
             continue
-        if _is_self_file(rel):
-            continue
         lines = _read_text_lenient(repo / rel)
         if lines is None:
             continue
+        is_self = _is_self_file(rel)
         for lineno, line in enumerate(lines, 1):
             for pattern, label in patterns:
+                if is_self and label != "deny-list entry" and _is_self_file_exempt_pattern(pattern):
+                    continue
                 if pattern.search(line):
                     violations.append(f"{rel}:{lineno}: {label}")
                     break  # one violation label per line is enough

@@ -111,33 +111,3 @@ def git_repo(tmp_path):
 
     return repo, commit
 
-
-@pytest.fixture
-def census_script() -> Path:
-    """Path to the census.sh script under test."""
-    return REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"
-
-
-@pytest.fixture
-def run_census(census_script, tmp_path):
-    """Run census.sh against a ledger dir, returning (exit_code, stdout, stderr).
-
-    The ledger dir is created in tmp_path and the records are written by the
-    caller. The census is run with a PATH that includes /usr/bin (for jq) but
-    the caller can override the PATH to simulate jq-missing (exit 3).
-    """
-
-    def _run(ledger_dir: Path, *, extra_env: dict | None = None) -> tuple[int, str, str]:
-        env = dict(os.environ)
-        if extra_env:
-            env.update(extra_env)
-        proc = subprocess.run(
-            ["bash", str(census_script), str(ledger_dir)],
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=60,
-        )
-        return proc.returncode, proc.stdout, proc.stderr
-
-    return _run

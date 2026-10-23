@@ -12,14 +12,24 @@
 # Columns: id  date  by  status  live  supersedes
 # A CHAIN block follows on stderr when the supersede chain is broken.
 #
-# Exit codes (distinct so one failing census names the class of invariant that
-# broke; one golden fixture per code lives under tests/fixtures/):
+# Exit codes. The codes are distinct so one failing census names the class of
+# invariant that broke; when several classes are violated at once, the lowest
+# number wins (10 < 11 < 12 < 20) and the higher-numbered checks may not have
+# been evaluated — the stderr message says so. One golden fixture per code
+# lives under tests/fixtures/:
 #   0   clean — every record valid, chain intact
 #   3   jq not found on the reading machine
-#   10  a record is missing or malformed (schema violation)
-#   11  an answer was stored without operator confirmation
+#   10  a record is missing or malformed, or the ledger is unusable:
+#       the directory does not exist (10:missing-dir), contains no *.json
+#       records (10:empty-ledger), or a filename, body, or schema field
+#       violates the declared shape (10:bad-name, 10:unparseable,
+#       10:schema, 10:missing-record, 10:git-unavailable)
+#   11  an answer was stored without operator confirmation (the record's
+#       commit has no predecessor — see references/census.md for the
+#       documented limitation of this proxy)
 #   12  a record was edited after commit (working tree differs from git)
-#   20  the supersede chain is broken (dangling, forward, or duplicate)
+#   20  the supersede chain is broken (dangling, duplicate, orphan, or a
+#       chain resolving to zero or more than one live record)
 #
 # Requires jq on the machine that does the reading.
 
@@ -28,7 +38,7 @@ set -u
 LEDGER_DIR=""
 for arg in "$@"; do
   case "$arg" in
-    --help|-h) sed -n '2,18p' "$0"; exit 0 ;;
+    --help|-h) sed -n '2,33p' "$0"; exit 0 ;;
     -*) ;;
     *) LEDGER_DIR="${arg%/}" ;;
   esac
@@ -36,7 +46,7 @@ done
 [ -z "$LEDGER_DIR" ] && LEDGER_DIR="."
 
 command -v jq >/dev/null 2>&1 || { echo "census.sh: jq not found on $(hostname 2>/dev/null || echo unknown)" >&2; exit 3; }
-[ -d "$LEDGER_DIR" ] || { echo "census.sh: ledger dir not found: $LEDGER_DIR" >&2; exit 10; }
+[ -d "$LEDGER_DIR" ] || { echo "census.sh: ledger dir not found: $LEDGER_DIR (10:missing-dir)" >&2; exit 10; }
 
 # Resolve the git top-level so attribution and the post-commit-edit check can
 # address paths relative to it. Empty when the ledger is not in a git tree
@@ -57,132 +67,188 @@ else
   REL_LEDGER=""
 fi
 
-RECORDS="$(cd "$LEDGER_DIR" 2>/dev/null && ls -1 *.json 2>/dev/null | LC_ALL=C sort)"
-if [ -z "$RECORDS" ]; then
-  echo "census.sh: no *.json records under $LEDGER_DIR" >&2
-  exit 10
+# --- Record enumeration ------------------------------------------------------
+# The directory is the aggregate; enumerate regular *.json files by name. A
+# record name that is not a single path segment matching
+# ^[A-Za-z0-9._-]+\.json$ is a schema violation (10:bad-name) before it is
+# ever used as a filesystem path or a git pathspec.
+STATUS=0
+RECORDS=""
+while IFS= read -r -d '' rec; do
+  REC="${rec##*/}"
+  if ! printf '%s' "$REC" | grep -qE '^[A-Za-z0-9._-]+\.json$'; then
+    echo "census.sh: $REC: filename is not a plain <name>.json path segment (10:bad-name)" >&2
+    STATUS=10
+    continue
+  fi
+  if [ -z "$RECORDS" ]; then
+    RECORDS="$REC"
+  else
+    RECORDS="$RECORDS"$'\n'"$REC"
+  fi
+done < <(find "$LEDGER_DIR" -maxdepth 1 -type f -name '*.json' -print0 2>/dev/null | LC_ALL=C sort -z)
+if [ -z "$RECORDS" ] && [ "$STATUS" -eq 0 ]; then
+  echo "census.sh: no *.json records under $LEDGER_DIR (10:empty-ledger)" >&2
+  STATUS=10
 fi
 
-# --- Per-record checks --------------------------------------------------------
-# Walk records in id order; the report is stable. For each record we run the
-# schema check (jq), collect the author from git, and detect a working-tree
-# diff against the last commit. Per-record rows accumulate in $TMP for the
-# report.
-
-ROWS="$(mktemp 2>/dev/null || echo "/tmp/census.$$")"
-trap 'rm -f "$ROWS"' EXIT
-: > "$ROWS"
-
-# A schema violation is a single string; empty string means the record is valid.
-schema_check() {
-  jq -r -e '
-    def is_iso: (.date | type) == "string"
-      and (.date | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"));
-    def has9:
-      has("id") and has("date") and has("asked_by") and has("questions")
-      and has("by") and has("scope") and has("status") and has("supersedes");
-    def questions_ok:
-      ((.questions | type) == "array")
-      and ((.questions | length) >= 1) and ((.questions | length) <= 4)
-      and (all(.questions[];
-        has("id") and has("text") and has("options")
-        and ((.options | type) == "array")
-        and ((.options | length) >= 2) and ((.options | length) <= 4)
-        and (all(.options[]; type == "string"))
-        and (.answer == null or (.answer | type == "string"))
-      ));
-    def status_ok: (.status | IN("decided","open","superseded"));
-    def id_ok: ((.id | type) == "string") and ((.id | length) > 0);
-    def by_ok: ((.by | type) == "string") and ((.by | length) > 0);
-    def asked_by_ok: ((.asked_by | type) == "string") and ((.asked_by | length) > 0);
-    def scope_ok: ((.scope | type) == "string") and ((.scope | length) > 0);
-    def sup_ok: ((.supersedes == null) or (.supersedes | type == "string"));
-    if has9 and is_iso and questions_ok and status_ok and id_ok and by_ok
-       and asked_by_ok and scope_ok and sup_ok
-    then "ok"
-    else
-      [ (if has9 then "" else
-          "missing field(s): " + ([
-            (if has("id") then "" else "id" end),
-            (if has("date") then "" else "date" end),
-            (if has("asked_by") then "" else "asked_by" end),
-            (if has("questions") then "" else "questions" end),
-            (if has("by") then "" else "by" end),
-            (if has("scope") then "" else "scope" end),
-            (if has("status") then "" else "status" end),
-            (if has("supersedes") then "" else "supersedes" end)
-          ] | map(select(. != "")) | join(",")) end),
-        (if is_iso | not then "date is not a valid UTC ISO-8601 string" else "" end),
-        (if questions_ok | not then "questions array or option bounds violated" else "" end),
-        (if status_ok | not then "status not one of decided|open|superseded" else "" end),
-        (if id_ok | not then "id missing or not a non-empty string" else "" end),
-        (if by_ok | not then "by missing or not a non-empty string" else "" end),
-        (if asked_by_ok | not then "asked_by missing or not a non-empty string" else "" end),
-        (if scope_ok | not then "scope missing or not a non-empty string" else "" end),
-        (if sup_ok | not then "supersedes must be null or a string" else "" end)
-      ] | map(select(. != "")) | join("; ")
-    end
-  ' "$1" 2>&1
-}
+# --- Schema -----------------------------------------------------------------
+# One jq program per record validates the declared shape (eight top-level
+# fields) and emits "ok"; a non-"ok" result is the (fixed, jq-generated)
+# violation message. jq stderr is discarded: an unparseable record is
+# distinguished from a schema failure by the follow-up `jq empty` probe, and raw
+# record bytes are never echoed back into the diagnostic line.
+SCHEMA_JQ='
+  def is_iso: (.date | type) == "string"
+    and (.date | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"));
+  def cal_ok:
+    (if .date[5:7] | tonumber as $m | $m >= 1 and $m <= 12 then true else false end)
+    and (if .date[8:10] | tonumber as $d | $d >= 1 and $d <= 31 then true else false end)
+    and (if .date[11:13] | tonumber as $h | $h <= 23 then true else false end)
+    and (if .date[14:16] | tonumber as $mi | $mi <= 59 then true else false end)
+    and (if .date[17:19] | tonumber as $s | $s <= 60 then true else false end);
+  def has8:
+    has("id") and has("date") and has("asked_by") and has("questions")
+    and has("by") and has("scope") and has("status") and has("supersedes");
+  def closed9: ((keys_unsorted | length) == 8);
+  def questions_ok:
+    ((.questions | type) == "array")
+    and ((.questions | length) >= 1) and ((.questions | length) <= 4)
+    and (all(.questions[];
+      has("id") and has("text") and has("options")
+      and ((.options | type) == "array")
+      and ((.options | length) >= 2) and ((.options | length) <= 4)
+      and (all(.options[]; type == "string"))
+      and (if has("answer")
+           then (.answer == null or (.answer | type) == "string")
+           else true end)
+      and ((if has("answer") then 4 else 3 end) == (keys_unsorted | length))
+    ));
+  def status_ok: (.status | IN("decided","open","superseded"));
+  def id_ok: ((.id | type) == "string") and ((.id | length) > 0);
+  def by_ok: ((.by | type) == "string") and ((.by | length) > 0);
+  def asked_by_ok: ((.asked_by | type) == "string") and ((.asked_by | length) > 0);
+  def scope_ok: ((.scope | type) == "string") and ((.scope | length) > 0);
+  def sup_type_ok: ((.supersedes == null) or
+    ((.supersedes | type) == "string") and ((.supersedes | length) > 0));
+  if has8 and closed9 and is_iso and cal_ok and questions_ok and status_ok
+     and id_ok and by_ok and asked_by_ok and scope_ok and sup_type_ok
+  then "ok"
+  else
+    [ (if has8 then "" else
+        "missing field(s): " + ([
+          (if has("id") then "" else "id" end),
+          (if has("date") then "" else "date" end),
+          (if has("asked_by") then "" else "asked_by" end),
+          (if has("questions") then "" else "questions" end),
+          (if has("by") then "" else "by" end),
+          (if has("scope") then "" else "scope" end),
+          (if has("status") then "" else "status" end),
+          (if has("supersedes") then "" else "supersedes" end)
+        ] | map(select(. != "")) | join(",")) end),
+      (if closed9 | not then "unknown field(s): " + (((keys_unsorted // []) - ["id","date","asked_by","questions","by","scope","status","supersedes"]) | join(",")) else "" end),
+      (if is_iso | not then "date is not a valid UTC ISO-8601 string" else "" end),
+      (if cal_ok | not then "date components out of range (month 1-12, day 1-31, hour 0-23, minute 0-59, second 0-60)" else "" end),
+      (if questions_ok | not then "questions array or option bounds violated" else "" end),
+      (if status_ok | not then "status not one of decided|open|superseded" else "" end),
+      (if id_ok | not then "id missing or not a non-empty string" else "" end),
+      (if by_ok | not then "by missing or not a non-empty string" else "" end),
+      (if asked_by_ok | not then "asked_by missing or not a non-empty string" else "" end),
+      (if scope_ok | not then "scope missing or not a non-empty string" else "" end),
+      (if sup_type_ok | not then "supersedes must be null or a non-empty string" else "" end)
+    ] | map(select(. != "")) | join("; ")
+  end
+'
+# Field extraction after a schema pass: id \t date \t status \t sup \t by \t any_answer
+SCHEMA_DATA_JQ='
+  [ .id, .date, .status,
+    (if .supersedes == null then "null" else (.supersedes|tostring) end),
+    .by,
+    ([.questions[]?.answer // ""] | map(select(. != "")) | length | tostring)
+  ] | join("\t")
+'
 
 # --- Per-record walk ----------------------------------------------------------
-STATUS=0
+# One pass over the validated records: schema check, field extraction,
+# attribution, and the exit-11 / exit-12 checks. PAIRS (id \t sup) accumulates
+# for the chain walk, so the chain section never re-parses a file.
+ROWS="$(mktemp)" || { echo "census.sh: cannot allocate a temp file (mktemp failed)" >&2; exit 3; }
+PAIRS="$(mktemp)" || { echo "census.sh: cannot allocate a temp file (mktemp failed)" >&2; rm -f "$ROWS"; exit 3; }
+trap 'rm -f "$ROWS" "$PAIRS"' EXIT
+: > "$ROWS"
+: > "$PAIRS"
+
+# Repo-wide, not per-record: the total commit count for the exit-11 check.
+n_total=""
+[ -n "$GIT_TOP" ] && n_total="$(git -C "$GIT_TOP" rev-list --count HEAD 2>/dev/null)"
 
 while IFS= read -r rec; do
   [ -z "$rec" ] && continue
   f="$LEDGER_DIR/$rec"
-  [ -f "$f" ] || { echo "census.sh: $rec not found in $LEDGER_DIR" >&2; STATUS=10; printf 'ERR\t-\t-\t-\tno\t-\n' >> "$ROWS"; continue; }
+  [ -f "$f" ] || { echo "census.sh: $rec not found in $LEDGER_DIR (10:missing-record)" >&2; STATUS=10; printf 'ERR\t-\t-\t-\tno\t-\n' >> "$ROWS"; continue; }
 
-  sc="$(schema_check "$f")"
+  sc="$(jq -r "$SCHEMA_JQ" "$f" 2>/dev/null)"
   if [ "$sc" != "ok" ]; then
-    echo "census.sh: $rec: schema violation: $sc" >&2
+    # Distinguish an unparseable record (jq parse error, which -r -e prints
+    # to stdout) from a genuine schema violation: on parse failure, `jq empty`
+    # also fails, so we report the fixed "not valid JSON" message rather than
+    # echoing the raw record bytes.
+    if ! jq empty "$f" >/dev/null 2>&1; then
+      echo "census.sh: $rec: record is not valid JSON (10:unparseable)" >&2
+    else
+      echo "census.sh: $rec: schema violation: $sc (10:schema)" >&2
+    fi
     STATUS=10
     printf 'ERR\t-\t-\t-\tno\t-\n' >> "$ROWS"
     continue
   fi
 
-  id="$(jq -r '.id' "$f")"
-  date="$(jq -r '.date' "$f")"
-  status="$(jq -r '.status' "$f")"
-  sup="$(jq -r '.supersedes // "null"' "$f")"
-  by_body="$(jq -r '.by' "$f")"
+  if ! fields="$(jq -r "$SCHEMA_DATA_JQ" "$f" 2>/dev/null)"; then
+    echo "census.sh: $rec: failed to extract fields (10:schema)" >&2
+    STATUS=10
+    printf 'ERR\t-\t-\t-\tno\t-\n' >> "$ROWS"
+    continue
+  fi
+  id="$(printf '%s' "$fields" | cut -f1)"
+  date="$(printf '%s' "$fields" | cut -f2)"
+  status="$(printf '%s' "$fields" | cut -f3)"
+  sup="$(printf '%s' "$fields" | cut -f4)"
+  by_body="$(printf '%s' "$fields" | cut -f5)"
+  any_answer="$(printf '%s' "$fields" | cut -f6)"
+
+  printf '%s\t%s\n' "$id" "$sup" >> "$PAIRS"
 
   # Attribution: the report shows the git author of the record's commit (the
-  # legitimacy check), not the file body's `by` field. When the ledger is not
-  # in a git tree, fall back to the file body's `by`.
+  # legitimacy check), not the file body's `by` field. The pathspec is the
+  # validated, plain-basename $rec prefixed with "./" so a leading dash can
+  # never be read as a git option.
   by_report="$by_body"
   if [ -n "$GIT_TOP" ] && [ -n "$REL_LEDGER" ]; then
-    by_git="$(git -C "$GIT_TOP" log -1 --format='%an' -- "$REL_LEDGER/$rec" 2>/dev/null)"
+    if ! by_git="$(git -C "$GIT_TOP" log -1 --format='%an' -- "${REL_LEDGER:?}/./$rec" 2>/dev/null)"; then
+      echo "census.sh: git failed to read history for $rec on a real repo (10:git-unavailable)" >&2
+      STATUS=10
+      printf 'ERR\t-\t-\t-\tno\t-\n' >> "$ROWS"
+      continue
+    fi
     if [ -n "$by_git" ]; then
       by_report="$by_git"
     fi
   fi
 
-  live="no"
-  [ "$status" = "decided" ] && live="yes"
-  [ "$status" = "open" ] && live="yes"
-
-  # Unconfirmed-answer check (exit 11): a decided record with an answer must
-  # trace to a prior commit that could have carried the operator confirmation.
-  # If the record is the first and only commit in the repo (no prior state),
-  # there is no confirmation trail — the record was written and committed in
-  # one step, which is the anti-fabrication violation. When the ledger is not
-  # in a git tree, this check cannot be run and is skipped.
-  if [ -n "$GIT_TOP" ] && [ "$status" = "decided" ]; then
-    any_answer="$(jq -r '[.questions[]?.answer // ""] | map(select(. != "")) | length' "$f" 2>/dev/null)"
-    if [ "${any_answer:-0}" -gt 0 ]; then
-      n_total="$(git -C "$GIT_TOP" rev-list --count HEAD 2>/dev/null)"
-      if [ "${n_total:-0}" -le 1 ]; then
-        echo "census.sh: $rec: answer stored without a preceding commit (no operator confirmation trail)" >&2
-        STATUS=11
-      fi
-    fi
+  # Unconfirmed-answer check (exit 11): a decided record with an answer whose
+  # commit has no predecessor. A fresh ledger whose first record is the first
+  # commit is the legitimate new-project case and passes; an answer only
+  # counts as confirmed once the record traces to prior history. See
+  # references/census.md for the documented limitation of this proxy.
+  if [ -n "$GIT_TOP" ] && [ "$status" = "decided" ] && [ "${any_answer:-0}" -gt 0 ] && [ "${n_total:-0}" -le 1 ]; then
+    echo "census.sh: $rec: answer stored without a preceding commit (no operator confirmation trail)" >&2
+    STATUS=11
   fi
 
   # Edited-after-commit check (exit 12): working-tree bytes vs the last commit
-  # that touched the path. When the ledger is not in a git tree, skip.
+  # that touched the path. Skipped when the ledger is not in a git tree.
   if [ -n "$GIT_TOP" ] && [ -n "$REL_LEDGER" ]; then
-    lastc="$(git -C "$GIT_TOP" log -1 --format='%H' -- "$REL_LEDGER/$rec" 2>/dev/null)"
+    lastc="$(git -C "$GIT_TOP" log -1 --format='%H' -- "${REL_LEDGER:?}/./$rec" 2>/dev/null)"
     if [ -n "$lastc" ]; then
       h_disk="$(sha1sum "$f" 2>/dev/null | cut -d' ' -f1)"
       h_git="$(git -C "$GIT_TOP" cat-file blob "$lastc:$REL_LEDGER/$rec" 2>/dev/null | sha1sum 2>/dev/null | cut -d' ' -f1)"
@@ -193,78 +259,93 @@ while IFS= read -r rec; do
     fi
   fi
 
+  # The live column reflects the record's own status field; the per-chain
+  # resolution (zero-live / multi-live) is checked below in the chain walk.
+  live="no"
+  [ "$status" = "decided" ] && live="yes"
+  [ "$status" = "open" ] && live="yes"
+
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$date" "$by_report" "$status" "$live" "$sup" >> "$ROWS"
-done <<EOF
+done <<REOF
 $RECORDS
-EOF
+REOF
 
 # --- Supersede chain resolution (exit 20) -------------------------------------
-# Only runs when no schema violation (exit 10) was found: the chain check is
-# only meaningful if all records are schema-valid.
+# Runs only when no schema violation (exit 10) was found: the chain walk
+# needs schema-valid records, and it reads PAIRS, which was accumulated from
+# the validated pass-1 records above (a malformed record never contributes a
+# pair). When a higher-priority code (11 or 12) already fired, the chain walk
+# is skipped and the report says so: the documented precedence is
+# 10 < 11 < 12 < 20.
 if [ "$STATUS" -ne 10 ]; then
+  if [ "$STATUS" -ne 0 ]; then
+    echo "census.sh: exit $STATUS already reported; chain not evaluated (priority 10 < 11 < 12 < 20)" >&2
+  else
+    # status map (id -> status) from the validated report rows ($ROWS field 4);
+    # $ROWS holds only data lines (the header is printed to stdout, not $ROWS).
+    status_file="$(mktemp)" || { rm -f "$ROWS" "$PAIRS"; echo "census.sh: cannot allocate a temp file (mktemp failed)" >&2; exit 3; }
+    awk -F'\t' 'NF >= 6 && $1 != "ERR" { print $1 "\t" $4 }' "$ROWS" > "$status_file"
 
-PAIRS="$(cd "$LEDGER_DIR" 2>/dev/null && for f in *.json; do
-  [ -f "$f" ] || continue
-  id="$(jq -r '.id // ""' "$f" 2>/dev/null)"
-  sup="$(jq -r '.supersedes // "null"' "$f" 2>/dev/null)"
-  [ -z "$id" ] && continue
-  printf '%s\t%s\n' "$id" "$sup"
-done | LC_ALL=C sort)"
+    # id/sup are indexed by row number; the walk follows row -> supersedes id
+    # -> row via the id_to_row map, so a walk by id string never works.
+    broken="$(awk -F'\t' '
+      FILENAME == ARGV[1] { status_of[$1] = $2; next }
+      { id[FNR] = $1; sup[FNR] = $2; files[$1]++; id_to_row[$1] = FNR }
+      END {
+        for (i in id) {
+          t = id[i]; cyc = 0
+          while (t in files) {
+            r = id_to_row[t]
+            if (t in seen_map) { cyc = 1; break }
+            seen_map[t] = 1
+            if (sup[r] == "null" || sup[r] == "") { root[i] = t; break }
+            t = sup[r]
+            if (++seen > 1000) { cyc = 1; break }
+          }
+          delete seen_map
+          if (cyc) root[i] = "?"
+          else if (!(t in files)) root[i] = t
+        }
+        for (i in id) {
+          r = root[i]; chain[r] = 1
+          if (status_of[id[i]] != "superseded") livecount[r]++
+          if (sup[i] != "null" && sup[i] != "" && !(sup[i] in files))
+            msg = msg sprintf("\ndangling: %s supersedes %s (no such record)", id[i], sup[i])
+          if (sup[i] != "null" && sup[i] != "") succ[sup[i]] = succ[sup[i]] " " id[i]
+          if (sup[i] == "null" && status_of[id[i]] == "superseded") marked[i] = 1
+        }
+        for (t in succ) {
+          n = split(succ[t], a, " "); cnt = 0
+          for (j = 1; j <= n; j++) if (a[j] != "") cnt++
+          if (cnt > 1) msg = msg sprintf("\nduplicate: %s is superseded by more than one record", t)
+        }
+        for (i in marked) {
+          has_succ = 0
+          for (j in id) if (sup[j] == id[i]) has_succ = 1
+          if (!has_succ) msg = msg sprintf("\norphan: %s is marked superseded but no record supersedes it", id[i])
+        }
+        for (i in id) if (root[i] == "?")
+          msg = msg sprintf("\ncycle: record %s is in a supersedes cycle", id[i])
+        for (r in chain) {
+          c = livecount[r] + 0
+          if (c == 0) msg = msg sprintf("\nzero-live: chain %s resolves to no live record (every record in it is superseded)", r)
+          if (c > 1) msg = msg sprintf("\nmulti-live: chain %s resolves to more than one live record (expected exactly one)", r)
+        }
+        if (msg != "") { print msg; print "BROKEN" }
+        else print "OK"
+      }
+    ' "$status_file" "$PAIRS")"
+    rm -f "$status_file"
 
-broken=""
-
-# 1. dangling: a supersedes that names an id with no file
-while IFS=$'\t' read -r id sup; do
-  [ -z "$id" ] && continue
-  if [ "$sup" != "null" ] && [ -n "$sup" ] && [ ! -f "$LEDGER_DIR/$sup.json" ]; then
-    broken="$broken
-dangling: $id supersedes $sup (no such record)"
+    if [ "$broken" != "OK" ]; then
+      STATUS=20
+      {
+        echo "CHAIN:"
+        printf '%s\n' "$broken" | sed '/^$/d' | sed '$d'
+      } >&2
+    fi
   fi
-done <<PEOF
-$PAIRS
-PEOF
-
-# 2. duplicate: two records both supersede the same id
-dup_targets="$(printf '%s\n' "$PAIRS" | awk -F'\t' '$2 != "null" && $2 != "" {print $2}' | LC_ALL=C sort | uniq -d)"
-if [ -n "$dup_targets" ]; then
-  while IFS= read -r t; do
-    [ -z "$t" ] && continue
-    broken="$broken
-duplicate: $t is superseded by more than one record"
-  done <<DPEOF
-$dup_targets
-DPEOF
 fi
-
-# 3. (forward-supersedes check removed: the supersede chain is the
-# authoritative ordering; the date is a tie-break for records with no
-# supersede relationship. A record with an earlier date than the record it
-# supersedes is valid — the chain order, not the timestamp, is the truth.)
-
-# 4. orphan: a root (supersedes: null) marked "superseded" with no live
-#    successor that supersedes it.
-while IFS=$'\t' read -r id sup; do
-  [ -z "$id" ] && continue
-  [ "$sup" = "null" ] || continue
-  st="$(jq -r '.status' "$LEDGER_DIR/$id.json" 2>/dev/null)"
-  [ "$st" = "superseded" ] || continue
-  has_successor="$(printf '%s\n' "$PAIRS" | awk -F'\t' -v t="$id" '$2 == t {print $1; exit}')"
-  if [ -z "$has_successor" ]; then
-    broken="$broken
-orphan: $id is marked superseded but no record supersedes it"
-  fi
-done <<RPEOF
-$PAIRS
-RPEOF
-
-if [ -n "$broken" ]; then
-  STATUS=20
-  {
-    echo "CHAIN:"
-    printf '%s\n' "$broken" | sed '/^$/d'
-  } >&2
-fi
-fi  # end of if [ "$STATUS" -ne 10 ]
 
 # --- Report -------------------------------------------------------------------
 printf 'id\tdate\tby\tstatus\tlive\tsupersedes\n'

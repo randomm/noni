@@ -68,7 +68,7 @@ in `references/decisions.md`.
 
 A correction writes a **new** file; the superseded record's bytes stay unchanged
 and its blob stays reachable in history. Never edit history. The supersede
-chain resolves to one live record per question, and a forward or duplicate
+chain resolves to one live record per chain, and a duplicate or dangling
 supersedes is refused by the census. The protocol is in
 `references/supersede.md`.
 
@@ -86,10 +86,12 @@ the anti-fabrication rule (the agent never answers for the operator) are in
 |---|---|
 | `0` | clean — every record valid, chain intact |
 | `3` | jq not found on the reading machine |
-| `10` | a record is missing or malformed (schema violation) |
-| `11` | an answer was stored without operator confirmation |
+| `10` | a record is missing or malformed, or the ledger is unusable (missing/empty dir, bad filename, unreadable git tree) |
+| `11` | an answer was stored without operator confirmation (the record's commit has no predecessor) |
 | `12` | a record was edited after commit (supersede instead) |
-| `20` | the supersede chain is broken (dangling, forward, or duplicate) |
+| `20` | the supersede chain is broken (dangling, duplicate, orphan, cycle, or a chain resolving to zero or more than one live record) |
+
+When several invariant classes fail at once, the lowest code wins (`10 < 11 < 12 < 20`); the stderr message says whether the higher-numbered checks were skipped.
 
 One golden fixture per code lives under `tests/fixtures/census-exit-*.json`. The
 exit-code contract and how to read the report are in `references/census.md`.

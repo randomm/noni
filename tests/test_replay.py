@@ -156,15 +156,11 @@ def test_replay_reproduces_the_why(tmp_path):
                 )
 
 
-def test_replay_no_shared_runtime_no_network(tmp_path):
-    """The replay reads nothing but git: no shared runtime, no network.
-
-    The test runs the census with a PATH that has no jq (to prove the census
-    is not silently falling back to a host tool) and with the HOME env var
-    pointing at an empty dir (to prove no host config is read). The census
-    exits 3 (jq missing) in this case, which proves it tried to run — but the
-    key assertion is that the *clone* is self-contained: the records are all
-    present and the git history is complete.
+def test_fresh_clone_has_complete_git_history(tmp_path):
+    """The fresh clone carries the complete git history the census reads:
+    4 commits (one per record) and all 4 records, with no dangling objects.
+    This is the precondition that lets the census replay every decision from
+    the clone alone — no shared runtime, no network.
     """
     src_repo = _generate_replay_repo(tmp_path)
     clone_dir = tmp_path / "clone"

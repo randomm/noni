@@ -22,13 +22,15 @@ one you are in.
 |---|---|
 | `0` | clean — every record valid, chain intact |
 | `3` | `jq` not found on the reading machine (missing dependency) |
-| `10` | a record is missing or malformed (schema violation) |
-| `11` | an answer was stored without operator confirmation |
+| `10` | a record is missing or malformed (schema violation), or the ledger is unusable: the directory does not exist, contains no `*.json` records, a filename is not a plain `<name>.json` path segment, or the git tree is unreadable on a real repo |
+| `11` | an answer was stored without operator confirmation (the record's commit has no predecessor) |
 | `12` | a record was edited after commit (the committed bytes differ from the working tree) |
-| `20` | the supersede chain is broken (dangling, duplicate, or orphan) |
+| `20` | the supersede chain is broken (dangling, duplicate, orphan, cycle, or a chain resolving to zero or more than one live record) |
 
 The codes are distinct so a single failing census tells the operator which class
-of invariant broke without re-reading the report. One golden fixture per code
+of invariant broke without re-reading the report. When several classes are
+violated at once, the **lowest number wins** (`10 < 11 < 12 < 20`) and the
+higher-numbered checks may not have been evaluated — the stderr message says so. One golden fixture per code
 lives under `tests/fixtures/census-exit-<code>.json` — a fixture that is *wrong*
 for its code makes the corresponding test fail, so the fixtures and the script
 cannot disagree.
@@ -45,19 +47,23 @@ cannot disagree.
   `questions` array is empty or has more than four entries, a question has fewer
   than two or more than four options, or a field has the wrong type.
 - **`11` (unconfirmed answer):** a committed record has an `answer` present but
-  the record does not trace to an operator confirmation. In the current model
-  this manifests as: `status` is `decided` but the record has no git commit
-  history preceding it that could have carried the confirmation, or the record
-  was written without the confirmation step. The census detects this by
-  checking that a `decided` record with an `answer` has a reachable commit
-  history (i.e., is not the sole commit of a fresh tree with no prior state).
+  no operator-confirmation trail to trace it to. In the current model this is
+detected by checking that a `decided` record with an `answer` is **not** the
+sole commit of the tree: a record that is the first and only commit has no
+predecessor that could have carried the confirmation. A fresh ledger whose
+first record is the first commit is the legitimate new-project case and passes;
+an answer only counts as confirmed once the record traces to prior history.
+  This is a proxy: git alone cannot distinguish a confirmed answer from a
+  fabricated one once a second commit exists.
 - **`12` (edited after commit):** the working-tree bytes of a committed record
   differ from the bytes in the last commit that touched that path. The census
   reads `git show <last commit>:<path>` and compares to the file on disk. A
   difference means someone edited the record instead of superseding it.
 - **`20` (broken chain):** a `supersedes` names a record that does not exist
-  (dangling), two records both supersede the same id (duplicate), or a root
-  (supersedes: null) is marked `superseded` with no live successor (orphan).
+  (dangling), two records both supersede the same id (duplicate), a root
+  (supersedes: null) is marked `superseded` with no live successor (orphan), a
+  `supersedes` cycle exists, or a chain resolves to zero or more than one live
+  record (a record is live when its `status` is not `superseded`).
   A record with an earlier date than the record it supersedes is **not** a
   violation — the supersede chain is the authoritative ordering; the date is
   a tie-break for records with no supersede relationship.

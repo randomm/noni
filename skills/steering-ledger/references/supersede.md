@@ -37,12 +37,18 @@ resolves to zero or more than one live record is broken.
 - **Root:** `supersedes: null`. A chain root with `status: superseded` but no
   later record pointing at it is broken — something marked it superseded
   without writing the replacement.
-- **Forward supersedes** (`B.supersedes` points at a record with a later `date`
-  than `B`) is refused: you cannot supersede a future.
 - **Duplicate supersedes** (two different records both `supersedes: "A"`) is
   refused: a record is replaced by at most one later record.
 - **Dangling supersedes** (`B.supersedes` names an id that does not exist in the
   ledger) is broken.
+- **Chain resolution:** the census walks `supersedes` and requires exactly one
+  live record per chain (a record is live when its `status` is not
+  `superseded`). A chain that resolves to zero or more than one live record is
+  broken.
+
+A record with an earlier `date` than the record it supersedes is **not** a
+violation: the supersede chain is the authoritative ordering; the date is a
+tie-break for records with no supersede relationship.
 
 ## The `status` lifecycle
 
@@ -58,6 +64,8 @@ restore, you add.
 
 ## What the census reports
 
-The census emits one line per record with `chain: <root-id>` and `live: true|false`,
-plus a final line naming any broken chains. A chain with no live record, a
-forward or duplicate supersedes, or a dangling `supersedes` is exit `20`.
+The census emits one line per record: `id  date  by  status  live  supersedes`
+(the `live` column reflects the record's own `status` field), followed by a
+`CHAIN` block naming any broken chains. A chain that resolves to zero or more
+than one live record, a duplicate or dangling `supersedes`, an orphan, or a
+supersedes cycle is exit `20`.

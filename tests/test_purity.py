@@ -8,8 +8,8 @@ The purity rule has two tiers:
 
 These tests enforce the two-tier purity:
 - The core skill files (SKILL.md, references/*.md) contain no references to
-  specific attached projects, no driver-tool vocabulary (pi-rukas, tehas,
-  hermes, bridge), and no project-specific content.
+  specific attached projects, no vocabulary from any specific driver, tracker
+  or project, and no project-specific content.
 - The fixture set (tests/fixtures/) contains no machine-local paths
   (/home/<user>, /Users/<user>) and no operator-specific content.
 """
@@ -27,15 +27,15 @@ FIXTURES = REPO / "tests" / "fixtures"
 README = REPO / "README.md"
 PRODUCT = REPO / "docs" / "PRODUCT.md"
 
-# Driver-tool vocabulary that must not appear in core skill files (two-tier
-# purity: the core must be viable with no adapter installed).
-# These are the names of the specific tools/projects that the adapters
-# integrate with. The core skill must not reference them by name.
+# Vocabulary from specific drivers, trackers or projects that must not appear
+# in core skill files (two-tier purity: the core must be viable with no
+# adapter installed). These are the names of the specific tools/projects the
+# adapters integrate with; the core skill must not reference them by name.
 FORBIDDEN_VOCAB = [
-    (re.compile(r"\bpi-rukas\b", re.IGNORECASE), "driver-tool vocabulary: pi-rukas"),
-    (re.compile(r"\btehas\b", re.IGNORECASE), "driver-tool vocabulary: tehas"),
-    (re.compile(r"\bhermes\b", re.IGNORECASE), "driver-tool vocabulary: hermes"),
-    (re.compile(r"\bbridge\b", re.IGNORECASE), "driver-tool vocabulary: bridge"),
+    (re.compile(r"\bpi-rukas\b", re.IGNORECASE), "external tool/project vocabulary"),
+    (re.compile(r"\btehas\b", re.IGNORECASE), "external tool/project vocabulary"),
+    (re.compile(r"\bhermes\b", re.IGNORECASE), "external tool/project vocabulary"),
+    (re.compile(r"\bbridge\b", re.IGNORECASE), "external tool/project vocabulary"),
 ]
 
 # Machine-local path patterns (the noni purity rule: no project-specific
@@ -60,9 +60,10 @@ FIXTURE_FILES = sorted(
 
 @pytest.mark.parametrize("path", SKILL_CORE_FILES, ids=lambda p: p.name)
 def test_core_skill_has_no_driver_tool_vocabulary(path):
-    """The core skill files contain no driver-tool vocabulary (pi-rukas, tehas,
-    hermes, bridge). The two-tier purity rule: the core must be viable with no
-    adapter installed, and the adapters are the only place those names appear.
+    """The core skill files contain no vocabulary from any specific driver,
+    tracker or project. The two-tier purity rule: the core must be viable with
+    no adapter installed, and the adapters are the only place those names
+    appear.
     """
     text = path.read_text(encoding="utf-8")
     for lineno, line in enumerate(text.splitlines(), 1):

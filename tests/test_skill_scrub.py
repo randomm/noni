@@ -5,9 +5,9 @@ hard-coded), and token-shaped strings. Env-var names (e.g. GH_TOKEN) and
 documented ~/ forms are allowed.
 
 The operator username is read from the git config of the repo (user.name) or
-from the $USER environment variable, not hard-coded. This is the fix for the
-bridge's test_skill_scrub.py which hard-codes "janni" — the noni purity rule
-says no project-specific content, and the operator's username is
+from the $USER environment variable, not hard-coded. This is the fix for a
+prior version of this check which hard-coded a real username — the noni
+purity rule says no project-specific content, and the operator's username is
 project-specific.
 """
 
@@ -29,7 +29,8 @@ def _operator_username() -> str:
     """Resolve the operator's username from the environment or git config.
 
     Parameterised: reads $USER, then git config user.name, then falls back to
-    the OS-level username. This is the fix for the bridge's hard-coded "janni".
+    the OS-level username. This is the fix for a prior version of this check
+    which hard-coded a real username.
     """
     user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
     if user:

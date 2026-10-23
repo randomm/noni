@@ -5,3 +5,5 @@ uv.lock
 noni.egg-info/
 .pytest_cache/
 /.pi/work-state/
+# local public-repo hygiene deny-list: never committed (issue #8 scrub check)
+/.noni-scrub-denylist

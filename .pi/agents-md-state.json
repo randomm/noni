@@ -25,7 +25,7 @@
   },
   {
     "key": "operator:constraints",
-    "value": "Purity rule is binding: core carries no project content and no pi-rukas/tehas vocabulary; adapters only under integrations/. docs/PRODUCT.md sections 3, 6 and 7 are binding for all epics.",
+    "value": "Purity rule is binding: core carries no project content and no vocabulary from any specific driver, tracker or project; adapters only under integrations/. docs/PRODUCT.md sections 3, 6 and 7 are binding for all epics.",
     "provenance": "asked",
     "date": "2026-10-23"
   },

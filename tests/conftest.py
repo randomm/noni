@@ -2,7 +2,7 @@
 
 WHY THIS FILE EXISTS.
 
-The bridge's conftest.py (tests/conftest.py in pi-tehas-hermes-bridge) clears
+A prior bridge conftest (tests/conftest.py in the reference driver bridge) clears
 every bridge-controlled environment variable and redirects HOME so that a test
 that expects "no projects" fails on the developer's machine while passing in
 CI, where the variable is simply unset. That is the bug the fixture closes:
@@ -65,7 +65,7 @@ for _var in NONI_ENV_VARS:
 def _git(repo: Path, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
     """Run git in a repo with a deterministic identity and no GPG signing.
 
-    Mirrors the bridge's _git helper (test_file_size_ratchet.py): passes
+    Mirrors the reference bridge's _git helper (test_file_size_ratchet.py): passes
     -c user.name / -c user.email / -c commit.gpgsign=false so a throwaway
     repo never inherits the host's git identity or a GPG requirement.
     """
@@ -94,7 +94,7 @@ def isolated_noni_env(tmp_path, monkeypatch):
 def git_repo(tmp_path):
     """A throwaway git repo with a deterministic identity, in tmp_path.
 
-    Mirrors the bridge's _repo helper: the repo is init'd, and a helper is
+    Mirrors the reference bridge's _repo helper: the repo is init'd, and a helper is
     returned for committing files with the deterministic identity.
     """
     repo = tmp_path / "repo"

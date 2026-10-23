@@ -1,0 +1,86 @@
+[
+  {
+    "key": "omit:quality-gates",
+    "value": "no gate commands could be derived from the project manifest",
+    "provenance": "auto",
+    "date": "2026-10-23"
+  },
+  {
+    "key": "omit:commands",
+    "value": "no commands could be derived from the project manifest",
+    "provenance": "auto",
+    "date": "2026-10-23"
+  },
+  {
+    "key": "omit:environment",
+    "value": "no recognised manifest was detected",
+    "provenance": "auto",
+    "date": "2026-10-23"
+  },
+  {
+    "key": "operator:merge-authority",
+    "value": "/work driver may auto-merge when all gates pass",
+    "provenance": "asked",
+    "date": "2026-10-23"
+  },
+  {
+    "key": "operator:constraints",
+    "value": "Purity rule is binding: core carries no project content and no pi-rukas/tehas vocabulary; adapters only under integrations/. docs/PRODUCT.md sections 3, 6 and 7 are binding for all epics.",
+    "provenance": "asked",
+    "date": "2026-10-23"
+  },
+  {
+    "key": "code-style",
+    "value": "agent",
+    "provenance": "detected",
+    "date": "2026-10-23"
+  },
+  {
+    "key": "architecture-notes",
+    "value": "agent",
+    "provenance": "detected",
+    "date": "2026-10-23"
+  },
+  {
+    "key": "scaffolded:minimalist-engineering",
+    "value": "scaffolded",
+    "provenance": "auto",
+    "date": "2026-10-23"
+  },
+  {
+    "key": "scaffolded:git-workflow",
+    "value": "scaffolded",
+    "provenance": "auto",
+    "date": "2026-10-23"
+  },
+  {
+    "key": "scaffolded:documentation-policy",
+    "value": "scaffolded",
+    "provenance": "auto",
+    "date": "2026-10-23"
+  },
+  {
+    "key": "scaffolded:issue-driven-development",
+    "value": "scaffolded",
+    "provenance": "auto",
+    "date": "2026-10-23"
+  },
+  {
+    "key": "scaffolded:code-review-doctrine",
+    "value": "scaffolded",
+    "provenance": "auto",
+    "date": "2026-10-23"
+  },
+  {
+    "key": "scaffolded:context7-protocol",
+    "value": "scaffolded",
+    "provenance": "auto",
+    "date": "2026-10-23"
+  },
+  {
+    "key": "scaffolded:testing-standards",
+    "value": "scaffolded",
+    "provenance": "auto",
+    "date": "2026-10-23"
+  }
+]

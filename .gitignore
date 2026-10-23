@@ -4,3 +4,4 @@ __pycache__/
 uv.lock
 noni.egg-info/
 .pytest_cache/
+/.pi/work-state/

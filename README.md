@@ -20,9 +20,11 @@ from here, the *what* lives inside the attached project.
 
 ## Status
 
-- Positioning & design phase. A competitor/market deep-research pass (2026-10-22) is
-  being re-anchored from the pi-rukas dogfood frame onto this product frame; the
-  evidence-bearing brief lands in `docs/` once its review pass closes.
+- Positioning & design complete: three verified research runs (competitor
+  landscape, skill-first packaging, coordination substrate) plus a two-clone
+  claim prototype settled the architecture. Read `docs/PRODUCT.md` — it is the
+  product document; the epic issue set (E1–E5) is on GitHub, filed via the
+  pi-rukas plan driver.
 - Origin: the private backlog + reliability skill that grew this idea now live in
   `randomm/pi-rukas-backlog` (full history preserved there); pi-rukas's public work is
   `trail-openers/pi-rukas`.

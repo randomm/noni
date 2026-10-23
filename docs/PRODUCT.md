@@ -108,16 +108,16 @@ less, rework less, merge faster?").
 
 ## 8. Epic map (filed via the plan driver as the issue set)
 
-- **E1 steering-ledger** — record format + both steer modes + anti-fabrication +
+- **E1 steering-ledger** (#1) — record format + both steer modes + anti-fabrication +
   attribution posture. Evidence: Run 3 T1/T3.
-- **E2 sessions+claims** — register layout, claim protocol per §5, don't-touch
+- **E2 sessions+claims** (#2) — register layout, claim protocol per §5, don't-touch
   signalling. Evidence: Run 3 T4 + the prototype.
-- **E3 census** — arbiter checks (double-claim, stale session, provenance
+- **E3 census** (#3) — arbiter checks (double-claim, stale session, provenance
   completeness), `report` mode NDJSON, heartbeat multi-store honesty.
-- **E4 adapters** — `integrations/tehas/` (primary: q_render/q_answer mapping,
+- **E4 adapters** (#4) — `integrations/tehas/` (primary: q_render/q_answer mapping,
   cycle-lock reading, label-event authorization, analytics.db join) and
   `integrations/github-issues/` (generic). Core viable with neither.
-- **E5 measurement/eval** — baseline capture, scenario eval on `to-bench`
+- **E5 measurement/eval** (#5) — baseline capture, scenario eval on `to-bench`
   (two concurrent sessions, planted double-claim), optional noni arm on the
   existing pi-ab-bench harness (Harbor, SWE-bench Pro V2, pinned).
 
@@ -126,7 +126,7 @@ class; run 2: backlog/direction competitors — adopt-nothing-wholesale verdict,
 borrow beads' claim discipline and seeds' release-train vocabulary; run 3:
 skill-first & coordination) live in the working tree at `outputs/` and are
 summarized here so the repo stays self-contained. The epic issue set is filed
-on this repo's GitHub issues via the pi-rukas plan driver.
+as issues #1–#5 on this repo via the pi-rukas plan driver (label `epic`).
 
 ## 9. First dogfood
 

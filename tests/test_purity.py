@@ -8,42 +8,65 @@ The purity rule has two tiers:
 
 These tests enforce the two-tier purity:
 - The core skill files (SKILL.md, references/*.md) contain no references to
-  specific attached projects, no driver-tool vocabulary (pi-rukas, tehas,
-  hermes, bridge), and no project-specific content.
+  specific attached projects, no vocabulary from any specific driver, tracker
+  or project, and no project-specific content.
 - The fixture set (tests/fixtures/) contains no machine-local paths
   (/home/<user>, /Users/<user>) and no operator-specific content.
+
+The banned vocabulary for tier 1 is the untracked local deny-list loaded via
+``public_safety.load_denylist`` — the same source the scrub uses — so no real
+external tool/project name ever has to be committed to this file. When the
+deney-list is absent the vocabulary check is skipped via pytest.skip with a
+visible reason (same contract as the scrub); the structural purity checks
+(no committed .git dirs, product docs exist) still run.
 """
 
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
+
+# Import the shared pattern registry and the deny-list loader from
+# scripts/public_safety.py so that new secret shapes or path patterns are
+# added in exactly one place and the banned vocabulary is the same deny-list
+# the scrub uses (never a committed list of real names).
+_scripts_dir = str(REPO / "scripts")
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
+from public_safety import (  # noqa: E402
+    FIXTURE_HOME_PATH_PATTERNS,
+    HOME_PATH_PATTERNS,
+    load_denylist,
+)
+
 SKILL_DIR = REPO / "skills" / "steering-ledger"
 FIXTURES = REPO / "tests" / "fixtures"
 README = REPO / "README.md"
 PRODUCT = REPO / "docs" / "PRODUCT.md"
 
-# Driver-tool vocabulary that must not appear in core skill files (two-tier
-# purity: the core must be viable with no adapter installed).
-# These are the names of the specific tools/projects that the adapters
-# integrate with. The core skill must not reference them by name.
+# Banned vocabulary for the core skill files: the untracked local deny-list
+# (two-tier purity: the core must be viable with no adapter installed). Real
+# external tool/project names live only in that deny-list and in adapters;
+# nothing real is committed here. Loaded once at module import; when the
+# deny-list is absent or inactive, the vocabulary check is skipped via
+# pytest.skip with a visible reason (same contract as the scrub's deny-list
+# class) while the structural checks below still run.
+_DENYLIST = load_denylist()
 FORBIDDEN_VOCAB = [
-    (re.compile(r"\bpi-rukas\b", re.IGNORECASE), "driver-tool vocabulary: pi-rukas"),
-    (re.compile(r"\btehas\b", re.IGNORECASE), "driver-tool vocabulary: tehas"),
-    (re.compile(r"\bhermes\b", re.IGNORECASE), "driver-tool vocabulary: hermes"),
-    (re.compile(r"\bbridge\b", re.IGNORECASE), "driver-tool vocabulary: bridge"),
+    (re.compile(re.escape(entry), re.IGNORECASE), "external tool/project vocabulary")
+    for entry in _DENYLIST.entries
 ]
 
-# Machine-local path patterns (the noni purity rule: no project-specific
-# content).
-FORBIDDEN_PATHS = [
-    (re.compile(r"/Users/"), "absolute macOS home path"),
-    (re.compile(r"/home/[a-z]"), "absolute Linux home path"),
-]
+# Machine-local path patterns. The known-identity patterns come from the
+# shared registry; the fixture-only catch-alls retain any-username coverage
+# (the shared registry is deliberately limited to well-known identities for
+# the scrub, where any-user names are the deny-list class's job).
+FORBIDDEN_PATHS: tuple[tuple[re.Pattern, str], ...] = tuple(HOME_PATH_PATTERNS) + tuple(FIXTURE_HOME_PATH_PATTERNS)
 
 SKILL_CORE_FILES = sorted(
     p
@@ -60,10 +83,20 @@ FIXTURE_FILES = sorted(
 
 @pytest.mark.parametrize("path", SKILL_CORE_FILES, ids=lambda p: p.name)
 def test_core_skill_has_no_driver_tool_vocabulary(path):
-    """The core skill files contain no driver-tool vocabulary (pi-rukas, tehas,
-    hermes, bridge). The two-tier purity rule: the core must be viable with no
-    adapter installed, and the adapters are the only place those names appear.
+    """The core skill files contain no vocabulary from any specific driver,
+    tracker or project. The two-tier purity rule: the core must be viable with
+    no adapter installed, and the adapters are the only place those names
+    appear.
     """
+    if _DENYLIST.status != "ok" or not _DENYLIST.entries:
+        # Same contract as the scrub: without an active deny-list the
+        # vocabulary class is skipped visibly (pytest.skip, not a silent
+        # no-op pass).
+        pytest.skip(
+            f"deny-list inactive: {_DENYLIST.status}; core skill files "
+            "unchecked for external tool/project vocabulary. This is NOT "
+            "a purity guarantee. See docs/PUBLISHING.md step 1."
+        )
     text = path.read_text(encoding="utf-8")
     for lineno, line in enumerate(text.splitlines(), 1):
         for pattern, label in FORBIDDEN_VOCAB:

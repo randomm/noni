@@ -3,13 +3,14 @@
 ## Operator choices
 
 - **Merge authority:** /work driver may auto-merge when all gates pass
-- **Project-specific constraints:** Purity rule is binding: core carries no project content and no pi-rukas/tehas vocabulary; adapters only under integrations/. docs/PRODUCT.md sections 3, 6 and 7 are binding for all epics.
+- **Project-specific constraints:** Purity rule is binding: core carries no project content and no vocabulary from any specific driver, tracker or project; adapters only under integrations/. docs/PRODUCT.md sections 3, 6 and 7 are binding for all epics.
+- **Public-repo hygiene:** noni is published as a public repository. No tracked file may contain personal information about the operator (names, employer names, hostnames or network details), machine-local absolute home paths, names or paths of other projects, tools, drivers or repositories outside noni, or secrets or credentials. Use generic wording instead ("a driver", "an issue runner", "a tracker", "a separate repository"). The rule itself names no banned project or tool.
 
 
 ## Code Style
 
 - Purity rule: repo holds only generic product content (positioning, research, design, specs, shipped skills) — no tickets, backlog entries, or any attached project's content
-- Two-tier purity: core skills carry neither project content nor pi-rukas/tehas vocabulary; adapters live in `integrations/tehas/`, `integrations/github-issues/`; core must be viable with neither installed
+- Two-tier purity: core skills carry neither project content nor vocabulary from any specific driver, tracker or project; adapters live under `integrations/` (one clearly-marked adapter directory per project, e.g. `integrations/github-issues/`); core must be viable with no adapter installed
 - SKILL.md is the unit of product; state lives outside the skill directory; core skills stay within the six Agent Skills spec frontmatter fields
 - Git + plain files are the only truth: no daemons, no databases; scripts only where atomicity and exit-code honesty demand them
 - Prose is convention, not enforcement: every invariant needs a script with an honest exit code or a census check
@@ -20,10 +21,10 @@
 - Attached project's `noni/` dir: direction/ (standing direction, release trains), decisions/ (steering ledger, one file per dated record), sessions/ (one committed file per session, single writer), census/ (on-demand NDJSON reports)
 - Census is the arbiter: claims are committed signals, not locks; double-claim detection happens at read time via the census
 - Metrics are derived from git history plus noni/ files, never self-reported
-- tehas is the primary integration, pi-rukas the reference driver; live transports are caches over git-committed state, never the state
+- the primary integration is a specific driver/tracker ecosystem (adapters map onto its mechanisms); live transports are caches over git-committed state, never the state
 - GitHub issues remain the work carrier; noni owns only the direction layer above them
 - Epic map: E1 steering ledger (#1), E2 sessions+claims (#2), E3 census (#3), E4 adapters (#4), E5 measurement/eval (#5)
-- Docs-only at v0: README.md + docs/PRODUCT.md; evidence briefs live outside the repo (~/outputs/.plans/)
+- Docs-only at v0: README.md + docs/PRODUCT.md; evidence briefs live outside the repo, in a local working tree the operator holds separately
 
 # Minimalist Engineering
 

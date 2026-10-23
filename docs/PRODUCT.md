@@ -2,8 +2,8 @@
 
 Status: v0 positioning · 2026-10-22 · owner-approved epic map below
 Evidence base: three verified research runs + a lead-run prototype; see
-`docs/briefs/` pointers in §8 and the decision log at
-`~/outputs/.plans/noni-backlog-competitors.md` (authoritative working record).
+§8 for the brief summaries and the local working-tree decision log
+(authoritative working record, held outside the repo).
 
 ## 1. What noni is
 
@@ -34,7 +34,8 @@ It owns four artifacts:
 Not an agent, not a task tracker, not a CI system, not a coordination daemon,
 not a database. No fleet manager, backlog UI or framework from the surveyed
 class is adopted wholesale; the surveyed mechanisms are either borrowed as
-conventions (beads' claim discipline, tehas' answer-legitimacy parsing) or
+conventions (a surveyed project's claim discipline, the primary integration's
+answer-legitimacy parsing) or
 left at the door (Dolt/Postgres truth stores, daemons, worktree-isolation-as-claiming).
 
 ## 3. Doctrine (owner-set; compensate for, never re-litigate)
@@ -47,13 +48,16 @@ left at the door (Dolt/Postgres truth stores, daemons, worktree-isolation-as-cla
   convention exists across runtimes). Packaging follows the Agent Skills
   spec: core skills stay inside the six spec frontmatter fields.
 - **Two-tier purity.** Core skills carry neither project content nor
-  pi-rukas/tehas vocabulary. Integrations are clearly-marked adapters
-  (`integrations/tehas/`, `integrations/github-issues/`). The core must be
-  viable with neither adapter installed.
-- **tehas is the primary integration, pi-rukas the reference driver** —
-  overlap with tehas is allowed where the generic product needs it, and the
-  adapters map onto tehas source mechanisms (q_render/q_answer legitimacy,
-  cycle flock liveness, label-event authorization) rather than reinventing them.
+  vocabulary from any specific driver, tracker or project. Integrations are
+  clearly-marked adapters (one directory per project, e.g.
+  `integrations/github-issues/`). The core must be viable with no adapter
+  installed.
+- **The primary integration is a specific driver/tracker ecosystem, and a
+  reference driver is the integration model** —
+  overlap with the primary integration is allowed where the generic product
+  needs it, and the adapters map onto its source mechanisms (question-render /
+  answer legitimacy parsing, cycle lock liveness, label-event authorization)
+  rather than reinventing them.
 - **A ping is a hint; the commit is the truth.** Any live transport
   (MCP-elicitation prompt, future A2A) is a notification cache over
   git-committed state, never the state itself. A2A: ignore now, dated re-check.
@@ -61,14 +65,14 @@ left at the door (Dolt/Postgres truth stores, daemons, worktree-isolation-as-cla
 ## 4. The steer, concretely
 
 Two input modes, one record shape, per the verified prior art (AG2, LangGraph,
-Claude AskUserQuestion, tehas all converge):
+Claude AskUserQuestion, the primary integration all converge):
 
 - **Multiple-choice**: agent asks 1–4 questions × 2–4 options (production-verified
   bounds), free-text escape hatch always offered. Answer must name the question
   it answers (id pairing). Never auto-answer for the operator (anti-fabrication).
 - **Free chat**: agent distills the conversation into a candidate record;
   the operator confirms; the confirmation is committed.
-- **Record shape** (ADR skeleton + tehas fields): `{id, date, asked_by, question,
+- **Record shape** (ADR skeleton + the primary integration's fields): `{id, date, asked_by, question,
   options[], answer, by, scope, status, supersedes}` under the repo's ledger
   path. `status` adopts one/many/stranger semantics with the git-attribution
   caveat: `by` is a commit author, forgeable locally — default posture is
@@ -76,7 +80,7 @@ Claude AskUserQuestion, tehas all converge):
 
 ## 5. Claims — the prototype verdict
 
-Two-clone experiments (2026-10-22, scratch tree `noni-claim-proto2`) showed:
+Two-clone experiments (2026-10-22, scratch tree kept outside the repo) showed:
 push-rejection works as compare-and-swap; shared-file claim edits conflict at
 merge but conflict-firing is file-layout luck; per-session claim files always
 auto-merge, so both claims land and the **census must detect double-claims at
@@ -102,11 +106,11 @@ violation. Prose states the protocol; scripts and census hold the line.
 ```
 
 Metrics are derived, never self-reported: the census reads git history and
-these files. The tehas adapter additionally joins `analytics.db` runs to
-noni artifacts by issue number for outcome questions ("do steered runs park
-less, rework less, merge faster?").
+these files. The primary integration's adapter additionally joins its local
+run analytics to noni artifacts by issue number for outcome questions ("do
+steered runs park less, rework less, merge faster?").
 
-## 8. Epic map (filed via the plan driver as the issue set)
+## 8. Epic map (filed via a plan driver as the issue set)
 
 - **E1 steering-ledger** (#1) — record format + both steer modes + anti-fabrication +
   attribution posture. Evidence: Run 3 T1/T3.
@@ -114,23 +118,24 @@ less, rework less, merge faster?").
   signalling. Evidence: Run 3 T4 + the prototype.
 - **E3 census** (#3) — arbiter checks (double-claim, stale session, provenance
   completeness), `report` mode NDJSON, heartbeat multi-store honesty.
-- **E4 adapters** (#4) — `integrations/tehas/` (primary: q_render/q_answer mapping,
-  cycle-lock reading, label-event authorization, analytics.db join) and
-  `integrations/github-issues/` (generic). Core viable with neither.
-- **E5 measurement/eval** (#5) — baseline capture, scenario eval on `to-bench`
-  (two concurrent sessions, planted double-claim), optional noni arm on the
-  existing pi-ab-bench harness (Harbor, SWE-bench Pro V2, pinned).
+- **E4 adapters** (#4) — the primary integration adapter (question-render /
+  answer mapping, cycle-lock reading, label-event authorization, run-analytics
+  join) and `integrations/github-issues/` (generic). Core viable with neither.
+- **E5 measurement/eval** (#5) — baseline capture, scenario eval on an
+  existing benchmark harness (two concurrent sessions, planted double-claim),
+  optional noni arm on the harness's pinned suite.
 
 Evidence briefs (run 1: autonomous-agent landscape — adjacent context, demoted
 class; run 2: backlog/direction competitors — adopt-nothing-wholesale verdict,
-borrow beads' claim discipline and seeds' release-train vocabulary; run 3:
-skill-first & coordination) live in the working tree at `outputs/` and are
-summarized here so the repo stays self-contained. The epic issue set is filed
-as issues #1–#5 on this repo via the pi-rukas plan driver (label `epic`).
+borrow a surveyed project's claim discipline and another's release-train
+vocabulary; run 3: skill-first & coordination) live in a local working tree
+held outside the repo and are summarized here so the repo stays self-
+contained. The epic issue set is filed as issues #1–#5 on this repo via the
+plan driver (label `epic`).
 
 ## 9. First dogfood
 
 noni on noni's own repo: E1–E5 are filed as GitHub issues (the work carrier),
 noni's own `noni/` state will hold the direction layer (the direction), and
-the plan/work drivers in this ecosystem are the first agent sessions to
-register, claim and get censused.
+the plan/work driver sessions are the first agent sessions to register,
+claim and get censused.

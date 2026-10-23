@@ -66,4 +66,4 @@ a follow-up. Concretely:
 The reference implementation of answer-legitimacy parsing (the `one`/`many`/
 `stranger` tick states, the non-allowed-account reply that voids, marker
 spoofing, CR injection, option-label box injection) is the prior-art
-`q_answer` function; the adapter maps onto it rather than reinventing it.
+answer-legitimacy function; the adapter maps onto it rather than reinventing it.

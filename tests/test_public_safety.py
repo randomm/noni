@@ -1,6 +1,6 @@
 """Public-repo hygiene tests (issue #8).
 
-The scrub check (tests/public_safety.py) must pass on a clean tree and fail,
+The scrub check (scripts/public_safety.py) must pass on a clean tree and fail,
 naming file and line, on a planted violation of each class: machine-local
 absolute home paths, common secret shapes, and deny-list names. Every planted
 violation uses a synthetic name — no real operator name, username, host or
@@ -10,17 +10,29 @@ tool name appears in this file or its fixtures.
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
-import public_safety
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 
+# Make the scripts/ directory importable so `import public_safety` resolves
+# to scripts/public_safety.py.
+_scripts_dir = str(REPO / "scripts")
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
+
+import public_safety  # noqa: E402
+
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
     cmd = ["git", "-C", str(repo), "-c", "user.name=Synthetic Tester", "-c", "user.email=testing@fixture.invalid", *args]
-    return subprocess.run(cmd, capture_output=True, text=True, check=True)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        stderr_first = result.stderr.strip().splitlines()[0] if result.stderr.strip() else "no stderr"
+        raise RuntimeError(f"git {args[0]} failed: {stderr_first}")
+    return result
 
 
 @pytest.fixture
@@ -105,12 +117,14 @@ def test_scrub_fails_on_denylist_entry(clean_repo, tmp_path, monkeypatch):
 
 def test_scrub_notice_when_denylist_absent(clean_repo, capsys):
     """When no deny-list file exists, the deny-list class is skipped with a
-    visible stderr notice while the built-in patterns still run."""
+    prominent stderr notice while the built-in patterns still run. The notice
+    explicitly states that the run is NOT a scrub-clean guarantee."""
     violations, source = public_safety.scrub_tracked_files(clean_repo)
     assert violations == []
     assert source is None
     captured = capsys.readouterr()
-    assert "deny-list skipped" in captured.err
+    assert "deny-list class SKIPPED" in captured.err
+    assert "NOT a scrub-clean guarantee" in captured.err
 
 
 def test_scrub_denylist_env_var_precedence(clean_repo, tmp_path, monkeypatch):
@@ -124,12 +138,12 @@ def test_scrub_denylist_env_var_precedence(clean_repo, tmp_path, monkeypatch):
     monkeypatch.setattr(public_safety, "_default_denylist_file", lambda: file_denylist)
     monkeypatch.setenv(public_safety.DENYLIST_ENV_VAR, env_denylist.as_posix())
 
-    entries, source = public_safety.load_denylist(clean_repo)
+    entries, source = public_safety.load_denylist()
     assert source == file_denylist.as_posix()
     assert entries == ["synthetic-file-name"]
 
     file_denylist.unlink()
-    entries, source = public_safety.load_denylist(clean_repo)
+    entries, source = public_safety.load_denylist()
     assert source == env_denylist.as_posix()
     assert entries == ["synthetic-env-name"]
 
@@ -153,13 +167,40 @@ def test_scrub_checks_tracked_files_only(clean_repo):
 
 
 def test_scrub_excludes_own_source(clean_repo):
-    """The scrub module and its test file are not scanned for their own
-    built-in regex literals (they define the patterns) — so the module's
-    ``/Users/<identity>`` and ``/home/<identity>`` literals do not self-match.
+    """The scrub module, its test file, and test_purity.py (which carries the
+    deny-list vocabulary as regex patterns) are not scanned for their own
+    built-in regex literals. A planted secret in any *other* tracked file is
+    still caught (see test_scrub_exemption_does_not_hide_planted_secret).
     """
     violations, _ = public_safety.scrub_tracked_files(REPO)
-    assert not any(v.startswith("tests/public_safety.py") for v in violations)
+    assert not any(v.startswith("scripts/public_safety.py") for v in violations)
     assert not any(v.startswith("tests/test_public_safety.py") for v in violations)
+    assert not any(v.startswith("tests/test_purity.py") for v in violations)
+
+
+def test_scrub_exemption_does_not_hide_planted_secret(clean_repo):
+    """The self-file exemption only covers the pattern-definition files;
+    a planted secret in any *other* tracked file is still caught."""
+    (clean_repo / "note.md").write_text("/home/builder/secret\n", encoding="utf-8")
+    _git(clean_repo, "add", "note.md")
+    _git(clean_repo, "commit", "-q", "-m", "plant in non-exempt file")
+
+    violations, _ = public_safety.scrub_tracked_files(clean_repo)
+    assert any(v.startswith("note.md") for v in violations), (
+        "a planted home path in a non-exempt file must be caught"
+    )
+
+
+def test_denylist_corrupt_file_degrades_gracefully(clean_repo, tmp_path, monkeypatch):
+    """A non-UTF-8 deny-list file degrades to an empty deny-list with a
+    visible notice rather than crashing the scrub."""
+    corrupt = tmp_path / "corrupt-denylist.bin"
+    corrupt.write_bytes(b"\x80\x81\x82 not utf8")
+    monkeypatch.setattr(public_safety, "_default_denylist_file", lambda: corrupt)
+
+    entries, source = public_safety.load_denylist()
+    assert entries == []
+    assert source == corrupt.as_posix()
 
 
 def test_noni_repo_is_clean():

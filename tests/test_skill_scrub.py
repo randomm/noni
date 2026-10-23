@@ -16,11 +16,20 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
+
+# Import the shared pattern registry from scripts/public_safety.py so that
+# new secret shapes or path patterns are added in exactly one place.
+_scripts_dir = str(REPO / "scripts")
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
+from public_safety import HOME_PATH_PATTERNS, SECRET_PATTERNS  # noqa: E402
+
 SKILL_DIR = REPO / "skills" / "steering-ledger"
 FIXTURES = REPO / "tests" / "fixtures"
 
@@ -57,16 +66,10 @@ def _operator_username() -> str:
 OPERATOR_USERNAME = _operator_username()
 
 FORBIDDEN = [
-    (re.compile(r"/Users/"), "absolute macOS home path"),
-    (re.compile(r"/home/"), "absolute Linux home path"),
+    *HOME_PATH_PATTERNS,
     (re.compile(re.escape(OPERATOR_USERNAME), re.IGNORECASE), f"operator username ({OPERATOR_USERNAME or 'unknown'})"),
-    (re.compile(r"\bghp_[A-Za-z0-9]{20,}"), "GitHub classic token"),
-    (re.compile(r"\bgho_[A-Za-z0-9]{20,}"), "GitHub OAuth token"),
-    (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"), "GitHub fine-grained token"),
-    (re.compile(r"\bsk-[A-Za-z0-9]{20,}"), "API secret key"),
+    *SECRET_PATTERNS,
     (re.compile(r"\bBearer\s+[A-Za-z0-9._~+/-]{20,}"), "bearer token"),
-    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "AWS access key id"),
-    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"), "private key block"),
 ]
 
 # __pycache__/*.pyc are build artifacts: never scan them.

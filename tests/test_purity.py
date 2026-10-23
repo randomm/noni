@@ -17,11 +17,20 @@ These tests enforce the two-tier purity:
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
+
+# Import the shared pattern registry from scripts/public_safety.py so that
+# new secret shapes or path patterns are added in exactly one place.
+_scripts_dir = str(REPO / "scripts")
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
+from public_safety import HOME_PATH_PATTERNS  # noqa: E402
+
 SKILL_DIR = REPO / "skills" / "steering-ledger"
 FIXTURES = REPO / "tests" / "fixtures"
 README = REPO / "README.md"
@@ -39,11 +48,8 @@ FORBIDDEN_VOCAB = [
 ]
 
 # Machine-local path patterns (the noni purity rule: no project-specific
-# content).
-FORBIDDEN_PATHS = [
-    (re.compile(r"/Users/"), "absolute macOS home path"),
-    (re.compile(r"/home/[a-z]"), "absolute Linux home path"),
-]
+# content). Imported from the shared registry in scripts/public_safety.py.
+FORBIDDEN_PATHS = list(HOME_PATH_PATTERNS)
 
 SKILL_CORE_FILES = sorted(
     p

@@ -18,8 +18,19 @@ history. History violations are **reported** (below) and never rewritten here.
 
    It must pass with no violations. The deny-list file itself is git-ignored
    and is never committed; when it is absent the check skips the deny-list
-   class with a visible notice, so its presence is verified by the local run,
-   not by the repo.
+   class with a prominent stderr notice. **A green run without the deny-list
+   is NOT a scrub-clean guarantee** — operator names, external project/tool
+   names, and hostnames are only checked by the deny-list class. Before
+   publishing, verify the deny-list is present and non-empty (the test output
+   must not show the "deny-list class SKIPPED" notice). For a standalone
+   operator check, run the CLI directly:
+
+   ```sh
+   python scripts/public_safety.py
+   ```
+
+   The CLI exits with status 2 (not 0) when the deny-list class was skipped,
+   so it will not report a false "clean".
 2. **Neutral identity.** Configure a neutral git identity for the new repo
    (e.g. a project name + a project-local email); do not reuse a personal
    identity, hostname or employer address.

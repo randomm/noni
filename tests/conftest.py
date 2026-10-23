@@ -111,3 +111,25 @@ def git_repo(tmp_path):
 
     return repo, commit
 
+
+@pytest.fixture
+def run_census():
+    """Run census.sh against a ledger dir, returning (exit_code, stdout, stderr).
+
+    Shared by every test module so the subprocess invocation logic lives in one
+    place. Pass a custom env dict to override PATH or other variables.
+    """
+    def _run(ledger_dir: Path, *, env: dict | None = None) -> tuple[int, str, str]:
+        full_env = dict(os.environ)
+        if env:
+            full_env.update(env)
+        proc = subprocess.run(
+            ["bash", str(REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"), str(ledger_dir)],
+            capture_output=True,
+            text=True,
+            env=full_env,
+            timeout=60,
+        )
+        return proc.returncode, proc.stdout, proc.stderr
+    return _run
+

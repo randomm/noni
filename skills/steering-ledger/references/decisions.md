@@ -5,7 +5,7 @@ is the commit: a file in the working tree that is not committed is not a record,
 and a committed record is replayable by any later session or fresh clone because
 it reads nothing but git.
 
-## The nine fields
+## The eight fields
 
 ```json
 {
@@ -33,7 +33,7 @@ malformed field fails the census with exit `10`.
 | field | type | rules |
 |---|---|---|
 | `id` | string | `YYYY-MM-DD-<slug>`; unique across the ledger; equals the filename stem |
-| `date` | string | UTC ISO-8801; generated from commit metadata at write time |
+| `date` | string | UTC ISO-8601; generated from commit metadata at write time |
 | `asked_by` | string | the agent role or session that asked |
 | `questions` | array | 1-4 question objects (see below) |
 | `by` | string | git author of the record's commit (see Attribution) |

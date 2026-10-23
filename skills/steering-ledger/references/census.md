@@ -37,24 +37,23 @@ cannot disagree.
 
 ## What each check reads
 
-- **`0` (clean):** every `noni/decisions/*.json` parses, has all nine fields,
+- **`0` (clean):** every `noni/decisions/*.json` parses, has all eight fields,
   the `questions` array has 1-4 entries each with 2-4 options, the `by` field
   matches the git author of the record's commit, and the supersede chain
   resolves to exactly one live record per chain.
 - **`3` (jq missing):** `command -v jq` fails. The script cannot validate
   without jq and exits honestly rather than reporting a false clean.
-- **`10` (schema violation):** a record is missing one of the nine fields, a
+- **`10` (schema violation):** a record is missing one of the eight fields, a
   `questions` array is empty or has more than four entries, a question has fewer
   than two or more than four options, or a field has the wrong type.
 - **`11` (unconfirmed answer):** a committed record has an `answer` present but
   no operator-confirmation trail to trace it to. In the current model this is
 detected by checking that a `decided` record with an `answer` is **not** the
-sole commit of the tree: a record that is the first and only commit has no
-predecessor that could have carried the confirmation. A fresh ledger whose
-first record is the first commit is the legitimate new-project case and passes;
-an answer only counts as confirmed once the record traces to prior history.
-  This is a proxy: git alone cannot distinguish a confirmed answer from a
-  fabricated one once a second commit exists.
+record whose commit is the very first commit of the tree: a record committed
+after any other history traces to prior commits and passes; only a record
+whose commit has no predecessor at all has no confirmation trail. This is a
+proxy: git alone cannot distinguish a confirmed answer from a fabricated one
+once any second commit exists.
 - **`12` (edited after commit):** the working-tree bytes of a committed record
   differ from the bytes in the last commit that touched that path. The census
   reads `git show <last commit>:<path>` and compares to the file on disk. A

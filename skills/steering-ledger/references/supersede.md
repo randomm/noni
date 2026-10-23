@@ -41,10 +41,6 @@ resolves to zero or more than one live record is broken.
   refused: a record is replaced by at most one later record.
 - **Dangling supersedes** (`B.supersedes` names an id that does not exist in the
   ledger) is broken.
-- **Chain resolution:** the census walks `supersedes` and requires exactly one
-  live record per chain (a record is live when its `status` is not
-  `superseded`). A chain that resolves to zero or more than one live record is
-  broken.
 
 A record with an earlier `date` than the record it supersedes is **not** a
 violation: the supersede chain is the authoritative ordering; the date is a

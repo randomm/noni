@@ -28,7 +28,7 @@ state.
 
 ## The record
 
-One JSON file per record under `noni/decisions/`, named `<id>.json`. The nine
+One JSON file per record under `noni/decisions/`, named `<id>.json`. The eight
 fields (in order):
 
 | field | type | meaning |

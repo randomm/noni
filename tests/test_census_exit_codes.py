@@ -42,6 +42,7 @@ def _setup_ledger(
     commit_order: list[str] | None,
     committed_version: dict | None = None,
     working_tree_version: dict | None = None,
+    exit_code: int = 0,
 ) -> Path:
     """Build a ledger tree in tmp_path from a fixture's record dict.
 
@@ -56,6 +57,14 @@ def _setup_ledger(
     _git(repo, "init", "-q")
 
     if commit_order:
+        # Make an initial empty commit so the first record's commit has a
+        # predecessor (the exit-11 check fires when the record's own commit is
+        # the first commit of the tree; a test fixture that commits records one
+        # at a time would otherwise fire exit 11 for the first record). The
+        # exit-11 fixture is the one exception: it needs the record to be the
+        # first commit, so skip the initial commit for it.
+        if exit_code != 11:
+            _git(repo, "commit", "-q", "--allow-empty", "-m", "initial")
         for fname in commit_order:
             if fname in records:
                 content = json.dumps(records[fname], indent=2)
@@ -81,43 +90,30 @@ def _setup_ledger(
     return ledger
 
 
-def _run_census(ledger_dir: Path, *, env: dict | None = None) -> tuple[int, str, str]:
-    """Run census.sh against a ledger dir, returning (exit_code, stdout, stderr)."""
-    full_env = dict(os.environ)
-    if env:
-        full_env.update(env)
-    proc = subprocess.run(
-        ["bash", str(CENSUS), str(ledger_dir)],
-        capture_output=True,
-        text=True,
-        env=full_env,
-        timeout=60,
-    )
-    return proc.returncode, proc.stdout, proc.stderr
-
-
 def _fixture(name: str) -> dict:
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
 
 
-def test_exit_0_clean(tmp_path):
+def test_exit_0_clean(tmp_path, run_census):
     """A clean ledger (valid records, intact chain, no edits, prior commits)
     exits 0."""
     fx = _fixture("census-exit-0.json")
     assert fx["exit_code"] == 0
     ledger = _setup_ledger(
         tmp_path, "repo", fx["records"], fx["setup"].get("commit_order"),
+        exit_code=fx["exit_code"],
     )
-    code, out, err = _run_census(ledger)
+    code, out, err = run_census(ledger)
     assert code == 0, f"expected exit 0, got {code}\nstderr: {err}\nstdout: {out}"
 
 
-def test_exit_3_jq_missing(tmp_path):
+def test_exit_3_jq_missing(tmp_path, run_census):
     """With jq absent from PATH, the census exits 3 (missing dependency)."""
     fx = _fixture("census-exit-3.json")
     assert fx["exit_code"] == 3
     ledger = _setup_ledger(
         tmp_path, "repo", fx["records"], fx["setup"].get("commit_order"),
+        exit_code=fx["exit_code"],
     )
     # Build a PATH that has `bash` (so the census can run) but no `jq`
     # (so the census exits 3). Symlink the real bash into a temp dir.
@@ -128,35 +124,37 @@ def test_exit_3_jq_missing(tmp_path):
     assert real_bash, "bash not found on this system"
     (fake_bin / "bash").symlink_to(real_bash)
     env = {"PATH": str(fake_bin)}
-    code, out, err = _run_census(ledger, env=env)
+    code, out, err = run_census(ledger, env=env)
     assert code == 3, f"expected exit 3, got {code}\nstderr: {err}\nstdout: {out}"
     assert "jq" in err.lower() or "jq" in out.lower()
 
 
-def test_exit_10_schema_violation(tmp_path):
+def test_exit_10_schema_violation(tmp_path, run_census):
     """A record with a missing field (or other schema violation) exits 10."""
     fx = _fixture("census-exit-10.json")
     assert fx["exit_code"] == 10
     ledger = _setup_ledger(
         tmp_path, "repo", fx["records"], fx["setup"].get("commit_order"),
+        exit_code=fx["exit_code"],
     )
-    code, out, err = _run_census(ledger)
+    code, out, err = run_census(ledger)
     assert code == 10, f"expected exit 10, got {code}\nstderr: {err}\nstdout: {out}"
 
 
-def test_exit_11_unconfirmed_answer(tmp_path):
+def test_exit_11_unconfirmed_answer(tmp_path, run_census):
     """A decided record with an answer, committed as the first and only commit
     (no prior state for confirmation), exits 11."""
     fx = _fixture("census-exit-11.json")
     assert fx["exit_code"] == 11
     ledger = _setup_ledger(
         tmp_path, "repo", fx["records"], fx["setup"].get("commit_order"),
+        exit_code=fx["exit_code"],
     )
-    code, out, err = _run_census(ledger)
+    code, out, err = run_census(ledger)
     assert code == 11, f"expected exit 11, got {code}\nstderr: {err}\nstdout: {out}"
 
 
-def test_exit_12_edited_after_commit(tmp_path):
+def test_exit_12_edited_after_commit(tmp_path, run_census):
     """A record committed, then edited in the working tree (status changed
     from decided to open), exits 12."""
     fx = _fixture("census-exit-12.json")
@@ -165,19 +163,21 @@ def test_exit_12_edited_after_commit(tmp_path):
         tmp_path, "repo", fx["records"], fx["setup"].get("commit_order"),
         committed_version=fx["setup"].get("committed_version"),
         working_tree_version=fx["setup"].get("working_tree_version"),
+        exit_code=fx["exit_code"],
     )
-    code, out, err = _run_census(ledger)
+    code, out, err = run_census(ledger)
     assert code == 12, f"expected exit 12, got {code}\nstderr: {err}\nstdout: {out}"
 
 
-def test_exit_20_broken_chain(tmp_path):
+def test_exit_20_broken_chain(tmp_path, run_census):
     """A record with a dangling supersedes (names a non-existent id) exits 20."""
     fx = _fixture("census-exit-20.json")
     assert fx["exit_code"] == 20
     ledger = _setup_ledger(
         tmp_path, "repo", fx["records"], fx["setup"].get("commit_order"),
+        exit_code=fx["exit_code"],
     )
-    code, out, err = _run_census(ledger)
+    code, out, err = run_census(ledger)
     assert code == 20, f"expected exit 20, got {code}\nstderr: {err}\nstdout: {out}"
     assert "dangling" in err.lower() or "chain" in err.lower()
 

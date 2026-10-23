@@ -29,20 +29,6 @@ def _git(repo: Path, *args: str) -> None:
     )
 
 
-def _run_census(ledger_dir: Path) -> tuple[int, str, str]:
-    import os
-
-    env = dict(os.environ)
-    proc = subprocess.run(
-        ["bash", str(CENSUS), str(ledger_dir)],
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=60,
-    )
-    return proc.returncode, proc.stdout, proc.stderr
-
-
 def _generate_replay_repo(tmp_path: Path) -> Path:
     """Run generate.sh to build the replay repo, returning the repo path."""
     out_dir = tmp_path / "replay-out"
@@ -74,8 +60,16 @@ def test_fresh_clone_replays_all_decisions(tmp_path):
     assert ledger.is_dir(), f"clone does not have noni/decisions/ at {ledger}"
 
     # The census must exit 0 (clean) on the fresh clone
-    code, out, err = _run_census(ledger)
-    assert code == 0, f"expected exit 0 on fresh clone, got {code}\nstderr: {err}\nstdout: {out}"
+    import os
+    env = dict(os.environ)
+    proc = subprocess.run(
+        ["bash", str(CENSUS), str(ledger)],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
+    )
+    assert proc.returncode == 0, f"expected exit 0 on fresh clone, got {proc.returncode}\nstderr: {proc.stderr}\nstdout: {proc.stdout}"
 
     # All four records are present in the clone
     records = sorted(ledger.glob("*.json"))

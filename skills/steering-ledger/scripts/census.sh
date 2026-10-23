@@ -19,12 +19,15 @@
 # lives under tests/fixtures/:
 #   0   clean — every record valid, chain intact
 #   3   jq not found on the reading machine
-#   10  a record is missing or malformed, or the ledger is unusable:
-#       the directory does not exist (10:missing-dir), contains no *.json
-#       records (10:empty-ledger), or a filename, body, or schema field
-#       violates the declared shape (10:bad-name, 10:unparseable,
-#       10:schema, 10:missing-record, 10:git-unavailable)
-#   11  an answer was stored without operator confirmation (the record's
+#   10  a record is missing or malformed, or the ledger is unusable —
+#       four distinct sub-classes, all named on the stderr line:
+#       (10:missing-dir) the directory does not exist (operator error —
+#       wrong path); (10:empty-ledger) the directory exists but contains
+#       no *.json records (the ledger may simply be empty); (10:bad-name,
+#       10:unparseable, 10:schema, 10:missing-record) a filename, body, or
+#       schema field violates the declared shape (fix the record);
+#       (10:git-unavailable) git itself failed on a real repo (fix the tree)
+#   11  an answer was stored without operator confirmation (the record's own
 #       commit has no predecessor — see references/census.md for the
 #       documented limitation of this proxy)
 #   12  a record was edited after commit (working tree differs from git)
@@ -87,8 +90,15 @@ while IFS= read -r -d '' rec; do
     RECORDS="$RECORDS"$'\n'"$REC"
   fi
 done < <(find "$LEDGER_DIR" -maxdepth 1 -type f -name '*.json' -print0 2>/dev/null | LC_ALL=C sort -z)
+find_err=""
 if [ -z "$RECORDS" ] && [ "$STATUS" -eq 0 ]; then
-  echo "census.sh: no *.json records under $LEDGER_DIR (10:empty-ledger)" >&2
+  # Distinguish "find failed" (e.g. permission denied) from a truly empty dir.
+  find_err="$(find "$LEDGER_DIR" -maxdepth 1 -name '*.json' 2>&1 | head -1)"
+  if [ -n "$find_err" ] && ! find "$LEDGER_DIR" -maxdepth 1 -name '*.json' >/dev/null 2>&1; then
+    echo "census.sh: find failed to enumerate $LEDGER_DIR: $find_err (10:empty-ledger)" >&2
+  else
+    echo "census.sh: no *.json records under $LEDGER_DIR (10:empty-ledger)" >&2
+  fi
   STATUS=10
 fi
 
@@ -101,16 +111,19 @@ fi
 SCHEMA_JQ='
   def is_iso: (.date | type) == "string"
     and (.date | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"));
-  def cal_ok:
+  # The calendar probe only makes sense for a date string; any non-string
+  # reaches the report as the (more accurate) "not a valid ISO-8601" message.
+  def cal_ok: (if (.date | type) == "string" then
     (if .date[5:7] | tonumber as $m | $m >= 1 and $m <= 12 then true else false end)
     and (if .date[8:10] | tonumber as $d | $d >= 1 and $d <= 31 then true else false end)
     and (if .date[11:13] | tonumber as $h | $h <= 23 then true else false end)
     and (if .date[14:16] | tonumber as $mi | $mi <= 59 then true else false end)
-    and (if .date[17:19] | tonumber as $s | $s <= 60 then true else false end);
+    and (if .date[17:19] | tonumber as $s | $s <= 60 then true else false end)
+    else false end);
   def has8:
     has("id") and has("date") and has("asked_by") and has("questions")
     and has("by") and has("scope") and has("status") and has("supersedes");
-  def closed9: ((keys_unsorted | length) == 8);
+  def closed8: ((keys_unsorted | length) == 8);
   def questions_ok:
     ((.questions | type) == "array")
     and ((.questions | length) >= 1) and ((.questions | length) <= 4)
@@ -131,7 +144,11 @@ SCHEMA_JQ='
   def scope_ok: ((.scope | type) == "string") and ((.scope | length) > 0);
   def sup_type_ok: ((.supersedes == null) or
     ((.supersedes | type) == "string") and ((.supersedes | length) > 0));
-  if has8 and closed9 and is_iso and cal_ok and questions_ok and status_ok
+  # The empty string is rejected: it is neither "no supersede" (null) nor a
+  # valid record id, and accepting it would make the chain walk ambiguous.
+  # (sup_type_ok already covers this via length > 0; stated here so the
+  # intent is explicit.)
+  if has8 and closed8 and is_iso and cal_ok and questions_ok and status_ok
      and id_ok and by_ok and asked_by_ok and scope_ok and sup_type_ok
   then "ok"
   else
@@ -146,7 +163,7 @@ SCHEMA_JQ='
           (if has("status") then "" else "status" end),
           (if has("supersedes") then "" else "supersedes" end)
         ] | map(select(. != "")) | join(",")) end),
-      (if closed9 | not then "unknown field(s): " + (((keys_unsorted // []) - ["id","date","asked_by","questions","by","scope","status","supersedes"]) | join(",")) else "" end),
+      (if closed8 | not then "unknown field(s): " + (((keys_unsorted // []) - ["id","date","asked_by","questions","by","scope","status","supersedes"]) | join(",")) else "" end),
       (if is_iso | not then "date is not a valid UTC ISO-8601 string" else "" end),
       (if cal_ok | not then "date components out of range (month 1-12, day 1-31, hour 0-23, minute 0-59, second 0-60)" else "" end),
       (if questions_ok | not then "questions array or option bounds violated" else "" end),
@@ -179,8 +196,17 @@ trap 'rm -f "$ROWS" "$PAIRS"' EXIT
 : > "$PAIRS"
 
 # Repo-wide, not per-record: the total commit count for the exit-11 check.
-n_total=""
-[ -n "$GIT_TOP" ] && n_total="$(git -C "$GIT_TOP" rev-list --count HEAD 2>/dev/null)"
+# A git failure (corrupt repo, no HEAD) is reported, not swallowed: with the
+# count unknown the unconfirmed-answer check is skipped rather than fired.
+n_total=0
+n_total_ok=1
+if [ -n "$GIT_TOP" ]; then
+  if ! n_total="$(git -C "$GIT_TOP" rev-list --count HEAD 2>/dev/null)"; then
+    n_total_ok=0
+    echo "census.sh: git rev-list --count HEAD failed; skipping the unconfirmed-answer check (10:git-unavailable)" >&2
+    STATUS=10
+  fi
+fi
 
 while IFS= read -r rec; do
   [ -z "$rec" ] && continue
@@ -209,54 +235,54 @@ while IFS= read -r rec; do
     printf 'ERR\t-\t-\t-\tno\t-\n' >> "$ROWS"
     continue
   fi
-  id="$(printf '%s' "$fields" | cut -f1)"
-  date="$(printf '%s' "$fields" | cut -f2)"
-  status="$(printf '%s' "$fields" | cut -f3)"
-  sup="$(printf '%s' "$fields" | cut -f4)"
-  by_body="$(printf '%s' "$fields" | cut -f5)"
-  any_answer="$(printf '%s' "$fields" | cut -f6)"
+  IFS=$'\t' read -r id date status sup by_body any_answer <<< "$fields"
 
   printf '%s\t%s\n' "$id" "$sup" >> "$PAIRS"
 
-  # Attribution: the report shows the git author of the record's commit (the
-  # legitimacy check), not the file body's `by` field. The pathspec is the
-  # validated, plain-basename $rec prefixed with "./" so a leading dash can
-  # never be read as a git option.
+  # Attribution + history: one git call per record returns both the commit
+  # author (%an, the legitimacy check) and the commit hash (%H, for the
+  # edited-after-commit check). The pathspec is the validated, plain-basename
+  # $rec prefixed with "./" so a leading dash can never be read as a git
+  # option. The NUL separator keeps fields with embedded spaces safe.
   by_report="$by_body"
+  lastc=""
   if [ -n "$GIT_TOP" ] && [ -n "$REL_LEDGER" ]; then
-    if ! by_git="$(git -C "$GIT_TOP" log -1 --format='%an' -- "${REL_LEDGER:?}/./$rec" 2>/dev/null)"; then
+    if ! attr="$(git -C "$GIT_TOP" log -1 --format='%an%x1f%H' -- "${REL_LEDGER:?}/./$rec" 2>/dev/null)"; then
       echo "census.sh: git failed to read history for $rec on a real repo (10:git-unavailable)" >&2
       STATUS=10
       printf 'ERR\t-\t-\t-\tno\t-\n' >> "$ROWS"
       continue
     fi
-    if [ -n "$by_git" ]; then
+    by_git="${attr%%$'\x1f'*}"
+    lastc="${attr##*$'\x1f'}"
+    if [ -n "${by_git:-}" ]; then
       by_report="$by_git"
     fi
   fi
 
   # Unconfirmed-answer check (exit 11): a decided record with an answer whose
-  # commit has no predecessor. A fresh ledger whose first record is the first
-  # commit is the legitimate new-project case and passes; an answer only
-  # counts as confirmed once the record traces to prior history. See
-  # references/census.md for the documented limitation of this proxy.
-  if [ -n "$GIT_TOP" ] && [ "$status" = "decided" ] && [ "${any_answer:-0}" -gt 0 ] && [ "${n_total:-0}" -le 1 ]; then
+  # own commit has no predecessor. Per-record, not repo-wide: a record
+  # committed after other history (even as the record's own first commit of
+  # the repo's ledger) traces to prior commits and passes; only a record
+  # whose commit is the very first commit of the tree has no confirmation
+  # trail. See references/census.md for the documented limitation of this
+  # proxy.
+  if [ "$n_total_ok" = 1 ] && [ -n "$GIT_TOP" ] && [ -n "$REL_LEDGER" ] \
+     && [ "$status" = "decided" ] && [ "${any_answer:-0}" -gt 0 ] \
+     && [ -n "$lastc" ] && [ -z "$(git -C "$GIT_TOP" rev-parse --verify --quiet "$lastc^" 2>/dev/null)" ]; then
     echo "census.sh: $rec: answer stored without a preceding commit (no operator confirmation trail)" >&2
     STATUS=11
   fi
 
   # Edited-after-commit check (exit 12): working-tree bytes vs the last commit
   # that touched the path. Skipped when the ledger is not in a git tree.
-  if [ -n "$GIT_TOP" ] && [ -n "$REL_LEDGER" ]; then
-    lastc="$(git -C "$GIT_TOP" log -1 --format='%H' -- "${REL_LEDGER:?}/./$rec" 2>/dev/null)"
-    if [ -n "$lastc" ]; then
+  if [ -n "$GIT_TOP" ] && [ -n "$REL_LEDGER" ] && [ -n "$lastc" ]; then
       h_disk="$(sha1sum "$f" 2>/dev/null | cut -d' ' -f1)"
       h_git="$(git -C "$GIT_TOP" cat-file blob "$lastc:$REL_LEDGER/$rec" 2>/dev/null | sha1sum 2>/dev/null | cut -d' ' -f1)"
       if [ -n "$h_disk" ] && [ -n "$h_git" ] && [ "$h_disk" != "$h_git" ]; then
         echo "census.sh: $rec: edited after commit (working tree differs from git)" >&2
         STATUS=12
       fi
-    fi
   fi
 
   # The live column reflects the record's own status field; the per-chain
@@ -288,56 +314,73 @@ if [ "$STATUS" -ne 10 ]; then
 
     # id/sup are indexed by row number; the walk follows row -> supersedes id
     # -> row via the id_to_row map, so a walk by id string never works.
+    # Chain aggregation only applies to roots that are real records (in files):
+    # a record whose supersedes target does not exist (dangling) gets no
+    # chain/livecount entry, so the dangling diagnostic stands alone.
+    awk_rc=0
     broken="$(awk -F'\t' '
       FILENAME == ARGV[1] { status_of[$1] = $2; next }
       { id[FNR] = $1; sup[FNR] = $2; files[$1]++; id_to_row[$1] = FNR }
-      END {
-        for (i in id) {
-          t = id[i]; cyc = 0
-          while (t in files) {
-            r = id_to_row[t]
-            if (t in seen_map) { cyc = 1; break }
-            seen_map[t] = 1
-            if (sup[r] == "null" || sup[r] == "") { root[i] = t; break }
-            t = sup[r]
-            if (++seen > 1000) { cyc = 1; break }
-          }
-          delete seen_map
-          if (cyc) root[i] = "?"
-          else if (!(t in files)) root[i] = t
+      # find_root(i): follow supersedes from record i to its chain root.
+      # Returns "?" on a cycle, the dangling target id otherwise.
+      function find_root(i,   t, cyc, r, seen_ctr) {
+        t = id[i]; cyc = 0; seen_ctr = 0
+        delete seen_map
+        while (t in files) {
+          r = id_to_row[t]
+          if (t in seen_map) { cyc = 1; break }
+          seen_map[t] = 1
+          if (sup[r] == "null" || sup[r] == "") { delete seen_map; return t }
+          t = sup[r]
+          if (++seen_ctr > 1000) { cyc = 1; break }
         }
+        delete seen_map
+        if (cyc) return "?"
+        return t   # dangling: t not in files
+      }
+      # check_live_count(): count live records per chain root and flag
+      # zero-live / multi-live chains.
+      function check_live_count(   r) {
+        for (r in chain)
+          if (r in files) {
+            c = livecount[r] + 0
+            if (c == 0) msg = msg sprintf("\nzero-live: chain %s resolves to no live record (every record in it is superseded)", r)
+            if (c > 1) msg = msg sprintf("\nmulti-live: chain %s resolves to more than one live record (expected exactly one)", r)
+          }
+      }
+      END {
+        for (i in id) root[i] = find_root(i)
         for (i in id) {
-          r = root[i]; chain[r] = 1
-          if (status_of[id[i]] != "superseded") livecount[r]++
+          r = root[i]
+          # Chain aggregation only for real roots (dangling roots are not chains)
+          if (r in files) {
+            chain[r] = 1
+            if (status_of[id[i]] != "superseded") livecount[r]++
+          }
           if (sup[i] != "null" && sup[i] != "" && !(sup[i] in files))
             msg = msg sprintf("\ndangling: %s supersedes %s (no such record)", id[i], sup[i])
-          if (sup[i] != "null" && sup[i] != "") succ[sup[i]] = succ[sup[i]] " " id[i]
+          if (sup[i] != "null" && sup[i] != "") succ_cnt[sup[i]]++
           if (sup[i] == "null" && status_of[id[i]] == "superseded") marked[i] = 1
         }
-        for (t in succ) {
-          n = split(succ[t], a, " "); cnt = 0
-          for (j = 1; j <= n; j++) if (a[j] != "") cnt++
-          if (cnt > 1) msg = msg sprintf("\nduplicate: %s is superseded by more than one record", t)
-        }
-        for (i in marked) {
-          has_succ = 0
-          for (j in id) if (sup[j] == id[i]) has_succ = 1
-          if (!has_succ) msg = msg sprintf("\norphan: %s is marked superseded but no record supersedes it", id[i])
-        }
+        for (t in succ_cnt)
+          if (succ_cnt[t] > 1) msg = msg sprintf("\nduplicate: %s is superseded by more than one record", t)
+        for (i in marked)
+          if (succ_cnt[id[i]] + 0 == 0)
+            msg = msg sprintf("\norphan: %s is marked superseded but no record supersedes it", id[i])
         for (i in id) if (root[i] == "?")
           msg = msg sprintf("\ncycle: record %s is in a supersedes cycle", id[i])
-        for (r in chain) {
-          c = livecount[r] + 0
-          if (c == 0) msg = msg sprintf("\nzero-live: chain %s resolves to no live record (every record in it is superseded)", r)
-          if (c > 1) msg = msg sprintf("\nmulti-live: chain %s resolves to more than one live record (expected exactly one)", r)
-        }
+        check_live_count()
         if (msg != "") { print msg; print "BROKEN" }
         else print "OK"
       }
-    ' "$status_file" "$PAIRS")"
+    ' "$status_file" "$PAIRS" 2>&1)"
+    awk_rc=$?
     rm -f "$status_file"
 
-    if [ "$broken" != "OK" ]; then
+    if [ "$awk_rc" -ne 0 ]; then
+      echo "census.sh: chain walk failed (awk exited with status $awk_rc): $broken (20)" >&2
+      STATUS=20
+    elif [ "$broken" != "OK" ]; then
       STATUS=20
       {
         echo "CHAIN:"

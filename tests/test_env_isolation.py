@@ -34,20 +34,6 @@ def _git(repo: Path, *args: str) -> None:
     )
 
 
-def _run_census(ledger_dir: Path, *, env: dict | None = None) -> tuple[int, str, str]:
-    full_env = dict(os.environ)
-    if env:
-        full_env.update(env)
-    proc = subprocess.run(
-        ["bash", str(CENSUS), str(ledger_dir)],
-        capture_output=True,
-        text=True,
-        env=full_env,
-        timeout=60,
-    )
-    return proc.returncode, proc.stdout, proc.stderr
-
-
 def _decoy_ledger(root: Path, marker: str = "decoy") -> Path:
     """A git repo with a noni/decisions/ dir containing a decoy record."""
     repo = root / f"decoy-{marker}"
@@ -70,7 +56,7 @@ def _decoy_ledger(root: Path, marker: str = "decoy") -> Path:
     return repo / "noni" / "decisions"
 
 
-def test_census_does_not_read_decoy_ledger_from_hostile_home(tmp_path, monkeypatch):
+def test_census_does_not_read_decoy_ledger_from_hostile_home(tmp_path, monkeypatch, run_census):
     """A hostile HOME with a decoy ledger must not be read by the census when
     the census is pointed at a different (clean) ledger dir.
 
@@ -110,13 +96,13 @@ def test_census_does_not_read_decoy_ledger_from_hostile_home(tmp_path, monkeypat
     monkeypatch.setenv("HOME", str(hostile_home))
     monkeypatch.setenv("USERPROFILE", str(hostile_home))
 
-    code, out, err = _run_census(clean_ledger)
+    code, out, err = run_census(clean_ledger)
     # The census should report the clean record, not the decoy
     assert "2026-10-01-clean" in out, f"expected the clean record in the census output, got: {out}"
     assert "2026-10-01-leaked" not in out, f"the decoy ledger leaked into the census: {out}"
 
 
-def test_census_does_not_read_decoy_when_git_dir_is_set(tmp_path, monkeypatch):
+def test_census_does_not_read_decoy_when_git_dir_is_set(tmp_path, monkeypatch, run_census):
     """If GIT_DIR is set to a hostile repo, the census must not use it when
     the ledger dir is in a different (clean) repo.
 
@@ -155,13 +141,13 @@ def test_census_does_not_read_decoy_when_git_dir_is_set(tmp_path, monkeypatch):
     hostile_git_dir = hostile_repo / ".git"
     monkeypatch.setenv("GIT_DIR", str(hostile_git_dir))
 
-    code, out, err = _run_census(clean_ledger)
+    code, out, err = run_census(clean_ledger)
     # The census should report the clean record, not the decoy
     assert "2026-10-01-clean2" in out, f"expected the clean record in the census output, got: {out}"
     assert "2026-10-01-gitdir-leak" not in out, f"the decoy ledger leaked via GIT_DIR: {out}"
 
 
-def test_without_the_fixture_the_hostile_env_is_visible(tmp_path, monkeypatch):
+def test_without_the_fixture_the_hostile_env_is_visible(tmp_path, monkeypatch, run_census):
     """The opposite assertion, and the reason the tests above mean something.
 
     Undoes the fixture's work for this one test (setting HOME to a hostile dir
@@ -182,7 +168,7 @@ def test_without_the_fixture_the_hostile_env_is_visible(tmp_path, monkeypatch):
 
     # Run the census on the decoy ledger — it SHOULD read it (this is the
     # negative control: the hostile env IS visible when the fixture is undone)
-    code, out, err = _run_census(decoy_ledger)
+    code, out, err = run_census(decoy_ledger)
     assert "2026-10-01-control" in out, (
         "the decoy ledger is not readable when pointed at directly — either the "
         "census changed or the negative control stopped working"

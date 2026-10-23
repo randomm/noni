@@ -22,7 +22,7 @@ CENSUS = REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"
 
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
-        ["git", "-C", str(repo), *args],
+        ["git", "-C", str(repo), "-c", "user.name=Replay", "-c", "user.email=replay@fixture.invalid", "-c", "commit.gpgsign=false", *args],
         check=True,
         capture_output=True,
     )
@@ -36,27 +36,17 @@ def _git_with_author(repo: Path, author_name: str, author_email: str, *args: str
     )
 
 
-def _run_census(ledger_dir: Path) -> tuple[int, str, str]:
-    import os
-
-    env = dict(os.environ)
-    proc = subprocess.run(
-        ["bash", str(CENSUS), str(ledger_dir)],
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=60,
-    )
-    return proc.returncode, proc.stdout, proc.stderr
 
 
-def test_by_comes_from_git_author(tmp_path):
+
+def test_by_comes_from_git_author(tmp_path, run_census):
     """Commit a record with author 'Alice' but the file body says 'Bob'. The
     census report shows 'Alice' (the git author), not 'Bob'."""
     repo = tmp_path / "repo"
     ledger = repo / "noni" / "decisions"
     ledger.mkdir(parents=True)
     _git(repo, "init", "-q")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "initial")
 
     record = {
         "id": "2026-10-01-attrib",
@@ -76,7 +66,7 @@ def test_by_comes_from_git_author(tmp_path):
     # Need a second commit so the unconfirmed-answer check doesn't fire
     _git_with_author(repo, "Alice", "alice@example.invalid", "commit", "-q", "--allow-empty", "-m", "second commit")
 
-    code, out, err = _run_census(ledger)
+    code, out, err = run_census(ledger)
     # The report should show 'Alice' in the by column, not 'Bob'
     lines = out.strip().split("\n")
     assert len(lines) >= 2, f"expected header + at least one record line, got: {out}"
@@ -87,13 +77,14 @@ def test_by_comes_from_git_author(tmp_path):
     assert by_field == "Alice", f"expected 'Alice' (git author), got '{by_field}' — the census must read by from git, not the file body"
 
 
-def test_by_matches_when_git_author_and_body_agree(tmp_path):
+def test_by_matches_when_git_author_and_body_agree(tmp_path, run_census):
     """When the git author and the file body's `by` agree, the report shows
     that author."""
     repo = tmp_path / "repo"
     ledger = repo / "noni" / "decisions"
     ledger.mkdir(parents=True)
     _git(repo, "init", "-q")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "initial")
 
     record = {
         "id": "2026-10-01-agree",
@@ -112,14 +103,14 @@ def test_by_matches_when_git_author_and_body_agree(tmp_path):
     _git_with_author(repo, "Alice", "alice@example.invalid", "commit", "-q", "-m", "steering: agreed attribution")
     _git_with_author(repo, "Alice", "alice@example.invalid", "commit", "-q", "--allow-empty", "-m", "second commit")
 
-    code, out, err = _run_census(ledger)
+    code, out, err = run_census(ledger)
     lines = out.strip().split("\n")
     record_line = lines[1]
     fields = record_line.split("\t")
     assert fields[2] == "Alice", f"expected 'Alice', got '{fields[2]}'"
 
 
-def test_census_reads_author_from_specific_path(tmp_path):
+def test_census_reads_author_from_specific_path(tmp_path, run_census):
     """The census reads the author of the commit that last touched the record's
     path, not the author of HEAD. Commit the record as Alice, then make a
     second commit as Bob (on a different file). The record's author is still
@@ -128,6 +119,7 @@ def test_census_reads_author_from_specific_path(tmp_path):
     ledger = repo / "noni" / "decisions"
     ledger.mkdir(parents=True)
     _git(repo, "init", "-q")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "initial")
 
     record = {
         "id": "2026-10-01-path-attr",
@@ -150,7 +142,7 @@ def test_census_reads_author_from_specific_path(tmp_path):
     _git_with_author(repo, "Bob", "bob@example.invalid", "add", "other.txt")
     _git_with_author(repo, "Bob", "bob@example.invalid", "commit", "-q", "-m", "unrelated change by Bob")
 
-    code, out, err = _run_census(ledger)
+    code, out, err = run_census(ledger)
     lines = out.strip().split("\n")
     record_line = lines[1]
     fields = record_line.split("\t")

@@ -1,4 +1,4 @@
-"""Validate ledger records against the declared nine-field schema.
+"""Validate ledger records against the declared eight-field schema.
 
 The schema is:
   id (string), date (UTC ISO-8601 string), asked_by (string),
@@ -55,7 +55,7 @@ def _run_census_on_record(tmp_path: Path, record: dict, fname: str = "test-recor
 
 
 def test_valid_record_passes(tmp_path):
-    """A complete minimal record with all nine fields passes the census
+    """A complete minimal record with all eight fields passes the census
     (exit 0 for the schema check; the record may still fail other checks like
     unconfirmed-answer, but the schema is valid)."""
     rec = _fixture("decision-valid.json")
@@ -100,7 +100,7 @@ def test_unknown_status_fails(tmp_path):
 def test_open_record_without_answer_is_valid_schema(tmp_path):
     """A record with status=open and no answer is schema-valid (the declined
     state). The schema check passes; the census may flag other issues, but
-    the nine-field shape is correct."""
+    the eight-field shape is correct."""
     rec = _fixture("decision-unconfirmed.json")
     assert rec["status"] == "open"
     # All questions have no answer (answer absent or null)
@@ -108,7 +108,7 @@ def test_open_record_without_answer_is_valid_schema(tmp_path):
         assert q.get("answer") is None or q.get("answer") == "", (
             f"open record should have no answer, got: {q.get('answer')}"
         )
-    # Schema-valid: all nine fields present, correct types
+    # Schema-valid: all eight fields present, correct types
     assert set(rec.keys()) >= REQUIRED_FIELDS
     assert rec["status"] in LEGAL_STATUSES
 

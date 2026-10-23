@@ -29,32 +29,19 @@ def _git(repo: Path, *args: str) -> None:
     )
 
 
-def _run_census(ledger_dir: Path) -> tuple[int, str, str]:
-    import os
-
-    env = dict(os.environ)
-    proc = subprocess.run(
-        ["bash", str(CENSUS), str(ledger_dir)],
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=60,
-    )
-    return proc.returncode, proc.stdout, proc.stderr
-
-
 def _load(name: str) -> dict:
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
 
 
-def test_chain_resolves_to_one_live_record(tmp_path):
+def test_chain_resolves_to_one_live_record(tmp_path, run_census):
     """The r1 -> r2 -> r3 chain resolves to exactly one live record (r3)."""
-    r1, r2, r3 = _load("r1.json"), _load("r2.json"), _load("r3.json")
+    r1, r2, r3 = _load("2026-10-01-r1.json"), _load("2026-10-10-r2.json"), _load("2026-10-22-r3.json")
 
     repo = tmp_path / "repo"
     ledger = repo / "noni" / "decisions"
     ledger.mkdir(parents=True)
     _git(repo, "init", "-q")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "initial")
 
     (ledger / "2026-10-01-r1.json").write_text(json.dumps(r1, indent=2))
     _git(repo, "add", "noni/decisions/2026-10-01-r1.json")
@@ -68,7 +55,7 @@ def test_chain_resolves_to_one_live_record(tmp_path):
     _git(repo, "add", "noni/decisions/2026-10-22-r3.json")
     _git(repo, "commit", "-q", "--allow-empty", "-m", "r3")
 
-    code, out, err = _run_census(ledger)
+    code, out, err = run_census(ledger)
     assert code == 0, f"expected exit 0 for a valid chain, got {code}\nstderr: {err}"
 
     # The report shows r3 as live (status=decided), r1 and r2 as not live
@@ -83,12 +70,13 @@ def test_chain_resolves_to_one_live_record(tmp_path):
 
 def test_superseded_record_bytes_unchanged(tmp_path):
     """After r2 supersedes r1, r1's bytes stay exactly as committed."""
-    r1, r2 = _load("r1.json"), _load("r2.json")
+    r1, r2 = _load("2026-10-01-r1.json"), _load("2026-10-10-r2.json")
 
     repo = tmp_path / "repo"
     ledger = repo / "noni" / "decisions"
     ledger.mkdir(parents=True)
     _git(repo, "init", "-q")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "initial")
 
     r1_bytes = json.dumps(r1, indent=2)
     (ledger / "2026-10-01-r1.json").write_text(r1_bytes)
@@ -113,15 +101,16 @@ def test_superseded_record_bytes_unchanged(tmp_path):
     assert blob.stdout == r1_bytes, "r1's git blob does not match the original bytes"
 
 
-def test_detached_record_is_separate_chain(tmp_path):
+def test_detached_record_is_separate_chain(tmp_path, run_census):
     """r4 is a detached root (supersedes: null) on a different scope. It is a
     separate chain from r1->r2->r3, and it is live."""
-    r1, r2, r3, r4 = _load("r1.json"), _load("r2.json"), _load("r3.json"), _load("r4-detached.json")
+    r1, r2, r3, r4 = _load("2026-10-01-r1.json"), _load("2026-10-10-r2.json"), _load("2026-10-22-r3.json"), _load("2026-10-25-r4-detached.json")
 
     repo = tmp_path / "repo"
     ledger = repo / "noni" / "decisions"
     ledger.mkdir(parents=True)
     _git(repo, "init", "-q")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "initial")
 
     (ledger / "2026-10-01-r1.json").write_text(json.dumps(r1, indent=2))
     _git(repo, "add", "noni/decisions/2026-10-01-r1.json")
@@ -139,7 +128,7 @@ def test_detached_record_is_separate_chain(tmp_path):
     _git(repo, "add", "noni/decisions/2026-10-25-r4.json")
     _git(repo, "commit", "-q", "--allow-empty", "-m", "r4")
 
-    code, out, err = _run_census(ledger)
+    code, out, err = run_census(ledger)
     assert code == 0, f"expected exit 0, got {code}\nstderr: {err}"
 
     lines = out.strip().split("\n")
@@ -149,7 +138,7 @@ def test_detached_record_is_separate_chain(tmp_path):
     assert "2026-10-25-r4-detached" in live_ids, f"r4 should be live, live records: {live_ids}"
 
 
-def test_forward_supersedes_is_allowed(tmp_path):
+def test_forward_supersedes_is_allowed(tmp_path, run_census):
     """A record that supersedes a record with a later date is NOT a violation.
     The supersede chain is the authoritative ordering; the date is a
     tie-break for records with no supersede relationship. A record with an
@@ -179,6 +168,7 @@ def test_forward_supersedes_is_allowed(tmp_path):
     ledger = repo / "noni" / "decisions"
     ledger.mkdir(parents=True)
     _git(repo, "init", "-q")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "initial")
 
     (ledger / "2026-10-25-late.json").write_text(json.dumps(r_late, indent=2))
     _git(repo, "add", "noni/decisions/2026-10-25-late.json")
@@ -188,11 +178,11 @@ def test_forward_supersedes_is_allowed(tmp_path):
     _git(repo, "add", "noni/decisions/2026-10-01-early.json")
     _git(repo, "commit", "-q", "--allow-empty", "-m", "early")
 
-    code, out, err = _run_census(ledger)
+    code, out, err = run_census(ledger)
     assert code == 0, f"expected exit 0 (forward supersedes is allowed), got {code}\nstderr: {err}"
 
 
-def test_duplicate_supersedes_refused(tmp_path):
+def test_duplicate_supersedes_refused(tmp_path, run_census):
     """Two records that both supersede the same id is a duplicate — the census
     must flag it (exit 20)."""
     r_root = {
@@ -230,6 +220,7 @@ def test_duplicate_supersedes_refused(tmp_path):
     ledger = repo / "noni" / "decisions"
     ledger.mkdir(parents=True)
     _git(repo, "init", "-q")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "initial")
 
     (ledger / "2026-10-01-root.json").write_text(json.dumps(r_root, indent=2))
     _git(repo, "add", "noni/decisions/2026-10-01-root.json")
@@ -243,6 +234,6 @@ def test_duplicate_supersedes_refused(tmp_path):
     _git(repo, "add", "noni/decisions/2026-10-03-b.json")
     _git(repo, "commit", "-q", "--allow-empty", "-m", "b")
 
-    code, out, err = _run_census(ledger)
+    code, out, err = run_census(ledger)
     assert code == 20, f"expected exit 20 for duplicate supersedes, got {code}\nstderr: {err}"
     assert "duplicate" in err.lower(), f"expected 'duplicate' in stderr, got: {err}"

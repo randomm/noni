@@ -189,36 +189,35 @@ def test_scrub_checks_tracked_files_only(clean_repo):
 
 
 def test_scrub_excludes_own_source(clean_repo):
-    """The scrub module, its test file, and test_purity.py (which carries
-    deny-list vocabulary as regex patterns) are exempt from the scrub, so
-    their own literals do not self-match. A planted secret in any *other*
-    tracked file is still caught (see
+    """The scrub module and the scrub test file are exempt from the scrub
+    because they carry the built-in pattern literals (home-path regexes, token
+    prefixes, the private key block marker) that would otherwise self-match.
+    No other test file needs an exemption: tracked files may carry only
+    synthetic names, so nothing planted in a test file can hide behind it. A
+    planted violation in any *other* tracked file is still caught (see
     test_scrub_exemption_does_not_hide_planted_secret)."""
     violations, _, _ = public_safety.scrub_tracked_files(REPO)
     assert not any(v.startswith("scripts/public_safety.py") for v in violations)
     assert not any(v.startswith("tests/test_public_safety.py") for v in violations)
-    assert not any(v.startswith("tests/test_purity.py") for v in violations)
 
 
-def test_scrub_exemption_covers_denylist_vocabulary_file(clean_repo, monkeypatch):
-    """The test_purity.py exemption exists because that file carries
-    deny-list vocabulary (external project names) as regex literals. Pin the
-    rationale: with a deny-list entry matching a literal already present in
-    tests/test_purity.py, the scrub must not flag that file (the exemption
-    is what keeps it clean), while the same entry in a non-exempt file is
-    flagged.
+def test_scrub_exemption_keeps_pattern_literal_file_clean(clean_repo, monkeypatch):
+    """The self-file exemption keeps the pattern-definition file (the scrub
+    module itself) clean from its own literals, while the same deny-list entry
+    planted in a non-exempt file of a throwaway fixture repo is flagged — all
+    with a synthetic name, no real external tool/project name anywhere.
     """
-    purity_text = (REPO / "tests" / "test_purity.py").read_text(encoding="utf-8")
-    literal = next(name for name in ("pi-rukas", "tehas", "hermes") if name in purity_text)
+    literal = "synthetic-vocab-name"
 
     denylist = clean_repo / ".denylist"
     denylist.write_text(literal + "\n", encoding="utf-8")
     monkeypatch.setenv(public_safety.DENYLIST_ENV_VAR, denylist.as_posix())
 
-    # The exempt file (in this repo) is not flagged by its own vocabulary.
+    # The scrub module (in this repo) carries its own pattern literals; the
+    # exemption is what keeps it clean under the built-in patterns.
     violations, _, _ = public_safety.scrub_tracked_files(REPO)
-    assert not any(v.startswith("tests/test_purity.py") for v in violations), (
-        f"tests/test_purity.py carries deny-list vocabulary; the exemption must keep it clean: {violations}"
+    assert not any(v.startswith("scripts/public_safety.py") for v in violations), (
+        f"scripts/public_safety.py carries pattern literals; the exemption must keep it clean: {violations}"
     )
 
     # The same entry in a non-exempt file of the throwaway repo is caught.
@@ -260,10 +259,35 @@ def test_denylist_corrupt_file_degrades_gracefully(clean_repo, tmp_path, monkeyp
     assert source is None
 
 
+def test_denylist_corrupt_default_falls_through_to_env_var(clean_repo, tmp_path, monkeypatch, capsys):
+    """When the default deny-list file exists but is unreadable, loading
+    continues to the env-var-named candidate instead of returning "corrupt"
+    immediately — the env-var file (if present) takes effect, and a visible
+    notice is printed for the corrupt file."""
+    corrupt = tmp_path / "corrupt-denylist.bin"
+    corrupt.write_bytes(b"\x80\x81\x82 not utf8")
+    env_denylist = tmp_path / "env-denylist.txt"
+    env_denylist.write_text("synthetic-env-name\n", encoding="utf-8")
+
+    monkeypatch.setattr(public_safety, "_default_denylist_file", lambda: corrupt)
+    monkeypatch.setenv(public_safety.DENYLIST_ENV_VAR, env_denylist.as_posix())
+
+    result = public_safety.load_denylist()
+    assert result.status == "ok"
+    assert result.source == env_denylist.as_posix()
+    assert result.entries == ["synthetic-env-name"]
+
+    # A visible notice was printed for the corrupt default file.
+    captured = capsys.readouterr()
+    assert "unreadable" in captured.err
+
+
 def test_noni_repo_is_clean():
     """The noni repo itself is clean under the built-in patterns (the local
     deny-list may additionally be present on the operator's machine; the
-    built-in run must pass either way)."""
+    built-in run must pass either way). The self-file exemption covers the
+    two files that carry built-in pattern literals (the scrub module and the
+    scrub test file); everything else must be violation-free."""
     violations, _, _ = public_safety.scrub_tracked_files(REPO)
     assert violations == []
 

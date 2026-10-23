@@ -123,7 +123,7 @@ def test_no_secrets_or_machine_local_paths_in_fixtures(path):
 
 
 def test_skill_md_within_agents_size_limit():
-    """SKILL.md is within the 400-line limit (the bridge's AGENTS.md cap)."""
+    """SKILL.md is within the 400-line limit (the driver's AGENTS.md cap)."""
     lines = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8").count("\n")
     assert lines <= 400, f"SKILL.md is {lines} lines; the cap is 400"
 

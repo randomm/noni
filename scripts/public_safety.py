@@ -44,6 +44,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 _self_path = Path(__file__).resolve()
 REPO = _self_path.parent.parent
@@ -104,20 +105,25 @@ SECRET_PATTERNS: tuple[tuple[re.Pattern, str], ...] = (
 
 BUILTIN_PATTERNS: tuple[tuple[re.Pattern, str], ...] = HOME_PATH_PATTERNS + SECRET_PATTERNS
 
-# Files exempt from the scrub, because they self-match. Two distinct classes:
-#   - scripts/public_safety.py defines the built-in pattern literals;
-#   - tests/test_public_safety.py carries planted fixture strings;
-#   - tests/test_purity.py carries deny-list vocabulary as regex literals
-#     (external project/tool names the hygiene rule forbids elsewhere).
-# Exempting them is safe: they contain no real secrets or machine-local
-# paths, only the literals that make them self-match. A planted violation in
-# any *other* tracked file is still caught (see
-# test_scrub_exemption_does_not_hide_planted_secret).
+# Files exempt from the scrub, because they carry built-in pattern literals
+# that would otherwise be flagged by their own patterns. Two distinct classes:
+#   - scripts/public_safety.py defines the built-in pattern literals
+#     (home-path regexes, token prefixes, the private key block marker);
+#   - tests/test_public_safety.py plants those literals as fixture strings
+#     to verify the scrub flags them.
+# No tracked file may carry real external tool/project names — that is
+# exactly what the scrub enforces (see issue #8), so no file is exempted for
+# *name* literals: the purity vocabulary check loads its banned vocabulary
+# from the untracked deny-list instead, and every planted name in the tests
+# is synthetic. Exempting the files above is safe: they contain no real
+# secrets or machine-local paths, only the literals that make them
+# self-match. A planted violation in any *other* tracked file is still caught
+# (see test_scrub_exemption_does_not_hide_planted_secret).
 #
 # Exemptions are matched against the repository-relative path from
 # `git ls-files` (plus this module's own __file__), so no per-file path
 # resolution is needed and symlinked worktrees cannot change the decision.
-_SELF_FILES = frozenset({"scripts/public_safety.py", "tests/test_public_safety.py", "tests/test_purity.py"})
+_SELF_FILES = frozenset({"scripts/public_safety.py", "tests/test_public_safety.py"})
 
 
 def _is_self_file(rel: str) -> bool:
@@ -158,7 +164,7 @@ class DenylistResult:
 
     entries: list[str]
     source: str | None
-    status: str
+    status: Literal["ok", "corrupt", "absent"]
 
 
 def load_denylist() -> DenylistResult:
@@ -168,10 +174,15 @@ def load_denylist() -> DenylistResult:
     env-var-named file; when neither exists the deny-list part is skipped
     (status "absent") and the caller prints a prominent stderr notice.
 
-    A corrupt or non-UTF-8 deny-list file yields status "corrupt" with a
-    visible stderr notice rather than crashing the scrub; the caller treats
-    it like "absent" (the deny-list class is not active for this run).
+    An unreadable or non-UTF-8 deny-list file is classified as corrupt (with
+    a visible stderr notice) — but loading does NOT stop at the corrupt file:
+    it continues to the next candidate, so an env-var-named deny-list still
+    takes effect when the default file is corrupt (or absent). If no later
+    candidate is usable, the run ends with status "corrupt" (or "absent" if
+    no candidate existed at all); the caller treats both like an inactive
+    deny-list class.
     """
+    last_corrupt: Path | None = None
     for candidate in (_default_denylist_file(), os.environ.get(DENYLIST_ENV_VAR)):
         if not candidate:
             continue
@@ -181,19 +192,24 @@ def load_denylist() -> DenylistResult:
         try:
             raw = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError) as e:
+            last_corrupt = path
             print(
                 f"public-safety: WARNING — deny-list {path} unreadable ({e}); "
-                "treating as empty. Built-in patterns still run, but the "
-                "deny-list class is effectively disabled for this run.",
+                f"continuing with the next candidate if any. Built-in patterns "
+                "still run, but the deny-list class is not active from this file.",
                 file=sys.stderr,
             )
-            return DenylistResult([], path.as_posix(), "corrupt")
+            continue
         entries = []
         for line in raw.splitlines():
             stripped = line.strip()
             if stripped and not stripped.startswith("#"):
                 entries.append(stripped)
         return DenylistResult(entries, path.as_posix(), "ok")
+    if last_corrupt is not None:
+        # No candidate could be read: the deny-list class is inactive, and the
+        # last (highest-precedence existing) unreadable file classifies the run.
+        return DenylistResult([], last_corrupt.as_posix(), "corrupt")
     return DenylistResult([], None, "absent")
 
 

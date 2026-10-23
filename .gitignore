@@ -1,1 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+uv.lock
+noni.egg-info/
+.pytest_cache/
 /.pi/work-state/

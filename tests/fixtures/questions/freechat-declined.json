@@ -1,0 +1,6 @@
+{
+  "id": "q1",
+  "text": "Adopt the new scheduler?",
+  "options": ["yes", "no", "later"],
+  "answer": null
+}

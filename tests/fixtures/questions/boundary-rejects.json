@@ -1,0 +1,27 @@
+{
+  "cases": [
+    { "name": "zero-questions", "questions": [], "valid": false, "reason": "questions array must have 1-4 entries" },
+    { "name": "five-questions", "questions": [
+      { "id": "q1", "text": "A?", "options": ["x", "y"] },
+      { "id": "q2", "text": "B?", "options": ["x", "y"] },
+      { "id": "q3", "text": "C?", "options": ["x", "y"] },
+      { "id": "q4", "text": "D?", "options": ["x", "y"] },
+      { "id": "q5", "text": "E?", "options": ["x", "y"] }
+    ], "valid": false, "reason": "questions array must have 1-4 entries" },
+    { "name": "one-option", "questions": [
+      { "id": "q1", "text": "A?", "options": ["only"], "answer": "only" }
+    ], "valid": false, "reason": "options must have 2-4 entries" },
+    { "name": "five-options", "questions": [
+      { "id": "q1", "text": "A?", "options": ["a", "b", "c", "d", "e"], "answer": "a" }
+    ], "valid": false, "reason": "options must have 2-4 entries" },
+    { "name": "two-options", "questions": [
+      { "id": "q1", "text": "A?", "options": ["yes", "no"], "answer": "yes" }
+    ], "valid": true, "reason": "2 options is the minimum" },
+    { "name": "four-options", "questions": [
+      { "id": "q1", "text": "A?", "options": ["a", "b", "c", "d"], "answer": "a" }
+    ], "valid": true, "reason": "4 options is the maximum" },
+    { "name": "free-text-escape", "questions": [
+      { "id": "q1", "text": "A?", "options": ["yes", "no"], "answer": "maybe with a condition" }
+    ], "valid": true, "reason": "answer may be free-text via the escape hatch" }
+  ]
+}

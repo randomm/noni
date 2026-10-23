@@ -1,0 +1,12 @@
+{
+  "id": "2026-10-22-r3",
+  "date": "2026-10-22T14:03:00Z",
+  "asked_by": "developer",
+  "questions": [
+    { "id": "q1", "text": "Which release carries the new scheduler?", "options": ["next train", "after that", "drop it"], "answer": "after that" }
+  ],
+  "by": "Operator",
+  "scope": "release ordering",
+  "status": "decided",
+  "supersedes": "2026-10-10-r2"
+}

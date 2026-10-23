@@ -1,0 +1,12 @@
+{
+  "id": "2026-10-25-r4-detached",
+  "date": "2026-10-25T10:00:00Z",
+  "asked_by": "developer",
+  "questions": [
+    { "id": "q1", "text": "Adopt the new linter?", "options": ["yes", "no", "later"], "answer": "yes" }
+  ],
+  "by": "Operator",
+  "scope": "tooling",
+  "status": "decided",
+  "supersedes": null
+}

@@ -10,15 +10,14 @@ The exit codes are:
   0   clean — every record valid, chain intact
   3   jq not found on the reading machine
   10  a record is missing or malformed (schema violation)
-  11  an answer was stored without operator confirmation
   12  a record was edited after commit (working tree differs from git)
-  20  the supersede chain is broken (dangling, forward, or duplicate)
+  20  the supersede chain is broken (dangling, duplicate, orphan, or a
+      chain resolving to zero or more than one live record)
 """
 
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 from pathlib import Path
 
@@ -57,14 +56,6 @@ def _setup_ledger(
     _git(repo, "init", "-q")
 
     if commit_order:
-        # Make an initial empty commit so the first record's commit has a
-        # predecessor (the exit-11 check fires when the record's own commit is
-        # the first commit of the tree; a test fixture that commits records one
-        # at a time would otherwise fire exit 11 for the first record). The
-        # exit-11 fixture is the one exception: it needs the record to be the
-        # first commit, so skip the initial commit for it.
-        if exit_code != 11:
-            _git(repo, "commit", "-q", "--allow-empty", "-m", "initial")
         for fname in commit_order:
             if fname in records:
                 content = json.dumps(records[fname], indent=2)
@@ -141,19 +132,6 @@ def test_exit_10_schema_violation(tmp_path, run_census):
     assert code == 10, f"expected exit 10, got {code}\nstderr: {err}\nstdout: {out}"
 
 
-def test_exit_11_unconfirmed_answer(tmp_path, run_census):
-    """A decided record with an answer, committed as the first and only commit
-    (no prior state for confirmation), exits 11."""
-    fx = _fixture("census-exit-11.json")
-    assert fx["exit_code"] == 11
-    ledger = _setup_ledger(
-        tmp_path, "repo", fx["records"], fx["setup"].get("commit_order"),
-        exit_code=fx["exit_code"],
-    )
-    code, out, err = run_census(ledger)
-    assert code == 11, f"expected exit 11, got {code}\nstderr: {err}\nstdout: {out}"
-
-
 def test_exit_12_edited_after_commit(tmp_path, run_census):
     """A record committed, then edited in the working tree (status changed
     from decided to open), exits 12."""
@@ -182,12 +160,43 @@ def test_exit_20_broken_chain(tmp_path, run_census):
     assert "dangling" in err.lower() or "chain" in err.lower()
 
 
+def test_exit_20_zero_live_chain(tmp_path, run_census):
+    """A chain in which every record is superseded (root superseded by the
+    successor, successor also marked superseded) resolves to zero live
+    records and exits 20."""
+    fx = _fixture("census-exit-20-zero-live.json")
+    assert fx["exit_code"] == 20
+    ledger = _setup_ledger(
+        tmp_path, "repo", fx["records"], fx["setup"].get("commit_order"),
+        exit_code=fx["exit_code"],
+    )
+    code, out, err = run_census(ledger)
+    assert code == 20, f"expected exit 20 for zero-live chain, got {code}\nstderr: {err}\nstdout: {out}"
+    assert "zero-live" in err, f"expected 'zero-live' in stderr, got: {err}"
+
+
+def test_exit_20_multi_live_chain(tmp_path, run_census):
+    """A chain in which the superseded root was never marked superseded
+    resolves to more than one live record and exits 20."""
+    fx = _fixture("census-exit-20-multi-live.json")
+    assert fx["exit_code"] == 20
+    ledger = _setup_ledger(
+        tmp_path, "repo", fx["records"], fx["setup"].get("commit_order"),
+        exit_code=fx["exit_code"],
+    )
+    code, out, err = run_census(ledger)
+    assert code == 20, f"expected exit 20 for multi-live chain, got {code}\nstderr: {err}\nstdout: {out}"
+    assert "multi-live" in err, f"expected 'multi-live' in stderr, got: {err}"
+
+
 def test_every_fixture_has_its_exit_code():
     """The fixture's exit_code field matches the code in the filename, so a
     rename or a wrong fixture cannot slip through unnoticed."""
     for f in sorted(FIXTURES.glob("census-exit-*.json")):
         fx = _fixture(f.name)
-        code_in_name = int(f.stem.replace("census-exit-", ""))
+        # The name is census-exit-<code> or census-exit-<code>-<suffix>; the
+        # code is the first integer segment after the prefix.
+        code_in_name = int(f.stem.replace("census-exit-", "").split("-", 1)[0])
         assert fx["exit_code"] == code_in_name, (
             f"{f.name}: exit_code in fixture is {fx['exit_code']} but filename says {code_in_name}"
         )

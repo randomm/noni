@@ -14,6 +14,10 @@ The tests use the committed golden fixtures:
   decision-invalid-missing-field.json — missing the `supersedes` field
   decision-invalid-unknown-status.json — status is "pending" (not in the legal set)
   decision-unconfirmed.json          — status "open" with no answer (the declined state)
+
+The fixture file name "unconfirmed" is a legacy name: "open with no answer"
+is the declined state, and nothing in this suite or the census treats
+confirmation as a checkable property (see references/modes.md, Anti-fabrication).
 """
 
 from __future__ import annotations
@@ -55,9 +59,9 @@ def _run_census_on_record(tmp_path: Path, record: dict, fname: str = "test-recor
 
 
 def test_valid_record_passes(tmp_path):
-    """A complete minimal record with all eight fields passes the census
-    (exit 0 for the schema check; the record may still fail other checks like
-    unconfirmed-answer, but the schema is valid)."""
+    """A complete minimal record with all eight fields passes the schema
+    check (the census reports exit 10 for a schema violation; a schema-valid
+    record is not flagged for it)."""
     rec = _fixture("decision-valid.json")
     assert set(rec.keys()) >= REQUIRED_FIELDS, f"missing fields: {REQUIRED_FIELDS - set(rec.keys())}"
     # The valid fixture is a baseline: all fields present and correct types.
@@ -99,8 +103,8 @@ def test_unknown_status_fails(tmp_path):
 
 def test_open_record_without_answer_is_valid_schema(tmp_path):
     """A record with status=open and no answer is schema-valid (the declined
-    state). The schema check passes; the census may flag other issues, but
-    the eight-field shape is correct."""
+    state): the eight-field shape is correct and the census does not flag it
+    for a schema violation."""
     rec = _fixture("decision-unconfirmed.json")
     assert rec["status"] == "open"
     # All questions have no answer (answer absent or null)

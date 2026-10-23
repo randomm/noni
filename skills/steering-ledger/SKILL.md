@@ -17,9 +17,12 @@ open, records nothing, and commits nothing.
 
 The record is the commit. A ping, a comment, or a chat message is a hint; the
 committed file is the truth. The census (`scripts/census.sh`) is the enforcement
-mechanism — every invariant below is either a script with an honest exit code or
-a census check that catches the violation. Prose states the protocol; the census
-holds the line.
+mechanism for what git and the files can prove: every invariant it enforces is
+a script with an honest exit code or a census check that catches the
+violation. Prose states the protocol; the census holds the line where git
+gives it the evidence. What git cannot prove — that an answer was the
+operator's, not an agent's — is a protocol rule agents follow, not a census
+check (see Anti-fabrication below).
 
 Read `references/decisions.md` before writing a record. Read
 `references/modes.md` before steering. Read `references/supersede.md` before
@@ -67,9 +70,9 @@ in `references/decisions.md`.
 ## Supersede
 
 A correction writes a **new** file; the superseded record's bytes stay unchanged
-and its blob stays reachable in history. Never edit history. The supersede
-chain resolves to one live record per chain, and a duplicate or dangling
-supersedes is refused by the census. The protocol is in
+and its blob stays reachable in history. Never edit history. Each supersede
+chain must resolve to exactly one live record, and a duplicate, dangling, or
+cyclic supersedes is refused by the census. The protocol is in
 `references/supersede.md`.
 
 ## Modes
@@ -87,19 +90,24 @@ the anti-fabrication rule (the agent never answers for the operator) are in
 | `0` | clean — every record valid, chain intact |
 | `3` | jq not found on the reading machine |
 | `10` | a record is missing or malformed, or the ledger is unusable (missing/empty dir, bad filename, unreadable git tree) |
-| `11` | an answer was stored without operator confirmation (the record's commit has no predecessor) |
 | `12` | a record was edited after commit (supersede instead) |
 | `20` | the supersede chain is broken (dangling, duplicate, orphan, cycle, or a chain resolving to zero or more than one live record) |
 
-When several invariant classes fail at once, the lowest code wins (`10 < 11 < 12 < 20`); the stderr message says whether the higher-numbered checks were skipped.
+When several invariant classes fail at once, the lowest code wins
+(`10 < 12 < 20`); the stderr message says whether the higher-numbered checks
+were skipped. The census does not check operator confirmation: it cannot see
+whether the operator confirmed an answer, so it never claims to (below).
 
 One golden fixture per code lives under `tests/fixtures/census-exit-*.json`. The
 exit-code contract and how to read the report are in `references/census.md`.
 
 ## Rules
 
-- **Never answer for the operator.** The agent asks and distils; the operator
-  answers and confirms. Anti-fabrication is the line.
+- **Never answer for the operator.** This is a protocol rule agents follow, not
+  something the census enforces: git cannot distinguish an operator answer from
+  an agent-written one (agents commit under the operator's identity), so the
+  census does not check confirmation and does not claim to. Signed operator
+  confirmation, where git can see it, is a follow-up.
 - **The answer is confirmed, not written.** A record with an `answer` is a
   confirmed record; an unconfirmed candidate commits nothing.
 - **One file per record; the directory is the aggregate.** The census tolerates a

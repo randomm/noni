@@ -17,7 +17,6 @@ leak through. That is what makes the first test's passing a real result.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 from pathlib import Path
 

@@ -1,7 +1,9 @@
 """Test the supersede chain: a supersede writes a NEW file, the superseded
 record's bytes stay unchanged and its git blob stays reachable, the chain
-resolves to one live record per question, and a forward/duplicate supersedes
-is refused.
+resolves to one live record per question, and a dangling, duplicate, orphan,
+cycle, or zero/multi-live chain is refused (exit 20). A record with an earlier
+date than the record it supersedes is NOT a violation: the supersede chain is
+the authoritative ordering.
 
 The fixtures are:
   supersede-chain/r1.json  — chain root, status=superseded
@@ -138,11 +140,10 @@ def test_detached_record_is_separate_chain(tmp_path, run_census):
     assert "2026-10-25-r4-detached" in live_ids, f"r4 should be live, live records: {live_ids}"
 
 
-def test_forward_supersedes_is_allowed(tmp_path, run_census):
+def test_supersedes_with_earlier_date_is_allowed(tmp_path, run_census):
     """A record that supersedes a record with a later date is NOT a violation.
     The supersede chain is the authoritative ordering; the date is a
-    tie-break for records with no supersede relationship. A record with an
-    earlier date than the record it supersedes is valid."""
+    tie-break for records with no supersede relationship."""
     r_late = {
         "id": "2026-10-25-late",
         "date": "2026-10-25T10:00:00Z",
@@ -179,7 +180,91 @@ def test_forward_supersedes_is_allowed(tmp_path, run_census):
     _git(repo, "commit", "-q", "--allow-empty", "-m", "early")
 
     code, out, err = run_census(ledger)
-    assert code == 0, f"expected exit 0 (forward supersedes is allowed), got {code}\nstderr: {err}"
+    assert code == 0, f"expected exit 0 (supersede chain is the ordering), got {code}\nstderr: {err}"
+
+
+def test_zero_live_chain_refused(tmp_path, run_census):
+    """A chain in which every record is marked superseded resolves to zero
+    live records and exits 20."""
+    r_root = {
+        "id": "2026-10-01-root",
+        "date": "2026-10-01T10:00:00Z",
+        "asked_by": "dev",
+        "questions": [{"id": "q1", "text": "A?", "options": ["x", "y"], "answer": "x"}],
+        "by": "Op",
+        "scope": "test",
+        "status": "superseded",
+        "supersedes": None,
+    }
+    r_a = {
+        "id": "2026-10-02-a",
+        "date": "2026-10-02T10:00:00Z",
+        "asked_by": "dev",
+        "questions": [{"id": "q1", "text": "B?", "options": ["x", "y"], "answer": "x"}],
+        "by": "Op",
+        "scope": "test",
+        "status": "superseded",
+        "supersedes": "2026-10-01-root",
+    }
+
+    repo = tmp_path / "repo"
+    ledger = repo / "noni" / "decisions"
+    ledger.mkdir(parents=True)
+    _git(repo, "init", "-q")
+
+    (ledger / "2026-10-01-root.json").write_text(json.dumps(r_root, indent=2))
+    _git(repo, "add", "noni/decisions/2026-10-01-root.json")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "root")
+
+    (ledger / "2026-10-02-a.json").write_text(json.dumps(r_a, indent=2))
+    _git(repo, "add", "noni/decisions/2026-10-02-a.json")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "a")
+
+    code, out, err = run_census(ledger)
+    assert code == 20, f"expected exit 20 for zero-live chain, got {code}\nstderr: {err}"
+    assert "zero-live" in err, f"expected 'zero-live' in stderr, got: {err}"
+
+
+def test_multi_live_chain_refused(tmp_path, run_census):
+    """A chain whose superseded record was never marked superseded resolves to
+    more than one live record and exits 20."""
+    r_root = {
+        "id": "2026-10-01-root",
+        "date": "2026-10-01T10:00:00Z",
+        "asked_by": "dev",
+        "questions": [{"id": "q1", "text": "A?", "options": ["x", "y"], "answer": "x"}],
+        "by": "Op",
+        "scope": "test",
+        "status": "decided",
+        "supersedes": None,
+    }
+    r_a = {
+        "id": "2026-10-02-a",
+        "date": "2026-10-02T10:00:00Z",
+        "asked_by": "dev",
+        "questions": [{"id": "q1", "text": "B?", "options": ["x", "y"], "answer": "x"}],
+        "by": "Op",
+        "scope": "test",
+        "status": "decided",
+        "supersedes": "2026-10-01-root",
+    }
+
+    repo = tmp_path / "repo"
+    ledger = repo / "noni" / "decisions"
+    ledger.mkdir(parents=True)
+    _git(repo, "init", "-q")
+
+    (ledger / "2026-10-01-root.json").write_text(json.dumps(r_root, indent=2))
+    _git(repo, "add", "noni/decisions/2026-10-01-root.json")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "root")
+
+    (ledger / "2026-10-02-a.json").write_text(json.dumps(r_a, indent=2))
+    _git(repo, "add", "noni/decisions/2026-10-02-a.json")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "a")
+
+    code, out, err = run_census(ledger)
+    assert code == 20, f"expected exit 20 for multi-live chain, got {code}\nstderr: {err}"
+    assert "multi-live" in err, f"expected 'multi-live' in stderr, got: {err}"
 
 
 def test_duplicate_supersedes_refused(tmp_path, run_census):

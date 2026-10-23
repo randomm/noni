@@ -1,5 +1,11 @@
 """Fresh-clone replay test: a fresh clone of the replay-repo fixture can replay
-every recorded decision with no shared runtime and no network.
+every recorded decision from the clone alone.
+
+What this proves: the ledger is replayable from a plain `git clone` with no
+shared runtime and no access to the source repository — the census runs
+green on the clone, every record is present, and the supersede chain
+resolves correctly in the clone's git history. (The network is not
+restricted by this test; the clone source is a local directory.)
 
 The test:
 1. Runs the generate.sh script to build the replay repo in tmp_path.
@@ -154,7 +160,7 @@ def test_fresh_clone_has_complete_git_history(tmp_path):
     """The fresh clone carries the complete git history the census reads:
     4 commits (one per record) and all 4 records, with no dangling objects.
     This is the precondition that lets the census replay every decision from
-    the clone alone — no shared runtime, no network.
+    the clone alone, with no access to the source repository.
     """
     src_repo = _generate_replay_repo(tmp_path)
     clone_dir = tmp_path / "clone"

@@ -9,7 +9,7 @@
 # order is primary and date is only a tie-break.
 #
 # The repo is a full clone (not shallow), so a fresh clone can replay every
-# recorded decision with no shared runtime and no network.
+# recorded decision from the clone alone, with no access to the source repo.
 #
 #   generate.sh [OUTPUT_DIR]
 #

@@ -50,13 +50,16 @@ triggers the commit. The commit only happens after confirmation.
 
 ## Anti-fabrication
 
-The agent never answers for the operator. Concretely:
+The agent never answers for the operator. This is a **protocol rule agents
+follow** — not something the census can verify: git cannot distinguish an
+operator answer from an agent-written answer (agents commit under the
+operator's identity), and signed, forge-verifiable confirmation is deferred to
+a follow-up. Concretely:
 
-- A record with an `answer` must trace to an operator confirmation. The census
-  checks this: an `answer` stored without confirmation is exit `11`.
-- A decline/cancel must leave the question open and commit nothing. The census
-  checks that a committed record does not carry an `answer` for a question that
-  was declined.
+- A record with an `answer` must come from an operator confirmation, by agent
+  discipline.
+- A decline/cancel must leave the question open and commit nothing: no file is
+  written, no `answer` is stored.
 - The agent may *propose* an answer in the candidate, but the candidate is not a
   record until the operator confirms it.
 

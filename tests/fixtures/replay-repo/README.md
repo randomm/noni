@@ -3,7 +3,7 @@
 A generator script (`generate.sh`) that produces a snapshot git repo whose
 `noni/decisions/` tree is a self-contained, replayable steering ledger. The
 repo is a full clone (not shallow), so a fresh clone can replay every recorded
-decision with no shared runtime and no network.
+decision from the clone alone, with no access to the source repository.
 
 ## Layout
 

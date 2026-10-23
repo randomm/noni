@@ -14,7 +14,7 @@
 #
 # Exit codes. The codes are distinct so one failing census names the class of
 # invariant that broke; when several classes are violated at once, the lowest
-# number wins (10 < 11 < 12 < 20) and the higher-numbered checks may not have
+# number wins (10 < 12 < 20) and the higher-numbered checks may not have
 # been evaluated — the stderr message says so. One golden fixture per code
 # lives under tests/fixtures/:
 #   0   clean — every record valid, chain intact
@@ -27,12 +27,9 @@
 #       10:unparseable, 10:schema, 10:missing-record) a filename, body, or
 #       schema field violates the declared shape (fix the record);
 #       (10:git-unavailable) git itself failed on a real repo (fix the tree)
-#   11  an answer was stored without operator confirmation (the record's own
-#       commit has no predecessor — see references/census.md for the
-#       documented limitation of this proxy)
 #   12  a record was edited after commit (working tree differs from git)
-#   20  the supersede chain is broken (dangling, duplicate, orphan, or a
-#       chain resolving to zero or more than one live record)
+#   20  the supersede chain is broken (dangling, duplicate, orphan, cycle,
+#       or a chain resolving to zero or more than one live record)
 #
 # Requires jq on the machine that does the reading.
 
@@ -41,7 +38,7 @@ set -u
 LEDGER_DIR=""
 for arg in "$@"; do
   case "$arg" in
-    --help|-h) sed -n '2,33p' "$0"; exit 0 ;;
+    --help|-h) sed -n '2,34p' "$0"; exit 0 ;;
     -*) ;;
     *) LEDGER_DIR="${arg%/}" ;;
   esac
@@ -187,26 +184,13 @@ SCHEMA_DATA_JQ='
 
 # --- Per-record walk ----------------------------------------------------------
 # One pass over the validated records: schema check, field extraction,
-# attribution, and the exit-11 / exit-12 checks. PAIRS (id \t sup) accumulates
+# attribution, and the exit-12 check. PAIRS (id \t sup) accumulates
 # for the chain walk, so the chain section never re-parses a file.
 ROWS="$(mktemp)" || { echo "census.sh: cannot allocate a temp file (mktemp failed)" >&2; exit 3; }
 PAIRS="$(mktemp)" || { echo "census.sh: cannot allocate a temp file (mktemp failed)" >&2; rm -f "$ROWS"; exit 3; }
 trap 'rm -f "$ROWS" "$PAIRS"' EXIT
 : > "$ROWS"
 : > "$PAIRS"
-
-# Repo-wide, not per-record: the total commit count for the exit-11 check.
-# A git failure (corrupt repo, no HEAD) is reported, not swallowed: with the
-# count unknown the unconfirmed-answer check is skipped rather than fired.
-n_total=0
-n_total_ok=1
-if [ -n "$GIT_TOP" ]; then
-  if ! n_total="$(git -C "$GIT_TOP" rev-list --count HEAD 2>/dev/null)"; then
-    n_total_ok=0
-    echo "census.sh: git rev-list --count HEAD failed; skipping the unconfirmed-answer check (10:git-unavailable)" >&2
-    STATUS=10
-  fi
-fi
 
 while IFS= read -r rec; do
   [ -z "$rec" ] && continue
@@ -260,20 +244,6 @@ while IFS= read -r rec; do
     fi
   fi
 
-  # Unconfirmed-answer check (exit 11): a decided record with an answer whose
-  # own commit has no predecessor. Per-record, not repo-wide: a record
-  # committed after other history (even as the record's own first commit of
-  # the repo's ledger) traces to prior commits and passes; only a record
-  # whose commit is the very first commit of the tree has no confirmation
-  # trail. See references/census.md for the documented limitation of this
-  # proxy.
-  if [ "$n_total_ok" = 1 ] && [ -n "$GIT_TOP" ] && [ -n "$REL_LEDGER" ] \
-     && [ "$status" = "decided" ] && [ "${any_answer:-0}" -gt 0 ] \
-     && [ -n "$lastc" ] && [ -z "$(git -C "$GIT_TOP" rev-parse --verify --quiet "$lastc^" 2>/dev/null)" ]; then
-    echo "census.sh: $rec: answer stored without a preceding commit (no operator confirmation trail)" >&2
-    STATUS=11
-  fi
-
   # Edited-after-commit check (exit 12): working-tree bytes vs the last commit
   # that touched the path. Skipped when the ledger is not in a git tree.
   if [ -n "$GIT_TOP" ] && [ -n "$REL_LEDGER" ] && [ -n "$lastc" ]; then
@@ -300,12 +270,12 @@ REOF
 # Runs only when no schema violation (exit 10) was found: the chain walk
 # needs schema-valid records, and it reads PAIRS, which was accumulated from
 # the validated pass-1 records above (a malformed record never contributes a
-# pair). When a higher-priority code (11 or 12) already fired, the chain walk
+# pair). When a higher-priority code (12) already fired, the chain walk
 # is skipped and the report says so: the documented precedence is
-# 10 < 11 < 12 < 20.
+# 10 < 12 < 20.
 if [ "$STATUS" -ne 10 ]; then
   if [ "$STATUS" -ne 0 ]; then
-    echo "census.sh: exit $STATUS already reported; chain not evaluated (priority 10 < 11 < 12 < 20)" >&2
+    echo "census.sh: exit $STATUS already reported; chain not evaluated (priority 10 < 12 < 20)" >&2
   else
     # status map (id -> status) from the validated report rows ($ROWS field 4);
     # $ROWS holds only data lines (the header is printed to stdout, not $ROWS).

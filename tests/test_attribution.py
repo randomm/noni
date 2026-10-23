@@ -63,7 +63,6 @@ def test_by_comes_from_git_author(tmp_path, run_census):
     (ledger / "2026-10-01-attrib.json").write_text(json.dumps(record, indent=2))
     _git_with_author(repo, "Alice", "alice@example.invalid", "add", "noni/decisions/2026-10-01-attrib.json")
     _git_with_author(repo, "Alice", "alice@example.invalid", "commit", "-q", "-m", "steering: attributed to Alice")
-    # Need a second commit so the unconfirmed-answer check doesn't fire
     _git_with_author(repo, "Alice", "alice@example.invalid", "commit", "-q", "--allow-empty", "-m", "second commit")
 
     code, out, err = run_census(ledger)

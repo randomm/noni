@@ -8,13 +8,14 @@ file. This module is the enforcing check for that rule: it scans the output of
 
 Violation classes:
 
-1. machine-local absolute home paths (``/Users/<user>``, ``/home/<user>``),
-   with a short list of well-known build-identity usernames that never belong
-   in a public repo;
-2. common secret shapes (token prefixes, private key blocks);
-3. a deny-list of names, hosts and project identifiers that is never
+1. machine-local absolute home paths of well-known build identities
+   (``/Users/<user>``, ``/home/<user>``);
+2. machine-local absolute home paths of *any* user — fixture guards only, not
+   part of the scrub (see ``FIXTURE_HOME_PATH_PATTERNS``);
+3. common secret shapes (token prefixes, private key blocks);
+4. a deny-list of names, hosts and project identifiers that is never
    committed: it is loaded from an untracked local file (path in .gitignore)
-   or an environment variable; when neither exists, the deny-list class is
+   or an environment variable; when neither exists the deny-list class is
    skipped with a **prominent** stderr notice while the built-in patterns
    still run. A green run without the deny-list is **not** a scrub-clean
    guarantee — see docs/PUBLISHING.md step 1.
@@ -25,8 +26,14 @@ lines starting with ``#`` are ignored; entries are matched with
 
 This module is the canonical home for the shared secret-shape and
 home-path patterns; ``test_skill_scrub.py`` and ``test_purity.py`` import
-``SECRET_PATTERNS`` and ``HOME_PATH_PATTERNS`` from here rather than
-maintaining their own copies.
+``SECRET_PATTERNS``, ``HOME_PATH_PATTERNS`` and
+``FIXTURE_HOME_PATH_PATTERNS`` from here rather than maintaining their own
+copies.
+
+Import contract: this module is not part of an installed package
+(``packages = []`` in pyproject.toml); tests import it with a
+``sys.path.insert(0, <repo>/scripts)`` in each test file (tests/
+test_public_safety.py, test_purity.py, test_skill_scrub.py).
 """
 
 from __future__ import annotations
@@ -35,9 +42,11 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
+_self_path = Path(__file__).resolve()
+REPO = _self_path.parent.parent
 
 # Default location of the untracked local deny-list. The path is in .gitignore
 # so the file can never be committed; the deny-list env var names an
@@ -53,8 +62,8 @@ DENYLIST_ENV_VAR = "NONI_SCRUB_DENYLIST"
 
 # Well-known, widely-used usernames that must never appear in a machine-local
 # home path. Deliberately generic; the operator's own username is never
-# matched here — it is carried by the untracked deny-list instead. The pattern
-# is anchored at the start of the line, so bare words in prose (e.g. "git
+# matched here — it is carried by the untracked deny-list instead. The
+# pattern requires a leading slash, so bare words in prose (e.g. "git
 # history") are not matched — only absolute paths.
 _COMMON_IDENTITIES = ("root", "admin", "builder", "nobody", "daemon", "www-data")
 
@@ -74,6 +83,16 @@ HOME_PATH_PATTERNS: tuple[tuple[re.Pattern, str], ...] = (
     ),
 )
 
+# Fixture guards only: any machine-local absolute home path, regardless of
+# username. Kept out of HOME_PATH_PATTERNS because the scrub's home-path class
+# is intentionally limited to well-known identities (any-user names are the
+# deny-list class's job, and matching every home path in tracked files would
+# false-positive on examples in docs).
+FIXTURE_HOME_PATH_PATTERNS: tuple[tuple[re.Pattern, str], ...] = (
+    (re.compile(r"/Users/[A-Za-z0-9._-]+/"), "machine-local absolute home path (/Users/<user>)"),
+    (re.compile(r"/home/[A-Za-z0-9._-]+/"), "machine-local absolute home path (/home/<user>)"),
+)
+
 SECRET_PATTERNS: tuple[tuple[re.Pattern, str], ...] = (
     (re.compile(r"\bghp_[A-Za-z0-9]{20,}"), "GitHub classic token"),
     (re.compile(r"\bgho_[A-Za-z0-9]{20,}"), "GitHub OAuth token"),
@@ -85,27 +104,34 @@ SECRET_PATTERNS: tuple[tuple[re.Pattern, str], ...] = (
 
 BUILTIN_PATTERNS: tuple[tuple[re.Pattern, str], ...] = HOME_PATH_PATTERNS + SECRET_PATTERNS
 
-# Files that carry the regex literals defining the built-in patterns must be
-# exempt from the scrub, or their own source would self-match. Only the files
-# that actually define pattern literals are exempted. The exemption applies to
-# all patterns (built-in and deny-list) — this is safe because these files
-# contain no real secrets or machine-local paths, only the pattern definitions
-# themselves. The test test_scrub_excludes_own_source verifies that a planted
-# secret in a *non-exempt* file is still caught.
-_SELF_FILES = frozenset(
-    {
-        Path(__file__).resolve(),
-        Path(__file__).resolve().parent.parent / "tests" / "test_public_safety.py",
-        Path(__file__).resolve().parent.parent / "tests" / "test_purity.py",
-    }
-)
+# Files exempt from the scrub, because they self-match. Two distinct classes:
+#   - scripts/public_safety.py defines the built-in pattern literals;
+#   - tests/test_public_safety.py carries planted fixture strings;
+#   - tests/test_purity.py carries deny-list vocabulary as regex literals
+#     (external project/tool names the hygiene rule forbids elsewhere).
+# Exempting them is safe: they contain no real secrets or machine-local
+# paths, only the literals that make them self-match. A planted violation in
+# any *other* tracked file is still caught (see
+# test_scrub_exemption_does_not_hide_planted_secret).
+#
+# Exemptions are matched against the repository-relative path from
+# `git ls-files` (plus this module's own __file__), so no per-file path
+# resolution is needed and symlinked worktrees cannot change the decision.
+_SELF_FILES = frozenset({"scripts/public_safety.py", "tests/test_public_safety.py", "tests/test_purity.py"})
+
+
+def _is_self_file(rel: str) -> bool:
+    # The relative paths from `git ls-files` match _SELF_FILES directly; the
+    # __file__ fallback covers being invoked with the module's own absolute
+    # path (not expected, but cheap to check).
+    return rel in _SELF_FILES or _self_path == REPO / rel
 
 
 def _read_text_lenient(path: Path) -> list[str] | None:
     """Read a tracked file as text, or None when it is binary / non-UTF-8.
 
     Binary or non-UTF-8 files are skipped gracefully (edge case: the scrub
-    must never crash on an untext-readable tracked file).
+    must never crash on an unreadable tracked file).
     """
     try:
         return path.read_text(encoding="utf-8").splitlines()
@@ -113,15 +139,38 @@ def _read_text_lenient(path: Path) -> list[str] | None:
         return None
 
 
-def load_denylist() -> tuple[list[str], str | None]:
-    """Load the deny-list; return (entries, source path as string or None).
+@dataclass
+class DenylistResult:
+    """Outcome of load_denylist: entries plus an explicit status.
+
+    ``status`` is one of:
+      - "ok" — a deny-list file was read successfully (entries may still be
+        empty for a comments-only file);
+      - "corrupt" — a deny-list file existed but was unreadable (non-UTF-8
+        or an I/O error), so the deny-list class is effectively disabled for
+        this run;
+      - "absent" — no deny-list file exists anywhere (class skipped).
+
+    The CLI treats "ok" with zero entries, "corrupt" and "absent" identically:
+    a run whose deny-list class is not active with a non-empty list refuses to
+    report clean (exit 2).
+    """
+
+    entries: list[str]
+    source: str | None
+    status: str
+
+
+def load_denylist() -> DenylistResult:
+    """Load the deny-list and classify the outcome.
 
     Load order: the default file (when it exists) takes precedence over the
     env-var-named file; when neither exists the deny-list part is skipped
-    (returns ([], None)) and the caller prints a prominent stderr notice.
+    (status "absent") and the caller prints a prominent stderr notice.
 
-    A corrupt or non-UTF-8 deny-list file is treated as empty with a visible
-    stderr notice rather than crashing the scrub.
+    A corrupt or non-UTF-8 deny-list file yields status "corrupt" with a
+    visible stderr notice rather than crashing the scrub; the caller treats
+    it like "absent" (the deny-list class is not active for this run).
     """
     for candidate in (_default_denylist_file(), os.environ.get(DENYLIST_ENV_VAR)):
         if not candidate:
@@ -138,14 +187,14 @@ def load_denylist() -> tuple[list[str], str | None]:
                 "deny-list class is effectively disabled for this run.",
                 file=sys.stderr,
             )
-            return [], path.as_posix()
+            return DenylistResult([], path.as_posix(), "corrupt")
         entries = []
         for line in raw.splitlines():
             stripped = line.strip()
             if stripped and not stripped.startswith("#"):
                 entries.append(stripped)
-        return entries, path.as_posix()
-    return [], None
+        return DenylistResult(entries, path.as_posix(), "ok")
+    return DenylistResult([], None, "absent")
 
 
 def _scan_tracked_files(repo: Path, patterns: list[tuple[re.Pattern, str]]) -> list[str]:
@@ -165,61 +214,68 @@ def _scan_tracked_files(repo: Path, patterns: list[tuple[re.Pattern, str]]) -> l
         rel = rel.strip()
         if not rel:
             continue
-        path = repo / rel
-        try:
-            resolved = path.resolve()
-        except OSError:
-            resolved = path
-        if resolved in _SELF_FILES:
+        if _is_self_file(rel):
             continue
-        lines = _read_text_lenient(path)
+        lines = _read_text_lenient(repo / rel)
         if lines is None:
             continue
         for lineno, line in enumerate(lines, 1):
             for pattern, label in patterns:
                 if pattern.search(line):
                     violations.append(f"{rel}:{lineno}: {label}")
+                    break  # one violation label per line is enough
     return violations
 
 
-def scrub_tracked_files(repo: Path = REPO) -> tuple[list[str], str | None]:
+def scrub_tracked_files(repo: Path = REPO) -> tuple[list[str], str | None, DenylistResult]:
     """Scan every git-tracked file under repo.
 
-    Returns (violations, denylist_source): violations is a list of
+    Returns (violations, denylist_source, denylist): violations is a list of
     ``path:line: label`` strings (empty means the repo is clean);
     denylist_source is the deny-list file path that was loaded, or None when
-    the deny-list class was skipped (a prominent stderr notice is printed
-    either way the deny-list is absent — a green run without the deny-list
-    does NOT guarantee scrub-clean, see docs/PUBLISHING.md step 1).
+    the deny-list class was not active (absent or corrupt — a prominent
+    stderr notice is printed either way, and a green run without the
+    deny-list does NOT guarantee scrub-clean; see docs/PUBLISHING.md
+    step 1); denylist carries the full outcome (entries, source, status)
+    for callers that need to tell a comments-only file apart from a missing
+    one.
     """
-    denylist, source = load_denylist()
+    denylist = load_denylist()
     patterns = list(BUILTIN_PATTERNS)
-    for entry in denylist:
+    for entry in denylist.entries:
         patterns.append((re.compile(re.escape(entry)), "deny-list entry"))
 
     violations = _scan_tracked_files(repo, patterns)
 
-    if source is None:
+    if denylist.status != "ok":
+        reason = "unreadable/corrupt" if denylist.status == "corrupt" else "absent"
+        source_note = f" file: {denylist.source}" if denylist.source else ""
         print(
-            f"public-safety: WARNING — deny-list class SKIPPED (no "
-            f"{_default_denylist_file().name} file, no {DENYLIST_ENV_VAR}). "
+            f"public-safety: WARNING — deny-list class SKIPPED ({reason}{source_note}). "
             "Built-in patterns ran, but operator names, external project/tool "
             "names and hostnames are NOT checked. This run is NOT a scrub-clean "
             "guarantee. See docs/PUBLISHING.md step 1.",
             file=sys.stderr,
         )
-    return violations, source
+    return violations, denylist.source if denylist.status == "ok" else None, denylist
+
+
+def _denylist_active(denylist: DenylistResult) -> bool:
+    """True when the deny-list class actually ran with at least one entry."""
+    return denylist.status == "ok" and len(denylist.entries) > 0
 
 
 if __name__ == "__main__":
-    found, source = scrub_tracked_files()
+    found, _source, denylist = scrub_tracked_files()
     if found:
         for v in found:
             print(v, file=sys.stderr)
         sys.exit(1)
-    if source is None:
-        # Refuse to report clean when the deny-list class was skipped
-        print("public-safety: NOT clean — deny-list class was skipped", file=sys.stderr)
+    if not _denylist_active(denylist):
+        # Refuse to report clean when the deny-list class was not active:
+        # skipped (absent), corrupt, or present but empty.
+        state = denylist.status if denylist.status != "ok" else "present but empty"
+        print(f"public-safety: NOT clean — deny-list class inactive ({state})", file=sys.stderr)
         sys.exit(2)
     print("public-safety: clean", file=sys.stderr)
     sys.exit(0)

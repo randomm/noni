@@ -29,7 +29,7 @@ REPO = Path(__file__).resolve().parent.parent
 _scripts_dir = str(REPO / "scripts")
 if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
-from public_safety import HOME_PATH_PATTERNS  # noqa: E402
+from public_safety import FIXTURE_HOME_PATH_PATTERNS, HOME_PATH_PATTERNS  # noqa: E402
 
 SKILL_DIR = REPO / "skills" / "steering-ledger"
 FIXTURES = REPO / "tests" / "fixtures"
@@ -47,9 +47,11 @@ FORBIDDEN_VOCAB = [
     (re.compile(r"\bbridge\b", re.IGNORECASE), "external tool/project vocabulary"),
 ]
 
-# Machine-local path patterns (the noni purity rule: no project-specific
-# content). Imported from the shared registry in scripts/public_safety.py.
-FORBIDDEN_PATHS = list(HOME_PATH_PATTERNS)
+# Machine-local path patterns. The known-identity patterns come from the
+# shared registry; the fixture-only catch-alls retain any-username coverage
+# (the shared registry is deliberately limited to well-known identities for
+# the scrub, where any-user names are the deny-list class's job).
+FORBIDDEN_PATHS: tuple[tuple[re.Pattern, str], ...] = tuple(HOME_PATH_PATTERNS) + tuple(FIXTURE_HOME_PATH_PATTERNS)
 
 SKILL_CORE_FILES = sorted(
     p

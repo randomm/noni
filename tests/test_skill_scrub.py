@@ -28,7 +28,7 @@ REPO = Path(__file__).resolve().parent.parent
 _scripts_dir = str(REPO / "scripts")
 if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
-from public_safety import HOME_PATH_PATTERNS, SECRET_PATTERNS  # noqa: E402
+from public_safety import FIXTURE_HOME_PATH_PATTERNS, HOME_PATH_PATTERNS, SECRET_PATTERNS  # noqa: E402
 
 SKILL_DIR = REPO / "skills" / "steering-ledger"
 FIXTURES = REPO / "tests" / "fixtures"
@@ -65,8 +65,9 @@ def _operator_username() -> str:
 
 OPERATOR_USERNAME = _operator_username()
 
-FORBIDDEN = [
+FORBIDDEN: list[tuple[re.Pattern, str]] = [
     *HOME_PATH_PATTERNS,
+    *FIXTURE_HOME_PATH_PATTERNS,
     (re.compile(re.escape(OPERATOR_USERNAME), re.IGNORECASE), f"operator username ({OPERATOR_USERNAME or 'unknown'})"),
     *SECRET_PATTERNS,
     (re.compile(r"\bBearer\s+[A-Za-z0-9._~+/-]{20,}"), "bearer token"),

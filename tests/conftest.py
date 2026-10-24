@@ -267,6 +267,7 @@ def run_register(repo: Path, identity: str, **kwargs) -> subprocess.CompletedPro
         ["python3", str(REGISTER), "--repo", str(repo), "--identity", identity, *extra],
         capture_output=True,
         text=True,
+        timeout=120,
     )
 
 

@@ -12,6 +12,8 @@ import shutil
 from pathlib import Path
 
 from scenario_eval import (
+    NOW,
+    STALE_AFTER,
     _plant_fault_12,
     build_scenario,
     fresh_clone,
@@ -36,7 +38,7 @@ def test_healthy_baseline(tmp_path: Path) -> None:
     base = _clean_base(tmp_path, "healthy")
     scenario = build_scenario(base, faulted=False)
     clone = fresh_clone(scenario)
-    code, rows = run_census_json(clone, scenario.now, scenario.stale_after)
+    code, rows = run_census_json(clone, NOW, STALE_AFTER)
     findings = normalize_findings(rows)
     assert code == 0, f"expected exit 0, got {code}: {findings}"
     assert len(findings) == 0, f"expected no findings, got: {findings}"
@@ -50,7 +52,7 @@ def test_faulted_variant_findings(tmp_path: Path) -> None:
     scenario = build_scenario(base, faulted=True)
     clone = fresh_clone(scenario)
     _plant_fault_12(clone)
-    code, rows = run_census_json(clone, scenario.now, scenario.stale_after)
+    code, rows = run_census_json(clone, NOW, STALE_AFTER)
     findings = normalize_findings(rows)
 
     # The planted set: {30 on #1, 31, 12, 20, 40 for agent-c}
@@ -74,14 +76,14 @@ def test_determinism(tmp_path: Path) -> None:
     scenario1 = build_scenario(base1, faulted=True)
     clone1 = fresh_clone(scenario1)
     _plant_fault_12(clone1)
-    _, rows1 = run_census_json(clone1, scenario1.now, scenario1.stale_after)
+    _, rows1 = run_census_json(clone1, NOW, STALE_AFTER)
     findings1 = normalize_findings(rows1)
 
     base2 = _clean_base(tmp_path, "det2")
     scenario2 = build_scenario(base2, faulted=True)
     clone2 = fresh_clone(scenario2)
     _plant_fault_12(clone2)
-    _, rows2 = run_census_json(clone2, scenario2.now, scenario2.stale_after)
+    _, rows2 = run_census_json(clone2, NOW, STALE_AFTER)
     findings2 = normalize_findings(rows2)
 
     assert findings1 == findings2, (
@@ -95,7 +97,6 @@ def test_fresh_clone_replay(tmp_path: Path) -> None:
     The assertion targets only the healthy chain."""
     base = _clean_base(tmp_path, "replay")
     scenario = build_scenario(base, faulted=False)
-
     # Delete all clones
     for clone_name in ("clone-a", "clone-b"):
         clone_path = base / clone_name
@@ -123,16 +124,3 @@ def test_fresh_clone_replay(tmp_path: Path) -> None:
     # The steered ordering is readable from the live record
     assert d2["scope"] == "release ordering"
     assert d2["questions"][0]["answer"] == "yes"
-
-
-def test_clean_variant_zero_findings(tmp_path: Path) -> None:
-    """Clean variant = healthy baseline only: census on a fresh clone reports
-    zero fail findings and exit 0 (proves 'nothing unplanted')."""
-    base = _clean_base(tmp_path, "clean")
-    scenario = build_scenario(base, faulted=False)
-    clone = fresh_clone(scenario)
-    code, rows = run_census_json(clone, scenario.now, scenario.stale_after)
-    findings = normalize_findings(rows)
-    fail_findings = [f for f in findings if f[2] == "fail"]
-    assert code == 0, f"expected exit 0, got {code}: {findings}"
-    assert len(fail_findings) == 0, f"expected no fail findings, got: {fail_findings}"

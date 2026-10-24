@@ -43,7 +43,12 @@ is clean (exit 0).
   double-claim.
 - **host/worktree** (ephemeral): the host name and worktree path of this
   working copy. The same logical session can legitimately appear from two
-  clones; the census keys on identity, not on this field.
+  clones; the census keys on identity, not on this field. The `register.py`
+  defaults never publish machine-local values: `--host` defaults to the
+  allocated session-id (never the machine hostname) and `--worktree` defaults
+  to the repo directory's basename (never an absolute path). An explicit
+  `--host` / `--worktree` value is written as given; keep it generic in a
+  public repo (no absolute paths or hostnames).
 - **started** (ephemeral): the UTC ISO-8601 timestamp of registration.
 - **status** (permanent): `active` while the session is working; a terminal
   state (`closed`, `done`, `superseded`, or `ended`) excludes the session's

@@ -69,8 +69,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", required=True, help="repository root")
     parser.add_argument("--identity", required=True, help="stable identity (role name)")
     parser.add_argument("--status", default="active", help="initial status (default: active)")
-    parser.add_argument("--host", default=None, help="host name (default: auto)")
-    parser.add_argument("--worktree", default=None, help="worktree path (default: auto)")
+    parser.add_argument(
+        "--host",
+        default=None,
+        help="host name (default: the allocated session-id; never a hostname)",
+    )
+    parser.add_argument(
+        "--worktree",
+        default=None,
+        help="worktree path (default: the repo directory's basename; never an absolute path)",
+    )
     parser.add_argument("--file", default=None, help="explicit file path (must match allocation)")
     args = parser.parse_args(argv)
 

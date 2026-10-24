@@ -33,7 +33,7 @@ Each register file records five fields:
 | field | permanent/ephemeral | meaning |
 |---|---|---|
 | `identity` | permanent | stable role name (e.g. `developer`, `reviewer`) |
-| `host/worktree` | ephemeral | host name and worktree path of this working copy |
+| `host/worktree` | ephemeral | host name and worktree path of this working copy (defaults never include an absolute path or hostname) |
 | `started` | ephemeral | UTC ISO-8601 timestamp of registration |
 | `status` | permanent | `active`, `closed`, or another terminal state |
 | `claims` | ephemeral | list of `- claim: <task>` rows |
@@ -58,6 +58,12 @@ The register writer allocates a session-id, creates the file at
 allocate (exit 2). A re-registration with the same identity on the same file
 is an idempotent no-op (exit 0). A registration that would overwrite another
 session's file is refused (exit 1).
+
+The `--host` and `--worktree` defaults never publish machine-local values:
+`--host` defaults to the allocated session-id and `--worktree` to the repo
+directory's basename. Neither default includes an absolute path or a
+hostname, because the register file is committed to a public repo. Explicit
+`--host` / `--worktree` values are written as given.
 
 ## Claiming a task
 

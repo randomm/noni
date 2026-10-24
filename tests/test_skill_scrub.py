@@ -30,7 +30,7 @@ if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 from public_safety import FIXTURE_HOME_PATH_PATTERNS, HOME_PATH_PATTERNS, SECRET_PATTERNS  # noqa: E402
 
-SKILL_DIR = REPO / "skills" / "steering-ledger"
+SKILL_DIRS = [REPO / "skills" / "steering-ledger", REPO / "skills" / "sessions-claims", REPO / "skills" / "census"]
 FIXTURES = REPO / "tests" / "fixtures"
 
 
@@ -76,7 +76,8 @@ FORBIDDEN: list[tuple[re.Pattern, str]] = [
 # __pycache__/*.pyc are build artifacts: never scan them.
 SKILL_FILES = sorted(
     p
-    for p in SKILL_DIR.rglob("*")
+    for d in SKILL_DIRS
+    for p in d.rglob("*")
     if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc"
 )
 
@@ -89,7 +90,7 @@ FIXTURE_FILES = sorted(
 
 def test_skill_files_present():
     """The steering-ledger skill has the expected file layout."""
-    rels = {p.relative_to(SKILL_DIR).as_posix() for p in SKILL_FILES}
+    rels = {p.relative_to(d).as_posix() for d in SKILL_DIRS for p in SKILL_FILES if p.is_relative_to(d)}
     assert "SKILL.md" in rels, f"SKILL.md missing; have: {rels}"
     assert "scripts/census.sh" in rels, f"scripts/census.sh missing; have: {rels}"
     for ref in ("references/decisions.md", "references/modes.md", "references/supersede.md", "references/census.md"):
@@ -103,7 +104,8 @@ def test_no_secrets_or_machine_local_paths_in_skills(path):
     text = path.read_text(encoding="utf-8")
     for lineno, line in enumerate(text.splitlines(), 1):
         for pattern, label in FORBIDDEN:
-            assert not pattern.search(line), f"{path.relative_to(SKILL_DIR)}:{lineno}: {label}"
+            rel = next((path.relative_to(d).as_posix() for d in SKILL_DIRS if path.is_relative_to(d)), str(path))
+            assert not pattern.search(line), f"{rel}:{lineno}: {label}"
 
 
 @pytest.mark.parametrize("path", FIXTURE_FILES, ids=lambda p: p.name)
@@ -124,12 +126,15 @@ def test_no_secrets_or_machine_local_paths_in_fixtures(path):
 
 def test_skill_md_within_agents_size_limit():
     """SKILL.md is within the 400-line limit (the driver's AGENTS.md cap)."""
-    lines = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8").count("\n")
-    assert lines <= 400, f"SKILL.md is {lines} lines; the cap is 400"
+    for d in SKILL_DIRS:
+        skill_md = d / "SKILL.md"
+        if skill_md.is_file():
+            lines = skill_md.read_text(encoding="utf-8").count("\n")
+            assert lines <= 400, f"{d.name}/SKILL.md is {lines} lines; the cap is 400"
 
 
 def test_census_script_is_executable():
     """The census script has the executable bit set (it is meant to be run
     directly)."""
-    census = SKILL_DIR / "scripts" / "census.sh"
+    census = (REPO / "skills" / "steering-ledger" / "scripts" / "census.sh")
     assert census.stat().st_mode & 0o111, "census.sh is not executable"

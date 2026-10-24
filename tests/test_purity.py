@@ -44,7 +44,7 @@ from public_safety import (  # noqa: E402
     load_denylist,
 )
 
-SKILL_DIR = REPO / "skills" / "steering-ledger"
+SKILL_DIRS = [REPO / "skills" / "steering-ledger", REPO / "skills" / "sessions-claims", REPO / "skills" / "census"]
 FIXTURES = REPO / "tests" / "fixtures"
 README = REPO / "README.md"
 PRODUCT = REPO / "docs" / "PRODUCT.md"
@@ -70,7 +70,8 @@ FORBIDDEN_PATHS: tuple[tuple[re.Pattern, str], ...] = tuple(HOME_PATH_PATTERNS) 
 
 SKILL_CORE_FILES = sorted(
     p
-    for p in SKILL_DIR.rglob("*.md")
+    for d in SKILL_DIRS
+    for p in d.rglob("*.md")
     if p.is_file() and "__pycache__" not in p.parts
 )
 
@@ -100,7 +101,8 @@ def test_core_skill_has_no_driver_tool_vocabulary(path):
     text = path.read_text(encoding="utf-8")
     for lineno, line in enumerate(text.splitlines(), 1):
         for pattern, label in FORBIDDEN_VOCAB:
-            assert not pattern.search(line), f"{path.relative_to(SKILL_DIR)}:{lineno}: {label}"
+            rel = path.relative_to(SKILL_DIRS[0].parent.parent) if path.is_relative_to(REPO) else path.name
+            assert not pattern.search(line), f"{rel}:{lineno}: {label}"
 
 
 @pytest.mark.parametrize("path", FIXTURE_FILES, ids=lambda p: p.name)

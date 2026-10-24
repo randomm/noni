@@ -1,0 +1,10 @@
+{
+  "comment": {
+    "id": 47,
+    "body": "q1: pick one\n  [x] next train\n  [ ] later"
+  },
+  "edits": [
+    "not-a-dict-edit",
+    {"actor": "op-1", "edited_at": "2026-10-01T10:05:00Z", "new_body": "q1: pick one\n  [x] next train\n  [ ] later"}
+  ]
+}

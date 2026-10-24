@@ -43,6 +43,76 @@ VERDICT_STRANGER = "stranger"
 LEGAL_VERDICTS = frozenset({VERDICT_NONE, VERDICT_ONE, VERDICT_MANY, VERDICT_STRANGER})
 
 
+STATUS_ABSENT = "absent"
+STATUS_ACTIVE = "active"
+STATUS_REFUSED = "refused"
+
+#: The closed set of allow-list load statuses. ``absent`` — no candidate
+#: file existed, so the allow-list is empty with no configuration to warn
+#: about. ``active`` — a candidate was loaded (possibly to an empty set).
+#: ``refused`` — a candidate was present but not trustworthy (symlink,
+#: world-writable, unreadable, undecodable); the allow-list is **inactive**
+#: and no further candidate is consulted.
+LEGAL_STATUS = frozenset({STATUS_ABSENT, STATUS_ACTIVE, STATUS_REFUSED})
+
+
+class Allowlist:
+    """The result of ``load_allowlist`` — never a bare set.
+
+    ``accounts`` is the trusted-account set (empty when the allow-list is
+    inactive or loaded with no valid lines). ``status`` is one of
+    LEGAL_STATUS (``active``, ``absent``, ``refused``). ``reason`` names
+    the refusal when status is ``refused`` (None otherwise).
+
+    ``authorized`` is the seam-facing accessor: **every**
+    authorization/legitimacy decision funnels through it, and it is
+    negative whenever the allow-list is not active — an empty set
+    authorizes nothing, and a refused one cannot be downgraded back to an
+    active-but-empty one by a caller passing ``set(allowlist)``.
+    """
+
+    def __init__(self, accounts: set[str], status: str, reason: str | None = None) -> None:
+        if status not in LEGAL_STATUS:
+            raise ValueError(f"status must be one of {sorted(LEGAL_STATUS)}, got {status!r}")
+        self.accounts = set(accounts)
+        self.status = status
+        self.reason = reason
+
+    @property
+    def authorized(self) -> bool:
+        return self.status == STATUS_ACTIVE
+
+    def __contains__(self, name: str) -> bool:
+        return self.status == STATUS_ACTIVE and name.casefold() in self.accounts
+
+    def __bool__(self) -> bool:
+        return self.status == STATUS_ACTIVE
+
+    def __len__(self) -> int:
+        return len(self.accounts) if self.status == STATUS_ACTIVE else 0
+
+    def __repr__(self) -> str:
+        return f"Allowlist(status={self.status!r}, accounts={self.accounts!r}, reason={self.reason!r})"
+
+
+def is_allowed(allowlist, name: str) -> bool:
+    """True iff ``name`` is an allow-listed account.
+
+    ``allowlist`` is an :class:`Allowlist` (from ``load_allowlist``) or a
+    bare set (the legacy shape the adapter seams take from callers that
+    built their own). A ``None`` allow-list, a bare set built from a
+    refused loader result (empty), or any non-str/empty name is **never**
+    authorized. Comparison is case-insensitive: tracker logins are
+    case-insensitive on GitHub, so ``"Op-1"`` matches an allow-listed
+    ``"op-1"``.
+    """
+    if not name or not isinstance(name, str):
+        return False
+    if isinstance(allowlist, Allowlist):
+        return allowlist.authorized and name.casefold() in allowlist.accounts
+    return name.casefold() in allowlist
+
+
 @dataclass(frozen=True)
 class QuestionVerdict:
     """The result of the question-legitimacy seam.
@@ -81,15 +151,34 @@ def _is_trustworthy_allowlist_file(path: Path) -> bool:
     return not (mode & 0o002)
 
 
+def _is_printable_token(line: str) -> bool:
+    """True iff ``line`` is a single printable, whitespace-free token.
+
+    A control or non-printable character anywhere in the line (not just the
+    internal whitespace already covered by ``\t``) or **any** Unicode
+    whitespace inside the name makes the line malformed: an account name
+    must be a single bounded printable token, and a line that smuggles a
+    hidden character must not authorize anything.
+    """
+    if len(line) > 200:
+        return False
+    for ch in line:
+        if not ch.isprintable() or ch.isspace():
+            return False
+    return True
+
+
 def _parse_allowlist_lines(raw: str) -> tuple[set[str], list[str]]:
     """Parse allow-list text into (accounts, warnings).
 
     One account per line; blank lines and ``#`` comments are ignored. Each
-    remaining line must be a single token: non-empty, no internal
-    whitespace, no path separators, no newlines. A malformed line is
-    reported in ``warnings`` and the account is **not** added (fail closed —
-    a broken allow-list must not accidentally authorize a prefix of a line
-    or the contents of an uncurated file).
+    remaining line must be a single token: printable, no internal
+    whitespace, no control or non-printable characters, no path separators.
+    A malformed line is reported in ``warnings`` and the account is **not**
+    added (fail closed — a broken allow-list must not accidentally authorize
+    a prefix of a line or the contents of an uncurated file). Account names
+    are stored as-is and compared case-insensitively at lookup time (tracker
+    logins are case-insensitive on GitHub).
     """
     accounts: set[str] = set()
     warnings: list[str] = []
@@ -97,14 +186,14 @@ def _parse_allowlist_lines(raw: str) -> tuple[set[str], list[str]]:
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        if len(stripped) > 200 or " " in stripped or "\t" in stripped or "/" in stripped:
+        if not _is_printable_token(stripped) or "/" in stripped:
             warnings.append(f"malformed line (skipped): {stripped!r}")
             continue
         accounts.add(stripped)
     return accounts, warnings
 
 
-def load_allowlist(env_var: str, default_file: str | Path | None, warnings: list[str] | None = None) -> set[str]:
+def load_allowlist(env_var: str, default_file: str | Path | None, warnings: list[str] | None = None) -> Allowlist:
     """Load the allow-list of trusted accounts from local configuration.
 
     The allow-list is **never hard-coded**: it comes from an untracked local
@@ -113,24 +202,35 @@ def load_allowlist(env_var: str, default_file: str | Path | None, warnings: list
     adapter without shipping the operator's trusted accounts. The loader is
     the safety boundary between local configuration and the two seams: a
     candidate must be a plain, non-symlink, non-world-writable file, and
-    every account line must be a single bounded token — anything else is
-    skipped, never trusted (the operator is responsible for pointing the
-    configuration at a curated file).
+    every account line must be a single bounded printable token — anything
+    else is skipped, never trusted (the operator is responsible for pointing
+    the configuration at a curated file).
 
-    Load order: the default file (when it exists) takes precedence over the
-    env-var-named file; when neither exists the allow-list is empty (an empty
-    allow-list authorizes no account — an adapter running without local
-    configuration must not authorize anything).
+    Returns an :class:`Allowlist` (status ``active``/``absent``/``refused``
+    plus the account set and, on refusal, a ``reason`` naming the cause).
+
+    Load order — fail closed:
+
+    * **Default file absent** (no candidate file): fall back to the
+      env-var-named file if it is present and trustworthy; if neither
+      exists the allow-list is ``absent`` (no notices — "no allow-list
+      configured" is not an error).
+    * **Default file present but refused** (symlink, world-writable,
+      unreadable, or undecodable): do **not** fall back to the env-var
+      candidate. Return an ``Allowlist`` with status ``refused`` and an
+      empty account set, and emit a prominent stderr notice naming the
+      file and the reason. An operator who pointed the default file at a
+      suspicious path must not silently get a different allow-list from the
+      env var; the refusal is the signal that the configuration is broken.
+    * **Default file present and trustworthy**: use it (malformed account
+      lines are skipped with a warning); the env-var candidate is not
+      consulted.
 
     File format: one account per line; blank lines and lines starting with
     ``#`` are ignored; any other malformed line is skipped with a warning
-    (see ``_parse_allowlist_lines``). A file that is a symlink, world-
-    writable, or unreadable is skipped (the next candidate is still
-    consulted), and in every skipped/broken case a prominent stderr notice
-    is emitted — so an operator can always distinguish "no allow-list
-    configured" (no notices) from "configuration present but broken"
-    (a notice names the file and why it was refused). Fail closed: no
-    crash, no partial trust.
+    (see ``_parse_allowlist_lines``). An active allow-list with no valid
+    lines is still ``active`` (it authorizes nothing — an empty allow-list
+    is not a refusal).
 
     ``warnings`` (optional): when a list is passed, the same notice strings
     that are printed to stderr are appended to it, so programmatic callers
@@ -138,35 +238,44 @@ def load_allowlist(env_var: str, default_file: str | Path | None, warnings: list
     """
     warnings = [] if warnings is None else warnings
 
-    candidates: list[Path] = []
-    if default_file is not None:
-        candidates.append(Path(default_file))
-    if env_var:
-        env_value = os.environ.get(env_var)
-        if env_value:
-            candidates.append(Path(env_value))
-
     def _warn(message: str) -> None:
         warnings.append(message)
         print(f"adapter-allowlist: WARNING — {message}", file=sys.stderr)
 
-    for path in candidates:
-        if not path.is_file():
-            continue
-        if not _is_trustworthy_allowlist_file(path):
-            _warn(f"{path} is a symlink or world-writable; refusing to use it as an allow-list source")
-            continue
+    def _refuse(path: Path, reason: str) -> Allowlist:
+        _warn(f"{path} refused as an allow-list source ({reason}); allow-list INACTIVE — nothing is authorized")
+        return Allowlist(set(), STATUS_REFUSED, f"{path} refused: {reason}")
+
+    def _load(path: Path) -> Allowlist:
+        if path.is_symlink():
+            return _refuse(path, "symlink")
+        try:
+            mode = path.stat().st_mode
+        except OSError as e:
+            return _refuse(path, f"not a plain file ({e})")
+        if mode & 0o002:
+            return _refuse(path, "world-writable")
         try:
             raw = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError) as e:
-            _warn(f"{path} unreadable ({e}); continuing with the next candidate if any")
-            continue
+            return _refuse(path, f"unreadable or undecodable ({e})")
         accounts, line_warnings = _parse_allowlist_lines(raw)
         for w in line_warnings:
             _warn(f"{path}: {w}")
-        return accounts
+        return Allowlist(accounts, STATUS_ACTIVE)
 
-    return set()
+    default = Path(default_file) if default_file is not None else None
+    env_value = os.environ.get(env_var) if env_var else None
+    env_path = Path(env_value) if env_value else None
+
+    # The default file is the operator's primary source. When it is present
+    # but refused we do not fall back to the env-var candidate: a broken
+    # primary must be visible, not silently replaced by a different list.
+    if default is not None and default.is_file():
+        return _load(default)
+    if env_path is not None and env_path.is_file():
+        return _load(env_path)
+    return Allowlist(set(), STATUS_ABSENT)
 
 
 def check_interface(adapter_module) -> list[str]:

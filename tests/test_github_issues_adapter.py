@@ -129,7 +129,8 @@ def test_allowlist_from_local_config_file(tmp_path, monkeypatch):
     config.write_text("# local allow-list\nop-1\n\nother-operator\n", encoding="utf-8")
     monkeypatch.delenv(adapter.ALLOWLIST_ENV_VAR, raising=False)
     loaded = adapter_protocol.load_allowlist(adapter.ALLOWLIST_ENV_VAR, config)
-    assert loaded == {"op-1", "other-operator"}
+    assert loaded.status == "active"
+    assert loaded.accounts == {"op-1", "other-operator"}
 
 
 def test_allowlist_from_env_var(tmp_path, monkeypatch):
@@ -139,7 +140,8 @@ def test_allowlist_from_env_var(tmp_path, monkeypatch):
     env_file.write_text("op-1\n", encoding="utf-8")
     monkeypatch.setenv(adapter.ALLOWLIST_ENV_VAR, env_file.as_posix())
     loaded = adapter_protocol.load_allowlist(adapter.ALLOWLIST_ENV_VAR, tmp_path / "absent.txt")
-    assert loaded == {"op-1"}
+    assert loaded.status == "active"
+    assert loaded.accounts == {"op-1"}
 
 
 def test_allowlist_file_takes_precedence_over_env_var(tmp_path, monkeypatch):
@@ -152,12 +154,14 @@ def test_allowlist_file_takes_precedence_over_env_var(tmp_path, monkeypatch):
 
     monkeypatch.setenv(adapter.ALLOWLIST_ENV_VAR, env_allowlist.as_posix())
     loaded = adapter_protocol.load_allowlist(adapter.ALLOWLIST_ENV_VAR, file_allowlist)
-    assert loaded == {"op-1"}
+    assert loaded.status == "active"
+    assert loaded.accounts == {"op-1"}
 
     # Remove the file: the env-var-named file takes effect.
     file_allowlist.unlink()
     loaded = adapter_protocol.load_allowlist(adapter.ALLOWLIST_ENV_VAR, file_allowlist)
-    assert loaded == {"other-operator"}
+    assert loaded.status == "active"
+    assert loaded.accounts == {"other-operator"}
 
 
 def test_allowlist_absent_yields_empty_set(tmp_path, monkeypatch):
@@ -166,7 +170,8 @@ def test_allowlist_absent_yields_empty_set(tmp_path, monkeypatch):
     a hard-coded list)."""
     monkeypatch.delenv(adapter.ALLOWLIST_ENV_VAR, raising=False)
     loaded = adapter_protocol.load_allowlist(adapter.ALLOWLIST_ENV_VAR, tmp_path / "absent.txt")
-    assert loaded == set()
+    assert loaded.status == "absent"
+    assert loaded.accounts == set()
 
 
 def test_default_allowlist_file_is_gitignored():
@@ -254,3 +259,178 @@ def test_adapter_record_with_source_passes_census(git_repo):
     # a real git repo (one root, one live record, nothing edited or deleted
     # post-commit).
     assert proc.returncode == 0, f"expected exit 0, got {proc.returncode}\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
+
+
+# --- Fail-closed allow-list loading ------------------------------------------
+
+
+def _make_world_writable(path: Path) -> None:
+    """Make ``path`` world-writable. On a filesystem without world-write
+    support (e.g. some FAT mounts) the mode may not stick — in that case the
+    test would need a different fixture, so we surface it as an error."""
+    path.chmod(path.stat().st_mode | 0o002)
+    assert path.stat().st_mode & 0o002, "could not make fixture world-writable"
+
+
+def test_default_allowlist_symlink_refuses_no_fallback_to_env(tmp_path, monkeypatch, capsys):
+    """A symlinked default allow-list file is refused (symlink), and the
+    env-var candidate is NOT consulted as a fallback — the result is
+    inactive/refused and nothing is authorized."""
+    real = tmp_path / "real-allowlist.txt"
+    real.write_text("op-1\n", encoding="utf-8")
+    default = tmp_path / "default.txt"
+    default.symlink_to(real)
+    env_file = tmp_path / "env-allowlist.txt"
+    env_file.write_text("op-1\n", encoding="utf-8")
+    monkeypatch.setenv(adapter.ALLOWLIST_ENV_VAR, env_file.as_posix())
+    warnings: list[str] = []
+    loaded = adapter_protocol.load_allowlist(adapter.ALLOWLIST_ENV_VAR, default, warnings)
+    assert loaded.status == "refused"
+    assert loaded.accounts == set()
+    assert not loaded.authorized
+    assert loaded.reason and "symlink" in loaded.reason
+    # The refusal is reported both on stderr and in warnings, naming the
+    # file and the reason (distinct from "no allow-list configured": that
+    # case emits no notices).
+    err = capsys.readouterr().err
+    assert "refused" in err and "symlink" in err and str(default) in err
+    assert any("refused" in w and "symlink" in w for w in warnings)
+    # Nothing is authorized: the adapter's seam sees the empty allow-list.
+    payload = _load_fixture("comment-one.json")
+    v = adapter.question_legitimacy(payload, set(loaded.accounts))
+    assert v.verdict == "stranger" and v.answer is None
+
+
+def test_default_allowlist_world_writable_refuses_no_fallback_to_env(tmp_path, monkeypatch, capsys):
+    """A world-writable default allow-list file is refused, and the env-var
+    candidate is NOT consulted — refused, nothing authorized."""
+    default = tmp_path / "default.txt"
+    default.write_text("op-1\n", encoding="utf-8")
+    _make_world_writable(default)
+    env_file = tmp_path / "env-allowlist.txt"
+    env_file.write_text("op-1\n", encoding="utf-8")
+    monkeypatch.setenv(adapter.ALLOWLIST_ENV_VAR, env_file.as_posix())
+    loaded = adapter_protocol.load_allowlist(adapter.ALLOWLIST_ENV_VAR, default)
+    assert loaded.status == "refused"
+    assert loaded.accounts == set()
+    assert not loaded.authorized
+    assert loaded.reason and "world-writable" in loaded.reason
+    err = capsys.readouterr().err
+    assert "refused" in err and "world-writable" in err
+
+
+def test_absent_default_with_valid_env_file_uses_env(tmp_path, monkeypatch):
+    """When the default file is absent, the env-var-named file IS consulted
+    (the fallback is reserved for the absent case) and is active."""
+    env_file = tmp_path / "env-allowlist.txt"
+    env_file.write_text("op-1\n", encoding="utf-8")
+    monkeypatch.setenv(adapter.ALLOWLIST_ENV_VAR, env_file.as_posix())
+    loaded = adapter_protocol.load_allowlist(adapter.ALLOWLIST_ENV_VAR, tmp_path / "absent-default.txt")
+    assert loaded.status == "active"
+    assert loaded.accounts == {"op-1"}
+    assert "op-1" in loaded
+    assert "op-1" in set(loaded.accounts)
+
+
+def test_default_present_undecodable_refuses_no_fallback(tmp_path, monkeypatch):
+    """A present-but-undecodable default file is refused, not fallen back.
+    (Covers the undecodable branch of the fail-closed rule.)"""
+    default = tmp_path / "default.txt"
+    default.write_bytes(b"\xff\xfe\x00op-1\n")  # not valid UTF-8
+    env_file = tmp_path / "env-allowlist.txt"
+    env_file.write_text("op-1\n", encoding="utf-8")
+    monkeypatch.setenv(adapter.ALLOWLIST_ENV_VAR, env_file.as_posix())
+    loaded = adapter_protocol.load_allowlist(adapter.ALLOWLIST_ENV_VAR, default)
+    assert loaded.status == "refused"
+    assert loaded.accounts == set()
+    assert not loaded.authorized
+
+
+def test_allowlist_with_only_malformed_lines_is_active_but_empty(tmp_path):
+    """An active allow-list whose lines are all malformed is still active
+    (it authorizes nothing — an empty active allow-list is not a refusal)."""
+    bad = tmp_path / "default.txt"
+    bad.write_text("op 1\nbad/line\nop\x001\n", encoding="utf-8")
+    warnings: list[str] = []
+    loaded = adapter_protocol.load_allowlist(adapter.ALLOWLIST_ENV_VAR, bad, warnings)
+    assert loaded.status == "active"
+    assert loaded.accounts == set()
+    # An active allow-list with no valid lines is still authorized (it
+    # authorizes nothing — an empty active allow-list is not a refusal).
+    assert loaded.authorized
+    # All three lines are malformed (internal whitespace, path separator,
+    # control character) — an active allow-list with no valid lines
+    # authorizes nothing (an empty active allow-list is not a refusal).
+    assert len(warnings) == 3
+
+
+def test_malformed_allowlist_lines_with_control_chars_skipped(tmp_path, capsys):
+    """Allow-list lines with control/non-printable characters or internal
+    whitespace are skipped with a diagnostic (and do not authorize)."""
+    f = tmp_path / "default.txt"
+    f.write_text("op-1\nop 2\nop\x003\nop\n\t\n", encoding="utf-8")
+    loaded = adapter_protocol.load_allowlist(adapter.ALLOWLIST_ENV_VAR, f)
+    assert loaded.status == "active"
+    # The two control-char/whitespace lines are skipped; op-1 and op are
+    # valid tokens.
+    assert loaded.accounts == {"op-1", "op"}
+    err = capsys.readouterr().err
+    assert "malformed line" in err
+
+
+def test_case_insensitive_allowlist_match():
+    """Tracker logins are case-insensitive on GitHub, so allow-list
+    matching is case-insensitive (documented behavior)."""
+    loaded = adapter_protocol.Allowlist({"op-1"}, "active")
+    assert "OP-1" in loaded
+    assert "Op-1" in loaded
+    assert "op-1" in loaded
+    assert "op-2" not in loaded
+    # is_allowed matches case-insensitively for both Allowlist and bare-set
+    # shapes.
+    assert adapter_protocol.is_allowed(loaded, "OP-1")
+    assert adapter_protocol.is_allowed({"op-1"}, "Op-1")
+
+
+def test_refused_allowlist_never_authorizes():
+    """A refused (or absent) Allowlist authorizes nothing, even if an
+    account string is present in its accounts attribute — the seam-facing
+    decision is always negative when not active."""
+    refused = adapter_protocol.Allowlist({"op-1"}, "refused", "symlink")
+    assert "op-1" not in refused
+    assert not refused
+    assert not adapter_protocol.is_allowed(refused, "op-1")
+    absent = adapter_protocol.Allowlist(set(), "absent")
+    assert "op-1" not in absent
+    assert not adapter_protocol.is_allowed(absent, "op-1")
+
+
+# --- Malformed payloads never crash and never authorize ---------------------
+
+
+def test_malformed_question_payload_never_authorizes():
+    """Non-dict payloads, non-dict comments/edits, and missing/non-str
+    actor or body fields all degrade to stranger / not-authorized rather
+    than a crash or a false positive."""
+    fixtures = [
+        "not-a-dict.json",
+        "comment-missing-actor.json",
+        "comment-non-dict-edit.json",
+        "comment-non-dict-user.json",
+    ]
+    for name in fixtures:
+        payload = _load_fixture(name)
+        v = adapter.question_legitimacy(payload, ALLOWED)
+        assert v.verdict in ("stranger", "none"), f"{name}: {v.verdict!r} (malformed payload must not authorize)"
+        assert v.answer is None
+
+
+def test_malformed_label_payload_never_authorizes():
+    """Malformed label payloads (non-dict events, non-str actor, non-dict
+    label, non-str label name) are never authorized and never raise."""
+    for name in ("label-non-dict-event.json", "label-non-str-actor.json", "label-non-dict-label.json"):
+        payload = _load_fixture(name)
+        assert adapter.label_authorization(payload, ALLOWED) is False, name
+    # A non-dict payload is also never authorized.
+    assert adapter.label_authorization("not-a-dict", ALLOWED) is False
+

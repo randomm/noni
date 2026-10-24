@@ -80,6 +80,7 @@ from adapter_protocol import (  # noqa: E402
     VERDICT_ONE,
     VERDICT_STRANGER,
     QuestionVerdict,
+    is_allowed,
 )
 
 #: The env var naming an alternative allow-list file (mirrors the scrub's
@@ -115,23 +116,37 @@ def _ticked_options(body: str) -> list[str]:
     return seen
 
 
-def _last_state(payload: dict) -> tuple[str, str]:
+def _last_state(payload: object) -> tuple[str, str]:
     """The (body, actor) of the comment's last state.
 
     If the payload carries an edit history, the last edit's ``new_body`` and
     actor define the current state (the comment's own body is the same
     content; the history is what carries *who* set it last). Without a
     history (or a malformed history) the comment's own body and user are
-    the last state (no edits means the author wrote it once) — a malformed
-    payload degrades to the comment's own body, never a crash.
+    the last state (no edits means the author wrote it once).
+
+    A malformed payload never crashes and never authorizes: a non-dict
+    payload, a non-dict comment, a non-dict edit, or a missing/non-str
+    actor or body yields an empty ("", "") — the empty actor is never on
+    any allow-list, so the seam returns ``stranger``/not authorized rather
+    than a crash or a false positive.
     """
-    comment = payload.get("comment", {})
+    if not isinstance(payload, dict):
+        return "", ""
+    comment = payload.get("comment")
+    comment = comment if isinstance(comment, dict) else {}
     edits = payload.get("edits")
     if isinstance(edits, list) and edits:
         last = edits[-1]
         if isinstance(last, dict):
-            return last.get("new_body", ""), last.get("actor", "")
-    return comment.get("body", ""), comment.get("user", {}).get("login", "")
+            body = last.get("new_body")
+            actor = last.get("actor")
+            return (body if isinstance(body, str) else "", actor if isinstance(actor, str) else "")
+    body = comment.get("body")
+    body = body if isinstance(body, str) else ""
+    user = comment.get("user")
+    login = user.get("login") if isinstance(user, dict) else None
+    return body, (login if isinstance(login, str) else "")
 
 
 def question_legitimacy(payload: dict, allowlist: set[str]) -> QuestionVerdict:
@@ -151,7 +166,7 @@ def question_legitimacy(payload: dict, allowlist: set[str]) -> QuestionVerdict:
         return QuestionVerdict(VERDICT_MANY, None)
 
     answer = options[0]
-    if actor in allowlist:
+    if is_allowed(allowlist, actor):
         return QuestionVerdict(VERDICT_ONE, answer)
     return QuestionVerdict(VERDICT_STRANGER, None)
 
@@ -166,23 +181,46 @@ def label_authorization(payload: dict, allowlist: set[str]) -> bool:
     allow-listed is unauthorized, and a label applied by an allow-listed
     account stays authorized if someone later removes it (removals are
     ``unlabeled`` events and do not re-attribute the application).
+
+    A malformed payload never crashes and never authorizes: a non-dict
+    issue/label/event, a non-str label name, a non-str actor, or a missing
+    label/event yields ``False`` — no evidence of an allow-listed applier
+    means unauthorized, never an exception.
     """
-    labels = {label.get("name") for label in payload.get("issue", {}).get("labels", []) if label.get("name")}
+    if not isinstance(payload, dict):
+        return False
+    issue = payload.get("issue")
+    issue = issue if isinstance(issue, dict) else {}
+    raw_labels = issue.get("labels")
+    raw_labels = raw_labels if isinstance(raw_labels, list) else []
+    labels: set[str] = set()
+    for label in raw_labels:
+        if isinstance(label, dict):
+            name = label.get("name")
+            if isinstance(name, str) and name:
+                labels.add(name)
     if not labels:
-        # No labels present: nothing to authorize, and nothing unauthorized.
+        # No (valid) labels present: nothing to authorize, and nothing
+        # unauthorized.
         return True
 
-    events = payload.get("events", [])
+    events = payload.get("events")
+    events = events if isinstance(events, list) else []
     for label in sorted(labels):
         applied_by: list[str] = []
         for event in events:
+            if not isinstance(event, dict):
+                continue
             if event.get("event") == "labeled" and event.get("label") == label:
-                applied_by.append(event.get("actor", ""))
-        # No recorded application event for a present label: cannot verify the
-        # actor, so it is not authorized (the read is about the event, not the
-        # presence — no event means no evidence of an allow-listed applier).
+                actor = event.get("actor")
+                applied_by.append(actor if isinstance(actor, str) else "")
+        # No recorded application event for a present label (or an event
+        # whose actor is missing/non-str, recorded as "" so it can never
+        # match the allow-list): cannot verify the actor, so it is not
+        # authorized (the read is about the event, not the presence — no
+        # event means no evidence of an allow-listed applier).
         if not applied_by:
             return False
-        if applied_by[-1] not in allowlist:
+        if not is_allowed(allowlist, applied_by[-1]):
             return False
     return True

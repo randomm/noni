@@ -191,6 +191,26 @@ class Git:
                     ts = self._commit_ts.get(current, 0)
                     self._last_commit[rel] = (ts, current)
 
+    def added_paths_under(self, prefix: str) -> set[str]:
+        """Every path under ``prefix`` that git history shows was ever added.
+
+        Runs ``git log --all --diff-filter=A --name-only`` restricted to the
+        prefix (through the shared ``_run`` timeout) so the same probe-honesty
+        rule applies: a hung or failing git degrades to the empty set (the
+        check degrades to disk-only enumeration), never a silent hang. Only
+        the newest commit per path is retained, for the fix text."""
+        prefix = prefix.strip("/").rstrip("/")
+        out = self._run(["log", "--all", "--diff-filter=A", "--name-only",
+                         "--format=", "--", prefix])
+        paths: set[str] = set()
+        newest: dict[str, str] = {}
+        for line in (out or "").splitlines():
+            rel = line.strip()
+            if rel.startswith(prefix + "/"):
+                paths.add(rel)
+                newest.setdefault(rel, "")
+        return paths
+
     def last_commit(self, relpath: str) -> tuple[int, str] | None:
         """(unix ts, commit id) of the latest commit containing relpath, or None."""
         return self._last_commit.get(relpath)
@@ -377,6 +397,7 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
     (git-backed) and the supersede-chain check, in that order."""
     valid, unparseable = _check_ledger_records(ledger, root, findings)
     _check_ledger_edited(valid, unparseable, git, root, findings)
+    _check_ledger_deleted(ledger, git, root, findings)
     _check_ledger_chain(valid, ledger, root, findings)
 
 
@@ -498,6 +519,51 @@ def _check_ledger_edited(
             )
         elif disk is not None and blob != disk:
             add("ledger-edited", "fail", rid, str(path), "record was edited after commit (working tree differs from git)")
+
+
+def _check_ledger_deleted(ledger: Path, git: Git | None, root: Path, findings: list[dict]) -> None:
+    """The deleted-record check (append-only ledger rule).
+
+    Decision records are append-only: a record is superseded by a new record,
+    never removed. A record that git history shows was ever added but is
+    absent from the working tree is a deletion and is reported here, whether
+    the deletion is uncommitted or itself committed. It is a sub-reason ("deleted")
+    of the ledger-edited class (exit 12): both are violations of the same
+    "never change committed record state" rule. A path that was never
+    committed is not a deletion — it is a missing record, covered by
+    ledger-record. Session files are intentionally NOT checked here: ending a
+    session via its status field is the protocol, and deleting a session file
+    is not a violation."""
+    if git is None or not git.available:
+        return
+    top = git.top
+    if top is None:
+        return
+    try:
+        prefix = ledger.resolve().relative_to(top.resolve()).as_posix()
+    except ValueError:
+        return  # ledger is outside this git tree: no history to check against
+    if ledger.is_dir() is False:
+        return  # a missing ledger dir is ledger-record's business, not deletion
+    for rel in sorted(git.added_paths_under(prefix)):
+        if (top / rel).is_file():
+            continue
+        subject = rel.rsplit("/", 1)[-1]
+        findings.append(
+            {
+                "check": "ledger-edited",
+                "code": CLASS_CODE["ledger-edited"],
+                "severity": "fail",
+                "subject": subject,
+                "artifact": _rel_to_root(root, top / rel),
+                "message": (
+                    f"deleted: record {subject} exists in git history but is absent from the "
+                    "working tree (deletion is uncommitted or committed); decision records are "
+                    "append-only — restore the record (git checkout <commit> -- <path>) and "
+                    "supersede it with a new record instead of deleting"
+                ),
+            }
+        )
 
 
 def _check_ledger_chain(

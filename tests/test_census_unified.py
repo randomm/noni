@@ -43,6 +43,16 @@ def _commit_file(repo: Path, rel: str, content: str) -> None:
     _git(repo, "commit", "-q", "--allow-empty", "-m", f"add {rel}")
 
 
+def _commit_dir_state(repo: Path, dirname: str) -> None:
+    """Commit the current on-disk contents of a directory (adds + removes) so
+    that deletions are part of the committed state."""
+    target = repo / dirname
+    for p in target.iterdir():
+        _git(repo, "add", "-f", str(p))
+    _git(repo, "add", "-u", dirname)
+    _git(repo, "commit", "-q", "--allow-empty", "-m", f"update {dirname}")
+
+
 def _valid_record(rec_id: str = "2026-10-01-alpha", status: str = "decided", supersedes=None) -> dict:
     return {
         "id": rec_id,
@@ -190,6 +200,74 @@ class TestExitCodes:
         (repo / "noni/decisions/2026-10-01-alpha.json").write_text(json.dumps(rec, indent=2))
         rc, out, err = _run_census(repo)
         assert rc == 12, f"expected exit 12, got {rc}\nstderr: {err}\nstdout: {out}"
+
+    def test_exit_12_deleted_uncommitted(self, tmp_path):
+        """A committed record deleted from the working tree (deletion not
+        yet committed) is reported under the ledger-edited class with the
+        deleted reason. The ledger still holds a second, valid record, so
+        the ledger-record check stays quiet and 12 is the only fired class."""
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                      json.dumps(_valid_record(), indent=2))
+        _commit_file(repo, "noni/decisions/2026-10-02-beta.json",
+                      json.dumps(_valid_record("2026-10-02-beta"), indent=2))
+        (repo / "noni/decisions/2026-10-01-alpha.json").unlink()
+        rc, out, err = _run_census(repo)
+        assert rc == 12, f"expected exit 12, got {rc}\nstderr: {err}\nstdout: {out}"
+        assert "deleted" in out, f"expected 'deleted' reason in output:\n{out}"
+
+    def test_exit_12_deleted_committed(self, tmp_path):
+        """A committed record whose deletion is itself committed is also
+        reported (exit 12): the git-history enumeration catches it even
+        though the working tree and HEAD agree the file is gone."""
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                      json.dumps(_valid_record(), indent=2))
+        _commit_file(repo, "noni/decisions/2026-10-02-beta.json",
+                      json.dumps(_valid_record("2026-10-02-beta"), indent=2))
+        (repo / "noni/decisions/2026-10-01-alpha.json").unlink()
+        _commit_dir_state(repo, "noni/decisions")
+        rc, out, err = _run_census(repo)
+        assert rc == 12, f"expected exit 12, got {rc}\nstderr: {err}\nstdout: {out}"
+        assert "deleted" in out, f"expected 'deleted' reason in output:\n{out}"
+
+    def test_never_committed_deleted_is_not_a_finding(self, tmp_path):
+        """A record that was never committed and is then deleted is not a
+        deletion: there is nothing in history to have been removed. A second,
+        committed record keeps the ledger non-empty, so no finding fires at
+        all (exit 0) — in particular no deleted finding (exit 12)."""
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-02-beta.json",
+                      json.dumps(_valid_record("2026-10-02-beta"), indent=2))
+        path = repo / "noni/decisions/2026-10-01-alpha.json"
+        path.write_text(json.dumps(_valid_record(), indent=2))
+        path.unlink()
+        rc, out, err = _run_census(repo)
+        assert rc == 0, f"expected exit 0, got {rc}\nstderr: {err}\nstdout: {out}"
+        assert "deleted" not in out, f"must not report a deletion for a never-committed file:\n{out}"
+
+    def test_deleted_record_json_keys(self, tmp_path):
+        """In --json mode the deleted-record finding carries the documented
+        keys: schema, kind, check, code, severity, subject, artifact,
+        message, fix."""
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                      json.dumps(_valid_record(), indent=2))
+        _commit_file(repo, "noni/decisions/2026-10-02-beta.json",
+                      json.dumps(_valid_record("2026-10-02-beta"), indent=2))
+        (repo / "noni/decisions/2026-10-01-alpha.json").unlink()
+        rc, out, err = _run_census(repo, "--json")
+        assert rc == 12, f"expected exit 12, got {rc}\nstderr: {err}"
+        rows = _ndjson_rows(out)
+        finding = [r for r in rows if r["kind"] == "finding"][0]
+        expected = {"schema", "kind", "check", "code", "severity", "subject",
+                    "artifact", "message", "fix"}
+        assert expected <= set(finding), f"missing keys: {expected - set(finding)}"
+        assert finding["check"] == "ledger-edited"
+        assert finding["code"] == 12
+        assert finding["severity"] == "fail"
+        assert "deleted" in finding["message"]
+        assert "git checkout" in finding["fix"] or "supersede" in finding["fix"]
 
     def test_exit_20_dangling_supersedes(self, tmp_path):
         repo = _init_repo(tmp_path / "repo")

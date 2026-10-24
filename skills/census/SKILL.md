@@ -34,7 +34,7 @@ python3 skills/census/scripts/census.py [options]
 | check id | code | meaning |
 |---|---|---|
 | `ledger-record` | 10 | a decision record is missing or malformed, or the ledger is unusable |
-| `ledger-edited` | 12 | a record was edited after commit (supersede, never edit) |
+| `ledger-edited` | 12 | a record was edited after commit (supersede, never edit); a committed record deleted from the working tree is also reported here, with the "deleted" reason |
 | `ledger-chain` | 20 | the supersede chain is broken (dangling, duplicate, orphan, cycle, zero-live, multi-live) |
 | `session-double` | 30 | two active claims on the same task from different identities (the arbiter) |
 | `session-claim` | 31 | a claim row committed without a register file |

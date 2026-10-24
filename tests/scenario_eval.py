@@ -1,14 +1,14 @@
 """E5 scenario eval: a deterministic end-to-end harness over the direction layer.
 
 The builder constructs a bare origin plus two agent clones in a throwaway
-directory (a tmp_path in the tests; any path when run standalone), drives the
-real register.py / claim.py scripts (fetch-rebase-push), and commits a healthy
-steering decision chain. In the faulted variant it plants five disjoint faults
-(census codes 30, 31, 20, 40 committed to origin, and 12 planted in the fresh
-clone's working tree), each in its own artifact. Every commit runs with pinned
-GIT_AUTHOR_DATE / GIT_COMMITTER_DATE, so a rebuilt scenario is identical, and
-the census runs against a FRESH clone of the bare origin with a fixed --now
-and --stale-after.
+directory (a tmp_path in the tests; its own temp dir when run standalone
+with no argument), drives the real register.py / claim.py scripts
+(fetch-rebase-push), and commits a healthy steering decision chain. In the
+faulted variant it plants five disjoint faults (census codes 30, 31, 20, 40
+committed to origin, and 12 planted in the fresh clone's working tree), each
+in its own artifact. Every commit runs with pinned GIT_AUTHOR_DATE /
+GIT_COMMITTER_DATE, so a rebuilt scenario is identical, and the census runs
+against a FRESH clone of the bare origin with a fixed --now and --stale-after.
 
 Determinism is asserted on the normalized finding multiset — the multiset of
 (check, code, severity, masked-subject) tuples from the census --json output —
@@ -16,9 +16,20 @@ because session ids carry a random 6-hex suffix per build; a session finding
 is identified by its build-time-known identity (agent-a / agent-b / agent-c),
 which its register file carries, never by the random id.
 
-Standalone: ``python tests/scenario_eval.py <path>`` builds the faulted
-variant at <path> and prints the census exit code plus the normalized finding
-set.
+Deletion is confined to what this run created: the builder and the standalone
+no-arg path create their own directories and remove only those; a directory
+that exists and is not empty is refused (exit 2, nothing deleted, nothing
+created), never cleaned. The only other removal is of the ``fresh`` clone
+under the scenario base, which ``fresh_clone`` itself created on an earlier
+call.
+
+Standalone: ``python tests/scenario_eval.py`` builds the faulted variant in
+its own ``tempfile.mkdtemp(prefix="noni-scenario-")`` directory, prints the
+census exit code plus the normalized finding set, and removes exactly that
+directory before exiting 0. ``python tests/scenario_eval.py <path>`` refuses
+an explicit path that exists and is non-empty (exit 2, clear message, no
+deletion); an explicit path that does not exist or is an empty directory is
+used as-is and left behind for the operator.
 """
 
 from __future__ import annotations
@@ -28,6 +39,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -73,7 +85,7 @@ class Scenario:
 
 def _git_pinned(repo: Path, *args: str, when: str) -> subprocess.CompletedProcess:
     """git in repo with the identity and both commit timestamps pinned."""
-    from conftest import git_pin_date
+    from _harness import git_pin_date
 
     return git_pin_date(repo, when, *args)
 
@@ -89,7 +101,7 @@ def _commit(repo: Path, rel: str, content: str, msg: str, when: str) -> None:
 
 def _push(repo: Path, when: str) -> None:
     """Push with fetch-rebase-push (at most 3 attempts)."""
-    from conftest import push_with_retry
+    from _harness import push_with_retry
     push_with_retry(repo, "main")
 
 
@@ -119,7 +131,7 @@ def _record(rec_id: str, when: str, status: str, supersedes, scope: str, questio
 
 def _register(repo: Path, identity: str, clone_name: str) -> str:
     """Register a session via the real register.py; return the session id."""
-    from conftest import run_register
+    from _harness import run_register
 
     proc = run_register(repo, identity, host=clone_name, worktree=str(repo))
     assert proc.returncode == 0, f"register {identity} failed: {proc.stderr}"
@@ -128,7 +140,7 @@ def _register(repo: Path, identity: str, clone_name: str) -> str:
 
 def _claim(repo: Path, session_id: str, task: str) -> None:
     """Claim a task via the real claim.py --push (fetch-rebase-push)."""
-    from conftest import run_claim
+    from _harness import run_claim
 
     proc = run_claim(repo, session_id, task, push=True)
     assert proc.returncode == 0, f"claim {task} by {session_id} failed: {proc.stderr}"
@@ -136,7 +148,7 @@ def _claim(repo: Path, session_id: str, task: str) -> None:
 
 def _ensure_branch(repo: Path, branch: str) -> None:
     """Ensure the repo is on `branch`, creating it if needed."""
-    from conftest import _git_ok
+    from _harness import _git_ok
 
     # Check if we're already on the branch
     proc = subprocess.run(
@@ -158,6 +170,13 @@ def build_scenario(base: Path, faulted: bool = False) -> Scenario:
     """Build the healthy baseline (optionally plus the planted faults) under
     base, returning the scenario handle.
 
+    base must not exist, or must exist as an empty directory: the builder
+    never deletes anything. It creates only its own entries (``origin.git``,
+    ``clone-a``, ``clone-b``) directly under base — a path outside the
+    given base is never touched. Callers that need a rebuild at a
+    pre-existing, non-empty base must clean it up themselves, and only if
+    they know the contents are their own.
+
     Healthy baseline: a bare origin plus two clones; session A (identity
     "agent-a") in clone 1 and session B (identity "agent-b") in clone 2
     register via the real register.py; A claims task #1 and B claims task #2
@@ -166,17 +185,18 @@ def build_scenario(base: Path, faulted: bool = False) -> Scenario:
     d2) sets the ordering between the two tasks; every commit uses a pinned
     recent date.
     """
-    from conftest import _git_ok
+    from _harness import _git_ok
 
-    # Clean up any previous run at this path.
-    for name in ("origin.git", "clone-a", "clone-b", "fresh"):
-        path = base / name
-        if path.exists():
-            if path.is_dir():
-                shutil.rmtree(path)
-            else:
-                path.unlink()
-    base.mkdir(parents=True, exist_ok=True)
+    if base.exists():
+        if not base.is_dir():
+            raise RuntimeError(f"refusing to build at {base}: path exists and is not a directory")
+        if any(base.iterdir()):
+            raise RuntimeError(
+                f"refusing to build at {base}: directory is not empty; "
+                "it must not exist or be an empty directory"
+            )
+    else:
+        base.mkdir(parents=True, exist_ok=True)
 
     origin = base / "origin.git"
     clone_a = base / "clone-a"
@@ -259,7 +279,7 @@ def _plant_faults(scenario: Scenario, t_c: str) -> None:
     40  a third session (identity "agent-c", no claims) whose only commit
         carries a pinned date older than --stale-after relative to --now.
     """
-    from conftest import git_pin_date, run_register
+    from _harness import git_pin_date, run_register
 
     # 30: the double claim on #1 (real claim.py --push, fetch-rebase-push).
     _claim(scenario.clone_b, scenario.sid_b, "#1")
@@ -302,9 +322,16 @@ def _plant_faults(scenario: Scenario, t_c: str) -> None:
 
 
 def fresh_clone(scenario: Scenario, name: str = "fresh") -> Path:
-    """A fresh clone of the scenario's bare origin (local directory clone)."""
+    """A fresh clone of the scenario's bare origin (local directory clone).
+
+    The destination must sit directly under the scenario base and must be
+    the builder's own ``fresh`` clone for anything to be removed: a
+    pre-existing, non-empty, foreign destination is refused, never deleted.
+    """
     dest = scenario.base / name
     if dest.exists():
+        if name != "fresh" or not dest.is_dir():
+            raise RuntimeError(f"refusing to remove {dest}: not this run's own clone directory")
         shutil.rmtree(dest)
     subprocess.run(["git", "clone", "-q", "--branch", "main", str(scenario.origin), str(dest)],
                    check=True, capture_output=True, timeout=60)
@@ -352,19 +379,52 @@ def normalize_findings(rows: list[dict]) -> list[tuple[str, int, str, str]]:
 
 
 def main(argv: list[str]) -> int:
-    """Standalone: build the faulted variant at <path> and report the census."""
-    if len(argv) != 1:
-        print("usage: python tests/scenario_eval.py <path>")
+    """Standalone entry point.
+
+    No argument: build the faulted variant in a fresh
+    ``tempfile.mkdtemp(prefix="noni-scenario-")`` directory and remove
+    exactly that directory before returning 0 — the only deletion this
+    path performs is of the directory this run created.
+    ``<path>``: refuse to build when the path exists and is non-empty (exit
+    2, clear message, nothing deleted, nothing created); build into a path
+    that does not exist or is an empty directory, and leave it in place
+    afterwards. Returns 0 on success, 2 on usage or refusal errors.
+    """
+    if len(argv) > 1:
+        print("usage: python tests/scenario_eval.py [path]")
         return 2
-    base = Path(argv[0])
-    scenario = build_scenario(base, faulted=True)
-    clone = fresh_clone(scenario)
-    _plant_fault_12(clone)
-    code, rows = run_census_json(clone, scenario.now, scenario.stale_after)
-    print(f"faulted variant built at {base}; census exit {code}")
-    for finding in normalize_findings(rows):
-        print(finding)
-    return 0
+    if len(argv) == 1:
+        base = Path(argv[0])
+        if base.exists() and not base.is_dir():
+            print(f"refusing to build at {base}: path exists and is not a directory")
+            return 2
+        if base.is_dir() and any(base.iterdir()):
+            print(
+                f"refusing to build at {base}: directory is not empty; "
+                "delete its contents first or pass a fresh path"
+            )
+            return 2
+        scenario = build_scenario(base, faulted=True)
+        clone = fresh_clone(scenario)
+        _plant_fault_12(clone)
+        code, rows = run_census_json(clone, scenario.now, scenario.stale_after)
+        print(f"faulted variant built at {base}; census exit {code}")
+        for finding in normalize_findings(rows):
+            print(finding)
+        return 0
+    base = Path(tempfile.mkdtemp(prefix="noni-scenario-"))
+    try:
+        scenario = build_scenario(base, faulted=True)
+        clone = fresh_clone(scenario)
+        _plant_fault_12(clone)
+        code, rows = run_census_json(clone, scenario.now, scenario.stale_after)
+        print(f"faulted variant built at {base}; census exit {code}")
+        for finding in normalize_findings(rows):
+            print(finding)
+        return 0
+    finally:
+        # Only the directory this run created is ever removed.
+        shutil.rmtree(base, ignore_errors=True)
 
 
 if __name__ == "__main__":

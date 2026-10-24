@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 from scenario_eval import (
@@ -17,6 +19,7 @@ from scenario_eval import (
     _plant_fault_12,
     build_scenario,
     fresh_clone,
+    main,
     normalize_findings,
     run_census_json,
 )
@@ -124,3 +127,87 @@ def test_fresh_clone_replay(tmp_path: Path) -> None:
     # The steered ordering is readable from the live record
     assert d2["scope"] == "release ordering"
     assert d2["questions"][0]["answer"] == "yes"
+
+
+# --- destructive-delete guards --------------------------------------------
+
+
+def test_main_explicit_path_non_empty_dir_refused(tmp_path: Path) -> None:
+    """An explicit path to a non-empty directory is refused (exit 2, nothing
+    deleted): a sentinel file survives the refused run, and no scenario
+    artifacts are created there."""
+    base = tmp_path / "occupied"
+    base.mkdir()
+    sentinel = base / "sentinel.txt"
+    sentinel.write_text("do not touch\n", encoding="utf-8")
+
+    code = main([str(base)])
+
+    assert code == 2
+    assert sentinel.is_file(), "refused run must not delete a foreign file"
+    assert sentinel.read_text(encoding="utf-8") == "do not touch\n"
+    for name in ("origin.git", "clone-a", "clone-b", "fresh"):
+        assert not (base / name).exists(), f"refused run created {name}"
+
+
+def test_main_no_arg_uses_and_removes_own_temp_dir() -> None:
+    """A no-arg standalone run creates its own temp dir, builds, and removes
+    exactly that dir (exit 0; no foreign path is ever touched)."""
+    code = main([])
+    assert code == 0
+
+
+def test_main_explicit_path_empty_dir_used(tmp_path: Path) -> None:
+    """An explicit path that exists as an empty directory is used as-is and
+    populated (the run leaves it behind for the operator)."""
+    base = tmp_path / "empty-base"
+    base.mkdir()
+
+    code = main([str(base)])
+
+    assert code == 0
+    assert (base / "origin.git").is_dir()
+    assert (base / "clone-a").is_dir()
+    assert (base / "clone-b").is_dir()
+
+
+def test_builder_refuses_non_empty_base_without_deleting(tmp_path: Path) -> None:
+    """build_scenario refuses a pre-existing non-empty base (never deletes it)
+    but accepts a pre-existing empty base."""
+    occupied = tmp_path / "occupied"
+    occupied.mkdir()
+    sentinel = occupied / "keep-me"
+    sentinel.write_text("x\n", encoding="utf-8")
+
+    try:
+        build_scenario(occupied)
+    except RuntimeError as exc:
+        assert "not empty" in str(exc)
+    else:
+        raise AssertionError("build_scenario must refuse a non-empty base")
+    assert sentinel.is_file()
+    assert (occupied / "origin.git").exists() is False
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    scenario = build_scenario(empty)
+    assert (empty / "origin.git").is_dir()
+    assert scenario.base == empty
+
+
+def test_standalone_subprocess_no_traceback() -> None:
+    """``python3 tests/scenario_eval.py`` (no pytest, no argument) runs clean:
+    exit 0 per the documented contract and no traceback on stderr. The no-arg
+    run also proves the standalone path's imports work without conftest."""
+    proc = subprocess.run(
+        [sys.executable, str(Path(__file__).parent / "scenario_eval.py")],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert proc.returncode == 0, f"exit {proc.returncode}\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
+    assert "Traceback" not in proc.stderr
+    # The census runs on the faulted variant, so the documented exit-code
+    # contract (lowest finding code wins) surfaces in the printed census exit.
+    assert "faulted variant built at" in proc.stdout
+    assert "census exit" in proc.stdout

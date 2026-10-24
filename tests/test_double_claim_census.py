@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 
-from conftest import _git_ok, _push_with_retry, build_bare_origin, run_claim, run_register
+from conftest import _git_ok, build_bare_origin, push_with_retry, run_claim, run_register
 
 
 def test_two_clones_double_claim_census_flags(tmp_path, run_sessions_census):
@@ -43,8 +43,8 @@ def test_two_clones_double_claim_census_flags(tmp_path, run_sessions_census):
     _git_ok(clone_b, "add", "noni/sessions/")
     _git_ok(clone_b, "commit", "-q", "-m", "register B")
     # Push both register commits (A first, B second — no conflict expected).
-    _push_with_retry(clone_a, "main")
-    _push_with_retry(clone_b, "main")
+    push_with_retry(clone_a, "main")
+    push_with_retry(clone_b, "main")
 
     # Both clones claim the same task with --push (fetch-rebase-push). If B
     # loses the race it fetch-rebase-pushes and both claims land.

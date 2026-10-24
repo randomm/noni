@@ -529,8 +529,8 @@ def _check_ledger_deleted(ledger: Path, git: Git | None, root: Path, findings: l
 
     Decision records are append-only: a record is superseded by a new record,
     never removed. A record that HEAD-reachable git history shows was added
-    but is absent from the working tree is a deletion and is reported here,
-    whether the deletion is uncommitted or itself committed. A record that
+    but is absent from the working tree — deleted or renamed — is reported
+    here, whether the change is uncommitted or itself committed. A record that
     was only ever added on an unmerged branch (never reachable from HEAD) is
     not a deletion — it is not part of this branch's history. It is a
     sub-reason ("deleted")
@@ -563,10 +563,11 @@ def _check_ledger_deleted(ledger: Path, git: Git | None, root: Path, findings: l
                 "subject": subject,
                 "artifact": _rel_to_root(root, top / rel),
                 "message": (
-                    f"deleted: record {subject} exists in git history but is absent from the "
-                    "working tree (deletion is uncommitted or committed); decision records are "
-                    "append-only — restore the record (git checkout <commit> -- <path>) and "
-                    "supersede it with a new record instead of deleting"
+                    f"deleted: record {subject} is missing from the working tree because it was "
+                    "deleted or renamed (in git history but absent now; the change is uncommitted "
+                    "or committed); decision records are append-only: restore the original path "
+                    "(git checkout <commit> -- <path>) and record any change as a new superseding "
+                    "record instead of deleting or renaming"
                 ),
             }
         )

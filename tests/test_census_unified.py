@@ -231,6 +231,25 @@ class TestExitCodes:
         assert rc == 12, f"expected exit 12, got {rc}\nstderr: {err}\nstdout: {out}"
         assert "deleted" in out, f"expected 'deleted' reason in output:\n{out}"
 
+    def test_exit_12_renamed_committed(self, tmp_path):
+        """A committed record that is renamed (committed on a new path, old
+        path gone) is reported under the ledger-edited class with the deleted
+        reason: the committed record path is missing from the working tree
+        because it was deleted or renamed."""
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                      json.dumps(_valid_record(), indent=2))
+        _commit_file(repo, "noni/decisions/2026-10-02-beta.json",
+                      json.dumps(_valid_record("2026-10-02-beta"), indent=2))
+        (repo / "noni/decisions/2026-10-01-alpha.json").rename(
+            repo / "noni/decisions/2026-10-03-alpha-renamed.json"
+        )
+        _commit_dir_state(repo, "noni/decisions")
+        rc, out, err = _run_census(repo)
+        assert rc == 12, f"expected exit 12, got {rc}\nstderr: {err}\nstdout: {out}"
+        assert "deleted" in out, f"expected 'deleted' reason in output:\n{out}"
+        assert "renamed" in out, f"expected 'renamed' in message:\n{out}"
+
     def test_deleted_on_unmerged_branch_is_not_reported(self, tmp_path):
         """A record added and committed on an unmerged feature branch, never
         merged into the current branch (main), must NOT be reported as deleted

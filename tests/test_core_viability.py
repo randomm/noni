@@ -42,19 +42,6 @@ CORE_TEST_MODULES = sorted(
 )
 
 
-def _git(repo: Path, *args: str) -> None:
-    cmd = [
-        "git", "-C", str(repo),
-        "-c", "user.name=Replay",
-        "-c", "user.email=replay@fixture.invalid",
-        "-c", "commit.gpgsign=false",
-        *args,
-    ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode != 0:
-        raise RuntimeError(f"git {args} failed: {proc.stderr.strip()}")
-
-
 def test_census_passes_on_fixture_repo_no_remote_no_integrations(git_repo):
     """The census passes on a fixture repo with no remote and no integrations
     dir: exit 0 for a valid ledger, including a tracker-sourced record with

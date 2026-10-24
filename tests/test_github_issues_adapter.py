@@ -53,26 +53,6 @@ def _load_fixture(name: str) -> dict:
     return json.loads((GH_FIXTURES / name).read_text(encoding="utf-8"))
 
 
-def _load_allowlist_via_adapter(tmp_path, *, file_content=None, env_content=None) -> set[str]:
-    """Load the allow-list through the adapter's seam (the protocol's loader
-    with the adapter's env var), writing the synthetic local config first.
-
-    ``file_content`` / ``env_content`` are the text to write into the local
-    config file / the env-var-named file (or None to omit that source).
-    Returns the adapter's loaded allow-list set.
-    """
-    if file_content is not None:
-        file_path = tmp_path / "file-allowlist.txt"
-        file_path.write_text(file_content, encoding="utf-8")
-    else:
-        file_path = tmp_path / "absent.txt"
-    if env_content is not None:
-        env_path = tmp_path / "env-allowlist.txt"
-        env_path.write_text(env_content, encoding="utf-8")
-        os.environ[adapter.ALLOWLIST_ENV_VAR] = env_path.as_posix()
-    return adapter_protocol.load_allowlist(adapter.ALLOWLIST_ENV_VAR, file_path)
-
-
 # --- Interface conformance ----------------------------------------------------
 
 def test_adapter_implements_the_interface():
@@ -140,12 +120,15 @@ def test_stranger_first_allowlisted_last_is_one():
 
 # --- Allow-list loading (never hard-coded) -----------------------------------
 
-def test_allowlist_from_local_config_file(tmp_path):
+def test_allowlist_from_local_config_file(tmp_path, monkeypatch):
     """The allow-list loads from an untracked local config file (one account
     per line, comments and blanks ignored), through the adapter's seam.
     This is the canonical seam: load_allowlist(env_var, file) with the
     adapter's env var and the local config file."""
-    loaded = _load_allowlist_via_adapter(tmp_path, file_content="# local allow-list\nop-1\n\nother-operator\n", env_content=None)
+    config = tmp_path / "file-allowlist.txt"
+    config.write_text("# local allow-list\nop-1\n\nother-operator\n", encoding="utf-8")
+    monkeypatch.delenv(adapter.ALLOWLIST_ENV_VAR, raising=False)
+    loaded = adapter_protocol.load_allowlist(adapter.ALLOWLIST_ENV_VAR, config)
     assert loaded == {"op-1", "other-operator"}
 
 

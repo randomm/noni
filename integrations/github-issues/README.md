@@ -17,21 +17,23 @@ q1: Which release carries the new scheduler?
 
 The operator answers by ticking an option (editing the comment). The
 adapter reads the comment **and its edit timeline** — the legitimacy rule
-is about the *last edit that ticked the answer*, so the recorded payload
+is about the *comment's last edit* and its actor, so the recorded payload
 must carry the edit history, not just the final comment body:
 
-- **`one`** — exactly one option ticked, and the last edit that ticked it
-  was made by an allow-listed account. The answer is that option's label.
+- **`one`** — exactly one option ticked in the comment's last state, and
+  the comment's last edit was made by an allow-listed account. The answer
+  is that option's label.
 - **`none`** — no option ticked.
 - **`many`** — more than one option ticked (ambiguous — persisted as
   `status: open` with no answer, never as an answer).
-- **`stranger`** — the last edit that ticked an option was made by an
-  account not on the allow-list (a foreign edit voids the reply).
+- **`stranger`** — the comment's last edit was made by an account not on
+  the allow-list (a foreign edit voids the reply).
 
-The last ticker wins, not the first: an allow-listed account ticks an
+The last editor wins, not the first: an allow-listed account ticks an
 option and a stranger later edits the same comment (re-ticking the same or
 a different option) yields `stranger`; a stranger ticks first and an
-allow-listed account later re-ticks the same option yields `one`.
+allow-listed account later edits the comment (re-ticking the same option)
+yields `one`.
 
 ## Label authorization
 
@@ -81,7 +83,7 @@ import github_issues_adapter as adapter
 
 assert adapter_protocol.check_interface(adapter) == []  # two seams present
 
-allowlist = adapter.load_allowlist(
+allowlist = adapter_protocol.load_allowlist(
     adapter.ALLOWLIST_ENV_VAR, adapter.default_allowlist_file()
 )
 verdict = adapter.question_legitimacy(payload, allowlist)   # QuestionVerdict

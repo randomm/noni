@@ -6,20 +6,20 @@ and ``integrations/adapter_protocol.py`` for GitHub issues:
 - **Question legitimacy.** A steering question is an **issue comment with
   checkbox options**. The payload is the comment together with its edit
   history (the timeline), because the legitimacy rule is about *who made the
-  last edit that ticked the answer*, not who is allowed to read the comment.
+  comment's last edit*, not who is allowed to read the comment.
   The verdict is ``one`` / ``none`` / ``many`` / ``stranger``:
 
     * ``one``      exactly one option ticked in the comment's last state, and
-                   the last edit that ticked it was made by an allow-listed
+                   the comment's last edit was made by an allow-listed
                    account;
     * ``none``     no option ticked;
     * ``many``     more than one option ticked (ambiguous — not an answer);
-    * ``stranger`` the last edit that ticked an option was made by an account
-                   not on the allow-list (a foreign edit voids the reply —
-                   the last ticker wins, not the first).
+    * ``stranger`` the comment's last edit was made by an account not on
+                   the allow-list (a foreign edit voids the reply — the
+                   last editor wins, not the first).
 
   A ticked comment edited later by anyone is re-evaluated on that edit: the
-  "last edit that ticked it" is the latest timeline event that changed the
+  "comment's last edit" is the latest timeline event that changed the
   comment, and it is that event's account that must be allow-listed.
 
 - **Label authorization.** The payload is the issue (with its labels) plus
@@ -137,8 +137,8 @@ def question_legitimacy(payload: dict, allowlist: set[str]) -> QuestionVerdict:
 
     Returns the operator's answer (when the steer is legitimate) and the
     verdict. A steer is legitimate (``one``) iff exactly one option is
-    ticked in the comment's last state and the last edit that ticked it was
-    made by an allow-listed account.
+    ticked in the comment's last state and the comment's last edit was made
+    by an allow-listed account.
     """
     body, actor = _last_state(payload)
     options = _ticked_options(body)

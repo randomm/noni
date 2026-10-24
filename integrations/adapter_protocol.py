@@ -23,6 +23,7 @@ exist with these shapes, and ``test_adapter_interface.py`` proves both).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 # The four verdicts of the question-legitimacy seam. A steer is:
 #   "none"     no answer was given (no tick); persist as status open, no answer.
@@ -63,7 +64,7 @@ class QuestionVerdict:
             raise ValueError(f"verdict {self.verdict!r} must carry no answer")
 
 
-def load_allowlist(env_var: str, default_file) -> set[str]:
+def load_allowlist(env_var: str, default_file: str | Path | None) -> set[str]:
     """Load the allow-list of trusted accounts from local configuration.
 
     The allow-list is **never hard-coded**: it comes from an untracked local
@@ -78,12 +79,13 @@ def load_allowlist(env_var: str, default_file) -> set[str]:
 
     File format: one account per line; blank lines and lines starting with
     ``#`` are ignored. An unreadable or non-UTF-8 file is skipped (with the
-    next candidate still consulted), never a crash.
+    next candidate still consulted, and a prominent stderr notice, mirroring
+    the scrub's deny-list loader), never a crash.
     """
     import os
-    from pathlib import Path
+    import sys
 
-    candidates: list = []
+    candidates: list[Path] = []
     if default_file is not None:
         candidates.append(Path(default_file))
     if env_var:
@@ -96,7 +98,12 @@ def load_allowlist(env_var: str, default_file) -> set[str]:
             if not path.is_file():
                 continue
             raw = path.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError):
+        except (UnicodeDecodeError, OSError) as e:
+            print(
+                f"adapter-allowlist: WARNING — {path} unreadable ({e}); "
+                f"continuing with the next candidate if any.",
+                file=sys.stderr,
+            )
             continue
         accounts = set()
         for line in raw.splitlines():

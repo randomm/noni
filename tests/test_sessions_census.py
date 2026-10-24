@@ -179,7 +179,7 @@ def test_empty_claims_is_clean(tmp_path, run_sessions_census):
     sessions.mkdir(parents=True)
     (sessions / "2026-10-01-empty.md").write_text(
         "- identity: developer\n"
-        "- host/worktree: halo (workstation-a)\n"
+        "- host/worktree: host-a (workstation-a)\n"
         "- started: 2026-10-01T10:00:00Z\n"
         "- status: active\n"
         "- claims:\n",
@@ -190,7 +190,7 @@ def test_empty_claims_is_clean(tmp_path, run_sessions_census):
 
     (sessions / "2026-10-01-bad.md").write_text(
         "- identity: developer\n"
-        "- host/worktree: halo (workstation-a)\n"
+        "- host/worktree: host-a (workstation-a)\n"
         "- started: 2026-10-01T10:00:00Z\n"
         "- status: active\n"
         "- claims:\n\n"
@@ -210,7 +210,7 @@ def test_same_identity_multiple_sessions_not_double_claim(tmp_path, run_sessions
     for name in ("2026-10-01-aaaaaa", "2026-10-01-bbbbbb"):
         (sessions / f"{name}.md").write_text(
             "- identity: developer\n"
-            "- host/worktree: halo (workstation-a)\n"
+            "- host/worktree: host-a (workstation-a)\n"
             "- started: 2026-10-01T10:00:00Z\n"
             "- status: active\n"
             "- claims:\n\n"
@@ -230,7 +230,7 @@ def test_priority_lowest_code_wins(tmp_path, run_sessions_census):
     sessions.mkdir(parents=True)
     (sessions / "2026-10-01-aaaaaa.md").write_text(
         "- identity: developer\n"
-        "- host/worktree: halo (workstation-a)\n"
+        "- host/worktree: host-a (workstation-a)\n"
         "- started: 2026-10-01T10:00:00Z\n"
         "- status: active\n"
         "- claims:\n\n"
@@ -239,7 +239,7 @@ def test_priority_lowest_code_wins(tmp_path, run_sessions_census):
     )
     (sessions / "2026-10-01-bbbbbb.md").write_text(
         "- identity: reviewer\n"
-        "- host/worktree: halo (workstation-a)\n"
+        "- host/worktree: host-a (workstation-a)\n"
         "- started: 2026-10-01T10:00:00Z\n"
         "- status: active\n"
         "- claims:\n\n"
@@ -247,7 +247,7 @@ def test_priority_lowest_code_wins(tmp_path, run_sessions_census):
         encoding="utf-8",
     )
     (sessions / "2026-10-01-cccccc.md").write_text(
-        "- host/worktree: halo (workstation-a)\n"  # missing identity
+        "- host/worktree: host-a (workstation-a)\n"  # missing identity
         "- started: 2026-10-01T10:00:00Z\n"
         "- status: active\n"
         "- claims:\n",

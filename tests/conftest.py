@@ -133,3 +133,110 @@ def run_census():
         return proc.returncode, proc.stdout, proc.stderr
     return _run
 
+
+# --- E2 session/claim helpers -------------------------------------------------
+
+SESSIONS_SKILL = REPO / "skills" / "sessions-claims" / "scripts"
+CENSUS_SESSIONS = SESSIONS_SKILL / "census-sessions.sh"
+REGISTER = SESSIONS_SKILL / "register.py"
+CLAIM = SESSIONS_SKILL / "claim.py"
+
+
+def _git_e2(repo: Path, *args: str) -> subprocess.CompletedProcess:
+    """Run git in a repo with a deterministic identity and no GPG signing."""
+    cmd = [
+        "git", "-C", str(repo),
+        "-c", "user.name=Replay",
+        "-c", "user.email=replay@fixture.invalid",
+        "-c", "commit.gpgsign=false",
+        *args,
+    ]
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def _git_ok(repo: Path, *args: str) -> subprocess.CompletedProcess:
+    proc = _git_e2(repo, *args)
+    if proc.returncode != 0:
+        raise RuntimeError(f"git {args} failed: {proc.stderr.strip()}")
+    return proc
+
+
+def build_bare_origin(origin: Path, worktrees: list[Path]) -> None:
+    """Build a bare origin plus one or more clones all on branch 'main'.
+
+    Mirrors the reference driver's retry-tree-fixture: a bare repo that serves
+    as the shared origin, and N clones each with a deterministic identity.
+    Each clone starts with one committed file so it has a commit to push.
+    The caller then drives register.py / claim.py / push-retry against the
+    clones.
+    """
+    origin.mkdir(parents=True, exist_ok=True)
+    _git_ok(origin, "init", "-q", "--bare")
+    first = worktrees[0]
+    first.mkdir(parents=True, exist_ok=True)
+    _git_ok(first, "init", "-q")
+    _git_ok(first, "checkout", "-q", "-b", "main")
+    (first / "README.md").write_text("test repo\n")
+    _git_ok(first, "add", "README.md")
+    _git_ok(first, "commit", "-q", "-m", "initial commit")
+    _git_ok(first, "remote", "add", "origin", str(origin))
+    _git_ok(first, "push", "-q", "-u", "origin", "main")
+    for wt in worktrees[1:]:
+        wt.mkdir(parents=True, exist_ok=True)
+        _git_ok(wt.parent, "clone", "-q", str(origin), str(wt))
+        _git_ok(wt, "checkout", "-q", "-b", "main")
+
+
+def run_register(repo: Path, identity: str, **kwargs) -> subprocess.CompletedProcess:
+    """Run register.py with --repo repo --identity identity and extra kwargs."""
+    extra = []
+    for key, value in kwargs.items():
+        extra.extend([f"--{key}", str(value)])
+    return subprocess.run(
+        ["python3", str(REGISTER), "--repo", str(repo), "--identity", identity, *extra],
+        capture_output=True,
+        text=True,
+    )
+
+
+def run_claim(
+    repo: Path, session_id: str, task: str, push: bool = False, **kwargs
+) -> subprocess.CompletedProcess:
+    """Run claim.py with the standard arguments and optional --push."""
+    extra = []
+    for key, value in kwargs.items():
+        extra.extend([f"--{key}", str(value)])
+    cmd = [
+        "python3", str(CLAIM),
+        "--repo", str(repo),
+        "--session-id", session_id,
+        "--task", task,
+        *extra,
+    ]
+    if push:
+        cmd.append("--push")
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+
+@pytest.fixture
+def run_sessions_census():
+    """Run the sessions census against a sessions dir.
+
+    Returns (exit_code, stdout, stderr). Pass a custom env dict to override
+    PATH or other variables.
+    """
+    def _run(sessions_dir: Path, *, env: dict | None = None) -> tuple[int, str, str]:
+        full_env = dict(os.environ)
+        if env:
+            full_env.update(env)
+        proc = subprocess.run(
+            ["bash", str(CENSUS_SESSIONS), str(sessions_dir)],
+            capture_output=True,
+            text=True,
+            env=full_env,
+            timeout=60,
+        )
+        return proc.returncode, proc.stdout, proc.stderr
+    return _run
+
+

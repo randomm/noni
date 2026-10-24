@@ -9,3 +9,6 @@ noni.egg-info/
 /.noni-scrub-denylist
 # local adapter allow-list (integrations/): never committed
 /.noni-adapter-allowlist
+# local research artifacts (never commit)
+/outputs/
+/parallel-research/

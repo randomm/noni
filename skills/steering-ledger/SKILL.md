@@ -32,7 +32,7 @@ state.
 ## The record
 
 One JSON file per record under `noni/decisions/`, named `<id>.json`. The eight
-fields (in order):
+fields (in order), plus one optional field (`source`):
 
 | field | type | meaning |
 |---|---|---|
@@ -44,6 +44,7 @@ fields (in order):
 | `scope` | string | the direction area the decision covers |
 | `status` | string | `decided`, `open`, or `superseded` |
 | `supersedes` | string | id of the record this one replaces, or `null` |
+| `source` | object, or `null` (optional) | tracker provenance: `{"issue_number": <int>, "comment_id": <int>}` when the record was produced from a tracker-sourced answer; `null` or absent otherwise (a record without it stays valid) |
 
 A `question` object is `{id, text, options, answer}`. `options` is an array of
 2-4 strings. `answer` is either the chosen option's string (or a free-text

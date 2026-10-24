@@ -31,6 +31,7 @@ from pathlib import Path
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 REPO = Path(__file__).resolve().parent.parent
 CENSUS = REPO / "skills" / "census" / "scripts" / "census.py"
+CENSUS_SH = REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"
 
 REQUIRED_FIELDS = {"id", "date", "asked_by", "questions", "by", "scope", "status", "supersedes"}
 OPTIONAL_FIELDS = {"source"}
@@ -70,6 +71,70 @@ def _run_census_on_record(tmp_path: Path, record: dict, fname: str = "test-recor
     )
     combined = proc.stdout + "\n" + proc.stderr
     return proc.returncode, combined, combined
+
+
+def _run_census_sh_on_record(tmp_path: Path, record: dict, fname: str = "test-record.json") -> tuple[int, str, str]:
+    """Write a single record to a ledger dir and run the per-epic census.sh
+    (the steering-ledger E1 entry point) on it. census.sh validates the same
+    closed field set as the unified census, including the optional source
+    field, so the two arbiter implementations stay in lockstep. The ledger
+    dir is not a git tree, so attribution and the post-commit-edit check skip
+    and a clean record exits 0."""
+    import os
+
+    ledger = tmp_path / "decisions"
+    ledger.mkdir(parents=True)
+    (ledger / fname).write_text(json.dumps(record, indent=2))
+    proc = subprocess.run(
+        ["bash", str(CENSUS_SH), str(ledger)],
+        capture_output=True,
+        text=True,
+        env=dict(os.environ),
+        timeout=60,
+    )
+    combined = proc.stdout + "\n" + proc.stderr
+    return proc.returncode, combined, combined
+
+
+def test_census_sh_source_null_is_clean(tmp_path):
+    """The steering-ledger census.sh accepts a record with source set to
+    null (the optional field admits null, exactly as the unified census
+    does) and reports it clean (exit 0)."""
+    rec = json.loads(json.dumps(_fixture("decision-valid.json")))
+    rec["source"] = None
+    code, out, err = _run_census_sh_on_record(tmp_path, rec)
+    assert code == 0, f"expected census.sh exit 0 for source=null, got {code}\n{err}"
+
+
+def test_census_sh_source_object_is_clean(tmp_path):
+    """The steering-ledger census.sh accepts a record whose source carries
+    the tracker's issue number and comment id (both integers) and reports it
+    clean (exit 0)."""
+    rec = json.loads(json.dumps(_fixture("decision-valid.json")))
+    rec["source"] = {"issue_number": 42, "comment_id": 9102}
+    code, out, err = _run_census_sh_on_record(tmp_path, rec)
+    assert code == 0, f"expected census.sh exit 0 for source object, got {code}\n{err}"
+
+
+def test_census_sh_source_string_fails(tmp_path):
+    """The steering-ledger census.sh rejects a record whose source is a
+    string (schema violation, exit 10)."""
+    rec = json.loads(json.dumps(_fixture("decision-valid.json")))
+    rec["source"] = "42"
+    code, out, err = _run_census_sh_on_record(tmp_path, rec)
+    assert code == 10, f"expected census.sh exit 10 for source as string, got {code}\n{err}"
+    assert "source" in err.lower()
+
+
+def test_census_sh_source_extra_key_fails(tmp_path):
+    """The steering-ledger census.sh rejects a record whose source object
+    carries an extra key (schema violation, exit 10): source admits exactly
+    issue_number and comment_id."""
+    rec = json.loads(json.dumps(_fixture("decision-valid.json")))
+    rec["source"] = {"issue_number": 42, "comment_id": 9102, "bogus": 1}
+    code, out, err = _run_census_sh_on_record(tmp_path, rec)
+    assert code == 10, f"expected census.sh exit 10 for extra key in source, got {code}\n{err}"
+    assert "source" in err.lower()
 
 
 def test_valid_record_passes(tmp_path):

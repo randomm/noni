@@ -523,20 +523,33 @@ def test_refused_allowlist_never_authorizes():
 
 
 def test_malformed_question_payload_never_authorizes():
-    """Non-dict payloads, non-dict comments/edits, and missing/non-str
-    actor or body fields all degrade to stranger / not-authorized rather
-    than a crash or a false positive."""
-    fixtures = [
-        "not-a-dict.json",
-        "comment-missing-actor.json",
-        "comment-non-dict-edit.json",
-        "comment-non-dict-user.json",
-    ]
-    for name in fixtures:
+    """Non-dict payloads, non-dict comments/users, and missing/non-str
+    actor or body fields all degrade to stranger (the last state carries a
+    ticked option but an empty/foreign actor) rather than a crash or a
+    false positive."""
+    for name in ("not-a-dict.json", "comment-missing-actor.json", "comment-non-dict-user.json"):
         payload = _load_fixture(name)
         v = adapter.question_legitimacy(payload, ALLOWED)
+        # A malformed state yields either none (no ticked option survives —
+        # not-a-dict payload, non-dict user) or stranger (a ticked option
+        # survives but the actor is missing/foreign); never a tick answer.
         assert v.verdict in ("stranger", "none"), f"{name}: {v.verdict!r} (malformed payload must not authorize)"
         assert v.answer is None
+
+
+def test_malformed_non_dict_edit_yields_none():
+    """A non-dict edit in the history is malformed: the adapter consults only
+    the LAST edit in the timeline (a valid dict here), so the bare-string
+    entry at the front is never read and never crashes the seam. The last
+    state's body uses bare '  [x]' checkbox lines (no dash/bullet prefix),
+    which the tick regex does not match, so zero options are ticked and the
+    verdict is none (not stranger) with no answer — a malformed timeline
+    entry never crashes and never authorizes."""
+    payload = _load_fixture("comment-non-dict-edit.json")
+    assert not isinstance(payload["edits"][0], dict)
+    v = adapter.question_legitimacy(payload, ALLOWED)
+    assert v.verdict == "none", f"{v.verdict!r} (malformed edit history yields none, not stranger)"
+    assert v.answer is None
 
 
 def test_malformed_label_payload_never_authorizes():

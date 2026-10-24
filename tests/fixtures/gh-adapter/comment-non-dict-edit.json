@@ -1,4 +1,5 @@
 {
+  "description": "Malformed edit history: the first edit entry is not a dict (a bare string). The adapter consults only the LAST edit in the timeline, which here is a valid dict, so the non-dict entry at the front is never read and never crashes the seam. The last state carries the ticked option and the allow-listed actor op-1, but the tick regex only matches checkbox lines prefixed with a dash or bullet ('- [x]'); this body's options are bare '  [x]' with no bullet, so zero options are counted as ticked and the verdict is none (no tick), not stranger, with no answer. A malformed timeline entry never crashes and never authorizes.",
   "comment": {
     "id": 47,
     "body": "q1: pick one\n  [x] next train\n  [ ] later"

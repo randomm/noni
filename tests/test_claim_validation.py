@@ -95,6 +95,17 @@ def test_same_task_claim_twice_is_refused(tmp_path):
     assert third.returncode == 0, third.stderr
 
 
+def test_invalid_utf8_session_is_refused_without_traceback(tmp_path):
+    """A session file with invalid UTF-8 bytes is refused (exit 2, like the
+    malformed-file path) with a clean stderr message and no traceback."""
+    repo = _make_session(tmp_path)
+    session_file = repo / "noni" / "sessions" / "2026-10-01-aaaaaa.md"
+    session_file.write_bytes(b"- identity: dev\n- claims:\n  - claim: \xff\xfe#42\n")
+    proc = run_claim(repo, "2026-10-01-aaaaaa", "#42")
+    assert proc.returncode == 2, f"expected exit 2, got {proc.returncode}: {proc.stderr}"
+    assert "Traceback" not in proc.stderr, f"unhandled exception: {proc.stderr}"
+
+
 def test_detached_head_push_is_refused(tmp_path):
     """The detached-HEAD guard fires on the literal string git actually
     prints (rev-parse --abbrev-ref HEAD prints "HEAD" when detached, not

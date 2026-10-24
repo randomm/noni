@@ -466,7 +466,7 @@ def _check_ledger_records(
         try:
             raw = path.read_bytes()
             body = raw.decode("utf-8")
-        except UnicodeDecodeError as e:
+        except UnicodeDecodeError:
             # The exception message embeds the offending bytes, which are
             # untrusted record content (a record that contains raw NULs or
             # other control bytes would smuggle them into stderr); the fixed

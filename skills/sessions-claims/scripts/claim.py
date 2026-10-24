@@ -177,7 +177,15 @@ def main(argv: list[str] | None = None) -> int:
     # refused (exit 2) rather than appended, so the register cannot carry
     # two identical claim rows (which the census would read as two active
     # claims from the same identity).
-    existing = session_file.read_text(encoding="utf-8")
+    try:
+        existing = session_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        print(
+            f"claim.py: {session_file.name} is not readable as UTF-8 "
+            f"({exc.__class__.__name__}); cannot check for a duplicate claim",
+            file=sys.stderr,
+        )
+        return 2
     for line in existing.splitlines():
         stripped = line.strip()
         if stripped.startswith(CLAIM_PREFIX) and stripped == CLAIM_PREFIX + task:

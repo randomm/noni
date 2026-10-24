@@ -74,7 +74,7 @@ set -u
 LEDGER_DIR=""
 for arg in "$@"; do
   case "$arg" in
-    --help|-h) sed -n '2,23p' "$0"; exit 0 ;;
+    --help|-h) sed -n '2,34p' "$0"; exit 0 ;;
     -*) ;;
     *) LEDGER_DIR="${arg%/}" ;;
   esac

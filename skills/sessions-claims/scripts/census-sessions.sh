@@ -18,8 +18,9 @@
 #
 # Exit codes. The codes are distinct so one failing census names the class of
 # invariant that broke; when several classes are violated at once, the lowest
-# number wins (30 < 31 < 32) and the higher-numbered checks may not have been
-# evaluated — the stderr message says so:
+# number wins (30 < 31 < 32). Every check runs in a single pass regardless of
+# the exit code — the priority only selects which code is returned — so all
+# findings are always in the NDJSON output:
 #   0   clean — every session file valid, no double-claims, all claims have
 #       a register file
 #   3   a required tool is missing (python3 not found)
@@ -31,7 +32,9 @@
 #       row has no task reference)
 #
 # Each non-zero exit prints NDJSON rows on stdout naming the offending task
-# or file, e.g. {"type": "double-claim", "task": "#42", "sessions": [...]}.
+# or file, e.g. {"type": "double-claim", "task": "#42", "sessions": [...]},
+# plus a stderr line naming the code and noting that all findings are in the
+# NDJSON rows.
 #
 # Requires python3 on the machine that does the reading.
 
@@ -40,7 +43,7 @@ set -u
 SESSIONS_DIR=""
 for arg in "$@"; do
   case "$arg" in
-    --help|-h) sed -n '2,34p' "$0"; exit 0 ;;
+    --help|-h) sed -n '2,39p' "$0"; exit 0 ;;
     -*) ;;
     *) SESSIONS_DIR="${arg%/}" ;;
   esac

@@ -59,7 +59,11 @@ construction. The writer allocates the path and then refuses to write any
 path it did not allocate:
 
 - `register.py --file <path>` where `<path>` does not match the allocated
-  path → exit 2 (refused).
+  path → exit 2 (refused). The allocated id is minted once per run, so
+  `--file` is only meaningful within the same run as the allocation — pass
+  the freshly-allocated path as printed in the `registered session <id>`
+  output. A re-run that reuses a previously-allocated file is rejected
+  (exit 2), not re-registered.
 - A file that already exists with a different identity → exit 1 (refused).
 - A file that already exists with the same identity → exit 0 (idempotent no-op).
 

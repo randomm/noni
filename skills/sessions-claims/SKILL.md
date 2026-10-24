@@ -91,8 +91,9 @@ Read-only, NDJSON on stdout, honest exit code:
 | `32` | a session file is malformed (missing required field, or a claim row with no task reference) |
 
 When several classes fire at once, the lowest code wins (`30 < 31 < 32`);
-stderr names the checks that were not evaluated. Each non-zero exit prints
-NDJSON rows naming the offending task or file.
+every check runs in a single pass and all findings are always in the NDJSON
+output (the priority only selects the returned code). Each non-zero exit
+prints NDJSON rows naming the offending task or file.
 
 The census is the deterministic arbiter. It does not block the session's work:
 an unregistered claim (exit 31) is reported, not refused — there is no

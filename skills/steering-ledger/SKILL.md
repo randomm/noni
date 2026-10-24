@@ -101,6 +101,13 @@ whether the operator confirmed an answer, so it never claims to (below).
 One golden fixture per code lives under `tests/fixtures/census-exit-*.json`. The
 exit-code contract and how to read the report are in `references/census.md`.
 
+The census also dispatches the sessions check (E2): `census.sh --sessions
+[SESSIONS_DIR]` reaches into the sibling `sessions-claims` skill via the
+relative path `../../sessions-claims/scripts/census-sessions.sh`. That is a
+documented dependency: with no override, `sessions-claims` must be installed at
+the expected relative path. Set `NONI_SESSIONS_CENSUS` to an absolute path to
+point the dispatch at a separately installed copy or an adapter.
+
 ## Rules
 
 - **Never answer for the operator.** This is a protocol rule agents follow, not

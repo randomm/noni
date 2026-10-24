@@ -32,7 +32,6 @@ from pathlib import Path
 REQUIRED_FIELDS = ("identity", "host/worktree", "started", "status", "claims")
 
 EXIT_CLEAN = 0
-EXIT_TOOLING = 3
 EXIT_DOUBLE_CLAIM = 30
 EXIT_NO_REGISTER = 31
 EXIT_MALFORMED = 32
@@ -56,7 +55,13 @@ def _parse_session_file(path: Path) -> dict:
     try:
         body = path.read_text(encoding="utf-8")
     except OSError:
-        return {"fields": {}, "claims": [], "malformed": ["unreadable file"]}
+        # An I/O or permission failure (distinct from a structurally
+        # malformed body): the file could not be read at all.
+        return {"fields": {}, "claims": [], "malformed": ["file could not be read"]}
+    except UnicodeDecodeError:
+        # Not valid UTF-8: a claim file with stray binary bytes is reported
+        # as malformed (32) instead of crashing the census with a traceback.
+        return {"fields": {}, "claims": [], "malformed": ["not valid UTF-8"]}
 
     for raw in body.splitlines():
         line = raw.strip()
@@ -174,15 +179,6 @@ def run_census(sessions_dir: Path) -> tuple[int, list[dict]]:
     return status, rows
 
 
-def _skipped_labels(status: int) -> list[str]:
-    """Which higher-priority checks were not evaluated for this exit code."""
-    if status == EXIT_DOUBLE_CLAIM:
-        return ["claim-without-register", "malformed"]
-    if status == EXIT_NO_REGISTER:
-        return ["malformed"]
-    return []
-
-
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     sessions_dir = Path(argv[0]) if argv else Path("noni/sessions")
@@ -192,13 +188,12 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(row, ensure_ascii=False))
 
     if status != EXIT_CLEAN:
-        skipped = _skipped_labels(status)
-        if skipped:
-            print(
-                f"census-sessions: exit {status}; checks not evaluated: "
-                f"{', '.join(skipped)} (priority 30 < 31 < 32)",
-                file=sys.stderr,
-            )
+        print(
+            f"census-sessions: exit {status}; the priority 30 < 31 < 32 only "
+            f"selects the exit code — every check runs and every finding is "
+            f"in the NDJSON rows above",
+            file=sys.stderr,
+        )
     return status
 
 

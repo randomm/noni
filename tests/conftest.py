@@ -161,14 +161,30 @@ def _git_ok(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return proc
 
 
+def _git_env_with_identity() -> dict:
+    """An env that pins a deterministic git identity for subprocesses.
+
+    claim.py commits under the caller's configured identity (it no longer
+    hardcodes one), so the test harness pins one here: GIT_CONFIG_GLOBAL
+    points at /dev/null so the host's ~/.gitconfig cannot leak in, and the
+    GIT_AUTHOR_*/GIT_COMMITTER_* env vars supply the identity (signing is
+    handled by the scripts' own commit.gpgsign=false)."""
+    return {
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_AUTHOR_NAME": "Replay",
+        "GIT_AUTHOR_EMAIL": "replay@fixture.invalid",
+        "GIT_COMMITTER_NAME": "Replay",
+        "GIT_COMMITTER_EMAIL": "replay@fixture.invalid",
+    }
+
+
 def build_bare_origin(origin: Path, worktrees: list[Path]) -> None:
     """Build a bare origin plus one or more clones all on branch 'main'.
 
-    Mirrors the reference driver's retry-tree-fixture: a bare repo that serves
-    as the shared origin, and N clones each with a deterministic identity.
-    Each clone starts with one committed file so it has a commit to push.
-    The caller then drives register.py / claim.py / push-retry against the
-    clones.
+    Every worktree is cloned from the bare origin (so the origin is actually
+    shared — not one clone of another) and starts with one committed file so
+    it has a commit to push. The caller then drives register.py / claim.py /
+    push-retry against the clones.
     """
     origin.mkdir(parents=True, exist_ok=True)
     _git_ok(origin, "init", "-q", "--bare")
@@ -187,6 +203,23 @@ def build_bare_origin(origin: Path, worktrees: list[Path]) -> None:
         _git_ok(wt, "checkout", "-q", "-b", "main")
 
 
+def _push_with_retry(repo: Path, branch: str, attempts: int = 3) -> None:
+    """fetch-rebase-push with at most `attempts` attempts.
+
+    The losing pusher ends rebased-and-pushed (both claims land); the census
+    then flags the double-claim. This is the push protocol documented in the
+    skill (fetch-rebase-push, at most 3 attempts)."""
+    for attempt in range(1, attempts + 1):
+        if attempt > 1:
+            _git_ok(repo, "fetch", "origin")
+            _git_ok(repo, "rebase", f"origin/{branch}")
+        proc = _git_e2(repo, "push", "origin", branch)
+        if proc.returncode == 0:
+            return
+        if attempt == attempts:
+            raise RuntimeError(f"push failed after {attempts} attempts: {proc.stderr.strip()}")
+
+
 def run_register(repo: Path, identity: str, **kwargs) -> subprocess.CompletedProcess:
     """Run register.py with --repo repo --identity identity and extra kwargs."""
     extra = []
@@ -202,7 +235,10 @@ def run_register(repo: Path, identity: str, **kwargs) -> subprocess.CompletedPro
 def run_claim(
     repo: Path, session_id: str, task: str, push: bool = False, **kwargs
 ) -> subprocess.CompletedProcess:
-    """Run claim.py with the standard arguments and optional --push."""
+    """Run claim.py with the standard arguments and optional --push.
+
+    Runs with the deterministic identity env (claim.py commits under the
+    caller's configured identity; the harness pins one here)."""
     extra = []
     for key, value in kwargs.items():
         extra.extend([f"--{key}", str(value)])
@@ -215,7 +251,9 @@ def run_claim(
     ]
     if push:
         cmd.append("--push")
-    return subprocess.run(cmd, capture_output=True, text=True)
+    full_env = dict(os.environ)
+    full_env.update(_git_env_with_identity())
+    return subprocess.run(cmd, capture_output=True, text=True, env=full_env, timeout=120)
 
 
 @pytest.fixture

@@ -40,8 +40,9 @@ def _now_utc() -> str:
 
 
 def _make_session_id() -> str:
-    # <UTC date>-<6 hex chars>: collision-free by construction (64M slots per
-    # day), stable across pulls and clones once committed.
+    # <UTC date>-<6 hex chars>: 16^6 ≈ 16.7M slots per day, so ids are
+    # collision-free by construction (see references/register.md); stable
+    # across pulls and clones once committed.
     return f"{datetime.now(timezone.utc).strftime('%Y-%m-%d')}-{uuid.uuid4().hex[:6]}"
 
 
@@ -85,9 +86,19 @@ def main(argv: list[str] | None = None) -> int:
     allocated = sessions_dir / f"{session_id}.md"
 
     host = args.host or allocated.stem
-    worktree = args.worktree or str(repo)
+    # Default to the repo's basename, not an absolute machine-local path:
+    # the register file is committed to a public repo, so the worktree field
+    # must stay generic (an absolute /home/... path would leak the operator's
+    # local layout — see the public-repo hygiene rule in AGENTS.md).
+    worktree = args.worktree or repo.resolve().name
     started = _now_utc()
 
+    # The --file guard: the writer refuses to write a path it did not allocate
+    # within this run (see the module docstring). The operator registers once
+    # and records the printed path; a re-run that reuses the same file is
+    # rejected here (exit 2) and re-registration is a no-op via the idempotency
+    # check below only when the operator re-passes the allocated path — the
+    # fresh-mint guard below is what makes that path the only valid one.
     if args.file is not None:
         target = Path(args.file)
         if not target.is_absolute():

@@ -13,50 +13,8 @@ out, and both claims land.
 from __future__ import annotations
 
 import json
-import subprocess
-from pathlib import Path
 
-from conftest import build_bare_origin, run_claim, run_register
-
-
-def _git(repo: Path, *args: str) -> str:
-    return (
-        subprocess.run(
-            ["git", "-C", str(repo), "-c", "user.name=Replay", "-c", "user.email=replay@fixture.invalid", "-c", "commit.gpgsign=false", *args],
-            capture_output=True, text=True,
-        ).stdout.strip()
-    )
-
-
-def _git_ok(repo: Path, *args: str) -> None:
-    proc = subprocess.run(
-        ["git", "-C", str(repo), "-c", "user.name=Replay", "-c", "user.email=replay@fixture.invalid", "-c", "commit.gpgsign=false", *args],
-        capture_output=True, text=True,
-    )
-    if proc.returncode != 0:
-        raise AssertionError(f"git {args} failed: {proc.stderr.strip()}")
-
-
-def _push_with_retry(repo: Path, branch: str, attempts: int = 3) -> None:
-    """fetch-rebase-push with at most `attempts` attempts.
-
-    The losing pusher ends rebased-and-pushed (both claims land); the census
-    then flags the double-claim. This is the push protocol documented in the
-    skill (fetch-rebase-push, at most 3 attempts).
-    """
-    for attempt in range(1, attempts + 1):
-        if attempt > 1:
-            _git_ok(repo, "fetch", "origin")
-            _git_ok(repo, "rebase", f"origin/{branch}")
-        proc = subprocess.run(
-            ["git", "-C", str(repo), "push", "origin", branch],
-            capture_output=True, text=True,
-        )
-        if proc.returncode == 0:
-            return
-        if attempt == attempts:
-            raise AssertionError(f"push failed after {attempts} attempts: {proc.stderr.strip()}")
-
+from conftest import _git_ok, _push_with_retry, build_bare_origin, run_claim, run_register
 
 
 def test_two_clones_double_claim_census_flags(tmp_path, run_sessions_census):

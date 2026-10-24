@@ -27,15 +27,18 @@ directory. Pass the sessions directory of the clone you want to audit.
 | `32` | a session file is malformed (missing required field, or a claim row with no task reference) |
 
 When several classes are violated at once, the **lowest number wins**
-(`30 < 31 < 32`) and the higher-numbered checks may not have been evaluated —
-the stderr message says which checks were skipped.
+(`30 < 31 < 32`). Every check runs in a single pass regardless of the exit
+— the priority only selects which code is returned — so all findings are
+always in the NDJSON output. The stderr line names the returned code and
+notes this.
 
 Each non-zero exit prints NDJSON rows on stdout naming the offending task or
-file:
+file (filenames below are of the registered shape `<YYYY-MM-DD>-<6 hex>.md`,
+allocated by `register.py`):
 
 - `{"type": "double-claim", "task": "#42", "sessions": [{"identity": "developer", "sessions": [...]}, {"identity": "reviewer", "sessions": [...]}]}`
-- `{"type": "claim-without-register", "file": "noni/sessions/2026-10-01-cccccc.md", "problems": [...]}`
-- `{"type": "malformed", "file": "noni/sessions/2026-10-01-dddddd.md", "problems": [...]}`
+- `{"type": "claim-without-register", "file": "noni/sessions/<session-id>.md", "problems": [...]}`
+- `{"type": "malformed", "file": "noni/sessions/<session-id>.md", "problems": [...]}`
 - `{"type": "same-identity-multi-session", "task": "#42", "identity": "developer", "sessions": [...]}`
 
 ## What each check reads

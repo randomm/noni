@@ -20,11 +20,16 @@
 # that catches it at read time.
 
 # --- Dispatch ------------------------------------------------------------------
+# The --sessions dispatch reaches into the sibling sessions-claims skill. The
+# relative path below is the co-installed default; set NONI_SESSIONS_CENSUS to
+# point at a separately installed copy or an adapter to override. (Documented
+# dependency: with no override, sessions-claims must be installed at the
+# expected relative path.)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ "$#" -gt 0 ]; then
   case "$1" in
     --sessions) shift
-      exec "$SCRIPT_DIR/../../sessions-claims/scripts/census-sessions.sh" "$@"
+      exec "${NONI_SESSIONS_CENSUS:-$SCRIPT_DIR/../../sessions-claims/scripts/census-sessions.sh}" "$@"
       ;;
   esac
 fi

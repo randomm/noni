@@ -148,26 +148,20 @@ def test_exit_32_malformed_claim_row(tmp_path, run_sessions_census):
 
 
 def test_census_read_only(tmp_path, run_sessions_census):
-    """The census never writes: git status --porcelain is empty before and
-    after, for every exit class including the failing ones."""
-    fx30 = _fixture("sessions-exit-30.json")
-    sessions = tmp_path / "noni" / "sessions"
-    _write_sessions_dir(sessions, fx30["files"])
-
-    # Also assert on a clean and a malformed tree.
-    for fx in (
-        _fixture("sessions-exit-0.json"),
-        _fixture("sessions-exit-32.json"),
-    ):
-        sdir = tmp_path / "other" / "sessions"
+    """The census never writes: for every exit-class fixture (clean, exit 30,
+    exit 32) the file set of the sessions dir is unchanged, and the census
+    creates no new file anywhere in the tree."""
+    for name in ("sessions-exit-0.json", "sessions-exit-30.json", "sessions-exit-32.json"):
+        fx = _fixture(name)
+        sdir = tmp_path / "noni" / "sessions"
+        for p in sdir.glob("*"):
+            p.unlink()
         _write_sessions_dir(sdir, fx["files"])
 
-    # The census must not create or modify any file under the sessions dir.
-    before = sorted(p.name for p in sessions.glob("*"))
-    for sdir in (sessions,):
+        before = sorted(p.name for p in sdir.glob("*"))
         code, out, err = run_sessions_census(sdir)
-    after = sorted(p.name for p in sessions.glob("*"))
-    assert before == after, f"the census changed the file set: {before} -> {after}"
+        after = sorted(p.name for p in sdir.glob("*"))
+        assert before == after, f"{name}: the census changed the file set: {before} -> {after}"
 
     # And it must not create any new file anywhere in the tmp_path tree
     # beyond what the fixtures wrote.
@@ -261,7 +255,7 @@ def test_priority_lowest_code_wins(tmp_path, run_sessions_census):
     )
     code, out, err = run_sessions_census(sessions)
     assert code == 30, f"lowest code (30) must win, got {code}: {err}"
-    assert "not evaluated" in err, f"stderr must name skipped checks: {err}"
+    assert "NDJSON" in err, f"stderr must direct the reader to the NDJSON rows: {err}"
 
 
 def test_entry_point_is_census_sessions_py(tmp_path, run_sessions_census):

@@ -25,26 +25,36 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 CLAIM_PREFIX = "- claim: "
 MAX_PUSH_ATTEMPTS = 3
+GIT_TIMEOUT = 60
 
 
 def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [
-            "git", "-C", str(cwd),
-            "-c", "user.name=Replay",
-            "-c", "user.email=replay@fixture.invalid",
-            "-c", "commit.gpgsign=false",
-            *args,
-        ],
-        capture_output=True,
-        text=True,
-    )
+    """Run git with the caller's configured identity.
+
+    The claim is committed under whoever's git config applies to the tree, so
+    attribution stays honest — the test harness pins a deterministic identity
+    via git config, production uses the operator's. Only GPG signing is
+    forced off (a signing requirement in a throwaway or CI tree must not
+    wedge the claim). Every call is bounded by GIT_TIMEOUT: a hung fetch or
+    push against an unresponsive remote surfaces as a clean failure instead
+    of an unbounded hang.
+    """
+    cmd = ["git", "-C", str(cwd), "-c", "commit.gpgsign=false", *args]
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=GIT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(
+            cmd, returncode=124, stdout="",
+            stderr=f"git {args[0]} timed out after {GIT_TIMEOUT}s",
+        )
 
 
 def _claim_rows(body: str) -> list[str]:
@@ -74,7 +84,19 @@ def _append_claim(path: Path, task: str) -> int:
     if not body.endswith("\n"):
         body += "\n"
     body += f"{CLAIM_PREFIX}{task}\n"
-    path.write_text(body, encoding="utf-8")
+    # Atomic replace: a mid-write crash cannot leave a truncated register
+    # file (which the census would then flag as malformed, exit 32).
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(body)
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
     return 0
 
 
@@ -99,6 +121,9 @@ def _push_with_retry(repo: Path, branch: str, attempts: int = MAX_PUSH_ATTEMPTS)
         push = _git(["push", "origin", branch], repo)
         if push.returncode == 0:
             return 0
+        if push.returncode == 124:
+            print(f"claim.py: push attempt {attempt}/{attempts} timed out: {push.stderr.strip()}", file=sys.stderr)
+            continue
         print(
             f"claim.py: push attempt {attempt}/{attempts} rejected: "
             f"{push.stderr.strip() or push.stdout.strip()}",
@@ -131,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
     if rc != 0:
         return rc
 
-    # Commit the claim.
+    # Commit the claim under the caller's configured identity (see _git).
     add = _git(["add", str(session_file.relative_to(repo))], repo)
     if add.returncode != 0:
         print(f"claim.py: git add failed: {add.stderr.strip()}", file=sys.stderr)

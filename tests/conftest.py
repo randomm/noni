@@ -27,6 +27,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -183,6 +184,36 @@ def _git_env_with_identity() -> dict:
         "GIT_COMMITTER_NAME": "Replay",
         "GIT_COMMITTER_EMAIL": "replay@fixture.invalid",
     }
+
+
+def git_pin_date(repo: Path, iso_utc: str, *args: str) -> subprocess.CompletedProcess:
+    """Run a git command with GIT_AUTHOR_DATE and GIT_COMMITTER_DATE pinned.
+
+    Every commit in a deterministic scenario must use pinned dates so that a
+    rebuilt scenario is identical (the census reads commit time from git
+    history, never from file content). ``iso_utc`` is the fixed timestamp for
+    this commit (e.g. "2026-10-01T00:00:00Z"); the identity env is pinned too
+    so the pinned-datetime commits attribute to the synthetic identity, and
+    GIT_CONFIG_GLOBAL/SYSTEM point at /dev/null so the host's gitconfig
+    cannot leak in (same isolation as the existing claim/register helpers).
+    """
+    dt = datetime.fromisoformat(iso_utc.replace("Z", "+00:00"))
+    env = dict(os.environ)
+    env.update(_git_env_with_identity())
+    env["GIT_CONFIG_SYSTEM"] = "/dev/null"
+    env["GIT_AUTHOR_DATE"] = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    env["GIT_COMMITTER_DATE"] = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "-c", "commit.gpgsign=false", *args],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"git (pinned {iso_utc}) {args} failed: {proc.stderr.strip()}"
+        )
+    return proc
 
 
 def build_bare_origin(origin: Path, worktrees: list[Path]) -> None:

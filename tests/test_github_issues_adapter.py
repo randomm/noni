@@ -218,10 +218,11 @@ def test_label_with_no_recorded_application_event_is_unauthorized():
 
 # --- The ledger record the adapter's output becomes ---------------------------
 
-def test_adapter_record_with_source_passes_census(tmp_path):
+def test_adapter_record_with_source_passes_census(git_repo):
     """A ledger record produced from a GitHub answer (the fixture's record)
     carries the new optional source field referencing the issue number and
     comment id, and the census accepts it (exit 0)."""
+    repo, commit = git_repo
     fixture = _load_fixture("record-with-source.json")
     record = fixture["record"]
 
@@ -232,23 +233,24 @@ def test_adapter_record_with_source_passes_census(tmp_path):
     assert record["status"] == "decided"
     assert record["questions"][0]["answer"] == fixture["expected_answer"]
 
-    # Run the census on the record: a tracker-sourced record with a valid
-    # source field is accepted (exit 0 for the schema).
-    ledger = tmp_path / "noni" / "decisions"
+    # Commit the record to the fixture repo so the git-backed census checks
+    # (edited, deleted, chain) run for real rather than skipping.
+    ledger = repo / "noni" / "decisions"
     ledger.mkdir(parents=True)
     (ledger / f"{record['id']}.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
+    commit({f"noni/decisions/{record['id']}.json": (ledger / f"{record['id']}.json").read_text()}, "record")
 
     import subprocess
 
     proc = subprocess.run(
-        ["python3", str(REPO / "skills" / "census" / "scripts" / "census.py"), "--ledger", str(ledger), "--now", "2026-10-02T12:00:00Z"],
+        ["python3", str(REPO / "skills" / "census" / "scripts" / "census.py"), "--repo", str(repo), "--now", "2026-10-02T12:00:00Z"],
         capture_output=True,
         text=True,
         timeout=60,
         env=dict(os.environ),
     )
-    # Exit 0: the record is schema-valid (the source field is admitted). The
-    # ledger is not in a git tree, so the git-backed checks (edited, deleted)
-    # skip rather than fail, and the chain resolves cleanly (one root, one
-    # live record).
+    # Exit 0: the record is schema-valid (the source field is admitted) and
+    # the full census — schema, edited, deleted and chain checks — passes on
+    # a real git repo (one root, one live record, nothing edited or deleted
+    # post-commit).
     assert proc.returncode == 0, f"expected exit 0, got {proc.returncode}\nstdout: {proc.stdout}\nstderr: {proc.stderr}"

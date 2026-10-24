@@ -121,14 +121,16 @@ def _last_state(payload: dict) -> tuple[str, str]:
     If the payload carries an edit history, the last edit's ``new_body`` and
     actor define the current state (the comment's own body is the same
     content; the history is what carries *who* set it last). Without a
-    history the comment's own body and user are the last state (no edits
-    means the author wrote it once).
+    history (or a malformed history) the comment's own body and user are
+    the last state (no edits means the author wrote it once) — a malformed
+    payload degrades to the comment's own body, never a crash.
     """
     comment = payload.get("comment", {})
-    edits = payload.get("edits", [])
-    if edits:
+    edits = payload.get("edits")
+    if isinstance(edits, list) and edits:
         last = edits[-1]
-        return last.get("new_body", ""), last.get("actor", "")
+        if isinstance(last, dict):
+            return last.get("new_body", ""), last.get("actor", "")
     return comment.get("body", ""), comment.get("user", {}).get("login", "")
 
 

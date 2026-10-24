@@ -231,6 +231,25 @@ class TestExitCodes:
         assert rc == 12, f"expected exit 12, got {rc}\nstderr: {err}\nstdout: {out}"
         assert "deleted" in out, f"expected 'deleted' reason in output:\n{out}"
 
+    def test_deleted_on_unmerged_branch_is_not_reported(self, tmp_path):
+        """A record added and committed on an unmerged feature branch, never
+        merged into the current branch (main), must NOT be reported as deleted
+        when the census runs on main: it is not part of HEAD's history."""
+        repo = _init_repo(tmp_path / "repo")
+        _git(repo, "branch", "-M", "main")
+        # Second, committed record on main keeps the ledger non-empty so no
+        # other finding fires.
+        _commit_file(repo, "noni/decisions/2026-10-02-beta.json",
+                      json.dumps(_valid_record("2026-10-02-beta"), indent=2))
+        # Record added on an unmerged branch.
+        _git(repo, "checkout", "-q", "-b", "feat")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                      json.dumps(_valid_record(), indent=2))
+        _git(repo, "checkout", "-q", "main")
+        rc, out, err = _run_census(repo)
+        assert rc == 0, f"expected exit 0 on main, got {rc}\nstderr: {err}\nstdout: {out}"
+        assert "deleted" not in out, f"must not report a deletion for an unmerged-branch record:\n{out}"
+
     def test_never_committed_deleted_is_not_a_finding(self, tmp_path):
         """A record that was never committed and is then deleted is not a
         deletion: there is nothing in history to have been removed. A second,

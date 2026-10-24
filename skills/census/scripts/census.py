@@ -192,23 +192,26 @@ class Git:
                     self._last_commit[rel] = (ts, current)
 
     def added_paths_under(self, prefix: str) -> set[str]:
-        """Every path under ``prefix`` that git history shows was ever added.
+        """Every path under ``prefix`` that HEAD-reachable history shows was added.
 
-        Runs ``git log --all --diff-filter=A --name-only`` restricted to the
+        Runs ``git log HEAD --diff-filter=A --name-only`` restricted to the
         prefix (through the shared ``_run`` timeout) so the same probe-honesty
         rule applies: a hung or failing git degrades to the empty set (the
-        check degrades to disk-only enumeration), never a silent hang. Only
-        the newest commit per path is retained, for the fix text."""
+        check degrades to disk-only enumeration), never a silent hang.
+        Paths that were added on an unmerged branch but never reached the
+        current branch are not reported as deleted, because they are not
+        reachable from HEAD."""
         prefix = prefix.strip("/").rstrip("/")
-        out = self._run(["log", "--all", "--diff-filter=A", "--name-only",
+        # Guard: if HEAD does not exist (empty repo, no commits yet), git log
+        # HEAD will fail and _run returns None, yielding an empty set. This is
+        # the correct behaviour — there is no history to check against.
+        out = self._run(["log", "HEAD", "--diff-filter=A", "--name-only",
                          "--format=", "--", prefix])
         paths: set[str] = set()
-        newest: dict[str, str] = {}
         for line in (out or "").splitlines():
             rel = line.strip()
             if rel.startswith(prefix + "/"):
                 paths.add(rel)
-                newest.setdefault(rel, "")
         return paths
 
     def last_commit(self, relpath: str) -> tuple[int, str] | None:
@@ -525,9 +528,12 @@ def _check_ledger_deleted(ledger: Path, git: Git | None, root: Path, findings: l
     """The deleted-record check (append-only ledger rule).
 
     Decision records are append-only: a record is superseded by a new record,
-    never removed. A record that git history shows was ever added but is
-    absent from the working tree is a deletion and is reported here, whether
-    the deletion is uncommitted or itself committed. It is a sub-reason ("deleted")
+    never removed. A record that HEAD-reachable git history shows was added
+    but is absent from the working tree is a deletion and is reported here,
+    whether the deletion is uncommitted or itself committed. A record that
+    was only ever added on an unmerged branch (never reachable from HEAD) is
+    not a deletion — it is not part of this branch's history. It is a
+    sub-reason ("deleted")
     of the ledger-edited class (exit 12): both are violations of the same
     "never change committed record state" rule. A path that was never
     committed is not a deletion — it is a missing record, covered by

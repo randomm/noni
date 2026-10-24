@@ -22,7 +22,7 @@ python3 skills/census/scripts/census.py [options]
 | `--ledger PATH` | `<repo>/noni/decisions` | override the ledger directory |
 | `--sessions PATH` | `<repo>/noni/sessions` | override the sessions directory |
 | `--now ISO-8601` | current UTC | fixed timestamp for time-based checks (reproducible output) |
-| `--stale-after N` | `7` (days) | staleness threshold for active sessions |
+| `--stale-after` | `7d` | staleness threshold for active sessions; positive whole days as `<N>` or `<N>d` (e.g. `7` or `7d`) |
 | `--strict` | off | treat stalled sessions and probe failures as failures |
 | `--json` | off | emit NDJSON records on stdout (`noni.census/1`) |
 | `--only CHECK` | all | run only the named check (repeatable) |

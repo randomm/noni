@@ -77,9 +77,11 @@ One `finding` record per violation, followed by exactly one `summary` record:
  "counts": {"session-double": 1}}
 ```
 
-Every `finding` row names the `artifact` path it derives from. No metric
-reads a value from an agent-authored field; every value comes from git
-history, file existence, or file byte size.
+Every `finding` row names the `artifact` path it derives from. Both output
+modes (--json and human-readable) sort rows by the same key —
+`(artifact, check, subject)` — so the row order is identical across modes
+and reproducible across runs. No metric reads a value from an agent-authored
+field; every value comes from git history, file existence, or file byte size.
 
 ## The probe-honesty rule
 
@@ -95,8 +97,9 @@ failure (exit 41) and the run is never reported clean.
   Running it leaves `git status --porcelain` empty.
 - **One entry point.** `census.py` is the only operator-facing census entry.
   The older per-epic scripts (`census.sh`, `census-sessions.sh`) remain
-  available as shims for backward compatibility but the canonical entry is
-  this one.
+  available as compatibility shims for backward compatibility with a subset
+  of the same exit codes (see the steering-ledger SKILL.md); the canonical
+  entry is `census.py`.
 - **Time from `--now`.** All time-based checks use `--now` when given (for
   reproducible output in tests) and the current UTC time otherwise.
 - **No self-reported numbers.** Every metric in `--json` mode names the

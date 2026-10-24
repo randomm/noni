@@ -44,6 +44,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -113,14 +114,14 @@ DATE_RE = re.compile(
 SESSION_REQUIRED_FIELDS = ("identity", "host/worktree", "started", "status", "claims")
 INACTIVE_STATUSES = {"closed", "done", "superseded", "ended"}
 
+# Every git subprocess in this module runs under this timeout: a hung git
+# (huge or corrupt history, a credential prompt) degrades to the cannot-tell
+# probe outcome instead of hanging the census.
+GIT_TIMEOUT_SECONDS = 60
+
 # Session register files follow the allocated shape <YYYY-MM-DD>-<6 hex>.md;
 # anything else is reported as malformed, never treated as an allocated file.
 SESSION_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[0-9a-f]{6}\.md$")
-
-
-class ProbeError(Exception):
-    """A probe could not read its input (unreadable file, non-UTF-8 bytes,
-    missing required field, git failure). Recorded, never swallowed."""
 
 
 class Git:
@@ -148,16 +149,26 @@ class Git:
                 self._parse(log)
 
     def _run(self, args: list[str]) -> str | None:
-        proc = subprocess.run(
-            ["git", "-C", str(self.top), *args],
-            capture_output=True,
-            text=True,
-        )
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(self.top), *args],
+                capture_output=True,
+                text=True,
+                timeout=GIT_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            return None
         if proc.returncode != 0:
             return None
         return proc.stdout
 
     def _parse(self, log: str) -> None:
+        """Resolve per-path last commits from the --all log.
+
+        The log is reverse-chronological, so the first commit parsed for a
+        path is its newest; record it only if the path is absent, so that
+        same-timestamp commits do not let an older one overwrite the newer.
+        _last_commit[relpath] is a (unix ts, commit id) pair."""
         current = None
         for line in log.splitlines():
             if "\x1f" in line:
@@ -169,9 +180,10 @@ class Git:
                 self._total_commits += 1
                 self._commit_ts[current] = int(ts)
             elif current is not None and line.strip():
-                ts = self._commit_ts.get(current, 0)
-                if ts >= self._last_commit.get(current, (0, current))[0]:
-                    self._last_commit[line.strip()] = (ts, current)
+                rel = line.strip()
+                if rel not in self._last_commit:
+                    ts = self._commit_ts.get(current, 0)
+                    self._last_commit[rel] = (ts, current)
 
     def last_commit(self, relpath: str) -> tuple[int, str] | None:
         """(unix ts, commit id) of the latest commit containing relpath, or None."""
@@ -189,22 +201,25 @@ class Git:
             return ""
         return self._commit_author.get(entry[1], "")
 
-    def blob_sha(self, commit: str, relpath: str) -> str | None:
-        """The sha1 of the committed bytes of relpath at commit, or None when
-        the blob is unreachable (shallow or pruned history)."""
-        proc = subprocess.run(
-            ["git", "-C", str(self.top), "cat-file", "blob", f"{commit}:{relpath}"],
-            capture_output=True,
-        )
+    def blob_content_sha1(self, commit: str, relpath: str) -> str | None:
+        """The sha1 of the committed content bytes of relpath at commit, or None
+        when the blob is unreachable (shallow or pruned history) or git times out.
+
+        Uses ``git cat-file blob`` to read the raw bytes and re-hashes them,
+        matching the way ``_repo_sha1`` hashes the disk bytes — so the
+        comparison is content-sha1 vs content-sha1. (``git rev-parse
+        <commit>:<path>`` returns the git object sha, not the content sha1.)"""
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(self.top), "cat-file", "blob", f"{commit}:{relpath}"],
+                capture_output=True,
+                timeout=GIT_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            return None
         if proc.returncode != 0:
             return None
         return hashlib.sha1(proc.stdout).hexdigest()
-
-    def repo_sha1(self, path: Path) -> str | None:
-        try:
-            return hashlib.sha1(path.read_bytes()).hexdigest()
-        except OSError:
-            return None
 
 
 def _parse_iso(ts: str) -> datetime | None:
@@ -227,11 +242,15 @@ def _parse_now(value: str | None) -> tuple[datetime | None, str | None]:
 
 
 def _git_top(root: Path) -> Path | None:
-    proc = subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=GIT_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return None
     if proc.returncode != 0:
         return None
     top = Path(proc.stdout.strip())
@@ -342,7 +361,21 @@ def _validate_record(obj: object) -> list[str]:
 
 
 def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict]) -> None:
-    """Check the steering ledger; append findings (each a partial finding row)."""
+    """Check the steering ledger; append findings (each a partial finding row).
+
+    Composition only: record I/O + schema validation, then the edited check
+    (git-backed) and the supersede-chain check, in that order."""
+    valid, unparseable = _check_ledger_records(ledger, root, findings)
+    _check_ledger_edited(valid, unparseable, git, root, findings)
+    _check_ledger_chain(valid, ledger, root, findings)
+
+
+def _check_ledger_records(
+    ledger: Path, root: Path, findings: list[dict]
+) -> tuple[list[tuple[str, Path, dict]], list[tuple[str, Path]]]:
+    """I/O + schema validation. Returns (valid, unparseable) where each entry
+    of unparseable is (name, path) of a file that exists on disk but failed
+    parsing — it still gets the git edited check."""
     def add(check: str, severity: str, subject: str, artifact: str, message: str) -> None:
         findings.append(
             {
@@ -358,13 +391,14 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
     kind, _problem = _file_kind(ledger, kind="dir")
     if kind == "absent":
         add("ledger-record", "fail", str(ledger), str(ledger), "ledger directory does not exist")
-        return
+        return [], []
     if kind != "regular":
         add("ledger-record", "fail", str(ledger), str(ledger), "ledger path is not a readable directory")
-        return
+        return [], []
 
     names = sorted(p.name for p in ledger.glob("*.json"))
     valid: list[tuple[str, Path, dict]] = []
+    unparseable: list[tuple[str, Path]] = []
     for name in names:
         path = ledger / name
         if not NAME_RE.match(name):
@@ -379,11 +413,13 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
             body = raw.decode("utf-8")
         except (UnicodeDecodeError, OSError) as e:
             add("ledger-record", "fail", name, str(path), f"record is unreadable: {e}")
+            unparseable.append((name, path))
             continue
         try:
             obj = json.loads(body)
         except json.JSONDecodeError:
             add("ledger-record", "fail", name, str(path), "record is not valid JSON")
+            unparseable.append((name, path))
             continue
         problems = _validate_record(obj)
         if problems:
@@ -394,26 +430,113 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
     if not names:
         add("ledger-record", "fail", str(ledger), str(ledger), "no *.json records under the ledger directory")
 
-    if git is not None:
-        for rid, path, _obj in valid:
-            rel = _rel_to(git.top, path)
-            if rel is None:
-                continue
-            entry = git.last_commit(rel)
-            if entry is None:
-                continue  # never committed: nothing to compare against
-            blob = git.blob_sha(entry[1], rel)
-            disk = _repo_sha1(path)
-            if blob is None:
-                add(
-                    "ledger-edited",
-                    "warn",
-                    rid,
-                    str(path),
-                    "cannot verify: committed blob is unreachable in this tree (shallow or pruned history)",
-                )
-            elif disk is not None and blob != disk:
-                add("ledger-edited", "fail", rid, str(path), "record was edited after commit (working tree differs from git)")
+    return valid, unparseable
+
+
+def _check_ledger_edited(
+    valid: list[tuple[str, Path, dict]],
+    unparseable: list[tuple[str, Path]],
+    git: Git | None,
+    root: Path,
+    findings: list[dict],
+) -> None:
+    """The post-commit edit check (git vs disk bytes).
+
+    Runs for every valid record AND every record that failed parsing: a
+    parse-time rejection must not silence the integrity check. The committed
+    blob set is resolved in one `git log` over the whole ledger directory
+    (not one `rev-parse` per record), and the disk sha is one in-memory hash
+    per file. A record whose committed bytes are unreachable degrades to a
+    cannot-verify warning (probe honesty), never a silent pass."""
+
+    def add(check: str, severity: str, subject: str, artifact: str, message: str) -> None:
+        findings.append(
+            {
+                "check": check,
+                "code": CLASS_CODE[check],
+                "severity": severity,
+                "subject": subject,
+                "artifact": _rel_to_root(root, Path(artifact)),
+                "message": message,
+            }
+        )
+
+    if git is None:
+        return
+    entries: list[tuple[str, str, Path]] = []
+    for rid, path, _obj in valid:
+        entries.append((rid, rid, path))
+    for name, path in unparseable:
+        entries.append((name, name, path))
+    if not entries:
+        return
+    rels = [_rel_to(git.top, p) for _s, _rid, p in entries]
+    if any(r is None for r in rels):
+        return
+    # One `git log --name-only` call over the ledger files: every commit that
+    # touched any of them, each commit block followed by the paths it touched.
+    # No per-record subprocess.
+    log = git._run(["log", "--all", "--name-only", "--format=%H", "--", *[r for r in rels if r is not None]])
+    if log is None:
+        for _subject, rid, path in entries:
+            add(
+                "ledger-edited",
+                "warn",
+                rid,
+                str(path),
+                "cannot verify: git history for the ledger is unreadable in this tree",
+            )
+        return
+    # Parse the log: commit-hash lines are followed by the paths they touched,
+    # separated by blank lines. `git log` is newest-first, so the first commit
+    # that touches a given path is its newest commit. Record only the first
+    # (newest) commit per path.
+    newest_per_rel: dict[str, str] = {}
+    current_commit: str | None = None
+    for line in log.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # A 40-char hex string is a commit hash line.
+        if len(stripped) == 40 and all(c in "0123456789abcdef" for c in stripped):
+            current_commit = stripped
+        elif current_commit is not None and stripped not in newest_per_rel:
+            newest_per_rel[stripped] = current_commit
+    for idx, (_subject, rid, path) in enumerate(entries):
+        rel = rels[idx]
+        commit = newest_per_rel.get(rel) if rel is not None else None
+        if commit is None:
+            continue  # never committed: nothing to compare against
+        blob = git.blob_content_sha1(commit, rel)
+        disk = _repo_sha1(path)
+        if blob is None:
+            add(
+                "ledger-edited",
+                "warn",
+                rid,
+                str(path),
+                "cannot verify: committed blob is unreachable in this tree (shallow or pruned history)",
+            )
+        elif disk is not None and blob != disk:
+            add("ledger-edited", "fail", rid, str(path), "record was edited after commit (working tree differs from git)")
+
+
+def _check_ledger_chain(
+    valid: list[tuple[str, Path, dict]], ledger: Path, root: Path, findings: list[dict]
+) -> None:
+    """Supersede-chain analysis: dangling, duplicate, orphan, cycle, and the
+    single-live-record-per-chain rule."""
+    def add(check: str, severity: str, subject: str, artifact: str, message: str) -> None:
+        findings.append(
+            {
+                "check": check,
+                "code": CLASS_CODE[check],
+                "severity": severity,
+                "subject": subject,
+                "artifact": _rel_to_root(root, Path(artifact)),
+                "message": message,
+            }
+        )
 
     ids = {rid for rid, _p, _o in valid}
     supers = {rid: o["supersedes"] for rid, _p, o in valid}
@@ -673,17 +796,16 @@ def main(argv: list[str] | None = None) -> int:
         print(err, file=sys.stderr)
         return EXIT_USAGE
     raw_days = args.stale_after.rstrip("dD")
-    try:
-        days = int(raw_days)
-    except ValueError:
-        print(f"error: --stale-after {args.stale_after!r} must be a positive number of days (e.g. 7 or 7d)", file=sys.stderr)
+    if not re.fullmatch(r"\d+", raw_days):
+        print(
+            f"error: --stale-after {args.stale_after!r} must be positive whole days (e.g. 7 or 7d)",
+            file=sys.stderr,
+        )
         return EXIT_USAGE
-    if days <= 0:
-        print("error: --stale-after must be a positive number of days", file=sys.stderr)
-        return EXIT_USAGE
+    days = int(raw_days)
     stale_after = timedelta(days=days)
 
-    if shutil_which("git") is None:
+    if shutil.which("git") is None:
         print("census: git not found on the reading machine", file=sys.stderr)
         return EXIT_TOOL_MISSING
 
@@ -728,9 +850,22 @@ def main(argv: list[str] | None = None) -> int:
         counts[f["check"]] += 1
     ok = exit_code == EXIT_CLEAN
 
-    # --- Output ---------------------------------------------------------------
-    if args.json_out:
-        for f in sorted(findings, key=lambda f: (f["artifact"], f["check"], f["subject"])):
+    _render(findings, counts, ok, exit_code, args.json_out)
+    return exit_code
+
+
+# One shared sort key for every finding row, in both the --json (NDJSON) and
+# human-readable branches: (artifact, check, subject). Both modes therefore
+# emit the same findings in the same order.
+FINDING_SORT_KEY = lambda f: (f["artifact"], f["check"], f["subject"])
+
+
+def _render(
+    findings: list[dict], counts: dict[str, int], ok: bool, exit_code: int, json_out: bool
+) -> None:
+    """Emit the results in either NDJSON (--json) or human-readable form."""
+    if json_out:
+        for f in sorted(findings, key=FINDING_SORT_KEY):
             row = {
                 "schema": SCHEMA_VERSION,
                 "kind": "finding",
@@ -751,19 +886,18 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
     else:
+        fired = {f["check"] for f in findings}
         if not findings:
             print("census: no findings; all checks passed")
-            fired_names = sorted(fired)
         else:
-            for f in sorted(findings, key=lambda f: (f["check"], f["artifact"], f["subject"])):
+            for f in sorted(findings, key=FINDING_SORT_KEY):
                 tag = {"fail": "FAIL", "warn": "WARN"}.get(f["severity"], "?")
                 print(f"{f['check']:<16} {tag:<4} {f['subject']}: {f['message']}")
                 print(f"{'':<16} fix: {CLASS_FIX[f['check']]}")
-            fired_names = ", ".join(sorted(fired))
         if ok:
             verdict_text = "clean"
         else:
-            verdict_text = f"{exit_code} ({fired_names})"
+            verdict_text = f"{exit_code} ({', '.join(sorted(fired))})"
         print(f"summary: {verdict_text}; {sum(counts.values())} finding(s); verdict {'ok' if ok else 'fail'}")
         if not ok:
             print(
@@ -771,21 +905,6 @@ def main(argv: list[str] | None = None) -> int:
                 "every finding is reported above",
                 file=sys.stderr,
             )
-
-    return exit_code
-
-
-def shutil_which(name: str) -> str | None:
-    for path in os.environ.get("PATH", "").split(os.pathsep):
-        if not path:
-            continue
-        candidate = Path(path) / name
-        try:
-            if candidate.is_file() and os.access(candidate, os.X_OK):
-                return str(candidate)
-        except OSError:
-            continue
-    return None
 
 
 if __name__ == "__main__":

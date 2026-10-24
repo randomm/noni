@@ -507,16 +507,47 @@ def test_case_insensitive_allowlist_match():
 
 
 def test_refused_allowlist_never_authorizes():
-    """A refused (or absent) Allowlist authorizes nothing, even if an
-    account string is present in its accounts attribute — the seam-facing
-    decision is always negative when not active."""
+    """A refused (or absent) Allowlist authorizes nothing, and an inactive
+    allow-list stores no accounts at all — the seam-facing decision is
+    always negative when not active, and len()/repr never suggest an
+    account is live when the list as a whole is not."""
     refused = adapter_protocol.Allowlist({"op-1"}, "refused", "symlink")
     assert "op-1" not in refused
     assert not refused
+    assert len(refused) == 0
+    assert refused.accounts == set()
+    assert "op-1" not in refused.accounts
     assert not adapter_protocol.is_allowed(refused, "op-1")
     absent = adapter_protocol.Allowlist(set(), "absent")
     assert "op-1" not in absent
     assert not adapter_protocol.is_allowed(absent, "op-1")
+
+
+def test_bare_string_allowlist_never_authorizes():
+    """A plain string is not an allow-list. A bare string is iterable over
+    its characters, so an unguarded ``name in allowlist``-style check would
+    let ``is_allowed("op-1", "o")`` authorize: is_allowed must refuse every
+    non-set input (not just let it through), and __contains__ must be
+    tolerant of non-str lookups (no AttributeError)."""
+    # A bare string allow-list authorizes nothing, whatever the name.
+    assert adapter_protocol.is_allowed("op-1", "o") is False
+    assert adapter_protocol.is_allowed("op-1", "op-1") is False
+    assert adapter_protocol.is_allowed(42, "op-1") is False
+    assert adapter_protocol.is_allowed(["op-1"], "op-1") is False
+    assert adapter_protocol.is_allowed(("op-1",), "op-1") is False
+    assert adapter_protocol.is_allowed({"op-1": 1}, "op-1") is False
+    # But a real set / frozenset still authorizes.
+    assert adapter_protocol.is_allowed(frozenset({"op-1"}), "OP-1")
+
+
+def test_allowlist_contains_is_tolerant_of_non_str_lookups():
+    """Allowlist.__contains__ must not call .casefold() on a non-str lookup
+    name (which would raise AttributeError) — it returns False instead."""
+    active = adapter_protocol.Allowlist({"op-1"}, "active")
+    for bad in (None, 42, ["op-1"], b"op-1", {"op-1"}):
+        assert bad not in active, f"{bad!r} must not match (and must not raise)"
+    # The str path is unchanged: a valid name still matches.
+    assert "op-1" in active
 
 
 # --- Malformed payloads never crash and never authorize ---------------------

@@ -7,40 +7,12 @@ class, runs census.main(), and asserts the exit code and output.
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-
-def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-    cmd = [
-        "git", "-C", str(repo),
-        "-c", "user.name=Replay",
-        "-c", "user.email=replay@fixture.invalid",
-        "-c", "commit.gpgsign=false",
-        *args,
-    ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if check and proc.returncode != 0:
-        raise RuntimeError(f"git {args} failed: {proc.stderr.strip()}")
-    return proc
-
-
-def _init_repo(path: Path) -> Path:
-    path.mkdir(parents=True, exist_ok=True)
-    _git(path, "init", "-q")
-    _git(path, "commit", "-q", "--allow-empty", "-m", "initial")
-    return path
-
-
-def _commit_file(repo: Path, rel: str, content: str) -> None:
-    target = repo / rel
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content)
-    _git(repo, "add", rel)
-    _git(repo, "commit", "-q", "--allow-empty", "-m", f"add {rel}")
+from _harness import _commit_file, _git, _init_repo  # noqa: E402
 
 
 def _commit_dir_state(repo: Path, dirname: str) -> None:

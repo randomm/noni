@@ -10,10 +10,12 @@ census does not check and does not claim to (see
 ## Usage
 
 ```
-scripts/census.sh [LEDGER_DIR]
+scripts/census.sh [LEDGER_DIR]        the decisions census (E1)
+scripts/census.sh --sessions [SESSIONS_DIR]  the sessions census (E2)
+scripts/census.sh --help         the usage and exit-code table
 ```
 
-`LEDGER_DIR` defaults to `noni/decisions/` relative to the current directory.
+`LEDGER_DIR` defaults to the current directory; pass the ledger directory of the clone you want to audit (e.g. `noni/decisions/`).
 Pass the absolute path of a clone's ledger to census a tree other than the
 one you are in.
 
@@ -30,10 +32,8 @@ one you are in.
 The codes are distinct so a single failing census tells the operator which class
 of invariant broke without re-reading the report. When several classes are
 violated at once, the **lowest number wins** (`10 < 12 < 20`) and the
-higher-numbered checks may not have been evaluated — the stderr message says so. One golden fixture per code
-lives under `tests/fixtures/census-exit-<code>.json` — a fixture that is *wrong*
-for its code makes the corresponding test fail, so the fixtures and the script
-cannot disagree.
+higher-numbered checks may not have been evaluated — the stderr message says
+so.
 
 ## What each check reads
 
@@ -64,7 +64,7 @@ cannot disagree.
 ## Reading the report
 
 The report goes to stdout: one tab-separated header line followed by one line
-per record, in filename order:
+per record, in filename order (six columns):
 
 ```
 id\tdate\tby\tstatus\tlive\tsupersedes

@@ -28,6 +28,42 @@ def _git_e2(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True)
 
 
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
+    """Run git with the deterministic harness identity (Replay), checking.
+
+    The shared form the test modules' private ``_git`` helpers used:
+    ``-c user.name/user.email/commit.gpgsign=false`` and ``check=True``.
+    Returns the CompletedProcess so callers can read stdout (e.g. a
+    ``git status --porcelain`` round-trip). ``_git_e2`` (no identity pin, no
+    check) stays for the push-retry path, which drives its own git config."""
+    cmd = [
+        "git", "-C", str(repo),
+        "-c", "user.name=Replay",
+        "-c", "user.email=replay@fixture.invalid",
+        "-c", "commit.gpgsign=false",
+        *args,
+    ]
+    return subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+
+def _init_repo(path: Path) -> Path:
+    """Create and initialise a throwaway git repo at ``path``."""
+    path.mkdir(parents=True, exist_ok=True)
+    _git(path, "init", "-q")
+    _git(path, "commit", "-q", "--allow-empty", "-m", "initial")
+    return path
+
+
+def _commit_file(repo: Path, rel: str, content: str) -> None:
+    """Write ``content`` to ``repo/rel`` and commit it under the harness
+    identity (creating parent dirs as needed)."""
+    target = repo / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content)
+    _git(repo, "add", rel)
+    _git(repo, "commit", "-q", "--allow-empty", "-m", f"add {rel}")
+
+
 def _git_ok(repo: Path, *args: str) -> subprocess.CompletedProcess:
     proc = _git_e2(repo, *args)
     if proc.returncode != 0:

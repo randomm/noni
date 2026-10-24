@@ -1,0 +1,2 @@
+census-sessions.sh [SESSIONS_DIR]
+five required fields each

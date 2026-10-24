@@ -466,7 +466,15 @@ def _check_ledger_records(
         try:
             raw = path.read_bytes()
             body = raw.decode("utf-8")
-        except (UnicodeDecodeError, OSError) as e:
+        except UnicodeDecodeError as e:
+            # The exception message embeds the offending bytes, which are
+            # untrusted record content (a record that contains raw NULs or
+            # other control bytes would smuggle them into stderr); the fixed
+            # wording below names the class without echoing the bytes.
+            add("ledger-record", "fail", name, str(path), "record is not valid UTF-8")
+            unparseable.append((name, path))
+            continue
+        except OSError as e:
             add("ledger-record", "fail", name, str(path), f"record is unreadable: {e}")
             unparseable.append((name, path))
             continue

@@ -24,15 +24,8 @@ if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 
 import public_safety  # noqa: E402
+from _harness import _git  # noqa: E402
 
-
-def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
-    cmd = ["git", "-C", str(repo), "-c", "user.name=Synthetic Tester", "-c", "user.email=testing@fixture.invalid", *args]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        stderr_first = result.stderr.strip().splitlines()[0] if result.stderr.strip() else "no stderr"
-        raise RuntimeError(f"git {args[0]} failed: {stderr_first}")
-    return result
 
 @pytest.fixture
 def clean_repo(tmp_path, monkeypatch):

@@ -220,6 +220,31 @@ def test_source_non_int_fields_fail(tmp_path):
     assert "issue_number" in err.lower()
 
 
+def test_integral_float_source_fails_in_both_entry_points(tmp_path):
+    """source.issue_number = 42.0 (an integral float) is rejected by BOTH the
+    unified census (isinstance(int) + not bool) and the census.sh shim (the
+    JSON-integer text-form check): the two entry points agree on every
+    source shape."""
+    rec = json.loads(json.dumps(_fixture("decision-valid.json")))
+    rec["source"] = {"issue_number": 42.0, "comment_id": 9102.0}
+    code, out, err = _run_census_on_record(tmp_path, rec)
+    assert code == 10, f"census.py: expected exit 10 for integral-float source, got {code}\nstderr: {err}"
+    code_sh, out_sh, err_sh = _run_census_sh_on_record(tmp_path, rec)
+    assert code_sh == 10, f"census.sh: expected exit 10 for integral-float source, got {code_sh}\n{err_sh}"
+    assert "integral" in (err_sh + out_sh).lower()
+
+
+def test_integral_float_source_rejects_only_the_float_shape(tmp_path):
+    """The 42.0 rejection is a source-shape rule, not a blanket refusal:
+    the same source with bare integers still passes both entry points."""
+    rec = json.loads(json.dumps(_fixture("decision-valid.json")))
+    rec["source"] = {"issue_number": 42, "comment_id": 9102}
+    code, out, err = _run_census_on_record(tmp_path, rec, fname="test-record-int.json")
+    assert code == 0, f"census.py: bare-int source must pass, got {code}\nstderr: {err}"
+    code_sh, out_sh, err_sh = _run_census_sh_on_record(tmp_path, rec, fname="test-record-int.json")
+    assert code_sh == 0, f"census.sh: bare-int source must pass, got {code_sh}\n{err_sh}"
+
+
 def test_unknown_status_fails(tmp_path):
     """A record with an unknown status (pending) fails the schema check
     (exit 10)."""

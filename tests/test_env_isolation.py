@@ -17,20 +17,13 @@ leak through. That is what makes the first test's passing a real result.
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 CENSUS = REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"
 CONFTEST = Path(__file__).resolve().parent / "conftest.py"
 
-
-def _git(repo: Path, *args: str) -> None:
-    subprocess.run(
-        ["git", "-C", str(repo), "-c", "user.name=Test", "-c", "user.email=test@fixture.invalid", "-c", "commit.gpgsign=false", *args],
-        check=True,
-        capture_output=True,
-    )
+from _harness import _git  # noqa: E402
 
 
 def _decoy_ledger(root: Path, marker: str = "decoy") -> Path:

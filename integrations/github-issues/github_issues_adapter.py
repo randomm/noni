@@ -89,6 +89,7 @@ from adapter_protocol import (  # noqa: E402
     VERDICT_NONE,
     VERDICT_ONE,
     VERDICT_STRANGER,
+    Allowlist,
     QuestionVerdict,
     is_allowed,
 )
@@ -159,7 +160,7 @@ def _last_state(payload: object) -> tuple[str, str]:
     return body, (login if isinstance(login, str) else "")
 
 
-def question_legitimacy(payload: dict, allowlist: set[str]) -> QuestionVerdict:
+def question_legitimacy(payload: dict, allowlist: set[str] | Allowlist) -> QuestionVerdict:
     """Question-legitimacy seam.
 
     Returns the operator's answer (when the steer is legitimate) and the
@@ -181,7 +182,7 @@ def question_legitimacy(payload: dict, allowlist: set[str]) -> QuestionVerdict:
     return QuestionVerdict(VERDICT_STRANGER, None)
 
 
-def label_authorization(payload: dict, label: str, allowlist: set[str]) -> bool:
+def label_authorization(payload: dict, label: str, allowlist: set[str] | Allowlist) -> bool:
     """Label-authorization seam.
 
     Given a label on an issue (the label is an explicit argument — it is

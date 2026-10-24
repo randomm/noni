@@ -1,4 +1,40 @@
 #!/usr/bin/env bash
+# The census entry point. Two checks live under this name, each with its own
+# exit-code table and its own golden fixtures under tests/fixtures/:
+#
+#   census.sh [LEDGER_DIR]                  the decisions census (E1)
+#       columns: id date by status live supersedes
+#       codes:   0 clean | 3 jq missing | 10 record/ledger unusable
+#                | 12 edited after commit | 20 supersede chain broken
+#
+#   census.sh --sessions [SESSIONS_DIR]     the sessions census (E2)
+#       one NDJSON row per finding; read-only, output to stdout only
+#       codes:   0 clean | 3 python3 missing | 30 double-claim
+#                | 31 claim without a register file | 32 malformed session file
+#
+# The two checks are never mixed in one run: the dispatch below selects the
+# E1 or the E2 path from the flag set, and the exit code is whichever check
+# ran. In the E2 path the sessions census is the deterministic arbiter for
+# the claim protocol: claims are signals, git delays the second claimant
+# (it does not lock), and the census double-claim check (30) is the check
+# that catches it at read time.
+
+# --- Dispatch ------------------------------------------------------------------
+# The --sessions dispatch reaches into the sibling sessions-claims skill. The
+# relative path below is the co-installed default; set NONI_SESSIONS_CENSUS to
+# point at a separately installed copy or an adapter to override. (Documented
+# dependency: with no override, sessions-claims must be installed at the
+# expected relative path.)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ "$#" -gt 0 ]; then
+  case "$1" in
+    --sessions) shift
+      exec "${NONI_SESSIONS_CENSUS:-$SCRIPT_DIR/../../sessions-claims/scripts/census-sessions.sh}" "$@"
+      ;;
+  esac
+fi
+
+# --- Decisions census (E1) ----------------------------------------------------
 # Census of the steering ledger: one line per dated decision record under
 # noni/decisions/. Read-only — never writes, never mutates a record.
 #

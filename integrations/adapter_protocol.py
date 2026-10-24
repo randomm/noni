@@ -12,7 +12,7 @@ An adapter is a plain module (no package, no ``__init__.py`` — the same
 ``sys.path`` insertion pattern every noni script uses) exposing:
 
   question_legitimacy(question_payload, allowlist) -> QuestionVerdict
-  label_authorization(label_payload, allowlist) -> bool
+  label_authorization(label_payload, label, allowlist) -> bool
 
 Exactly two seams. The interface is structural — there is no base class
 and no import of it required from an adapter (importing this module from an
@@ -300,6 +300,7 @@ def check_interface(adapter_module) -> list[str]:
     """
     import inspect
 
+    expected_arity = {"question_legitimacy": 2, "label_authorization": 3}
     problems: list[str] = []
     for seam in ("question_legitimacy", "label_authorization"):
         fn = getattr(adapter_module, seam, None)
@@ -316,6 +317,7 @@ def check_interface(adapter_module) -> list[str]:
             # contract violation to report, not an exception to propagate.
             problems.append(f"seam {seam} has no inspectable signature: {e}")
             continue
-        if len(params) != 2:
-            problems.append(f"seam {seam} must take exactly two arguments (payload, allowlist), got {len(params)}")
+        arity = expected_arity[seam]
+        if len(params) != arity:
+            problems.append(f"seam {seam} must take exactly {arity} arguments, got {len(params)}")
     return problems

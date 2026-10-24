@@ -37,11 +37,13 @@ yields `one`.
 
 ## Label authorization
 
-The seam is asked about a label and answers from the timeline, not from
-the issue's current label state. The label is **authorized** iff the
-allow-list is active and the latest `labeled` event for that label names
-an allow-listed actor. It reads the **account behind the label event**,
-not the label's presence:
+The seam is `label_authorization(payload, label, allowlist)`: the label
+is an **explicit argument** — it is never inferred from the issue's
+current label set. It answers from the timeline, not from the issue's
+current label state. The label is **authorized** iff the allow-list is
+active and the latest `labeled` event whose label name matches `label`
+(casefolded) names an allow-listed actor. It reads the **account behind
+the label event**, not the label's presence:
 
 - the label's current presence on the issue does not matter: a label
   applied by an allow-listed account stays authorized if someone later
@@ -51,14 +53,18 @@ not the label's presence:
   still present on the issue;
 - a label with no recorded `labeled` event is unauthorized: without the
   event there is no evidence of an allow-listed applier;
-- a payload with no labels has nothing to authorize — it is unauthorized
-  in **every** allow-list state (active, absent or refused), including an
-  active allow-list; there is no "nothing to check, so True" path;
+- an empty or non-str `label` argument names nothing to authorize — it is
+  unauthorized in **every** allow-list state (active, absent or refused),
+  including an active allow-list; there is no "nothing to check, so True"
+  path;
 - an absent or refused allow-list authorizes nothing, no matter what the
   payload says;
-- label names compare case-insensitively on both sides (the label named
-  in the payload and the label named in the event must name the same
-  label).
+- label names compare case-insensitively on both sides (the label
+  argument and the label named in the event must name the same label).
+
+An issue with several labels is not a special case: asking about any one
+of them is decided by that label's own timeline events, not by the
+first label on the issue.
 
 ## The allow-list
 
@@ -95,5 +101,5 @@ allowlist = adapter_protocol.load_allowlist(
     adapter.ALLOWLIST_ENV_VAR, adapter.default_allowlist_file()
 )
 verdict = adapter.question_legitimacy(payload, allowlist)   # QuestionVerdict
-ok = adapter.label_authorization(payload, allowlist)        # bool
+ok = adapter.label_authorization(payload, "steer", allowlist)  # bool
 ```

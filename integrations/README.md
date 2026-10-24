@@ -23,23 +23,26 @@ An adapter is a plain Python module (no package, no `__init__.py` — the
 same `sys.path` insertion pattern every other noni script uses) that
 implements exactly **two seams**:
 
-1. **Question legitimacy** — given the tracker-side representation of a
-   steering question, return the operator's answer and a verdict. The
-   verdict is one of `none` | `one` | `many` | `stranger`. A `many` or
-   `stranger` verdict is never stored as an answer; the caller persists
-   such a steer as `status: open` with the answer absent.
-2. **Label authorization** — given a label on an issue, return whether the
-   **account that applied the label** is on the allow-list. The seam is
-   asked about a label and answers from the timeline: it is authorized
-   only when the allow-list is active and the latest label-application
-   event for that label names an allow-listed actor. It reads the account
-   behind the label event, not the label's presence: a label applied by a
-   stranger is unauthorized whether or not it is still present on the
-   issue, a label applied by an allow-listed account stays authorized if
-   someone later removes it, a label with no recorded application event
-   is unauthorized, and a payload with no labels — or an inactive
-   (absent/refused) allow-list — is unauthorized in every state. There is
-   no "nothing to check, so True" path.
+1. **Question legitimacy** — `question_legitimacy(question_payload,
+   allowlist)`: given the tracker-side representation of a steering
+   question, return the operator's answer and a verdict. The verdict is
+   one of `none` | `one` | `many` | `stranger`. A `many` or `stranger`
+   verdict is never stored as an answer; the caller persists such a steer
+   as `status: open` with the answer absent.
+2. **Label authorization** — `label_authorization(label_payload, label,
+   allowlist)`: given a label **on** an issue (the label is an explicit
+   argument — never inferred from the issue's current label set), return
+   whether the **account that applied the label** is on the allow-list.
+   The seam answers from the timeline: it is authorized only when the
+   allow-list is active and the latest label-application event whose label
+   name matches `label` (casefolded) names an allow-listed actor. It reads
+   the account behind the label event, not the label's presence: a label
+   applied by a stranger is unauthorized whether or not it is still
+   present on the issue, a label applied by an allow-listed account stays
+   authorized if someone later removes it, a label with no recorded
+   application event is unauthorized, and an empty or non-str `label`
+   argument — or an inactive (absent/refused) allow-list — is unauthorized
+   in every state. There is no "nothing to check, so True" path.
 
 The contract is documented and enforced by `test_adapter_interface.py`;
 any module that implements both seams satisfies the interface. There is no

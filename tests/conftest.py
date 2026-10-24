@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -53,6 +54,12 @@ NONI_ENV_VARS = (
 )
 
 REPO = Path(__file__).resolve().parent.parent
+
+# Make the unified census module importable from test files (no __init__.py;
+# sys.path insertion is the established pattern for repo-local modules).
+_CENSUS_SCRIPTS = REPO / "skills" / "census" / "scripts"
+if str(_CENSUS_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_CENSUS_SCRIPTS))
 
 # Clear at import time (conftest is imported before any test module is
 # collected), so a variable exported by the developer's shell cannot reach a

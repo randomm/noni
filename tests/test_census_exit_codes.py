@@ -1,202 +1,200 @@
-"""Test the census exit codes against one committed golden fixture per code.
+"""Tests for the exit-code table of the unified census.
 
-Each golden fixture under tests/fixtures/census-exit-<code>.json describes the
-ledger tree and the environment condition the test must set up. The test reads
-the fixture, builds the tree in tmp_path, runs the census, and asserts the
-exit code. A fixture that is wrong for its code makes the corresponding test
-fail, so the fixtures and the script cannot disagree.
-
-The exit codes are:
-  0   clean — every record valid, chain intact
-  3   jq not found on the reading machine
-  10  a record is missing or malformed (schema violation)
-  12  a record was edited after commit (working tree differs from git)
-  20  the supersede chain is broken (dangling, duplicate, orphan, or a
-      chain resolving to zero or more than one live record)
+Each test plants exactly one violation class in an otherwise clean fixture
+repo and asserts the exact exit code. The exit-code contract is:
+  0   clean (warnings allowed)
+  2   usage error
+  10  ledger-record
+  12  ledger-edited
+  20  ledger-chain
+  30  session-double
+  31  session-claim
+  32  session-malformed
+  40  session-stalled (only under --strict)
+  41  probe failure (only under --strict)
 """
 
 from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
-FIXTURES = Path(__file__).resolve().parent / "fixtures"
 REPO = Path(__file__).resolve().parent.parent
-CENSUS = REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"
+_CENSUS_DIR = str(REPO / "skills" / "census" / "scripts")
+if _CENSUS_DIR not in sys.path:
+    sys.path.insert(0, _CENSUS_DIR)
+
+import census  # noqa: E402
 
 
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
-        ["git", "-C", str(repo), "-c", "user.name=Replay", "-c", "user.email=replay@fixture.invalid", "-c", "commit.gpgsign=false", *args],
-        check=True,
-        capture_output=True,
+        ["git", "-C", str(repo), "-c", "user.name=Replay",
+         "-c", "user.email=replay@fixture.invalid", "-c", "commit.gpgsign=false", *args],
+        check=True, capture_output=True,
     )
 
 
-def _setup_ledger(
-    tmp_path: Path,
-    ledger_name: str,
-    records: dict[str, dict],
-    commit_order: list[str] | None,
-    committed_version: dict | None = None,
-    working_tree_version: dict | None = None,
-    exit_code: int = 0,
-) -> Path:
-    """Build a ledger tree in tmp_path from a fixture's record dict.
-
-    If commit_order is given, each record is committed in that order (for
-    git-based fixtures). If committed_version / working_tree_version are given
-    (exit-12), the committed version is committed first and the working-tree
-    version is written on top.
-    """
-    repo = tmp_path / "repo"
-    ledger = repo / "noni" / "decisions"
-    ledger.mkdir(parents=True)
-    _git(repo, "init", "-q")
-
-    if commit_order:
-        for fname in commit_order:
-            if fname in records:
-                content = json.dumps(records[fname], indent=2)
-                (ledger / fname).write_text(content)
-                _git(repo, "add", "noni/decisions/" + fname)
-                _git(repo, "commit", "-q", "--allow-empty", "-m", f"add {fname}")
-    else:
-        for fname, rec in records.items():
-            content = json.dumps(rec, indent=2)
-            (ledger / fname).write_text(content)
-
-    if committed_version is not None:
-        # exit-12: commit the committed_version, then write the working_tree_version
-        fname = list(records.keys())[0]
-        content = json.dumps(committed_version, indent=2)
-        (ledger / fname).write_text(content)
-        _git(repo, "add", "noni/decisions/" + fname)
-        _git(repo, "commit", "-q", "--allow-empty", "-m", f"add {fname} (committed version)")
-        if working_tree_version is not None:
-            content = json.dumps(working_tree_version, indent=2)
-            (ledger / fname).write_text(content)
-
-    return ledger
+def _init_repo(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    _git(path, "init", "-q")
+    _git(path, "commit", "-q", "--allow-empty", "-m", "initial")
+    return path
 
 
-def _fixture(name: str) -> dict:
-    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+def _commit_file(repo: Path, rel: str, content: str) -> None:
+    target = repo / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content)
+    _git(repo, "add", rel)
+    _git(repo, "commit", "-q", "--allow-empty", "-m", f"add {rel}")
 
 
-def test_exit_0_clean(tmp_path, run_census):
-    """A clean ledger (valid records, intact chain, no edits, prior commits)
-    exits 0."""
-    fx = _fixture("census-exit-0.json")
-    assert fx["exit_code"] == 0
-    ledger = _setup_ledger(
-        tmp_path, "repo", fx["records"], fx["setup"].get("commit_order"),
-        exit_code=fx["exit_code"],
+def _valid_record(rec_id="2026-10-01-alpha", status="decided", supersedes=None) -> dict:
+    return {
+        "id": rec_id, "date": "2026-10-01T10:00:00Z", "asked_by": "dev",
+        "questions": [{"id": "q1", "text": "Q?", "options": ["yes", "no"], "answer": "yes"}],
+        "by": "T", "scope": "s", "status": status, "supersedes": supersedes,
+    }
+
+
+def _session_body(identity: str, claims: list[str] | None = None) -> str:
+    lines = [f"- identity: {identity}", "- host/worktree: ws",
+             "- started: 2026-10-01T10:00:00Z", "- status: active", "- claims:"]
+    for c in claims or []:
+        lines.append(f"  - claim: {c}")
+    return "\n".join(lines) + "\n"
+
+
+def _run(repo: Path, *args: str) -> int:
+    import io
+    from contextlib import redirect_stderr, redirect_stdout
+    out, err = io.StringIO(), io.StringIO()
+    argv = ["--repo", str(repo), "--now", "2026-10-02T00:00:00Z", *args]
+    with redirect_stdout(out), redirect_stderr(err):
+        return census.main(argv)
+
+
+def test_exit_0_clean(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/decisions/2026-10-01-a.json", json.dumps(_valid_record(), indent=2))
+    assert _run(repo) == 0
+
+
+def test_exit_2_bad_now():
+    import io
+    from contextlib import redirect_stderr
+    err = io.StringIO()
+    with redirect_stderr(err):
+        rc = census.main(["--now", "invalid"])
+    assert rc == 2
+
+
+def test_exit_2_unknown_check():
+    import io
+    from contextlib import redirect_stderr
+    err = io.StringIO()
+    with redirect_stderr(err):
+        rc = census.main(["--only", "bogus"])
+    assert rc == 2
+
+
+def test_exit_10_schema_violation(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    bad = _valid_record()
+    del bad["status"]
+    _commit_file(repo, "noni/decisions/2026-10-01-bad.json", json.dumps(bad, indent=2))
+    assert _run(repo) == 10
+
+
+def test_exit_10_empty_ledger(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/decisions/.gitkeep", "")
+    assert _run(repo) == 10
+
+
+def test_exit_10_not_valid_json(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/decisions/2026-10-01-bad.json", "{bad")
+    assert _run(repo) == 10
+
+
+def test_exit_12_edited_after_commit(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/decisions/2026-10-01-a.json", json.dumps(_valid_record(), indent=2))
+    (repo / "noni/decisions/2026-10-01-a.json").write_text(
+        json.dumps(_valid_record(status="open"), indent=2)
     )
-    code, out, err = run_census(ledger)
-    assert code == 0, f"expected exit 0, got {code}\nstderr: {err}\nstdout: {out}"
+    assert _run(repo) == 12
 
 
-def test_exit_3_jq_missing(tmp_path, run_census):
-    """With jq absent from PATH, the census exits 3 (missing dependency)."""
-    fx = _fixture("census-exit-3.json")
-    assert fx["exit_code"] == 3
-    ledger = _setup_ledger(
-        tmp_path, "repo", fx["records"], fx["setup"].get("commit_order"),
-        exit_code=fx["exit_code"],
-    )
-    # Build a PATH that has `bash` (so the census can run) but no `jq`
-    # (so the census exits 3). Symlink the real bash into a temp dir.
-    fake_bin = tmp_path / "fake-bin"
-    fake_bin.mkdir()
-    import shutil as _shutil
-    real_bash = _shutil.which("bash")
-    assert real_bash, "bash not found on this system"
-    (fake_bin / "bash").symlink_to(real_bash)
-    env = {"PATH": str(fake_bin)}
-    code, out, err = run_census(ledger, env=env)
-    assert code == 3, f"expected exit 3, got {code}\nstderr: {err}\nstdout: {out}"
-    assert "jq" in err.lower() or "jq" in out.lower()
+def test_exit_20_dangling_supersedes(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/decisions/2026-10-01-root.json", json.dumps(_valid_record("2026-10-01-root"), indent=2))
+    dangling = _valid_record("2026-10-22-d", "decided", "2026-10-99-missing")
+    _commit_file(repo, "noni/decisions/2026-10-22-d.json", json.dumps(dangling, indent=2))
+    assert _run(repo) == 20
 
 
-def test_exit_10_schema_violation(tmp_path, run_census):
-    """A record with a missing field (or other schema violation) exits 10."""
-    fx = _fixture("census-exit-10.json")
-    assert fx["exit_code"] == 10
-    ledger = _setup_ledger(
-        tmp_path, "repo", fx["records"], fx["setup"].get("commit_order"),
-        exit_code=fx["exit_code"],
-    )
-    code, out, err = run_census(ledger)
-    assert code == 10, f"expected exit 10, got {code}\nstderr: {err}\nstdout: {out}"
+def test_exit_20_cycle(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    a = _valid_record("2026-10-01-a", "decided", "2026-10-02-b")
+    b = _valid_record("2026-10-02-b", "decided", "2026-10-01-a")
+    _commit_file(repo, "noni/decisions/2026-10-01-a.json", json.dumps(a, indent=2))
+    _commit_file(repo, "noni/decisions/2026-10-02-b.json", json.dumps(b, indent=2))
+    assert _run(repo) == 20
 
 
-def test_exit_12_edited_after_commit(tmp_path, run_census):
-    """A record committed, then edited in the working tree (status changed
-    from decided to open), exits 12."""
-    fx = _fixture("census-exit-12.json")
-    assert fx["exit_code"] == 12
-    ledger = _setup_ledger(
-        tmp_path, "repo", fx["records"], fx["setup"].get("commit_order"),
-        committed_version=fx["setup"].get("committed_version"),
-        working_tree_version=fx["setup"].get("working_tree_version"),
-        exit_code=fx["exit_code"],
-    )
-    code, out, err = run_census(ledger)
-    assert code == 12, f"expected exit 12, got {code}\nstderr: {err}\nstdout: {out}"
+def test_exit_30_double_claim(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md", _session_body("dev", ["#42"]))
+    _commit_file(repo, "noni/sessions/2026-10-01-bbbbbb.md", _session_body("rev", ["#42"]))
+    assert _run(repo) == 30
 
 
-def test_exit_20_broken_chain(tmp_path, run_census):
-    """A record with a dangling supersedes (names a non-existent id) exits 20."""
-    fx = _fixture("census-exit-20.json")
-    assert fx["exit_code"] == 20
-    ledger = _setup_ledger(
-        tmp_path, "repo", fx["records"], fx["setup"].get("commit_order"),
-        exit_code=fx["exit_code"],
-    )
-    code, out, err = run_census(ledger)
-    assert code == 20, f"expected exit 20, got {code}\nstderr: {err}\nstdout: {out}"
-    assert "dangling" in err.lower() or "chain" in err.lower()
+def test_exit_31_claim_without_register(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    body = ("- host/worktree: ws\n- started: 2026-10-01T10:00:00Z\n"
+            "- status: active\n- claims:\n  - claim: #42\n")
+    _commit_file(repo, "noni/sessions/2026-10-01-cccccc.md", body)
+    assert _run(repo) == 31
 
 
-def test_exit_20_zero_live_chain(tmp_path, run_census):
-    """A chain in which every record is superseded (root superseded by the
-    successor, successor also marked superseded) resolves to zero live
-    records and exits 20."""
-    fx = _fixture("census-exit-20-zero-live.json")
-    assert fx["exit_code"] == 20
-    ledger = _setup_ledger(
-        tmp_path, "repo", fx["records"], fx["setup"].get("commit_order"),
-        exit_code=fx["exit_code"],
-    )
-    code, out, err = run_census(ledger)
-    assert code == 20, f"expected exit 20 for zero-live chain, got {code}\nstderr: {err}\nstdout: {out}"
-    assert "zero-live" in err, f"expected 'zero-live' in stderr, got: {err}"
+def test_exit_32_malformed_claim_row(tmp_path):
+    repo = _init_repo(tmp_path / "repo")
+    body = ("- identity: dev\n- host/worktree: ws\n- started: 2026-10-01T10:00:00Z\n"
+            "- status: active\n- claims:\n\n  - claim:\n")
+    _commit_file(repo, "noni/sessions/2026-10-01-dddddd.md", body)
+    assert _run(repo) == 32
 
 
-def test_exit_20_multi_live_chain(tmp_path, run_census):
-    """A chain in which the superseded root was never marked superseded
-    resolves to more than one live record and exits 20."""
-    fx = _fixture("census-exit-20-multi-live.json")
-    assert fx["exit_code"] == 20
-    ledger = _setup_ledger(
-        tmp_path, "repo", fx["records"], fx["setup"].get("commit_order"),
-        exit_code=fx["exit_code"],
-    )
-    code, out, err = run_census(ledger)
-    assert code == 20, f"expected exit 20 for multi-live chain, got {code}\nstderr: {err}\nstdout: {out}"
-    assert "multi-live" in err, f"expected 'multi-live' in stderr, got: {err}"
+def test_exit_40_stalled_only_under_strict(tmp_path):
+    """A stalled session is a warn (exit 0) without --strict, and a fail
+    (exit 40) with --strict. The session must have no commit for >7 days."""
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md", _session_body("dev"))
+    import io
+    from contextlib import redirect_stderr, redirect_stdout
+    # Without --strict: warn (exit 0)
+    out, err = io.StringIO(), io.StringIO()
+    with redirect_stdout(out), redirect_stderr(err):
+        rc = census.main(["--repo", str(repo), "--now", "2027-01-01T00:00:00Z", "--stale-after", "1"])
+    assert rc == 0, f"expected 0 (warn without --strict), got {rc}: {err.getvalue()}"
+    # With --strict: fail (exit 40)
+    out, err = io.StringIO(), io.StringIO()
+    with redirect_stdout(out), redirect_stderr(err):
+        rc = census.main(["--repo", str(repo), "--now", "2027-01-01T00:00:00Z", "--stale-after", "1", "--strict"])
+    assert rc == 40, f"expected 40 (fail with --strict), got {rc}: {err.getvalue()}"
 
 
-def test_every_fixture_has_its_exit_code():
-    """The fixture's exit_code field matches the code in the filename, so a
-    rename or a wrong fixture cannot slip through unnoticed."""
-    for f in sorted(FIXTURES.glob("census-exit-*.json")):
-        fx = _fixture(f.name)
-        # The name is census-exit-<code> or census-exit-<code>-<suffix>; the
-        # code is the first integer segment after the prefix.
-        code_in_name = int(f.stem.replace("census-exit-", "").split("-", 1)[0])
-        assert fx["exit_code"] == code_in_name, (
-            f"{f.name}: exit_code in fixture is {fx['exit_code']} but filename says {code_in_name}"
-        )
+def test_lowest_code_wins(tmp_path):
+    """When exit 10 (schema) and 30 (double-claim) both fire, 10 wins."""
+    repo = _init_repo(tmp_path / "repo")
+    bad = _valid_record()
+    del bad["id"]
+    _commit_file(repo, "noni/decisions/2026-10-01-bad.json", json.dumps(bad, indent=2))
+    _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md", _session_body("dev", ["#1"]))
+    _commit_file(repo, "noni/sessions/2026-10-01-bbbbbb.md", _session_body("rev", ["#1"]))
+    assert _run(repo) == 10

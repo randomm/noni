@@ -102,8 +102,11 @@ violation. Prose states the protocol; scripts and census hold the line.
   direction/   standing direction, release trains, Now-state ordering
   decisions/   steering ledger: one file per dated record
   sessions/    one committed file per session (registration + claims), one writer each
-  census/      on-demand reports (NDJSON); git history is the metric source
 ```
+
+Results are recomputed on demand by the census (no `census/` directory). The
+census is read-only: running it leaves `git status --porcelain` empty. Trends,
+if ever wanted, are recomputed from git history (E5).
 
 Metrics are derived, never self-reported: the census reads git history and
 these files. The primary integration's adapter additionally joins its local

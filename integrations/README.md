@@ -29,11 +29,17 @@ implements exactly **two seams**:
    `stranger` verdict is never stored as an answer; the caller persists
    such a steer as `status: open` with the answer absent.
 2. **Label authorization** — given a label on an issue, return whether the
-   **account that applied the label** is on the allow-list. It reads the
-   account behind the label event, not the label's presence: a label
-   applied by a stranger is unauthorized even if it is present on the
-   issue, and a label applied by an allow-listed account stays authorized
-   if someone later removes it.
+   **account that applied the label** is on the allow-list. The seam is
+   asked about a label and answers from the timeline: it is authorized
+   only when the allow-list is active and the latest label-application
+   event for that label names an allow-listed actor. It reads the account
+   behind the label event, not the label's presence: a label applied by a
+   stranger is unauthorized whether or not it is still present on the
+   issue, a label applied by an allow-listed account stays authorized if
+   someone later removes it, a label with no recorded application event
+   is unauthorized, and a payload with no labels — or an inactive
+   (absent/refused) allow-list — is unauthorized in every state. There is
+   no "nothing to check, so True" path.
 
 The contract is documented and enforced by `test_adapter_interface.py`;
 any module that implements both seams satisfies the interface. There is no

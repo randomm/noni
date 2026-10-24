@@ -23,13 +23,18 @@ and ``integrations/adapter_protocol.py`` for GitHub issues:
   comment, and it is that event's account that must be allow-listed.
 
 - **Label authorization.** The payload is the issue (with its labels) plus
-  the issue's timeline events. The check reads **the account behind the label
-  event, not the label's presence**: for each label present on the issue it
-  finds the latest label event, and the label is authorized only when that
-  event's actor is on the allow-list. A label applied by a stranger is
-  unauthorized even though it is present on the issue; a label applied by an
-  allow-listed account stays authorized if a stranger later removes it (the
-  removal is a different event; authorization is about who applied it).
+  the issue's timeline events. The seam is asked about a label and
+  returns True iff an *authorized application* of that label is on
+  record: the allow-list is active, and the latest ``labeled`` timeline
+  event for the label names an allow-listed actor. It reads the account
+  behind the label event, not the label's presence: a label currently
+  absent from the issue still counts if it was applied by an allow-listed
+  account (and later removed by anyone — the removal is a different
+  event, not a new application), and a label present on the issue with no
+  recorded ``labeled`` event — or one applied by a stranger — is not
+  authorized. The allow-list itself must be active: an absent or
+  refused allow-list authorizes nothing, even in the absence of any
+  label.
 
 The allow-list comes from local configuration only (an untracked file or an
 env var, via ``adapter_protocol.load_allowlist``) — never hard-coded.
@@ -74,6 +79,7 @@ import re
 # Import the shared contract and the allow-list loader from the sibling
 # integrations module (no package; tests insert integrations/ on sys.path —
 # the same pattern every noni script uses).
+import adapter_protocol  # noqa: E402
 from adapter_protocol import (  # noqa: E402
     VERDICT_MANY,
     VERDICT_NONE,
@@ -174,53 +180,82 @@ def question_legitimacy(payload: dict, allowlist: set[str]) -> QuestionVerdict:
 def label_authorization(payload: dict, allowlist: set[str]) -> bool:
     """Label-authorization seam.
 
-    Returns True iff every label present on the issue was *applied* by an
-    allow-listed account. The check reads the account behind the label
-    event (the latest ``labeled`` event for that label in the timeline), not
-    the label's presence: a present label whose application actor is not
-    allow-listed is unauthorized, and a label applied by an allow-listed
-    account stays authorized if someone later removes it (removals are
-    ``unlabeled`` events and do not re-attribute the application).
+    Returns True iff the allow-list is **active** and the latest
+    ``labeled`` timeline event for the label names an allow-listed
+    actor — and False in every other state, in any allow-list state.
+
+    The seam is asked about a label, not about the issue's current label
+    set: authorization is about who *applied* the label, so the label's
+    current presence on the issue does not matter. A label applied by an
+    allow-listed account stays authorized if someone later removes it
+    (the removal is a different event and does not re-attribute the
+    application), and a label applied by a stranger is unauthorized
+    whether or not it is still present.
+
+    Fails closed in every state: an absent or refused allow-list
+    authorizes nothing (there is no active allow-list to authorize the
+    application), a label with no recorded ``labeled`` event has no
+    evidence of an allow-listed applier, and label names compare
+    case-insensitively on both sides (tracker label names are
+    case-insensitive in practice; the event and the requested label must
+    name the same label).
 
     A malformed payload never crashes and never authorizes: a non-dict
-    issue/label/event, a non-str label name, a non-str actor, or a missing
-    label/event yields ``False`` — no evidence of an allow-listed applier
-    means unauthorized, never an exception.
+    payload/issue/event, a non-str label name or actor, or a missing
+    label/event yields ``False`` — no evidence of an allow-listed
+    applier means unauthorized, never an exception.
     """
+    # The allow-list must be active (an Allowlist carries its own status;
+    # a bare set is active iff non-empty). An inactive allow-list
+    # authorizes nothing, in any label state.
+    if isinstance(allowlist, adapter_protocol.Allowlist):
+        if not allowlist.authorized:
+            return False
+    else:
+        if not allowlist:
+            return False
+
     if not isinstance(payload, dict):
         return False
+
+    events = payload.get("events")
+    events = events if isinstance(events, list) else []
+
+    # The requested label: the first valid label name on the issue. The
+    # seam is asked about that label; an issue with no (valid) labels has
+    # no label to authorize.
     issue = payload.get("issue")
     issue = issue if isinstance(issue, dict) else {}
     raw_labels = issue.get("labels")
     raw_labels = raw_labels if isinstance(raw_labels, list) else []
-    labels: set[str] = set()
+    requested: str | None = None
     for label in raw_labels:
         if isinstance(label, dict):
             name = label.get("name")
             if isinstance(name, str) and name:
-                labels.add(name)
-    if not labels:
-        # No (valid) labels present: nothing to authorize, and nothing
-        # unauthorized.
-        return True
+                requested = name.casefold()
+                break
+    if requested is None:
+        return False
 
-    events = payload.get("events")
-    events = events if isinstance(events, list) else []
-    for label in sorted(labels):
-        applied_by: list[str] = []
-        for event in events:
-            if not isinstance(event, dict):
-                continue
-            if event.get("event") == "labeled" and event.get("label") == label:
-                actor = event.get("actor")
-                applied_by.append(actor if isinstance(actor, str) else "")
-        # No recorded application event for a present label (or an event
-        # whose actor is missing/non-str, recorded as "" so it can never
-        # match the allow-list): cannot verify the actor, so it is not
-        # authorized (the read is about the event, not the presence — no
-        # event means no evidence of an allow-listed applier).
-        if not applied_by:
-            return False
-        if not is_allowed(allowlist, applied_by[-1]):
-            return False
-    return True
+    # The latest ``labeled`` event for the requested label (label names
+    # compare case-insensitively). The timeline is oldest-first, so the
+    # last matching event is the latest application; an application with
+    # a missing/non-str actor is recorded as "" so it can never match.
+    latest_actor: str | None = None
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if event.get("event") != "labeled":
+            continue
+        event_label = event.get("label")
+        if not isinstance(event_label, str) or not event_label:
+            continue
+        if event_label.casefold() != requested:
+            continue
+        actor = event.get("actor")
+        latest_actor = actor if isinstance(actor, str) else ""
+
+    if latest_actor is None:
+        return False
+    return is_allowed(allowlist, latest_actor)

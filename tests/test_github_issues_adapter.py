@@ -205,20 +205,74 @@ def test_label_applied_by_stranger_is_unauthorized_even_if_present():
 
 def test_label_applied_by_allowlisted_then_removed_stays_authorized():
     """A label applied by an allow-listed account stays authorized if a
-    stranger later removes it: authorization is about who applied it, not
-    who removed it (and not whether it is still present)."""
+    stranger later removes it: the seam is asked about the label (the
+    payload names it) and authorization is about who applied it, not who
+    removed it (and not whether it is still present)."""
     payload = _load_fixture("label-authorized-then-removed.json")
     assert adapter.label_authorization(payload, ALLOWED) is True
 
 
 def test_label_with_no_recorded_application_event_is_unauthorized():
-    """A label present on the issue with no recorded labeled event has no
+    """A label named in the payload with no recorded labeled event has no
     evidence of an allow-listed applier: unauthorized."""
     payload = {
         "issue": {"labels": [{"name": "steer"}]},
         "events": [{"event": "opened", "actor": "agent-synthetic", "created_at": "2026-10-06T09:00:00Z"}],
     }
     assert adapter.label_authorization(payload, ALLOWED) is False
+
+
+def test_no_labels_no_events_is_unauthorized_in_every_allowlist_state():
+    """A payload with no labels and no events has no label to authorize:
+    False, and it stays False in every allow-list state (active, absent,
+    refused) — the old True-on-no-labels path is gone."""
+    payload = {"issue": {"labels": []}, "events": []}
+    # active (the test's bare set)
+    assert adapter.label_authorization(payload, ALLOWED) is False
+    # absent
+    assert adapter.label_authorization(payload, adapter_protocol.Allowlist(set(), "absent")) is False
+    # refused
+    assert adapter.label_authorization(payload, adapter_protocol.Allowlist(set(), "refused", "symlink")) is False
+    # active but empty
+    assert adapter.label_authorization(payload, set()) is False
+
+
+def test_malformed_label_payload_no_label_event_is_unauthorized():
+    """A payload whose issue carries no valid label but whose timeline has
+    a labeled event: the seam is asked about a label it cannot identify,
+    so it is unauthorized (no label to name, no authorization)."""
+    payload = {
+        "issue": {"labels": []},
+        "events": [{"event": "labeled", "actor": "op-1", "label": "steer", "created_at": "2026-10-01T10:00:00Z"}],
+    }
+    assert adapter.label_authorization(payload, ALLOWED) is False
+
+
+def test_malformed_payload_non_dict_issue_is_unauthorized():
+    """A non-dict issue is malformed: unauthorized, never a crash."""
+    payload = {"issue": "not-a-dict", "events": [{"event": "labeled", "actor": "op-1", "label": "steer"}]}
+    assert adapter.label_authorization(payload, ALLOWED) is False
+
+
+def test_label_name_comparison_is_case_insensitive():
+    """Label names compare case-insensitively on both sides: a label named
+    'Steer' in the payload matches a 'steer' labeled event and vice versa."""
+    payload = {
+        "issue": {"labels": [{"name": "Steer"}]},
+        "events": [{"event": "labeled", "actor": "op-1", "label": "steer", "created_at": "2026-10-01T10:00:00Z"}],
+    }
+    assert adapter.label_authorization(payload, ALLOWED) is True
+    inverted = {
+        "issue": {"labels": [{"name": "steer"}]},
+        "events": [{"event": "labeled", "actor": "op-1", "label": "Steer", "created_at": "2026-10-01T10:00:00Z"}],
+    }
+    assert adapter.label_authorization(inverted, ALLOWED) is True
+    # Case-insensitivity does not reach across different labels.
+    different = {
+        "issue": {"labels": [{"name": "Steer"}]},
+        "events": [{"event": "labeled", "actor": "op-1", "label": "other", "created_at": "2026-10-01T10:00:00Z"}],
+    }
+    assert adapter.label_authorization(different, ALLOWED) is False
 
 
 # --- The ledger record the adapter's output becomes ---------------------------
@@ -380,16 +434,39 @@ def test_malformed_allowlist_lines_with_control_chars_skipped(tmp_path, capsys):
 
 def test_case_insensitive_allowlist_match():
     """Tracker logins are case-insensitive on GitHub, so allow-list
-    matching is case-insensitive (documented behavior)."""
+    matching is case-insensitive (documented behavior), and the match is
+    symmetric: the account name is casefolded at parse time and at
+    lookup time, so a stored name matches a case-varied lookup and a
+    case-varied stored name matches a plain lookup."""
+    # Direction 1: plain stored, case-varied lookup.
     loaded = adapter_protocol.Allowlist({"op-1"}, "active")
     assert "OP-1" in loaded
     assert "Op-1" in loaded
     assert "op-1" in loaded
     assert "op-2" not in loaded
+    # Direction 2: case-varied stored, plain lookup.
+    loaded_case = adapter_protocol.Allowlist({"OP-1"}, "active")
+    assert "op-1" in loaded_case
+    assert "Op-1" in loaded_case
+    assert "OP-1" in loaded_case
+    assert "op-2" not in loaded_case
     # is_allowed matches case-insensitively for both Allowlist and bare-set
-    # shapes.
+    # shapes, in both directions.
     assert adapter_protocol.is_allowed(loaded, "OP-1")
+    assert adapter_protocol.is_allowed(loaded_case, "op-1")
     assert adapter_protocol.is_allowed({"op-1"}, "Op-1")
+    assert adapter_protocol.is_allowed({"OP-1"}, "op-1")
+    # load_allowlist casefolds at parse time: a file written in any case
+    # matches any-case lookups.
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        f = Path(td) / "al.txt"
+        f.write_text("OP-1\n", encoding="utf-8")
+        parsed = adapter_protocol.load_allowlist(adapter.ALLOWLIST_ENV_VAR, f)
+        assert parsed.status == "active"
+        assert parsed.accounts == {"op-1"}
+        assert "op-1" in parsed and "OP-1" in parsed
 
 
 def test_refused_allowlist_never_authorizes():

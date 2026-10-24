@@ -69,12 +69,18 @@ class Allowlist:
     negative whenever the allow-list is not active — an empty set
     authorizes nothing, and a refused one cannot be downgraded back to an
     active-but-empty one by a caller passing ``set(allowlist)``.
+
+    Account names are stored casefolded (``"OP-1"`` is stored as
+    ``"op-1"``) and compared casefolded at lookup, so the
+    case-insensitive match is symmetric: a lookup in any case matches an
+    account stored in any case, and vice versa. Tracker logins are
+    case-insensitive on GitHub, so case folding is the correct comparison.
     """
 
     def __init__(self, accounts: set[str], status: str, reason: str | None = None) -> None:
         if status not in LEGAL_STATUS:
             raise ValueError(f"status must be one of {sorted(LEGAL_STATUS)}, got {status!r}")
-        self.accounts = set(accounts)
+        self.accounts = {name.casefold() if isinstance(name, str) else name for name in accounts}
         self.status = status
         self.reason = reason
 
@@ -102,15 +108,20 @@ def is_allowed(allowlist, name: str) -> bool:
     bare set (the legacy shape the adapter seams take from callers that
     built their own). A ``None`` allow-list, a bare set built from a
     refused loader result (empty), or any non-str/empty name is **never**
-    authorized. Comparison is case-insensitive: tracker logins are
-    case-insensitive on GitHub, so ``"Op-1"`` matches an allow-listed
-    ``"op-1"``.
+    authorized. Comparison is case-insensitive and **symmetric**: account
+    names are casefolded at parse time (``_parse_allowlist_lines``) and at
+    lookup time, so a stored ``"OP-1"`` matches lookup ``"op-1"`` and a
+    stored ``"op-1"`` matches lookup ``"OP-1"`` — tracker logins are
+    case-insensitive on GitHub.
     """
     if not name or not isinstance(name, str):
         return False
     if isinstance(allowlist, Allowlist):
         return allowlist.authorized and name.casefold() in allowlist.accounts
-    return name.casefold() in allowlist
+    try:
+        return name.casefold() in {a.casefold() for a in allowlist if isinstance(a, str)}
+    except TypeError:
+        return False
 
 
 @dataclass(frozen=True)

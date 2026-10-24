@@ -37,20 +37,28 @@ yields `one`.
 
 ## Label authorization
 
-The adapter reads the **account behind the label event**, not the label's
-presence. For every label present on the issue it looks up the issue's
-timeline for the label's (latest) `labeled` event:
+The seam is asked about a label and answers from the timeline, not from
+the issue's current label state. The label is **authorized** iff the
+allow-list is active and the latest `labeled` event for that label names
+an allow-listed actor. It reads the **account behind the label event**,
+not the label's presence:
 
-- the label is **authorized** iff that event's actor is on the allow-list;
-- a label present on the issue but applied by a stranger is
-  **unauthorized** (the presence is not the evidence — the application
-  event is);
-- a label applied by an allow-listed account stays authorized if someone
-  later removes it: the removal is a different event and does not
-  re-attribute the application;
-- a label present on the issue with no recorded `labeled` event is
-  unauthorized: without the event there is no evidence of an allow-listed
-  applier.
+- the label's current presence on the issue does not matter: a label
+  applied by an allow-listed account stays authorized if someone later
+  removes it (the removal is a different event and does not re-attribute
+  the application);
+- a label applied by a stranger is **unauthorized** whether or not it is
+  still present on the issue;
+- a label with no recorded `labeled` event is unauthorized: without the
+  event there is no evidence of an allow-listed applier;
+- a payload with no labels has nothing to authorize — it is unauthorized
+  in **every** allow-list state (active, absent or refused), including an
+  active allow-list; there is no "nothing to check, so True" path;
+- an absent or refused allow-list authorizes nothing, no matter what the
+  payload says;
+- label names compare case-insensitively on both sides (the label named
+  in the payload and the label named in the event must name the same
+  label).
 
 ## The allow-list
 

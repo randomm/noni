@@ -59,8 +59,11 @@ LEGAL_STATUS = frozenset({STATUS_ABSENT, STATUS_ACTIVE, STATUS_REFUSED})
 class Allowlist:
     """The result of ``load_allowlist`` — never a bare set.
 
-    ``accounts`` is the trusted-account set (empty when the allow-list is
-    inactive or loaded with no valid lines). ``status`` is one of
+    ``accounts`` is the trusted-account set. It is empty whenever the
+    allow-list is inactive (``absent`` or ``refused``) — a refused
+    allow-list must not *carry* the accounts it refuses to authorize, so
+    ``len()``, ``in`` and the repr can never suggest an account is live
+    when the allow-list as a whole is not. ``status`` is one of
     LEGAL_STATUS (``active``, ``absent``, ``refused``). ``reason`` names
     the refusal when status is ``refused`` (None otherwise).
 
@@ -80,7 +83,14 @@ class Allowlist:
     def __init__(self, accounts: set[str], status: str, reason: str | None = None) -> None:
         if status not in LEGAL_STATUS:
             raise ValueError(f"status must be one of {sorted(LEGAL_STATUS)}, got {status!r}")
-        self.accounts = {name.casefold() if isinstance(name, str) else name for name in accounts}
+        # Inactive allow-lists store no accounts at all: an ``absent`` or
+        # ``refused`` list must never carry names that suggest accounts are
+        # live when the list as a whole is not (the ``authorized`` gate is
+        # the seam-facing decision, but ``len()``, ``in`` and the repr must
+        # agree with it).
+        self.accounts: set[str] = set()
+        if status == STATUS_ACTIVE:
+            self.accounts = {name.casefold() for name in accounts if isinstance(name, str)}
         self.status = status
         self.reason = reason
 
@@ -88,8 +98,12 @@ class Allowlist:
     def authorized(self) -> bool:
         return self.status == STATUS_ACTIVE
 
-    def __contains__(self, name: str) -> bool:
-        return self.status == STATUS_ACTIVE and name.casefold() in self.accounts
+    def __contains__(self, name: object) -> bool:
+        if self.status != STATUS_ACTIVE or not isinstance(name, str):
+            # A non-str lookup name (or an inactive list) never matches: the
+            # seam is tolerant of malformed input, never an AttributeError.
+            return False
+        return name.casefold() in self.accounts
 
     def __bool__(self) -> bool:
         return self.status == STATUS_ACTIVE
@@ -105,23 +119,28 @@ def is_allowed(allowlist, name: str) -> bool:
     """True iff ``name`` is an allow-listed account.
 
     ``allowlist`` is an :class:`Allowlist` (from ``load_allowlist``) or a
-    bare set (the legacy shape the adapter seams take from callers that
-    built their own). A ``None`` allow-list, a bare set built from a
-    refused loader result (empty), or any non-str/empty name is **never**
+    bare set or frozenset (the legacy shape the adapter seams take from
+    callers that built their own). A ``None`` allow-list, **any other
+    non-container input (a plain string is not an allow-list — it is
+    iterable, and letting it through would let ``"op-1"`` authorize
+    ``"o"``)**, a bare set built from a refused loader result (empty), or
+    any non-str/empty name is **never**
     authorized. Comparison is case-insensitive and **symmetric**: account
     names are casefolded at parse time (``_parse_allowlist_lines``) and at
     lookup time, so a stored ``"OP-1"`` matches lookup ``"op-1"`` and a
     stored ``"op-1"`` matches lookup ``"OP-1"`` — tracker logins are
     case-insensitive on GitHub.
     """
-    if not name or not isinstance(name, str):
+    if not isinstance(name, str) or not name:
         return False
     if isinstance(allowlist, Allowlist):
         return allowlist.authorized and name.casefold() in allowlist.accounts
-    try:
-        return name.casefold() in {a.casefold() for a in allowlist if isinstance(a, str)}
-    except TypeError:
+    if not isinstance(allowlist, (set, frozenset)):
+        # A plain string (or tuple, dict, list, int, ...) is not an
+        # allow-list: refusing it here is what keeps a bare string from
+        # iterating its characters and authorizing a single-letter lookup.
         return False
+    return name.casefold() in {a.casefold() for a in allowlist if isinstance(a, str)}
 
 
 @dataclass(frozen=True)

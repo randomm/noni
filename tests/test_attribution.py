@@ -16,16 +16,9 @@ import json
 import subprocess
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
+from _harness import REPO, _git  # noqa: E402
+
 CENSUS = REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"
-
-
-def _git(repo: Path, *args: str) -> None:
-    subprocess.run(
-        ["git", "-C", str(repo), "-c", "user.name=Replay", "-c", "user.email=replay@fixture.invalid", "-c", "commit.gpgsign=false", *args],
-        check=True,
-        capture_output=True,
-    )
 
 
 def _git_with_author(repo: Path, author_name: str, author_email: str, *args: str) -> None:

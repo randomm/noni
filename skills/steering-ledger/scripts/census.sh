@@ -6,6 +6,8 @@
 #       columns: id date by status live supersedes
 #       codes:   0 clean | 3 jq missing | 10 record/ledger unusable
 #                | 12 edited after commit | 20 supersede chain broken
+#       a record is valid when it carries the eight top-level required
+#       fields (plus the optional source field) and the chain resolves
 #
 #   census.sh --sessions [SESSIONS_DIR]     the sessions census (E2)
 #       one NDJSON row per finding; read-only, output to stdout only
@@ -51,17 +53,18 @@ fi
 # Exit codes. The codes are distinct so one failing census names the class of
 # invariant that broke; when several classes are violated at once, the lowest
 # number wins (10 < 12 < 20) and the higher-numbered checks may not have
-# been evaluated — the stderr message says so. One golden fixture per code
-# lives under tests/fixtures/:
-#   0   clean — every record valid, chain intact
+# been evaluated — the stderr message says so.
+#   0   clean — every record valid (the eight top-level required fields
+#       plus the optional source field), chain intact
 #   3   jq not found on the reading machine
 #   10  a record is missing or malformed, or the ledger is unusable —
-#       four distinct sub-classes, all named on the stderr line:
+#       five distinct sub-classes, all named on the stderr line:
 #       (10:missing-dir) the directory does not exist (operator error —
 #       wrong path); (10:empty-ledger) the directory exists but contains
 #       no *.json records (the ledger may simply be empty); (10:bad-name,
-#       10:unparseable, 10:schema, 10:missing-record) a filename, body, or
-#       schema field violates the declared shape (fix the record);
+#       10:unparseable, 10:schema, 10:missing-record, 10:integral-float)
+#       a filename, body, or schema field violates the declared shape (fix
+#       the record);
 #       (10:git-unavailable) git itself failed on a real repo (fix the tree)
 #   12  a record was edited after commit (working tree differs from git)
 #   20  the supersede chain is broken (dangling, duplicate, orphan, cycle,
@@ -69,12 +72,27 @@ fi
 #
 # Requires jq on the machine that does the reading.
 
+# --- Decisions census header end (the --help output ends here) --------------
+# The --help branch below prints this file from the second line to this
+# marker, so the help text always matches the header and no hard-coded
+# line range drifts when the header above changes length.
+
 set -u
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+  # The help text is this script's own header comment: every line from the
+  # second line up to (not including) the dispatch marker below, so it is
+  # always the current header and no hard-coded line range drifts when the
+  # header changes length. (The marker line is not a comment, so the awk
+  # comment-filter ends the range at it without special-casing.)
+  awk 'NR > 1 { if (!/^#/) exit; sub(/^# ?/, ""); print }' "$0"
+  exit 0
+fi
 
 LEDGER_DIR=""
 for arg in "$@"; do
   case "$arg" in
-    --help|-h) sed -n '2,34p' "$0"; exit 0 ;;
+    --help|-h) ;;
     -*) ;;
     *) LEDGER_DIR="${arg%/}" ;;
   esac
@@ -162,11 +180,15 @@ SCHEMA_JQ='
   def closed8: ((keys_unsorted | length) == 8
     or ((keys_unsorted | length) == 9) and has("source"));
   # source: absent or null is fine; present-and-non-null it must be an
-  # object with exactly the two fields (issue_number, comment_id), each an
-  # integer (type "number" and equal to its floor — jq has no bool-typed
-  # numbers, but the floor check is the integer test). Mirrors the
-  # census.py rule exactly.
-  def is_int: (type == "number") and (. == floor);
+  # object with exactly the two fields (issue_number, comment_id), each a
+  # JSON integer. A JSON integer is a number whose textual form carries
+  # no decimal point or exponent; the floor check alone would pass an
+  # integral float (42.0), so both conditions must hold. This is the rule
+  # census.py mirrors exactly with isinstance(int) plus not-bool, and the
+  # two entry points must agree on every source shape.
+  def is_int: (type == "number")
+    and (tostring | test("^-?[0-9]+$"))
+    and (. == floor);
   def source_ok:
     ((has("source") | not) or (.source == null) or
       ((.source | type) == "object")
@@ -256,11 +278,28 @@ while IFS= read -r rec; do
     # Distinguish an unparseable record (jq parse error, which -r -e prints
     # to stdout) from a genuine schema violation: on parse failure, `jq empty`
     # also fails, so we report the fixed "not valid JSON" message rather than
-    # echoing the raw record bytes.
+    # echoing the raw record bytes. A non-UTF-8 body is named the same way:
+    # the fixed wording names the class without echoing the record bytes.
     if ! jq empty "$f" >/dev/null 2>&1; then
-      echo "census.sh: $rec: record is not valid JSON (10:unparseable)" >&2
+      # Non-UTF-8 bodies fall in the same class: the fixed wording names
+      # the problem (not valid JSON / not valid UTF-8) without echoing the
+      # record bytes, which jq would otherwise quote into its error text.
+      if LC_ALL=C grep -q $'[\x80-\xff]' "$f" 2>/dev/null; then
+        echo "census.sh: $rec: record is not valid JSON or valid UTF-8 (10:unparseable)" >&2
+      else
+        echo "census.sh: $rec: record is not valid JSON (10:unparseable)" >&2
+      fi
+    else
+      # Distinguish the integral-float source rejection (a number whose text
+    # form is not a bare integer — an integral float such as 42.0 — which
+    # census.py's isinstance(int) rejects too) from the other schema
+    # violations: the fixed 10:integral-float diagnostic names the shape
+    # without echoing the offending value.
+    if jq -e '(.source | type) == "object" and ((.source.issue_number | (type == "number") and (tostring | test("^-?[0-9]+$") | not)) or (.source.comment_id | (type == "number") and (tostring | test("^-?[0-9]+$") | not)))' "$f" >/dev/null 2>&1; then
+      echo "census.sh: $rec: source.issue_number/comment_id must be a bare JSON integer (an integral float such as 42.0 is not an integer) (10:integral-float)" >&2
     else
       echo "census.sh: $rec: schema violation: $sc (10:schema)" >&2
+    fi
     fi
     STATUS=10
     printf 'ERR\t-\t-\t-\tno\t-\n' >> "$ROWS"
@@ -329,7 +368,7 @@ REOF
 # 10 < 12 < 20.
 if [ "$STATUS" -ne 10 ]; then
   if [ "$STATUS" -ne 0 ]; then
-    echo "census.sh: exit $STATUS already reported; chain not evaluated (priority 10 < 12 < 20)" >&2
+    echo "census.sh: exit $STATUS already reported; the supersede chain check was not evaluated (priority 10 < 12 < 20)" >&2
   else
     # status map (id -> status) from the validated report rows ($ROWS field 4);
     # $ROWS holds only data lines (the header is printed to stdout, not $ROWS).

@@ -27,13 +27,6 @@ CENSUS = REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"
 GENERATE = FIXTURES / "generate.sh"
 
 
-def _git(repo: Path, *args: str) -> None:
-    subprocess.run(
-        ["git", "-C", str(repo), *args],
-        check=True,
-        capture_output=True,
-    )
-
 
 def _generate_replay_repo(tmp_path: Path) -> Path:
     """Run generate.sh to build the replay repo, returning the repo path."""

@@ -102,11 +102,13 @@ def main(argv: list[str] | None = None) -> int:
     started = _now_utc()
 
     # The --file guard: the writer refuses to write a path it did not allocate
-    # within this run (see the module docstring). The operator registers once
-    # and records the printed path; a re-run that reuses the same file is
-    # rejected here (exit 2) and re-registration is a no-op via the idempotency
-    # check below only when the operator re-passes the allocated path — the
-    # fresh-mint guard below is what makes that path the only valid one.
+    # within this run (see the module docstring). The allocated path is
+    # freshly minted (a new random session id) on every run, so a --file that
+    # names a file from an earlier run is refused here (exit 2): the writer
+    # writes only a path it allocated in this run. A re-run that names a
+    # file already registered under the same identity is a no-op (exit 0) via
+    # the idempotency check below — that path is only reachable when the
+    # operator points --file at a path this run happens to have allocated.
     if args.file is not None:
         target = Path(args.file)
         if not target.is_absolute():

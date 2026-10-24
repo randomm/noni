@@ -22,13 +22,7 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures" / "supersede-chain"
 REPO = Path(__file__).resolve().parent.parent
 CENSUS = REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"
 
-
-def _git(repo: Path, *args: str) -> None:
-    subprocess.run(
-        ["git", "-C", str(repo), "-c", "user.name=Replay", "-c", "user.email=replay@fixture.invalid", "-c", "commit.gpgsign=false", *args],
-        check=True,
-        capture_output=True,
-    )
+from _harness import _git  # noqa: E402
 
 
 def _load(name: str) -> dict:

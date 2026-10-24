@@ -99,8 +99,7 @@ When several invariant classes fail at once, the lowest code wins
 were skipped. The census does not check operator confirmation: it cannot see
 whether the operator confirmed an answer, so it never claims to (below).
 
-One golden fixture per code lives under `tests/fixtures/census-exit-*.json`. The
-exit-code contract and how to read the report are in `references/census.md`.
+The exit-code contract and how to read the report are in `references/census.md`.
 
 The census also dispatches the sessions check (E2): `census.sh --sessions
 [SESSIONS_DIR]` reaches into the sibling `sessions-claims` skill via the

@@ -21,8 +21,8 @@
 # number wins (30 < 31 < 32). Every check runs in a single pass regardless of
 # the exit code — the priority only selects which code is returned — so all
 # findings are always in the NDJSON output:
-#   0   clean — every session file valid, no double-claims, all claims have
-#       a register file
+#   0   clean — every session file valid (five required fields each), no
+#       double-claims, all claims have a register file
 #   3   a required tool is missing (python3 not found)
 #   30  double-claim: two active claims on the same task from different
 #       identities (the arbiter check)
@@ -37,13 +37,23 @@
 # NDJSON rows.
 #
 # Requires python3 on the machine that does the reading.
+#
+# This header is also the --help output: the script prints itself from the
+# second line to the first non-comment line of the body below, so the help
+# text always matches the header and there is no hard-coded line range that
+# drifts when this header changes length.
 
 set -u
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+  awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print }' "$0"
+  exit 0
+fi
 
 SESSIONS_DIR=""
 for arg in "$@"; do
   case "$arg" in
-    --help|-h) sed -n '2,39p' "$0"; exit 0 ;;
+    --help|-h) ;;
     -*) ;;
     *) SESSIONS_DIR="${arg%/}" ;;
   esac

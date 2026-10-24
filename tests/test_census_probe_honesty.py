@@ -22,21 +22,7 @@ if _CENSUS_DIR not in sys.path:
     sys.path.insert(0, _CENSUS_DIR)
 
 import census  # noqa: E402
-
-
-def _git(repo: Path, *args: str) -> None:
-    subprocess.run(
-        ["git", "-C", str(repo), "-c", "user.name=Replay",
-         "-c", "user.email=replay@fixture.invalid", "-c", "commit.gpgsign=false", *args],
-        check=True, capture_output=True,
-    )
-
-
-def _init_repo(path: Path) -> Path:
-    path.mkdir(parents=True, exist_ok=True)
-    _git(path, "init", "-q")
-    _git(path, "commit", "-q", "--allow-empty", "-m", "initial")
-    return path
+from _harness import _git, _init_repo  # noqa: E402
 
 
 def _session_body(identity: str) -> str:

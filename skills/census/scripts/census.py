@@ -52,6 +52,10 @@ from pathlib import Path
 
 SCHEMA_VERSION = "noni.census/1"
 
+# The ledger checks run as one group: any of the three triggers all three, so
+# --only/--skip must be applied at group granularity.
+LEDGER_CHECKS = frozenset({"ledger-record", "ledger-edited", "ledger-chain"})
+
 # --- Exit-code table ----------------------------------------------------------
 # 0 clean | 2 usage error | 3 required tool missing | 10 record/ledger unusable
 # | 12 edited after commit | 20 supersede chain broken | 30 double-claim
@@ -94,6 +98,7 @@ CLASS_FIX = {
 }
 
 NAME_RE = re.compile(r"^[A-Za-z0-9._-]+\.json$")
+STALE_AFTER_RE = re.compile(r"^\d+d?$")
 
 REQUIRED_LEDGER_FIELDS = (
     "id",
@@ -168,7 +173,8 @@ class Git:
         The log is reverse-chronological, so the first commit parsed for a
         path is its newest; record it only if the path is absent, so that
         same-timestamp commits do not let an older one overwrite the newer.
-        _last_commit[relpath] is a (unix ts, commit id) pair."""
+        _last_commit[relpath] is a (unix ts, commit id) pair keyed by the
+        commit id (the second tuple element)."""
         current = None
         for line in log.splitlines():
             if "\x1f" in line:
@@ -219,6 +225,10 @@ class Git:
             return None
         if proc.returncode != 0:
             return None
+        # proc.stdout is bytes (no text=True): the digest is over raw blob
+        # bytes, matching _repo_sha1's read_bytes(). Do NOT add text=True —
+        # it would decode the blob (raising or altering on non-UTF-8) and
+        # silently change the digest.
         return hashlib.sha1(proc.stdout).hexdigest()
 
 
@@ -443,12 +453,12 @@ def _check_ledger_edited(
     """The post-commit edit check (git vs disk bytes).
 
     Runs for every valid record AND every record that failed parsing: a
-    parse-time rejection must not silence the integrity check. The committed
-    blob set is resolved in one `git log` over the whole ledger directory
-    (not one `rev-parse` per record), and the disk sha is one in-memory hash
-    per file. A record whose committed bytes are unreachable degrades to a
-    cannot-verify warning (probe honesty), never a silent pass."""
-
+    parse-time rejection must not silence the integrity check. The newest
+    commit per path is a dict lookup over the git log already parsed at
+    construction time (not a second `git log` subprocess), and the disk sha
+    is one in-memory hash per file. A record whose committed bytes are
+    unreachable degrades to a cannot-verify warning (probe honesty), never a
+    silent pass."""
     def add(check: str, severity: str, subject: str, artifact: str, message: str) -> None:
         findings.append(
             {
@@ -471,43 +481,12 @@ def _check_ledger_edited(
     if not entries:
         return
     rels = [_rel_to(git.top, p) for _s, _rid, p in entries]
-    if any(r is None for r in rels):
-        return
-    # One `git log --name-only` call over the ledger files: every commit that
-    # touched any of them, each commit block followed by the paths it touched.
-    # No per-record subprocess.
-    log = git._run(["log", "--all", "--name-only", "--format=%H", "--", *[r for r in rels if r is not None]])
-    if log is None:
-        for _subject, rid, path in entries:
-            add(
-                "ledger-edited",
-                "warn",
-                rid,
-                str(path),
-                "cannot verify: git history for the ledger is unreadable in this tree",
-            )
-        return
-    # Parse the log: commit-hash lines are followed by the paths they touched,
-    # separated by blank lines. `git log` is newest-first, so the first commit
-    # that touches a given path is its newest commit. Record only the first
-    # (newest) commit per path.
-    newest_per_rel: dict[str, str] = {}
-    current_commit: str | None = None
-    for line in log.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        # A 40-char hex string is a commit hash line.
-        if len(stripped) == 40 and all(c in "0123456789abcdef" for c in stripped):
-            current_commit = stripped
-        elif current_commit is not None and stripped not in newest_per_rel:
-            newest_per_rel[stripped] = current_commit
     for idx, (_subject, rid, path) in enumerate(entries):
         rel = rels[idx]
-        commit = newest_per_rel.get(rel) if rel is not None else None
-        if commit is None:
+        entry = git.last_commit(rel) if rel is not None else None
+        if entry is None:
             continue  # never committed: nothing to compare against
-        blob = git.blob_content_sha1(commit, rel)
+        blob = git.blob_content_sha1(entry[1], rel)
         disk = _repo_sha1(path)
         if blob is None:
             add(
@@ -525,7 +504,11 @@ def _check_ledger_chain(
     valid: list[tuple[str, Path, dict]], ledger: Path, root: Path, findings: list[dict]
 ) -> None:
     """Supersede-chain analysis: dangling, duplicate, orphan, cycle, and the
-    single-live-record-per-chain rule."""
+    single-live-record-per-chain rule.
+
+    Only records that parsed cleanly (valid) can contribute to chain
+    analysis: an unparseable record's supersedes field is unreadable, so its
+    chain state is genuinely unknowable."""
     def add(check: str, severity: str, subject: str, artifact: str, message: str) -> None:
         findings.append(
             {
@@ -795,14 +778,20 @@ def main(argv: list[str] | None = None) -> int:
     if err:
         print(err, file=sys.stderr)
         return EXIT_USAGE
-    raw_days = args.stale_after.rstrip("dD")
-    if not re.fullmatch(r"\d+", raw_days):
+    raw_days = args.stale_after
+    if not STALE_AFTER_RE.fullmatch(raw_days):
         print(
             f"error: --stale-after {args.stale_after!r} must be positive whole days (e.g. 7 or 7d)",
             file=sys.stderr,
         )
         return EXIT_USAGE
-    days = int(raw_days)
+    days = int(raw_days.rstrip("dD"))
+    if days <= 0:
+        print(
+            f"error: --stale-after {args.stale_after!r} must be positive whole days (e.g. 7 or 7d)",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
     stale_after = timedelta(days=days)
 
     if shutil.which("git") is None:
@@ -826,7 +815,7 @@ def main(argv: list[str] | None = None) -> int:
     # empty or broken ledger directory is a violation. The ledger and the
     # sessions layer are independent: a repo with sessions but no ledger is
     # clean for ledger checks (and vice versa).
-    if "ledger-record" in checks or "ledger-edited" in checks or "ledger-chain" in checks:
+    if LEDGER_CHECKS & set(checks):
         if ledger.is_dir():
             _check_ledger(ledger, git, root, findings)
 
@@ -857,7 +846,10 @@ def main(argv: list[str] | None = None) -> int:
 # One shared sort key for every finding row, in both the --json (NDJSON) and
 # human-readable branches: (artifact, check, subject). Both modes therefore
 # emit the same findings in the same order.
-FINDING_SORT_KEY = lambda f: (f["artifact"], f["check"], f["subject"])
+def _finding_sort_key(f: dict) -> tuple[str, str, str]:
+    """One shared sort key for every finding row, in both the --json (NDJSON)
+    and human-readable branches: (artifact, check, subject)."""
+    return (f["artifact"], f["check"], f["subject"])
 
 
 def _render(
@@ -865,7 +857,7 @@ def _render(
 ) -> None:
     """Emit the results in either NDJSON (--json) or human-readable form."""
     if json_out:
-        for f in sorted(findings, key=FINDING_SORT_KEY):
+        for f in sorted(findings, key=_finding_sort_key):
             row = {
                 "schema": SCHEMA_VERSION,
                 "kind": "finding",
@@ -890,7 +882,7 @@ def _render(
         if not findings:
             print("census: no findings; all checks passed")
         else:
-            for f in sorted(findings, key=FINDING_SORT_KEY):
+            for f in sorted(findings, key=_finding_sort_key):
                 tag = {"fail": "FAIL", "warn": "WARN"}.get(f["severity"], "?")
                 print(f"{f['check']:<16} {tag:<4} {f['subject']}: {f['message']}")
                 print(f"{'':<16} fix: {CLASS_FIX[f['check']]}")

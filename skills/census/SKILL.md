@@ -57,8 +57,8 @@ class that fired.
 30  session-double
 31  session-claim
 32  session-malformed
-40  session-stalled (only under --strict; warn otherwise)
-41  probe failure (only under --strict; warn otherwise)
+40  session-stalled (warn by default; failure under --strict)
+41  probe (warn by default; failure under --strict)
 ```
 
 A clean exit with warnings is normal: a cannot-tell staleness probe (no git
@@ -80,7 +80,8 @@ One `finding` record per violation, followed by exactly one `summary` record:
 Every `finding` row names the `artifact` path it derives from. Both output
 modes (--json and human-readable) sort rows by the same key —
 `(artifact, check, subject)` — so the row order is identical across modes
-and reproducible across runs. No metric reads a value from an agent-authored
+and reproducible across runs (see `_finding_sort_key`). No metric reads a
+value from an agent-authored
 field; every value comes from git history, file existence, or file byte size.
 
 ## The probe-honesty rule
@@ -95,11 +96,10 @@ failure (exit 41) and the run is never reported clean.
 
 - **Read-only.** The census never writes, mutates, or creates any file.
   Running it leaves `git status --porcelain` empty.
-- **One entry point.** `census.py` is the only operator-facing census entry.
-  The older per-epic scripts (`census.sh`, `census-sessions.sh`) remain
-  available as compatibility shims for backward compatibility with a subset
-  of the same exit codes (see the steering-ledger SKILL.md); the canonical
-  entry is `census.py`.
+- **One entry point.** `census.py` is the canonical entry point. The older
+  per-epic scripts (`census.sh`, `census-sessions.sh`) remain as compatibility
+  shims with a subset of the same exit codes (see the steering-ledger
+  SKILL.md).
 - **Time from `--now`.** All time-based checks use `--now` when given (for
   reproducible output in tests) and the current UTC time otherwise.
 - **No self-reported numbers.** Every metric in `--json` mode names the

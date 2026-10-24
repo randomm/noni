@@ -1,0 +1,12 @@
+{
+  "description": "Exactly one option ticked, but the last edit that ticked it was made by an account not on the allow-list (stranger-1). Verdict: stranger, no answer.",
+  "issue": { "number": 42, "title": "Steer: which release carries the new scheduler?" },
+  "comment": {
+    "id": 9104,
+    "user": { "login": "agent-synthetic" },
+    "body": "q1: Which release carries the new scheduler?\n- [x] drop it\n- [ ] next train\n- [ ] after that"
+  },
+  "edits": [
+    { "actor": "stranger-1", "edited_at": "2026-10-02T11:00:00Z", "new_body": "q1: Which release carries the new scheduler?\n- [x] drop it\n- [ ] next train\n- [ ] after that" }
+  ]
+}

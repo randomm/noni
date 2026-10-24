@@ -1,0 +1,14 @@
+{
+  "description": "More than one option ticked: the operator ticked two options. Ambiguous — verdict many, no answer.",
+  "issue": { "number": 42, "title": "Steer: which release carries the new scheduler?" },
+  "comment": {
+    "id": 9103,
+    "user": { "login": "agent-synthetic" },
+    "body": "q1: Which release carries the new scheduler?\n- [x] next train\n- [x] after that\n- [ ] drop it"
+  },
+  "edits": [
+    { "actor": "op-1", "edited_at": "2026-10-02T10:00:00Z", "new_body": "q1: Which release carries the new scheduler?\n- [ ] next train\n- [ ] after that\n- [ ] drop it" },
+    { "actor": "op-1", "edited_at": "2026-10-02T10:05:00Z", "new_body": "q1: Which release carries the new scheduler?\n- [x] next train\n- [ ] after that\n- [ ] drop it" },
+    { "actor": "op-1", "edited_at": "2026-10-02T10:06:00Z", "new_body": "q1: Which release carries the new scheduler?\n- [x] next train\n- [x] after that\n- [ ] drop it" }
+  ]
+}

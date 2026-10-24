@@ -111,6 +111,14 @@ REQUIRED_LEDGER_FIELDS = (
     "supersedes",
 )
 
+# The one optional (but validated) ledger field: ``source``. It carries the
+# tracker provenance of a record produced from a tracker-sourced answer (an
+# adapter's question-legitimacy verdict): an object with ``issue_number``
+# (int) and ``comment_id`` (int). ``null`` (or absent) for records that did
+# not come from a tracker. A record without it stays valid: the eight
+# REQUIRED_LEDGER_FIELDS above are the closed required set, and ``source`` is
+# the one extra key the schema admits.
+
 # A UTC ISO-8601 second-resolution timestamp (the record date shape).
 DATE_RE = re.compile(
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
@@ -340,9 +348,22 @@ def _validate_record(obj: object) -> list[str]:
     missing = [f for f in REQUIRED_LEDGER_FIELDS if f not in obj]
     if missing:
         problems.append("missing field(s): " + ", ".join(missing))
-    extra = [k for k in obj if k not in REQUIRED_LEDGER_FIELDS]
+    extra = [k for k in obj if k not in REQUIRED_LEDGER_FIELDS and k != "source"]
     if extra:
         problems.append("unknown field(s): " + ", ".join(sorted(extra)))
+    if "source" in obj:
+        src = obj["source"]
+        if src is not None:
+            if not isinstance(src, dict):
+                problems.append("source must be null or an object with issue_number and comment_id")
+            else:
+                if not isinstance(src.get("issue_number"), int) or isinstance(src.get("issue_number"), bool):
+                    problems.append("source.issue_number must be an integer")
+                if not isinstance(src.get("comment_id"), int) or isinstance(src.get("comment_id"), bool):
+                    problems.append("source.comment_id must be an integer")
+                src_extra = [k for k in src if k not in ("issue_number", "comment_id")]
+                if src_extra:
+                    problems.append("source unknown field(s): " + ", ".join(sorted(src_extra)))
     date = obj.get("date")
     if isinstance(date, str):
         if not DATE_RE.match(date):

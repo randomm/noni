@@ -1,0 +1,13 @@
+{
+  "description": "Exactly one option ticked, and the last edit that ticked it was made by an allow-listed account (op-1). Verdict: one; answer: 'next train'.",
+  "issue": { "number": 42, "title": "Steer: which release carries the new scheduler?" },
+  "comment": {
+    "id": 9102,
+    "user": { "login": "agent-synthetic" },
+    "body": "q1: Which release carries the new scheduler?\n- [x] next train\n- [ ] after that\n- [ ] drop it"
+  },
+  "edits": [
+    { "actor": "agent-synthetic", "edited_at": "2026-10-02T09:00:00Z", "new_body": "q1: Which release carries the new scheduler?\n- [ ] next train\n- [ ] after that\n- [ ] drop it" },
+    { "actor": "op-1", "edited_at": "2026-10-02T09:10:00Z", "new_body": "q1: Which release carries the new scheduler?\n- [x] next train\n- [ ] after that\n- [ ] drop it" }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "description": "Label applied by an allow-listed account (op-1), then later removed by a non-allow-listed account (stranger-1): the label is genuinely no longer on the issue (the issue's labels list does not name it). The seam is asked about that label explicitly: even though the removal has taken the label off the issue's live state, authorization is about who applied the label, not who removed it and not whether it is still present — the application event's actor is allow-listed, so the label remains authorized.",
+  "issue": {
+    "number": 45,
+    "title": "Steer: which release carries the new scheduler?",
+    "labels": []
+  },
+  "events": [
+    { "event": "opened", "actor": "agent-synthetic", "created_at": "2026-10-05T09:00:00Z" },
+    { "event": "labeled", "actor": "op-1", "label": "steer", "created_at": "2026-10-05T09:05:00Z" },
+    { "event": "unlabeled", "actor": "stranger-1", "label": "steer", "created_at": "2026-10-05T09:30:00Z" }
+  ]
+}

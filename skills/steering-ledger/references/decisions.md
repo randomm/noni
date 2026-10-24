@@ -5,7 +5,7 @@ is the commit: a file in the working tree that is not committed is not a record,
 and a committed record is replayable by any later session or fresh clone because
 it reads nothing but git.
 
-## The eight fields
+## The eight fields (plus one optional)
 
 ```json
 {
@@ -23,12 +23,17 @@ it reads nothing but git.
   "by": "Operator Name",
   "scope": "release ordering",
   "status": "decided",
-  "supersedes": null
+  "supersedes": null,
+  "source": { "issue_number": 42, "comment_id": 9102 }
 }
 ```
 
 The field list is fixed and the census validates it. A record with a missing or
-malformed field fails the census with exit `10`.
+malformed field fails the census with exit `10`. One field, `source`, is
+optional: a record that did not come from a tracker may omit it (or set it to
+`null`), but when it is present it must carry exactly the tracker's issue number
+and comment id as integers — it is how a ledger record produced from a tracker
+answer references where that answer came from.
 
 | field | type | rules |
 |---|---|---|
@@ -40,6 +45,7 @@ malformed field fails the census with exit `10`.
 | `scope` | string | the direction area the decision covers |
 | `status` | string | `decided` \| `open` \| `superseded` |
 | `supersedes` | string \| null | id of the replaced record, or `null` for a root record |
+| `source` | object \| null (optional) | tracker provenance: `{"issue_number": <int>, "comment_id": <int>}` when the record was produced from a tracker-sourced answer (an adapter's question-legitimacy verdict); `null` or absent for a record that did not come from a tracker. A record without it stays valid. |
 
 ## The question object
 

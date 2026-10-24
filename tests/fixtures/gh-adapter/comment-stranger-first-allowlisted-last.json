@@ -1,0 +1,13 @@
+{
+  "description": "Last-editor-wins (allow-listed last). A non-allow-listed account (stranger-1) first ticks an option, then an allow-listed account (op-1) later edits the same comment and re-ticks the same option. The last edit that ticked it was made by an allow-listed account, so the verdict is one (answer 'next train') — the earlier stranger tick does not void a later allow-listed re-tick.",
+  "issue": { "number": 43, "title": "Steer: which release carries the new scheduler?" },
+  "comment": {
+    "id": 9202,
+    "user": { "login": "agent-synthetic" },
+    "body": "q1: Which release carries the new scheduler?\n- [x] next train\n- [ ] after that\n- [ ] drop it"
+  },
+  "edits": [
+    { "actor": "stranger-1", "edited_at": "2026-10-03T09:00:00Z", "new_body": "q1: Which release carries the new scheduler?\n- [x] next train\n- [ ] after that\n- [ ] drop it" },
+    { "actor": "op-1", "edited_at": "2026-10-03T09:15:00Z", "new_body": "q1: Which release carries the new scheduler?\n- [x] next train\n- [ ] after that\n- [ ] drop it" }
+  ]
+}

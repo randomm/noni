@@ -7,3 +7,5 @@ noni.egg-info/
 /.pi/work-state/
 # local public-repo hygiene deny-list: never committed (issue #8 scrub check)
 /.noni-scrub-denylist
+# local adapter allow-list (integrations/): never committed
+/.noni-adapter-allowlist

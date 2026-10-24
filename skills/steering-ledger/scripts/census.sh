@@ -137,7 +137,7 @@ fi
 
 # --- Schema -----------------------------------------------------------------
 # One jq program per record validates the declared shape (eight top-level
-# fields) and emits "ok"; a non-"ok" result is the (fixed, jq-generated)
+# required fields plus the one optional source field) and emits "ok"; a non-"ok" result is the (fixed, jq-generated)
 # violation message. jq stderr is discarded: an unparseable record is
 # distinguished from a schema failure by the follow-up `jq empty` probe, and raw
 # record bytes are never echoed back into the diagnostic line.
@@ -156,7 +156,24 @@ SCHEMA_JQ='
   def has8:
     has("id") and has("date") and has("asked_by") and has("questions")
     and has("by") and has("scope") and has("status") and has("supersedes");
-  def closed8: ((keys_unsorted | length) == 8);
+  # The closed set is the eight required fields plus the one optional
+  # source field: exactly eight keys when source is absent, nine when
+  # present.
+  def closed8: ((keys_unsorted | length) == 8
+    or ((keys_unsorted | length) == 9) and has("source"));
+  # source: absent or null is fine; present-and-non-null it must be an
+  # object with exactly the two fields (issue_number, comment_id), each an
+  # integer (type "number" and equal to its floor — jq has no bool-typed
+  # numbers, but the floor check is the integer test). Mirrors the
+  # census.py rule exactly.
+  def is_int: (type == "number") and (. == floor);
+  def source_ok:
+    ((has("source") | not) or (.source == null) or
+      ((.source | type) == "object")
+      and ((.source | has("issue_number")) and (.source | has("comment_id")))
+      and (((.source | keys_unsorted) - ["issue_number","comment_id"]) | length == 0)
+      and (.source.issue_number | is_int)
+      and (.source.comment_id | is_int));
   def questions_ok:
     ((.questions | type) == "array")
     and ((.questions | length) >= 1) and ((.questions | length) <= 4)
@@ -182,7 +199,7 @@ SCHEMA_JQ='
   # (sup_type_ok already covers this via length > 0; stated here so the
   # intent is explicit.)
   if has8 and closed8 and is_iso and cal_ok and questions_ok and status_ok
-     and id_ok and by_ok and asked_by_ok and scope_ok and sup_type_ok
+     and id_ok and by_ok and asked_by_ok and scope_ok and sup_type_ok and source_ok
   then "ok"
   else
     [ (if has8 then "" else
@@ -196,7 +213,8 @@ SCHEMA_JQ='
           (if has("status") then "" else "status" end),
           (if has("supersedes") then "" else "supersedes" end)
         ] | map(select(. != "")) | join(",")) end),
-      (if closed8 | not then "unknown field(s): " + (((keys_unsorted // []) - ["id","date","asked_by","questions","by","scope","status","supersedes"]) | join(",")) else "" end),
+      (if closed8 | not then "unknown field(s): " + (((keys_unsorted // []) - ["id","date","asked_by","questions","by","scope","status","supersedes","source"]) | join(",")) else "" end),
+      (if source_ok | not then "source must be null or an object with issue_number and comment_id" else "" end),
       (if is_iso | not then "date is not a valid UTC ISO-8601 string" else "" end),
       (if cal_ok | not then "date components out of range (month 1-12, day 1-31, hour 0-23, minute 0-59, second 0-60)" else "" end),
       (if questions_ok | not then "questions array or option bounds violated" else "" end),

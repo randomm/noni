@@ -1,0 +1,10 @@
+{
+  "description": "A steering question posted as an issue comment with checkbox options. No option is ticked: the operator has not answered.",
+  "issue": { "number": 42, "title": "Steer: which release carries the new scheduler?" },
+  "comment": {
+    "id": 9101,
+    "user": { "login": "agent-synthetic" },
+    "body": "q1: Which release carries the new scheduler?\n- [ ] next train\n- [ ] after that\n- [ ] drop it"
+  },
+  "edits": []
+}

@@ -1,0 +1,18 @@
+{
+  "description": "The operator's answer is legitimate (single tick by allow-listed op-1) — the expected verdict is one with answer 'next train' — and the ledger record that the adapter's output becomes. The record carries the new optional source field referencing the tracker issue number and comment id; the census accepts it (exit 0). This is the bridge between a tracker-sourced answer and the steering ledger: the answer plus its provenance in one commit.",
+  "expected_verdict": "one",
+  "expected_answer": "next train",
+  "record": {
+    "id": "2026-10-02-steer-order",
+    "date": "2026-10-02T09:10:00Z",
+    "asked_by": "agent-synthetic",
+    "questions": [
+      { "id": "q1", "text": "Which release carries the new scheduler?", "options": ["next train", "after that", "drop it"], "answer": "next train" }
+    ],
+    "by": "Operator",
+    "scope": "release ordering",
+    "status": "decided",
+    "supersedes": null,
+    "source": { "issue_number": 42, "comment_id": 9102 }
+  }
+}

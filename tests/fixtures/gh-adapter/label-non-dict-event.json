@@ -1,0 +1,6 @@
+{
+  "issue": {"labels": [{"name": "steer"}]},
+  "events": [
+    "not-a-dict-event"
+  ]
+}

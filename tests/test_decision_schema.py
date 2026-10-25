@@ -26,7 +26,10 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
+
+from _harness import subprocess_env
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 REPO = Path(__file__).resolve().parent.parent
@@ -56,14 +59,12 @@ def _run_census_on_record(tmp_path: Path, record: dict, fname: str = "test-recor
     combined stdout+stderr (the finding lines go to stdout in the unified
     census, so callers must check both).
     """
-    import os
-
     ledger = tmp_path / "noni" / "decisions"
     ledger.mkdir(parents=True)
     (ledger / fname).write_text(json.dumps(record, indent=2))
-    env = dict(os.environ)
+    env = subprocess_env()
     proc = subprocess.run(
-        ["python3", str(CENSUS), "--ledger", str(ledger), "--now", "2026-10-01T12:00:00Z"],
+        [sys.executable, str(CENSUS), "--ledger", str(ledger), "--now", "2026-10-01T12:00:00Z"],
         capture_output=True,
         text=True,
         env=env,

@@ -43,6 +43,7 @@ from _harness import (
     push_with_retry,
     run_claim,
     run_register,
+    subprocess_env,
 )
 
 __all__ = [
@@ -54,6 +55,7 @@ __all__ = [
     "push_with_retry",
     "run_claim",
     "run_register",
+    "subprocess_env",
 ]
 
 # Environment variables the census script or the tests read. Cleared for
@@ -93,6 +95,14 @@ NONI_ENV_VARS = (
 _CENSUS_SCRIPTS = REPO / "skills" / "census" / "scripts"
 if str(_CENSUS_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_CENSUS_SCRIPTS))
+
+# The interpreter the sessions-census wrapper execs. census-sessions.sh reads
+# NONI_PYTHON (defaulting to python3); exporting sys.executable here makes the
+# wrapper run the same interpreter pytest itself runs under, which is the one
+# coverage's subprocess hook can measure. setdefault, not set: a caller that
+# exports its own NONI_PYTHON keeps it, and tests/test_sessions_census.py::
+# test_exit_3_python_missing builds its own PATH-less env to prove exit 3.
+os.environ.setdefault("NONI_PYTHON", sys.executable)
 
 # Clear at import time (conftest is imported before any test module is
 # collected), so a variable exported by the developer's shell cannot reach a
@@ -160,7 +170,7 @@ def run_census():
     place. Pass a custom env dict to override PATH or other variables.
     """
     def _run(ledger_dir: Path, *, env: dict | None = None) -> tuple[int, str, str]:
-        full_env = dict(os.environ)
+        full_env = subprocess_env()
         if env:
             full_env.update(env)
         proc = subprocess.run(
@@ -182,7 +192,7 @@ def run_sessions_census():
     PATH or other variables.
     """
     def _run(sessions_dir: Path, *, env: dict | None = None) -> tuple[int, str, str]:
-        full_env = dict(os.environ)
+        full_env = subprocess_env()
         if env:
             full_env.update(env)
         proc = subprocess.run(

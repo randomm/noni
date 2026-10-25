@@ -18,6 +18,27 @@ no backlog entries, no references to any attached project's content. When noni i
 into use, it becomes an integral part of the project it attaches to: the *how* ships
 from here, the *what* lives inside the attached project.
 
+## Development
+
+Install the pinned dev tools, then run the two gates. The versions are pinned
+exactly in `pyproject.toml` and in CI, so local and CI run the same tools.
+
+```bash
+python -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+
+.venv/bin/ruff check .                                          # lint
+.venv/bin/coverage run -m pytest                                # test under coverage
+.venv/bin/coverage combine                                      # merge subprocess data
+.venv/bin/coverage report                                       # report; fails below 80%
+```
+
+The coverage command measures the seven Python product modules and enforces
+the at-least-80% rule from `AGENTS.md`. `coverage combine` is required, not
+optional: `register.py`, `claim.py` and `census-sessions.py` run as
+subprocesses, so their data lands in separate files that only combine merges.
+See `docs/PUBLISHING.md` for the pre-publish public-repo scrub.
+
 ## Status
 
 - Positioning & design complete: three verified research runs (competitor

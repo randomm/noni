@@ -9,10 +9,14 @@ description = "Attachable product-direction layer: steering ledger, backlog orde
 requires-python = ">=3.11"
 dependencies = []
 
+# The versions are pinned exactly, and .github/workflows/ci.yml installs the
+# same pins: the gate a developer runs locally must be the gate CI runs.
+# tests/test_gate_wiring.py asserts the two lists stay identical.
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0",
-    "ruff>=0.5",
+    "coverage==7.17.0",
+    "pytest==9.1.1",
+    "ruff==0.17.2",
 ]
 
 # Flat layout (dashboard, desktop, skills, scripts, tests): name the backend
@@ -23,7 +27,7 @@ packages = []
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-extend-exclude = ["skills", "noni/decisions"]
+extend-exclude = ["noni/decisions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B"]
@@ -31,3 +35,36 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# The quality gate behind the AGENTS.md rule of at least 80 percent coverage
+# for new code. `include` names the seven product modules exactly, so the
+# total is the coverage of the shipped code and never of the tests that
+# measure it. (`source` cannot be used for this: coverage treats a source
+# entry that is not a directory as an importable package name, and these
+# scripts are never imported by that name.)
+#
+# `patch = ["subprocess"]` plus `parallel = true` are what make the gate
+# honest: register.py, claim.py and census-sessions.py are reached only as
+# subprocesses, so without subprocess measurement their files would be read
+# but never executed. `relative_files` keeps the combined data portable, so
+# `coverage combine` finds the subprocess files written by the launched
+# interpreters whatever their working directory.
+#
+# The gate command: coverage run -m pytest && coverage combine && coverage report
+[tool.coverage.run]
+relative_files = true
+patch = ["subprocess"]
+parallel = true
+
+[tool.coverage.report]
+fail_under = 80
+skip_empty = true
+include = [
+    "scripts/public_safety.py",
+    "integrations/adapter_protocol.py",
+    "integrations/github-issues/github_issues_adapter.py",
+    "skills/census/scripts/census.py",
+    "skills/sessions-claims/scripts/register.py",
+    "skills/sessions-claims/scripts/claim.py",
+    "skills/sessions-claims/scripts/census-sessions.py",
+]

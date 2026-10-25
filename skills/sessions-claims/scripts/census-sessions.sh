@@ -36,7 +36,9 @@
 # plus a stderr line naming the code and noting that all findings are in the
 # NDJSON rows.
 #
-# Requires python3 on the machine that does the reading.
+# Requires a Python 3 interpreter on the machine that does the reading. The
+# interpreter is $NONI_PYTHON when that variable is set, and python3
+# otherwise; the exit-3 check below tests the one actually about to run.
 #
 # This header is also the --help output: the script prints itself from the
 # second line to the first non-comment line of the body below, so the help
@@ -66,9 +68,14 @@ done
 # is the direct entry point.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-command -v python3 >/dev/null 2>&1 || {
-  echo "census-sessions.sh: python3 not found on $(hostname 2>/dev/null || echo unknown)" >&2
+NONI_PYTHON="${NONI_PYTHON:-python3}"
+# An empty NONI_PYTHON is treated as absent: the variable must name an
+# interpreter, and an empty word would make `command -v` and `exec` fail in a
+# way that does not look like a missing dependency.
+[ -n "$NONI_PYTHON" ] || NONI_PYTHON=python3
+command -v "$NONI_PYTHON" >/dev/null 2>&1 || {
+  echo "census-sessions.sh: $NONI_PYTHON not found on $(hostname 2>/dev/null || echo unknown)" >&2
   exit 3
 }
 
-exec python3 "$SCRIPT_DIR/census-sessions.py" "$SESSIONS_DIR"
+exec "$NONI_PYTHON" "$SCRIPT_DIR/census-sessions.py" "$SESSIONS_DIR"

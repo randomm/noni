@@ -105,6 +105,11 @@ The census is the deterministic arbiter. It does not block the session's work:
 an unregistered claim (exit 31) is reported, not refused — there is no
 pre-commit or pre-push hook, no write-path refusal.
 
+Beyond this table, the unified census warns (43) when two or more non-terminal
+session files share one `identity`, and (44) when a committed session file is
+deleted from the working tree; both are warn by default and fail at their own
+code under `--strict` (see `skills/census/SKILL.md`).
+
 One golden fixture per code lives under `tests/fixtures/sessions-exit-<code>.json`.
 
 ## Rules

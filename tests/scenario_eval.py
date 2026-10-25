@@ -348,10 +348,20 @@ def _plant_fault_12(fresh: Path) -> None:
 
 
 def run_census_json(clone: Path, now: str, stale_after: str) -> tuple[int, list[dict]]:
-    """Run the unified census --json --strict on clone; return (exit, rows)."""
+    """Run the unified census --json --strict on clone; return (exit, rows).
+
+    The hygiene class (50) is skipped for this fixture. The scenario is
+    self-contained on purpose — it asserts on the planted protocol faults, not
+    on public-repo hygiene — and a throwaway clone of a bare origin has no
+    deny-list, so hygiene would report its inactive class on every build and
+    --strict would turn that always-report into an exit 50 that masks the
+    planted codes. The hygiene class has its own tests in
+    tests/test_census_unified.py::TestHygiene; this fixture measures the
+    ledger/session arbiter.
+    """
     proc = subprocess.run(
         ["python3", str(_CENSUS), "--repo", str(clone), "--json", "--strict",
-         "--now", now, "--stale-after", stale_after],
+         "--skip", "hygiene", "--now", now, "--stale-after", stale_after],
         capture_output=True, text=True, timeout=120,
     )
     rows = [json.loads(line) for line in proc.stdout.strip().splitlines() if line.strip()]

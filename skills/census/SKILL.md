@@ -23,7 +23,7 @@ python3 skills/census/scripts/census.py [options]
 | `--sessions PATH` | `<repo>/noni/sessions` | override the sessions directory |
 | `--now ISO-8601` | current UTC | fixed timestamp for time-based checks (reproducible output) |
 | `--stale-after` | `7d` | staleness threshold for active sessions; positive whole days as `<N>` or `<N>d` (e.g. `7` or `7d`) |
-| `--strict` | off | treat stalled sessions and probe failures as failures |
+| `--strict` | off | treat every warn class as a failure: `session-stalled`, `probe`, `ledger-empty`, `session-same-identity`, `session-deleted`, `hygiene` |
 | `--json` | off | emit NDJSON records on stdout (`noni.census/1`) |
 | `--only CHECK` | all | run only the named check (repeatable) |
 | `--skip CHECK` | none | skip the named check (repeatable) |
@@ -33,14 +33,28 @@ python3 skills/census/scripts/census.py [options]
 
 | check id | code | meaning |
 |---|---|---|
-| `ledger-record` | 10 | a decision record is missing or malformed, or the ledger is unusable |
+| `ledger-record` | 10 | a decision record is malformed (schema violation, bad filename, unreadable/unparseable record), or the `noni/decisions/` directory exists and holds no `*.json` record |
+| `ledger-empty` | 42 | there is no steering ledger to arbitrate — exactly one row per run, whose message carries the state word `absent` (no `noni/`), `not a directory` (`noni/` is not a directory), `symlink` (refused, never followed), or `empty` (`noni/` present, no `decisions/` directory). It only ADDS rows: the `decisions/` directory that exists and holds no record stays the `ledger-record` exit 10 (warn by default; fail under `--strict`) |
 | `ledger-edited` | 12 | a record was edited after commit (supersede, never edit); a committed record deleted or renamed from the working tree is also reported here, with the "deleted" reason |
 | `ledger-chain` | 20 | the supersede chain is broken (dangling, duplicate, orphan, cycle, zero-live, multi-live) |
 | `session-double` | 30 | two active claims on the same task from different identities (the arbiter) |
 | `session-claim` | 31 | a claim row committed without a register file |
 | `session-malformed` | 32 | a session file is malformed (missing field, bad claim row) |
 | `session-stalled` | 40 | an active session with no commit for `--stale-after` (warn by default; fail under `--strict`) |
+| `session-same-identity` | 43 | two or more non-terminal session files carry the same `identity` — one row per identity, naming every file (warn by default; fail under `--strict`) |
+| `session-deleted` | 44 | a `<YYYY-MM-DD>-<6 hex>.md` register file that git history shows was added is gone from the working tree (warn by default; fail under `--strict`) |
 | `probe` | 41 | a probe could not read its input (unreadable file, symlink, git failure) — never reported as clean |
+| `hygiene` | 50 | a tracked file fails the public-repo hygiene scan (machine-local home path, secret shape, active deny-list entry), or the scan/deny-list did not run (warn by default; fail under `--strict`) |
+
+The `warn` classes are reported either way and never move the exit code on
+their own: a run whose only findings are warnings exits 0, and `--strict`
+promotes them to failures at their own codes. `ledger-empty` adds rows only in
+the states where this census used to report nothing — no `noni/`, `noni/` not a
+directory, a symlink, or `noni/` present without a `decisions/` directory. It
+never weakens an existing failure: a `noni/decisions/` directory that exists and
+holds no `*.json` record keeps its `ledger-record` exit 10 with the original
+message, and no `ledger-empty` row. The legacy `census.sh` shim likewise keeps
+exit 10 for an empty ledger — it documents a different entry point.
 
 When several classes fire at once the lowest code wins; stderr names every
 class that fired.
@@ -59,6 +73,10 @@ class that fired.
 32  session-malformed
 40  session-stalled (warn by default; failure under --strict)
 41  probe (warn by default; failure under --strict)
+42  ledger-empty (warn by default; failure under --strict)
+43  session-same-identity (warn by default; failure under --strict)
+44  session-deleted (warn by default; failure under --strict)
+50  hygiene (warn by default; failure under --strict)
 ```
 
 A clean exit with warnings is normal: a cannot-tell staleness probe (no git
@@ -84,6 +102,26 @@ and reproducible across runs (see `_finding_sort_key`). No metric reads a
 value from an agent-authored
 field; every value comes from git history, file existence, or file byte size.
 
+### The hygiene artifact namespace
+
+`hygiene` rows live in two artifact namespaces, and which one applies is
+decided by `subject`, which is therefore the machine-readable discriminator —
+consumers should branch on it rather than matching message prose:
+
+| `subject` | meaning | `artifact` |
+|---|---|---|
+| `path:line` of a tracked file | a built-in or active deny-list violation | that file, root-relative |
+| `hygiene scan` | the scan itself did not run (no git tree, `git ls-files` failed or hung, `public_safety` not importable) | the checker, named from the skill directory (`../../../scripts/public_safety.py`) |
+| `deny-list` | the deny-list half of the scan did not run; the state word (`absent`, `corrupt`, `present but empty`) is in the message | the checker, as above |
+
+A violating file's artifact is rooted in the tree being audited; the two
+probe-failure rows name the census's own checker, which lives outside that
+tree, so they are rooted in the installed skill instead — the census never
+prints a machine-local absolute path either way. A tracked path may contain a
+colon, so the census splits public_safety's `path:line: label` on its known
+label set rather than on the first colon, and a violation of an unexpected
+shape is reported verbatim instead of split.
+
 ## The probe-honesty rule
 
 A probe that cannot read its input (unreadable file, symlink, non-UTF-8 bytes,
@@ -91,6 +129,55 @@ git failure on a real repo) is recorded as a `probe` finding (warn) or a
 `session-stalled` cannot-tell finding (warn). It is **never** silently
 skipped, and it is **never** reported as clean. Under `--strict` it becomes a
 failure (exit 41) and the run is never reported clean.
+
+The same rule extends to the classes that report their own absence:
+
+- **`ledger-empty` (42)** reports the ledger that is not there. "No `noni/`
+  at all" is exactly one row carrying the state word `absent` — not the
+  silent clean it used to be, because a census that says nothing here cannot
+  tell "nothing to census" apart from "the ledger went missing". The class is
+  additive: it reports only the states where the record pass has nothing to
+  say, and it never softens a failure the group already reports. A
+  `noni/decisions/` directory that exists and holds no `*.json` record is
+  therefore still a `ledger-record` failure (10), not a `ledger-empty` warn —
+  `empty` names `noni/` present with no `decisions/` directory and nothing
+  else. Nor does the class gate the integrity checks: a record that history
+  shows was added and is now gone stays a `ledger-edited` failure (12), so an
+  emptied ledger reports the deletion that emptied it — the git-backed
+  integrity checks run whatever the empty probe found.
+- **`hygiene` (50)** always reports, a clean tree included. When the
+  deny-list class is not active (its file is `absent`, `corrupt`, or present
+  with no entries) the run emits one `hygiene` row naming that state; a scan
+  that cannot run at all (`--repo` is not a git repo, `git ls-files` fails or
+  hangs, `scripts/public_safety.py` is not importable, or the scanner raises
+  for any reason) emits one row saying the scan did not run. Neither is ever
+  reported as hygiene-clean, and no scanner failure can take the census down:
+  every finding the run already collected is still reported. The scan runs
+  in-process over the census's own git tree — the `--ledger` / `--sessions`
+  overrides never re-target it.
+- **The deletion classes report what they could not check.** A
+  `--sessions`/`--ledger` override that points outside the audited git tree
+  switches off the append-only question for that group; both say so in a
+  `cannot-tell` row rather than letting a filtered or `--strict` run read "no
+  rows" as "nothing was deleted". A cannot-tell row is a warn by default and
+  is promoted by `--strict`, whatever its class's own severity: not being able
+  to read the tree is not itself a protocol violation. The edit check's
+  `cannot verify` row — a committed blob that is unreachable in a shallow or
+  pruned tree — follows the same rule: it is a `ledger-edited` row that stays a
+  warn at exit 0 and becomes a failure only under `--strict`, unlike the
+  genuine `record was edited after commit` row of the same class, which fails
+  either way.
+
+### census exit 50 is not the public_safety gate
+
+`scripts/public_safety.py` run as a script is the stricter gate: it refuses to
+report clean when the deny-list class is inactive and exits 2. The census
+reports the same condition as a `hygiene` warn that leaves the process at exit
+0. Both read the deny-list through `public_safety.load_denylist` and its one
+precedence (the default file next to the checker, which is gitignored, then
+`NONI_SCRUB_DENYLIST`), so the two entry points never disagree about whether
+the deny-list half ran — but a clean census exit 50 is not a substitute for
+running `scripts/public_safety.py` before publishing.
 
 ## Rules
 
@@ -106,4 +193,11 @@ failure (exit 41) and the run is never reported clean.
   artifact path it derives from; no value comes from a number written inside
   an agent-authored file.
 - **No project content in the skill.** The census script carries no
-  machine-local paths, operator names, or project-specific vocabulary.
+  machine-local paths, operator names, or project-specific vocabulary. A row
+  built from someone else's exception text is bounded and stripped of absolute
+  paths for the same reason.
+- **Read-only git.** Every git call the census makes pins the host's git
+  config away (`GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` to the null device,
+  `-c protocol.ext.allow=never -c core.hooksPath=/dev/null` on the command
+  line), so a repository being audited cannot turn a read into execution
+  through `core.hooksPath` or an external protocol helper.

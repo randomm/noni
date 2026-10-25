@@ -161,7 +161,12 @@ The same rule extends to the classes that report their own absence:
   `cannot-tell` row rather than letting a filtered or `--strict` run read "no
   rows" as "nothing was deleted". A cannot-tell row is a warn by default and
   is promoted by `--strict`, whatever its class's own severity: not being able
-  to read the tree is not itself a protocol violation.
+  to read the tree is not itself a protocol violation. The edit check's
+  `cannot verify` row — a committed blob that is unreachable in a shallow or
+  pruned tree — follows the same rule: it is a `ledger-edited` row that stays a
+  warn at exit 0 and becomes a failure only under `--strict`, unlike the
+  genuine `record was edited after commit` row of the same class, which fails
+  either way.
 
 ### census exit 50 is not the public_safety gate
 

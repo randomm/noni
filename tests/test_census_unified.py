@@ -457,6 +457,40 @@ class TestHygiene:
                 f"must refuse an illegal violation shape: {bad!r}"
             )
 
+    def test_split_violation_tries_every_label_before_giving_up(self):
+        """A label whose suffix matches is not the end of the search: when its
+        head does not parse, the walk must continue to the next candidate
+        rather than returning None there and then. With the early return the
+        verdict depends on set-iteration order, so a violation public_safety
+        could resolve is reported verbatim on some runs and split on others.
+
+        The fixture is two labels sharing one tail — ``"secret shape (PEM)"``
+        and ``"1: secret shape (PEM)"`` — and a violation ending in both:
+        ``x:1: 1: secret shape (PEM)``. Against the shorter label the head is
+        ``x:1: 1`` (rpartitions to line ``" 1"``, not a digit) so that split
+        must be rejected; the longer label's head, ``x:1``, is the one legal
+        split. The old ``return None`` found the split only when the shorter
+        label happened to sort second, so the loop below pins every order."""
+        import census
+
+        unparseable = "secret shape (PEM)"
+        parsable = "1: secret shape (PEM)"
+        violation = "x:1" + ": " + parsable
+        expected = ("x", 1, parsable)
+
+        # Both labels really do claim this violation, and only one parses.
+        assert violation.endswith(": " + unparseable)
+        assert violation.endswith(": " + parsable)
+
+        for _ in range(200):
+            # A fresh set each round, and both insertion orders: the label set
+            # is a set, so iteration order is the thing the bug varies on.
+            assert census._split_violation(violation, {unparseable, parsable}) == expected
+            assert census._split_violation(violation, {parsable, unparseable}) == expected
+        # The refusal cases still refuse: nothing matched, so the caller goes
+        # verbatim rather than inventing a split.
+        assert census._split_violation("1: secret shape (PEM", {unparseable, parsable}) is None
+
     def test_violation_in_path_containing_a_colon_is_split_correctly(self, tmp_path):
         """Regression: a tracked path may legally contain a colon
         ("x:y/p.txt"). Splitting public_safety's "path:line: label" at the
@@ -935,6 +969,69 @@ class TestExitCodes:
         # deleted row is present alongside it.
         assert rc == 10, f"expected exit 10 (lowest code), got {rc}\nstderr: {err}\n{out}"
         assert "deleted" in out, f"expected 'deleted' reason:\n{out}"
+
+    def test_unreachable_blob_is_warn_not_fail_without_strict(self, tmp_path, monkeypatch):
+        """Regression vs origin/main: a committed record whose committed bytes
+        are unreachable (shallow or pruned history, or a timed-out
+        ``git cat-file``) is a probe-honesty cannot-verify, NOT a protocol
+        violation. The row must carry warn severity and leave the process at
+        exit 0 without --strict; only --strict may escalate it.
+
+        ``blob_content_sha1`` is monkeypatched to return None so the case is
+        reached deterministically on a tree that does hold the object (a real
+        shallow clone would not be reproducible here)."""
+        import census
+
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                      json.dumps(_valid_record(), indent=2))
+        monkeypatch.setattr(census.Git, "blob_content_sha1",
+                            lambda self, commit, relpath: None)
+        rc, out, err = _run_census(repo, json_out=True)
+        assert rc == 0, (
+            f"an unreachable committed blob must not fail the census: got {rc}"
+            f"\nstderr: {err}\nstdout: {out}"
+        )
+        rows = [r for r in _ndjson_rows(out)
+                if r.get("check") == "ledger-edited"
+                and r["message"].startswith("cannot verify")]
+        assert len(rows) == 1, f"expected one cannot-verify row: {rows}"
+        row = rows[0]
+        assert row["severity"] == "warn", f"must be warn, not fail: {row}"
+        assert row["code"] == 12, f"stays in the ledger-edited class: {row}"
+        assert row["subject"] == "2026-10-01-alpha", f"names the record: {row}"
+        assert "unreachable" in row["message"], f"message text is kept: {row}"
+
+    def test_unreachable_blob_fails_under_strict(self, tmp_path, monkeypatch):
+        """The same row escalates under --strict: a census that cannot read its
+        own committed input is not allowed to report clean there."""
+        import census
+
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                      json.dumps(_valid_record(), indent=2))
+        monkeypatch.setattr(census.Git, "blob_content_sha1",
+                            lambda self, commit, relpath: None)
+        rc, out, err = _run_census(repo, "--strict", json_out=True, skip_hygiene=True)
+        assert rc == 12, (
+            f"expected exit 12 under --strict, got {rc}\nstderr: {err}\nstdout: {out}"
+        )
+        rows = [r for r in _ndjson_rows(out) if r.get("check") == "ledger-edited"]
+        assert len(rows) == 1 and rows[0]["severity"] == "fail", f"row: {rows}"
+
+    def test_genuine_edit_still_fails_without_strict(self, tmp_path):
+        """Companion to the cannot-verify pair: the severity fix must not leak
+        into the real edit row. Working-tree bytes that differ from the
+        committed bytes stay a failure with no --strict."""
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                      json.dumps(_valid_record(), indent=2))
+        (repo / "noni/decisions/2026-10-01-alpha.json").write_text(
+            json.dumps(_valid_record(status="open"), indent=2))
+        rc, out, err = _run_census(repo, json_out=True)
+        assert rc == 12, f"expected exit 12, got {rc}\nstderr: {err}\nstdout: {out}"
+        rows = [r for r in _ndjson_rows(out) if r.get("check") == "ledger-edited"]
+        assert len(rows) == 1 and rows[0]["severity"] == "fail", f"row: {rows}"
 
     def test_deleted_on_unmerged_branch_is_not_reported(self, tmp_path):
         """A record added and committed on an unmerged feature branch, never

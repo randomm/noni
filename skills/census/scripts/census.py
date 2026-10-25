@@ -140,12 +140,17 @@ CLASS_SEVERITY = {name: sev for name, (_code, sev, _fix) in CHECKS.items()}
 CLASS_FIX = {name: fix for name, (_code, _sev, fix) in CHECKS.items()}
 
 
+def _promote(severity: str, strict: bool) -> str:
+    """The run-mode half of severity: a warn row is a failure under --strict.
+    The one place that rule lives — both derivations below call it, so there is
+    no second copy to drift."""
+    return "fail" if strict and severity == "warn" else severity
+
+
 def _severity(check: str, strict: bool) -> str:
     """The severity a row of ``check`` carries in this run: warn classes become
-    failures under --strict, fail classes are unaffected. The one place that
-    rule lives — every reporter derives its severity here."""
-    severity = CLASS_SEVERITY[check]
-    return "fail" if strict and severity == "warn" else severity
+    failures under --strict, fail classes are unaffected."""
+    return _promote(CLASS_SEVERITY[check], strict)
 
 
 NAME_RE = re.compile(r"^[A-Za-z0-9._-]+\.json$")
@@ -398,7 +403,8 @@ def _rel_to_root(root: Path, path: Path) -> str:
 
 
 def _row(check: str, strict: bool, subject: str, artifact: str, message: str,
-         root: Path, relative_artifact: bool = True) -> dict:
+         root: Path, relative_artifact: bool = True,
+         severity: str | None = None) -> dict:
     """Build one finding row: the only place a row's shape is written.
 
     ``code``/``fix`` come from CHECKS and ``severity`` from `_severity`, so a
@@ -406,11 +412,19 @@ def _row(check: str, strict: bool, subject: str, artifact: str, message: str,
     here rather than five reporter-by-reporter copies. ``artifact`` is rooted
     into the audited tree by default; a reporter that names an artefact
     outside it passes ``relative_artifact=False`` and supplies its own id.
+
+    ``severity`` overrides the class default for a single row. It exists for
+    the probe-honesty case only — a row that reports *this run could not read
+    its input* rather than a protocol violation, which is a warn regardless of
+    its class. The override goes through `_promote`, so ``--strict`` still
+    escalates it and that rule keeps its one owner. A reporter that passes
+    ``severity`` must pass the run's ``strict``, not a literal.
     """
+    severity = _promote(severity, strict) if severity else _severity(check, strict)
     return {
         "check": check,
         "code": CLASS_CODE[check],
-        "severity": _severity(check, strict),
+        "severity": severity,
         "subject": subject,
         "artifact": _rel_to_root(root, Path(artifact)) if relative_artifact else artifact,
         "message": message,
@@ -563,7 +577,7 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
     probe = _ledger_probe(ledger)
     _check_ledger_empty(probe, ledger, root, findings, strict)
     valid, unparseable = _check_ledger_records(ledger, root, findings, probe.state)
-    _check_ledger_edited(valid, unparseable, git, root, findings)
+    _check_ledger_edited(valid, unparseable, git, root, findings, strict)
     _check_ledger_deleted(ledger, git, root, findings, strict)
     _check_ledger_chain(valid, ledger, root, findings)
 
@@ -736,6 +750,7 @@ def _check_ledger_edited(
     git: Git | None,
     root: Path,
     findings: list[dict],
+    strict: bool,
 ) -> None:
     """The post-commit edit check (git vs disk bytes).
 
@@ -746,10 +761,16 @@ def _check_ledger_edited(
     is one in-memory hash per file. A record whose committed bytes are
     unreachable degrades to a cannot-verify warning (probe honesty), never a
     silent pass."""
-    # ledger-edited is a fail class: its rows are failures with or without
-    # --strict, so no run-mode flag is needed to build them.
-    def add(check: str, subject: str, artifact: str, message: str) -> None:
-        findings.append(_row(check, False, subject, artifact, message, root))
+    # ledger-edited is a fail class, so an ordinary row of it is a failure with
+    # or without --strict. The one exception is the unreachable-blob row below:
+    # the census could not read the committed bytes, which is an unreadable
+    # environment, not a protocol violation — so it overrides its severity to
+    # warn (exit 0) and is escalated only under --strict, matching origin/main
+    # and the cannot-tell rule in _append_cannot_tell.
+    def add(check: str, subject: str, artifact: str, message: str,
+            cannot_verify: bool = False) -> None:
+        findings.append(_row(check, strict, subject, artifact, message, root,
+                             severity="warn" if cannot_verify else None))
 
     if git is None:
         return
@@ -770,7 +791,8 @@ def _check_ledger_edited(
         disk = _repo_sha1(path)
         if blob is None:
             add("ledger-edited", rid, str(path),
-                "cannot verify: committed blob is unreachable in this tree (shallow or pruned history)")
+                "cannot verify: committed blob is unreachable in this tree (shallow or pruned history)",
+                cannot_verify=True)
         elif disk is not None and blob != disk:
             add("ledger-edited", rid, str(path), "record was edited after commit (working tree differs from git)")
 
@@ -784,14 +806,17 @@ def _append_cannot_tell(check: str, reason: str, strict: bool, findings: list[di
     class's cannot-tell is a warn by default (an environment that cannot be
     read is not itself a protocol violation) and --strict escalates it, while a
     warn class keeps its own default — which is why session-deleted's
-    cannot-tell exits 44 under --strict and ledger-edited's exits 41.
+    cannot-tell exits 44 under --strict and ledger-edited's exits 41. The
+    unreachable-blob row of the edit check follows the same rule through
+    ``_row``'s explicit ``severity`` argument rather than through this helper,
+    because it names the record it could not verify instead of the check.
     """
     base = CLASS_SEVERITY[check]
     severity = "warn" if base == "fail" else base
     findings.append({
         "check": check,
         "code": CLASS_CODE[check],
-        "severity": "fail" if strict else severity,
+        "severity": _promote(severity, strict),
         "subject": "cannot-tell",
         "artifact": check,
         "message": f"cannot-tell: {reason}",
@@ -1099,7 +1124,10 @@ def _split_violation(violation: str, labels: set[str]) -> tuple[str, int, str] |
         path, sep, line_no = head.rpartition(":")
         if sep and path and line_no.isdigit():
             return path, int(line_no), label
-        return None
+        # The suffix matched but the head is not "<path>:<digits>". This label
+        # is not the split; a later one in the set may match the same tail with
+        # a head that does parse, so keep looking instead of giving up.
+        continue
     return None
 
 

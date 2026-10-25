@@ -2,14 +2,23 @@
 
 ## Operator choices
 
-- **Merge authority:** /work driver may auto-merge when all gates pass
+- **Gate files:** `AGENTS.md`, `.github/workflows/`, `pyproject.toml`, `scripts/public_safety.py`, `.pi/`.
+- **Merge authority:** Agents may squash-merge a pull request into `main` only when all of these hold:
+  - CI is green on the PR's current head commit.
+  - The PR is not a draft.
+  - The adversarial and lens reviews have passed at that same head commit with no open CRITICAL or HIGH findings.
+  - The PR does not change a gate file (see Gate files). Changes to gate files need the operator's merge.
+  - The PR does not delete or weaken an existing test assertion. Otherwise it needs the operator's merge.
+
+  The governing rule is the AGENTS.md on `main`, not the copy in the PR branch. CI and both reviews must be at the PR's current head commit. Any new push needs CI and both reviews again. CI red, pending or missing means no merge. The agent re-checks every condition immediately before merging. Agents never push to `main` directly and never force-push.
+- **Review blocking level:** Review findings are blocking at HIGH severity and above.
 - **Project-specific constraints:** Purity rule is binding: core carries no project content and no vocabulary from any specific driver, tracker or project; adapters only under integrations/. docs/PRODUCT.md sections 3, 6 and 7 are binding for all epics.
 - **Public-repo hygiene:** noni is published as a public repository. No tracked file may contain personal information about the operator (names, employer names, hostnames or network details), machine-local absolute home paths, names or paths of other projects, tools, drivers or repositories outside noni, or secrets or credentials. Use generic wording instead ("a driver", "an issue runner", "a tracker", "a separate repository"). The rule itself names no banned project or tool.
 
 
 ## Code Style
 
-- Purity rule: repo holds only generic product content (positioning, research, design, specs, shipped skills) — no tickets, backlog entries, or any attached project's content
+- Purity rule: repo holds only generic product content (positioning, research, design, specs, shipped skills): no tickets, backlog entries, or any attached project's content
 - Two-tier purity: core skills carry neither project content nor vocabulary from any specific driver, tracker or project; adapters live under `integrations/` (one clearly-marked adapter directory per project, e.g. `integrations/github-issues/`); core must be viable with no adapter installed
 - SKILL.md is the unit of product; state lives outside the skill directory; core skills stay within the six Agent Skills spec frontmatter fields
 - Git + plain files are the only truth: no daemons, no databases; scripts only where atomicity and exit-code honesty demand them
@@ -71,7 +80,7 @@ Before adding documentation: *"Will this be true in 200 PRs?"*
 ## Forbidden documentation
 
 - ❌ Issue drafts, implementation summaries, fix notes, scratch files
-- ❌ `TODO` comments — create GitHub issues instead
+- ❌ `TODO` comments: create GitHub issues instead
 
 # Issue-Driven Development
 
@@ -123,7 +132,7 @@ standard-library features, or meta-questions about the project.
 - Coverage for lower-risk areas (documentation, config, formatting)
   may be lower; the threshold is the floor for logic, not a target for
   boilerplate.
-- A bug fix ships with its regression test — a fix without a test that
+- A bug fix ships with its regression test. A fix without a test that
   failed first is an incomplete fix.
 
 ## Environment
@@ -145,6 +154,20 @@ standard-library features, or meta-questions about the project.
 
 Run these before pushing. All must pass locally:
 
-- **pytest** — `pytest`
-- **ruff** — `ruff check .`
+- **pytest**: `pytest`
+- **ruff**: `ruff check .`
+
+## Project conventions
+
+These are working conventions. The checks that enforce rules are the ones under Quality Gates. A convention without a check is guidance.
+
+- No ALL_CAPS scratch files (PLAN.md, DESIGN.md, NOTES.md, RESEARCH.md, TODO.md and the like). The issue thread holds plans and notes.
+- Docs change in the same PR as the behaviour they describe. Never leave the repo claiming something that is not true.
+- Prose in docs, comments, commit messages and PR text is plain and direct: short sentences, no em dashes, no hype. Comments explain why, not what; leave a comment out if the code already says it.
+- File size ratchet: new Python and shell source files under `skills/`, `scripts/` and `integrations/` stay at or under 500 lines; a file already over the limit is grandfathered and may be edited but may not grow in a PR. SKILL.md files keep their own 400-line cap.
+- Never commit secrets or tokens, `.env` files, raw model output, scratch files, or local research artifacts.
+- Scope discipline: change only the files the issue covers (check `git diff --name-only origin/main...HEAD` before opening a PR). A bug found along the way gets its own issue and a note in the PR.
+- Tests are offline and deterministic: no network, no real accounts; use fixtures and stubs.
+- Fail closed: a missing or malformed setting stops the command with a clear message; never fall back to something wider.
+- Work cycles do not edit their own gates: a gate file (see Gate files) is changed by people (or by the agents-md tool on the operator's request), not by a work cycle.
 

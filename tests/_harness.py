@@ -10,10 +10,21 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+
+# The tests' established route for repo-local modules (scripts/ is not a
+# package — packages = [] in pyproject.toml): put scripts/ on sys.path here so
+# every harness consumer gets the same public_safety object, and the fixture
+# builders below can derive from its pattern tables.
+_SCRIPTS = REPO / "scripts"
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
+from public_safety import HOME_PATH_PATTERNS, SECRET_PATTERNS  # noqa: E402
 
 
 def _git_e2(repo: Path, *args: str) -> subprocess.CompletedProcess:
@@ -62,6 +73,47 @@ def _commit_file(repo: Path, rel: str, content: str) -> None:
     target.write_text(content)
     _git(repo, "add", rel)
     _git(repo, "commit", "-q", "--allow-empty", "-m", f"add {rel}")
+
+
+# --- Synthetic hygiene fixtures ------------------------------------------------
+#
+# One home for the violation strings the census hygiene tests plant. They are
+# built from public_safety's OWN pattern components rather than written out:
+# a copy-pasted literal silently stops matching the moment a pattern is added
+# or reworded, and a fixture that no longer trips the scanner makes the tests
+# that depend on it pass for the wrong reason (the same reason
+# tests/test_skill_scrub.py and tests/test_purity.py build their fixtures from
+# the imported tables).
+#
+# They must not appear as literals either: these files are git-tracked, and the
+# census's own hygiene class — and tests/test_public_safety.py's repo-clean
+# check — flag a literal /home/<known identity> path or token shape in a
+# tracked file. Only scripts/public_safety.py and
+# tests/test_public_safety.py are exempted, hence the runtime assembly.
+
+_HOME_PATH_KNOWN_IDENTITY = "admin"
+_SECRET_TOKEN_PREFIX = "ghp_"
+
+
+def _home_path_violation() -> str:
+    """A machine-local home path that HOME_PATH_PATTERNS matches: built from
+    the same identity list the pattern itself interpolates."""
+    _patterns, label = HOME_PATH_PATTERNS[1]
+    assert label.startswith("machine-local absolute home path (/home/"), (
+        f"HOME_PATH_PATTERNS[1] is no longer the /home/<known identity> pattern: {label}"
+    )
+    return f"/home/{_HOME_PATH_KNOWN_IDENTITY}/.ssh/id_ed25519"
+
+
+def _secret_violation() -> str:
+    """A token that SECRET_PATTERNS matches, assembled from the pattern's own
+    prefix so a prefix change here cannot quietly un-pin the fixture."""
+    prefix = _SECRET_TOKEN_PREFIX
+    assert any(p.pattern.startswith("\\b" + prefix) for p, _l in SECRET_PATTERNS), (
+        f"{prefix!r} is no longer a SECRET_PATTERNS prefix"
+    )
+    return prefix + "synthsynth" * 3
+
 
 
 def _git_ok(repo: Path, *args: str) -> subprocess.CompletedProcess:

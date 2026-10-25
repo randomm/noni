@@ -7,12 +7,13 @@ class, runs census.main(), and asserts the exit code and output.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-from _harness import _commit_file, _git, _init_repo  # noqa: E402
+from _harness import _commit_file, _git, _home_path_violation, _init_repo, _secret_violation  # noqa: E402
 
 _scripts_dir = str(REPO / "scripts")
 if _scripts_dir not in sys.path:
@@ -20,13 +21,11 @@ if _scripts_dir not in sys.path:
 
 DENYLIST_ENV_VAR = "NONI_SCRUB_DENYLIST"
 
-# Synthetic violation shapes, built at run time rather than written as
-# literals: this file is git-tracked and the census's own hygiene class (and
-# tests/test_public_safety.py::test_noni_repo_is_clean) flags a literal
-# /home/<known identity> path or token shape in a tracked file. Only
-# scripts/public_safety.py and tests/test_public_safety.py are exempted.
-_HOME_PATH = "/" + "home" + "/" + "admin" + "/.ssh/id_ed25519"
-_SECRET = "ghp_" + "synthsynth" * 3
+# Synthetic violation shapes, built by tests/_harness.py from public_safety's
+# own pattern tables (see there for why they are not literals and why they are
+# not copy-pasted either).
+_HOME_PATH = _home_path_violation()
+_SECRET = _secret_violation()
 
 
 def _commit_dir_state(repo: Path, dirname: str) -> None:
@@ -94,10 +93,25 @@ def _run_census(repo: Path, *args: str, json_out: bool = False,
 def _census_main(argv: list[str]) -> int:
     """Import and call census.main(argv) with a fresh module import."""
     import importlib
-    if "census" in sys.modules:
-        return importlib.import_module("census").main(argv)
-    mod = importlib.import_module("census")
-    return mod.main(argv)
+
+    return importlib.import_module("census").main(argv)
+
+
+def _hygiene_target():
+    """The public_safety module the census's hygiene class will actually run.
+
+    The census loads its checker into a census-owned sys.modules slot, so a
+    seam installed on a plain ``import public_safety`` object can be a
+    different module from the one the scan uses. Loading through the census's
+    own loader returns the object the scan reads, which is what the hygiene
+    tests patch (``_default_denylist_file``, ``_scan_tracked_files``,
+    ``FUTURE_PATTERNS``).
+    """
+    import census
+
+    module = census._load_public_safety()
+    assert module is not None, "scripts/public_safety.py must be loadable for the hygiene tests"
+    return module
 
 
 def _ndjson_rows(stdout: str) -> list[dict]:
@@ -384,21 +398,20 @@ class TestHygiene:
         look like a path with line "1" and label "b". "b" is not a label
         public_safety can emit, so there is no legal split."""
         import census
-        import public_safety
 
         # Sanity: the label set is read from public_safety, not duplicated.
-        labels = census._hygiene_labels(public_safety)
+        labels = census._hygiene_labels(_hygiene_target())
         assert "GitHub classic token" in labels
         assert "deny-list entry" in labels, "the deny-list label is not in BUILTIN_PATTERNS"
 
         # Legal shapes, including colons in the path.
         assert census._split_violation("x:y/p.txt:1: GitHub classic token",
-                                       public_safety) == ("x:y/p.txt", 1, "GitHub classic token")
+                                       labels) == ("x:y/p.txt", 1, "GitHub classic token")
         assert census._split_violation("a:b/c:d.txt:42: deny-list entry",
-                                       public_safety) == ("a:b/c:d.txt", 42, "deny-list entry")
+                                       labels) == ("a:b/c:d.txt", 42, "deny-list entry")
         assert census._split_violation(
             "n.md:3: machine-local absolute home path (/home/<known identity>)",
-            public_safety) == ("n.md", 3, "machine-local absolute home path (/home/<known identity>)")
+            labels) == ("n.md", 3, "machine-local absolute home path (/home/<known identity>)")
 
         # Illegal shapes: refused, so the caller reports them verbatim.
         for bad in ("a:1: b",                      # label "b" is not a real label
@@ -406,7 +419,7 @@ class TestHygiene:
                     "nocolons here",                # no structure at all
                     "n.md:xx: private key block",   # non-numeric line
                     ":1: private key block"):       # empty path
-            assert census._split_violation(bad, public_safety) is None, (
+            assert census._split_violation(bad, labels) is None, (
                 f"must refuse an illegal violation shape: {bad!r}"
             )
 
@@ -479,7 +492,7 @@ class TestHygiene:
 
     def test_corrupt_denylist_is_reported_inactive(self, tmp_path, monkeypatch):
         """"corrupt" is a third inactive state: named in the row, never clean."""
-        import public_safety
+        public_safety = _hygiene_target()
 
         repo = _init_repo(tmp_path / "repo")
         _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
@@ -497,7 +510,7 @@ class TestHygiene:
     def test_empty_denylist_is_reported_inactive(self, tmp_path, monkeypatch):
         """A deny-list that is present but holds no entry is its own state:
         the class did not run, and the row says so."""
-        import public_safety
+        public_safety = _hygiene_target()
 
         repo = _init_repo(tmp_path / "repo")
         _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
@@ -550,7 +563,7 @@ class TestHygiene:
         close — so this test pins the row, its subject/artifact and its message
         (mutation guard: deleting the add(), or emptying any of its three
         fields, fails here)."""
-        import public_safety
+        public_safety = _hygiene_target()
 
         repo = _init_repo(tmp_path / "repo")
         _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
@@ -584,7 +597,7 @@ class TestHygiene:
         exposes, so a future table bound to a truthy non-iterable must degrade
         to the verbatim row rather than raise out of the census (the class's
         own contract is never-crash, report-instead)."""
-        import public_safety
+        public_safety = _hygiene_target()
 
         repo = _init_repo(tmp_path / "repo")
         _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
@@ -602,6 +615,44 @@ class TestHygiene:
             assert len(rows) == 1, f"expected one row, no crash: {rows}"
             # The known tables still load, so the well-shaped row still splits.
             assert rows[0]["artifact"] == "n.md", f"expected a split row: {rows[0]}"
+        finally:
+            _clear_denylist()
+
+    def test_pattern_table_that_raises_on_iteration_never_crashes_the_census(
+            self, tmp_path, monkeypatch):
+        """The never-crash claim covers more than TypeError.
+
+        A table whose iteration protocol raises (``__iter__``, ``__len__`` or
+        ``__bool__`` blowing up) must contribute no labels and let the run
+        report verbatim rows — not escape as a traceback that discards every
+        finding the census already collected. The int fixture above pins only
+        the TypeError shape, so this is the case that makes the contract real."""
+        public_safety = _hygiene_target()
+
+        class _BadTable:
+            def __bool__(self) -> bool:
+                return True
+
+            def __iter__(self):
+                raise RuntimeError("table hang")
+
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                      json.dumps(_valid_record(), indent=2))
+        monkeypatch.setattr(public_safety, "FUTURE_PATTERNS", _BadTable(), raising=False)
+        monkeypatch.setattr(
+            public_safety, "_scan_tracked_files",
+            lambda repo, patterns: ["n.md:2: unrecognised future label"],
+        )
+        _with_denylist(tmp_path, "synthetic-project-name")
+        try:
+            rc, out, err = _run_census(repo, json_out=True)
+            assert rc == 0, f"expected 0 (warn), got {rc}\n{err}"
+            rows = [r for r in _ndjson_rows(out) if r.get("check") == "hygiene"]
+            assert len(rows) == 1, f"expected one verbatim row, no crash: {rows}"
+            assert rows[0]["artifact"] == "n.md:2: unrecognised future label", (
+                f"a table that cannot be walked must not garble the row: {rows[0]}"
+            )
         finally:
             _clear_denylist()
 
@@ -1142,3 +1193,364 @@ class TestProbeHonesty:
         _git(repo, "commit", "-q", "--allow-empty", "-m", "add symlink")
         rc, out, err = _run_census(repo, "--strict")
         assert rc == 41, f"expected exit 41 (probe under --strict), got {rc}\nstderr: {err}\nstdout: {out}"
+
+
+class TestCannotTellRows:
+    """A check that could not run says so: no filtered or --strict run reads
+    "no rows" as "nothing was wrong" when the question was never answered."""
+
+    def test_sessions_override_outside_the_tree_reports_cannot_tell(self, tmp_path):
+        """--sessions pointing outside the audited git tree disables the
+        append-only check: that is reported, not silently clean."""
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                      json.dumps(_valid_record(), indent=2))
+        outside = tmp_path / "elsewhere-sessions"
+        outside.mkdir()
+        (outside / "2026-10-01-aaaaaa.md").write_text(_session_body("developer"))
+        rc, out, err = _run_census(repo, "--sessions", str(outside),
+                                   "--only", "session-deleted", "--strict", skip_hygiene=True)
+        assert rc == 44, (
+            "an override that turns off an integrity check must not exit 0: "
+            f"got {rc}\nstderr: {err}\nstdout: {out}"
+        )
+        assert "cannot-tell" in out, f"expected the cannot-tell row: {out}"
+
+    def test_ledger_override_outside_the_tree_reports_cannot_tell(self, tmp_path):
+        """Same rule for --ledger: the group says it could not answer."""
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "README.md", "# repo\n")
+        outside = tmp_path / "elsewhere-ledger"
+        outside.mkdir()
+        (outside / "2026-10-01-alpha.json").write_text(json.dumps(_valid_record(), indent=2))
+        rc, out, err = _run_census(repo, "--ledger", str(outside), "--only", "ledger-edited",
+                                   "--strict", json_out=True, skip_hygiene=True)
+        assert rc == 12, (
+            f"the cannot-tell row is the ledger-edited class and exits 12 under --strict, "
+            f"got {rc}\nstderr: {err}\nstdout: {out}"
+        )
+        assert "cannot-tell" in out, f"expected the cannot-tell row: {out}"
+        # The cannot-tell is a warn without --strict: reading it as the class's
+        # own fail severity would make "I could not read the tree" look like a
+        # protocol violation (see test_ledger_cannot_tell_is_warn_without_strict).
+        rows = [r for r in _ndjson_rows(out) if r.get("check") == "ledger-edited"]
+        assert len(rows) == 1, f"expected one ledger-edited row: {rows}"
+        assert rows[0]["subject"] == "cannot-tell", f"row: {rows[0]}"
+
+    def test_ledger_cannot_tell_is_warn_without_strict(self, tmp_path):
+        """The same override without --strict stays a warning: the census could
+        not read the ledger, which is not itself a protocol violation."""
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "README.md", "# repo\n")
+        outside = tmp_path / "elsewhere-ledger-quiet"
+        outside.mkdir()
+        (outside / "2026-10-01-alpha.json").write_text(json.dumps(_valid_record(), indent=2))
+        rc, out, err = _run_census(repo, "--ledger", str(outside), skip_hygiene=True)
+        assert rc == 0, f"expected 0 (warn), got {rc}\nstderr: {err}\nstdout: {out}"
+        assert "cannot-tell" in out, f"expected the cannot-tell row: {out}"
+
+    def test_no_git_tree_is_not_reported_as_a_deletion_cannot_tell(self, tmp_path):
+        """A plain directory has no history at all: that state belongs to
+        hygiene (scan did not run) and the ledger-empty probe, not to the
+        deletion classes — otherwise "I ran no git" looks like a protocol bug."""
+        plain = tmp_path / "plain"
+        sessions = plain / "noni" / "sessions"
+        sessions.mkdir(parents=True)
+        (sessions / "2026-10-01-aaaaaa.md").write_text(_session_body("developer"))
+        (plain / "noni" / "decisions").mkdir()
+        (plain / "noni" / "decisions" / "2026-10-01-alpha.json").write_text(
+            json.dumps(_valid_record(), indent=2), encoding="utf-8")
+        rc, out, err = _run_census(plain, "--only", "session-deleted", skip_hygiene=True)
+        assert rc == 0, f"expected 0, got {rc}\nstderr: {err}\nstdout: {out}"
+        assert "session-deleted" not in out, f"unexpected row: {out}"
+
+
+class TestLedgerStateVocabulary:
+    """The ledger-empty state words are a closed vocabulary owned by one table.
+
+    tests iterate LEDGER_EMPTY_MESSAGES rather than re-listing the words, so a
+    state word cannot be renamed or added without the wording table and these
+    cases moving together — the invariant AGENTS.md asks a script or a census
+    check to hold, expressed as a test over the arbiter's own data."""
+
+    def test_state_table_is_the_whole_vocabulary(self):
+        import census
+
+        assert set(census.LEDGER_EMPTY_STATES) == set(census.LEDGER_EMPTY_MESSAGES), (
+            "the pinned state words and the message table have drifted apart"
+        )
+        # Exactly one state is silent, and it is the one the class must not
+        # report: a ledger that holds a record.
+        silent = {s for s, detail in census.LEDGER_EMPTY_MESSAGES.items() if detail is None}
+        assert silent == {"ok"}, f"expected only 'ok' to be silent, got {silent}"
+        for state in census.LEDGER_EMPTY_STATES:
+            if state != "ok":
+                assert census.LEDGER_EMPTY_MESSAGES[state], (
+                    f"state {state!r} has no wording: it would render an empty row"
+                )
+
+    def test_every_reported_state_word_appears_in_its_own_row(self, tmp_path):
+        """Each non-silent state of the table is reachable and names itself in
+        exactly one row — the probe-honesty contract for this class."""
+        import census
+
+        cases = {
+            "absent": lambda repo: _commit_file(repo, "README.md", "# repo\n"),
+            "empty": lambda repo: _commit_file(repo, "noni/decisions/.gitkeep", ""),
+            "not a directory": lambda repo: _commit_file(repo, "noni", "a file, not a dir\n"),
+        }
+        for state in census.LEDGER_EMPTY_STATES:
+            if state not in cases:
+                continue
+            repo = _init_repo(tmp_path / f"repo-{state.replace(' ', '-')}")
+            cases[state](repo)
+            rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
+            rows = [r for r in _ndjson_rows(out) if r.get("check") == "ledger-empty"]
+            assert rc == 0 and len(rows) == 1, f"{state}: expected one row, got {rc} {rows}"
+            assert f"({state})" in rows[0]["message"], f"{state}: {rows[0]['message']}"
+            # The row never carries a machine-local absolute path in subject.
+            assert not rows[0]["subject"].startswith("/"), (
+                f"subject must be root-relative like artifact, not an absolute path: {rows[0]}"
+            )
+            assert rows[0]["subject"] == rows[0]["artifact"]
+
+    def test_probe_error_keeps_its_text(self, tmp_path, monkeypatch):
+        """An OSError on the ledger probe is not labelled a symlink: the row
+        carries the error text so the operator sees what actually failed."""
+        import census
+
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/.gitkeep", "")
+        ledger = repo / "noni" / "decisions"
+
+        def boom(self, pattern):
+            # glob() is the probe that decides empty vs ok; breaking only the
+            # ledger's glob isolates "the ledger probe faulted" from "the tree
+            # is unreadable", which is the state this test is about.
+            if self == ledger:
+                raise OSError("input/output error")
+            return real_glob(self, pattern)
+
+        real_glob = census.Path.glob
+        monkeypatch.setattr(census.Path, "glob", boom)
+        rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
+        rows = [r for r in _ndjson_rows(out) if r.get("check") == "ledger-empty"]
+        assert len(rows) == 1, f"expected one row: {rows}"
+        assert "input/output error" in rows[0]["message"], (
+            f"the OSError text must survive into the row: {rows[0]['message']}"
+        )
+        assert "symlink" not in rows[0]["message"], (
+            f"an I/O fault must not be reported as a symlink: {rows[0]['message']}"
+        )
+        assert rc == 0, f"the state stays warn, got {rc}\n{err}"
+
+
+class TestHygieneRowContract:
+    """The hygiene class's four states are machine-distinguishable: subject, not
+    prose, tells a caller which half of the scan a row is about."""
+
+    def test_subjects_are_the_discriminator(self, tmp_path):
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                      json.dumps(_valid_record(), indent=2))
+        _commit_file(repo, "note.md", "token " + _SECRET + "\n")
+        _with_denylist(tmp_path, "synthetic-project-name")
+        try:
+            _rc, out, _err = _run_census(repo, json_out=True)
+        finally:
+            _clear_denylist()
+        rows = [r for r in _ndjson_rows(out) if r.get("check") == "hygiene"]
+        assert [r["subject"] for r in rows] == ["note.md:1"], (
+            f"a violation row's subject is path:line: {rows}"
+        )
+
+    def test_not_run_and_denylist_rows_use_their_own_subjects(self, tmp_path):
+        """`hygiene scan` and `deny-list` are the documented subject values for
+        the two probe-failure states, so a caller can ask "did the scan run?"
+        without matching English."""
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        (plain / "note.txt").write_text("hello\n", encoding="utf-8")
+        _rc, out, _err = _run_census(plain, json_out=True)
+        rows = [r for r in _ndjson_rows(out) if r.get("check") == "hygiene"]
+        assert [r["subject"] for r in rows] == ["hygiene scan"], f"rows: {rows}"
+
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                      json.dumps(_valid_record(), indent=2))
+        _rc, out, _err = _run_census(repo, json_out=True)
+        rows = [r for r in _ndjson_rows(out) if r.get("check") == "hygiene"]
+        assert [r["subject"] for r in rows] == ["deny-list"], f"rows: {rows}"
+
+    def test_exception_from_the_scan_reports_not_run_and_never_crashes(self, tmp_path, monkeypatch):
+        """Any exception type from the scan — not only the ones the class used
+        to name — becomes the not-run row. The class promises never to take the
+        census down, and a stray ValueError used to discard every finding this
+        run had already collected."""
+        public_safety = _hygiene_target()
+
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/.gitkeep", "")
+        monkeypatch.setattr(public_safety, "load_denylist",
+                            lambda: (_ for _ in ()).throw(ValueError("deny-list store unreachable")))
+        rc, out, err = _run_census(repo, json_out=True)
+        rows = [r for r in _ndjson_rows(out) if r.get("check") == "hygiene"]
+        assert rc == 0, f"a scan that cannot run is warn, got {rc}\n{err}"
+        assert any(r["subject"] == "hygiene scan" and "did not run" in r["message"] for r in rows), (
+            f"expected the not-run row: {rows}"
+        )
+        # Findings from the other classes are still in the run: an
+        # un-caught exception would have taken the whole census down instead,
+        # and the summary's own counts are the proof that they were collected.
+        summary = [r for r in _ndjson_rows(out) if r.get("kind") == "summary"][0]
+        assert summary["counts"].get("hygiene") == 1, f"summary: {summary}"
+        assert summary["counts"].get("ledger-empty"), (
+            f"the run collected no ledger row, so the failure was not contained "
+            f"inside the hygiene class: {out}"
+        )
+
+    def test_not_run_row_never_prints_an_absolute_path(self, tmp_path, monkeypatch):
+        """The exception text is bounded and stripped of host paths: the census
+        promises never to print a machine-local absolute path, and public_safety's
+        denial messages carry them."""
+        public_safety = _hygiene_target()
+
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                      json.dumps(_valid_record(), indent=2))
+        leaked = _home_path_violation()
+        monkeypatch.setattr(
+            public_safety, "load_denylist",
+            lambda: (_ for _ in ()).throw(OSError(f"git ls-files failed: {leaked}")))
+        _rc, out, _err = _run_census(repo, json_out=True)
+        rows = [r for r in _ndjson_rows(out)
+                if r.get("check") == "hygiene" and r["subject"] == "hygiene scan"]
+        assert len(rows) == 1, f"rows: {rows}"
+        assert leaked not in rows[0]["message"], (
+            f"the row leaked a machine-local absolute path: {rows[0]['message']}"
+        )
+        assert len(rows[0]["message"]) < 400, f"message unbounded: {rows[0]['message']}"
+
+
+    def test_checker_is_loaded_into_a_census_owned_slot(self, tmp_path):
+        """The census loads its checker under its own sys.modules key and never
+        writes the shared "public_safety" name.
+
+        The census is a read-only arbiter: replacing a host application's module
+        (or a second census instance's) while it runs its scan is a side effect
+        it must not have. The unqualified key was also the substitution route —
+        a module registered there from a sibling sys.path entry was trusted on
+        the strength of the key alone.
+        """
+        import census
+
+        module = census._load_public_safety()
+        assert module is not None, "scripts/public_safety.py must be loadable"
+        assert census.CENSUS_PS_MODULE_KEY == "noni_census_public_safety"
+        assert sys.modules.get(census.CENSUS_PS_MODULE_KEY) is module
+        # The census's own loader never registers under the shared name; a test
+        # that imported the module normally may have, so assert about the
+        # census's write, not about the registry's contents.
+        assert module.__name__ == census.CENSUS_PS_MODULE_KEY
+
+    def test_module_from_another_tree_is_not_trusted(self, tmp_path, monkeypatch):
+        """A public_safety whose __file__ is not SCRIPTS_DIR/public_safety.py is
+        refused, not executed: the census re-verifies the resolved path on every
+        call rather than trusting the registry entry."""
+        import census
+
+        class _Foreign:
+            __file__ = str(tmp_path / "public_safety.py")
+
+            @staticmethod
+            def scrub_tracked_files(repo):
+                raise AssertionError("the foreign checker must never be executed")
+
+            @staticmethod
+            def _denylist_active(denylist):
+                return True
+
+            @staticmethod
+            def load_denylist():
+                return None
+
+        monkeypatch.setitem(sys.modules, census.CENSUS_PS_MODULE_KEY, _Foreign())
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                      json.dumps(_valid_record(), indent=2))
+        # The foreign entry is rejected and the real file loaded in its place:
+        # the run reports the deny-list half (the real checker, no deny-list),
+        # never an all-clear from the impostor's active=True.
+        _rc, out, err = _run_census(repo, json_out=True)
+        rows = [r for r in _ndjson_rows(out) if r.get("check") == "hygiene"]
+        assert [r["subject"] for r in rows] == ["deny-list"], f"rows: {rows}"
+        # The impostor's _denylist_active() -> True would have silenced this row
+        # entirely, i.e. reported a hygiene-clean guarantee on a scan that never
+        # ran; the real checker's absent deny-list is what the row must name.
+        assert "absent" in rows[0]["message"], f"row: {rows[0]}"
+
+
+class TestCheckContractIsDerived:
+    """The check ids, codes and severities have exactly one source (CHECKS);
+    the surfaces a caller reads are renderings of it, not extra copies."""
+
+    def test_list_matches_the_table(self):
+        import io
+        from contextlib import redirect_stdout
+
+        import census
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            assert census.main(["--list"]) == 0
+        assert set(buf.getvalue().split()) == set(census.CHECKS), (
+            "--list and CHECKS have drifted apart"
+        )
+
+    def test_strict_help_lists_the_warn_classes(self):
+        import census
+
+        parser = census._build_parser()
+        strict = next(a for a in parser._actions if a.dest == "strict")
+        for name, (_code, sev, _fix) in census.CHECKS.items():
+            if sev == "warn":
+                assert name in strict.help, f"--strict help omits warn class {name}: {strict.help}"
+        # No fail class leaks into the list a reader uses to decide what
+        # --strict changes. Match the id as a whole word, not as a substring:
+        # "session-double" is contained in "session-double-…" style ids and
+        # would pass an `in` test for the wrong reason.
+        listed = set(re.findall(r"[a-z][a-z-]+", strict.help))
+        for name, (_code, sev, _fix) in census.CHECKS.items():
+            if sev == "fail":
+                assert name not in listed, f"--strict help names a fail class {name}: {strict.help}"
+
+    def test_skill_md_options_table_strict_row_matches_the_help_string(self):
+        """The --strict contract is written in CHECKS and rendered in three
+        places; the two prose renderings must list the same classes."""
+        import census
+
+        parser = census._build_parser()
+        help_ids = {m for m in re.findall(r"[a-z][a-z-]+",
+                                         next(a for a in parser._actions
+                                             if a.dest == "strict").help)
+                    if m in census.CHECKS}
+        text = (REPO / "skills" / "census" / "SKILL.md").read_text(encoding="utf-8")
+        row = next(line for line in text.splitlines() if line.startswith("| `--strict`"))
+        table_ids = set(re.findall(r"`([a-z][a-z-]+)`", row)) - {"--strict"}
+        assert help_ids == table_ids, (
+            f"--strict help and the SKILL.md options row disagree: {help_ids ^ table_ids}"
+        )
+
+    def test_skill_md_documents_the_same_table(self):
+        """SKILL.md's exit-code block is the operator-facing contract; a class
+        added to CHECKS without documenting it here fails."""
+        import census
+
+        text = (REPO / "skills" / "census" / "SKILL.md").read_text(encoding="utf-8")
+        documented = set(re.findall(r"^\s*(\d{2})\s+([a-z-]+)", text, re.MULTILINE))
+        by_code = {(str(c), n) for n, (c, _s, _f) in census.CHECKS.items()}
+        assert by_code <= documented, (
+            f"SKILL.md is missing exit-code lines for: {sorted(by_code - documented)}"
+        )
+        for name, (_code, _sev, _fix) in census.CHECKS.items():
+            assert f"`{name}`" in text, f"SKILL.md does not document check {name}"

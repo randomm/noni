@@ -26,6 +26,21 @@ directory. Pass the sessions directory of the clone you want to audit.
 | `31` | a claim row was committed without a register file (work is not blocked — report only) |
 | `32` | a session file is malformed (missing required field, or a claim row with no task reference) |
 
+**Legacy shim.** This table is `census-sessions.sh`, the per-epic entry point.
+The unified census (`skills/census/scripts/census.py`, documented in
+`skills/census/SKILL.md`) is the arbiter and adds three register classes this
+shim does not report: `session-same-identity` (43, warn) — two or more
+non-terminal register files carrying one `identity`, one row per identity
+naming every file; `session-deleted` (44, warn) — a
+`<YYYY-MM-DD>-<6 hex>.md` file that HEAD-reachable history shows was added and
+is gone from the working tree, because sessions end via their `status` field
+and never by deleting the register; and `session-stalled` (40, warn) — an
+active file with no commit for `--stale-after`, reported as cannot-tell when
+history is unavailable. All three are warn by default and fail at their own
+code under `--strict`. `same-identity-multi-session` below is the shim's
+narrower claim-overlap view; the unified class of the same name is the
+file-level view.
+
 When several classes are violated at once, the **lowest number wins**
 (`30 < 31 < 32`). Every check runs in a single pass regardless of the exit
 — the priority only selects which code is returned — so all findings are

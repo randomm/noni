@@ -96,13 +96,29 @@ One `finding` record per violation, followed by exactly one `summary` record:
 Every `finding` row names the `artifact` path it derives from. Both output
 modes (--json and human-readable) sort rows by the same key —
 `(artifact, check, subject)` — so the row order is identical across modes
-and reproducible across runs (see `_finding_sort_key`). For `hygiene` the
-artifact is the violating tracked file and the subject is its `path:line`;
-a tracked path may contain a colon, so the census splits public_safety's
-`path:line: label` on its known label set rather than on the first colon, and
-a violation of an unexpected shape is reported verbatim instead of split. No
-metric reads a value from an agent-authored
+and reproducible across runs (see `_finding_sort_key`). No metric reads a
+value from an agent-authored
 field; every value comes from git history, file existence, or file byte size.
+
+### The hygiene artifact namespace
+
+`hygiene` rows live in two artifact namespaces, and which one applies is
+decided by `subject`, which is therefore the machine-readable discriminator —
+consumers should branch on it rather than matching message prose:
+
+| `subject` | meaning | `artifact` |
+|---|---|---|
+| `path:line` of a tracked file | a built-in or active deny-list violation | that file, root-relative |
+| `hygiene scan` | the scan itself did not run (no git tree, `git ls-files` failed or hung, `public_safety` not importable) | the checker, named from the skill directory (`../../../scripts/public_safety.py`) |
+| `deny-list` | the deny-list half of the scan did not run; the state word (`absent`, `corrupt`, `present but empty`) is in the message | the checker, as above |
+
+A violating file's artifact is rooted in the tree being audited; the two
+probe-failure rows name the census's own checker, which lives outside that
+tree, so they are rooted in the installed skill instead — the census never
+prints a machine-local absolute path either way. A tracked path may contain a
+colon, so the census splits public_safety's `path:line: label` on its known
+label set rather than on the first colon, and a violation of an unexpected
+shape is reported verbatim instead of split.
 
 ## The probe-honesty rule
 
@@ -126,10 +142,30 @@ The same rule extends to the classes that report their own absence:
   deny-list class is not active (its file is `absent`, `corrupt`, or present
   with no entries) the run emits one `hygiene` row naming that state; a scan
   that cannot run at all (`--repo` is not a git repo, `git ls-files` fails or
-  hangs, `scripts/public_safety.py` is not importable) emits one row saying
-  the scan did not run. Neither is ever reported as hygiene-clean. The scan
-  runs in-process over the census's own git tree — the `--ledger` /
-  `--sessions` overrides never re-target it.
+  hangs, `scripts/public_safety.py` is not importable, or the scanner raises
+  for any reason) emits one row saying the scan did not run. Neither is ever
+  reported as hygiene-clean, and no scanner failure can take the census down:
+  every finding the run already collected is still reported. The scan runs
+  in-process over the census's own git tree — the `--ledger` / `--sessions`
+  overrides never re-target it.
+- **The deletion classes report what they could not check.** A
+  `--sessions`/`--ledger` override that points outside the audited git tree
+  switches off the append-only question for that group; both say so in a
+  `cannot-tell` row rather than letting a filtered or `--strict` run read "no
+  rows" as "nothing was deleted". A cannot-tell row is a warn by default and
+  is promoted by `--strict`, whatever its class's own severity: not being able
+  to read the tree is not itself a protocol violation.
+
+### census exit 50 is not the public_safety gate
+
+`scripts/public_safety.py` run as a script is the stricter gate: it refuses to
+report clean when the deny-list class is inactive and exits 2. The census
+reports the same condition as a `hygiene` warn that leaves the process at exit
+0. Both read the deny-list through `public_safety.load_denylist` and its one
+precedence (the default file next to the checker, which is gitignored, then
+`NONI_SCRUB_DENYLIST`), so the two entry points never disagree about whether
+the deny-list half ran — but a clean census exit 50 is not a substitute for
+running `scripts/public_safety.py` before publishing.
 
 ## Rules
 
@@ -145,4 +181,11 @@ The same rule extends to the classes that report their own absence:
   artifact path it derives from; no value comes from a number written inside
   an agent-authored file.
 - **No project content in the skill.** The census script carries no
-  machine-local paths, operator names, or project-specific vocabulary.
+  machine-local paths, operator names, or project-specific vocabulary. A row
+  built from someone else's exception text is bounded and stripped of absolute
+  paths for the same reason.
+- **Read-only git.** Every git call the census makes pins the host's git
+  config away (`GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` to the null device,
+  `-c protocol.ext.allow=never -c core.hooksPath=/dev/null` on the command
+  line), so a repository being audited cannot turn a read into execution
+  through `core.hooksPath` or an external protocol helper.

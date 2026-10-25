@@ -33,16 +33,13 @@ if _CENSUS_DIR not in sys.path:
     sys.path.insert(0, _CENSUS_DIR)
 
 import census  # noqa: E402
-from _harness import _commit_file, _init_repo  # noqa: E402
+from _harness import _commit_file, _home_path_violation, _init_repo, _secret_violation  # noqa: E402
 
-# Synthetic violation shapes. They are built at run time, never written as
-# literals: this file is git-tracked, and a literal /home/<known identity> path
-# would fail the very public-repo hygiene scan the census reports here (see
-# tests/test_public_safety.py::test_noni_repo_is_clean, which also exempts
-# scripts/public_safety.py and tests/test_public_safety.py as the two files that
-# carry the pattern literals).
-_HOME_PATH = "/" + "home" + "/" + "admin" + "/.ssh/id_ed25519"
-_SECRET = "ghp_" + "synthsynth" * 3
+# Synthetic violation shapes, built by tests/_harness.py from public_safety's
+# own pattern tables (see there for why they are not literals and why the
+# construction is not copy-pasted into this file).
+_HOME_PATH = _home_path_violation()
+_SECRET = _secret_violation()
 
 _scripts_dir = str(REPO / "scripts")
 if _scripts_dir not in sys.path:

@@ -29,6 +29,16 @@ one you are in.
 | `12` | a record was edited after commit (the committed bytes differ from the working tree) |
 | `20` | the supersede chain is broken (dangling, duplicate, orphan, cycle, or a chain resolving to zero or more than one live record) |
 
+**Legacy shim.** This table is the contract of `census.sh`, the per-epic entry
+point. The unified census (`skills/census/scripts/census.py`, documented in
+`skills/census/SKILL.md`) has since split the code-10 row in two: `ledger-record`
+(10) now covers only a malformed record, and the unusable-ledger states moved to
+`ledger-empty` (42, warn; fail under `--strict`) carrying one of the state words
+`absent`, `empty`, `not a directory`, `symlink`. The unified census also owns
+three classes this shim does not have: `session-same-identity` (43),
+`session-deleted` (44) and `hygiene` (50). Where the two disagree, the unified
+census is the arbiter and this table describes the shim's own exit codes only.
+
 The codes are distinct so a single failing census tells the operator which class
 of invariant broke without re-reading the report. When several classes are
 violated at once, the **lowest number wins** (`10 < 12 < 20`) and the

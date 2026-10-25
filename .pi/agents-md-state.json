@@ -19,9 +19,15 @@
   },
   {
     "key": "operator:merge-authority",
-    "value": "/work driver may auto-merge when all gates pass",
+    "value": "Agents may squash-merge a pull request into `main` only when CI is green on the PR's head commit, the PR is not a draft, the adversarial and lens reviews have passed with no open CRITICAL or HIGH findings, and the PR does not change `AGENTS.md`. Changes to `AGENTS.md` need the operator's merge. Agents never push to `main` directly and never force-push.",
     "provenance": "asked",
     "date": "2026-10-23"
+  },
+  {
+    "key": "operator:review-blocking",
+    "value": "Review findings are blocking at HIGH severity and above.",
+    "provenance": "asked",
+    "date": "2026-10-25"
   },
   {
     "key": "operator:constraints",

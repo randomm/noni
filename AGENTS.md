@@ -2,7 +2,8 @@
 
 ## Operator choices
 
-- **Merge authority:** /work driver may auto-merge when all gates pass
+- **Merge authority:** Agents may squash-merge a pull request into `main` only when CI is green on the PR's head commit, the PR is not a draft, the adversarial and lens reviews have passed with no open CRITICAL or HIGH findings, and the PR does not change `AGENTS.md`. Changes to `AGENTS.md` need the operator's merge. Agents never push to `main` directly and never force-push.
+- **Review blocking level:** Review findings are blocking at HIGH severity and above.
 - **Project-specific constraints:** Purity rule is binding: core carries no project content and no vocabulary from any specific driver, tracker or project; adapters only under integrations/. docs/PRODUCT.md sections 3, 6 and 7 are binding for all epics.
 - **Public-repo hygiene:** noni is published as a public repository. No tracked file may contain personal information about the operator (names, employer names, hostnames or network details), machine-local absolute home paths, names or paths of other projects, tools, drivers or repositories outside noni, or secrets or credentials. Use generic wording instead ("a driver", "an issue runner", "a tracker", "a separate repository"). The rule itself names no banned project or tool.
 
@@ -147,4 +148,16 @@ Run these before pushing. All must pass locally:
 
 - **pytest** — `pytest`
 - **ruff** — `ruff check .`
+
+# Project conventions
+
+- No ALL_CAPS scratch files (PLAN.md, DESIGN.md, NOTES.md, RESEARCH.md, TODO.md and the like). The issue thread holds plans and notes.
+- Docs change in the same PR as the behaviour they describe. Never leave the repo claiming something that is not true.
+- Prose in docs, comments, commit messages and PR text is plain and direct: short sentences, no em dashes, no hype. Comments explain why, not what; leave a comment out if the code already says it.
+- File size ratchet: new source files stay at or under 500 lines; a file already over the limit may not grow in a PR.
+- Never commit secrets or tokens, `.env` files, raw model output, scratch files, or local research artifacts.
+- Scope discipline: change only the files the issue covers (check `git diff --name-only origin/main..HEAD` before opening a PR). A bug found along the way gets its own issue and a note in the PR.
+- Tests are offline and deterministic: no network, no real accounts; use fixtures and stubs.
+- Fail closed: a missing or malformed setting stops the command with a clear message; never fall back to something wider.
+- Work cycles do not edit their own gates: CI configuration, `AGENTS.md` and the agent configuration under `.pi/` are changed by people (or by the agents-md tool on the operator's request), not by a work cycle.
 

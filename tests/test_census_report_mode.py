@@ -63,6 +63,7 @@ LEGAL_CHECKS = {
     "ledger-record", "ledger-edited", "ledger-chain",
     "session-double", "session-claim", "session-malformed",
     "session-stalled", "probe",
+    "ledger-empty", "session-same-identity", "session-deleted", "hygiene",
 }
 
 
@@ -133,9 +134,56 @@ def test_json_no_metric_reads_agent_authored_number(tmp_path):
     # The code field is always from the exit-code table, never from file content
     for row in rows:
         if row["kind"] == "finding":
-            assert row["code"] in {10, 12, 20, 30, 31, 32, 40, 41}, (
+            assert row["code"] in {10, 12, 20, 30, 31, 32, 40, 41, 42, 43, 44, 50}, (
                 f"code {row['code']} not from the exit-code table"
             )
+
+
+def test_json_rows_for_the_new_classes_follow_the_schema(tmp_path):
+    """All four new classes (ledger-empty 42, session-same-identity 43,
+    session-deleted 44, hygiene 50) emit --json rows in the noni.census/1
+    shape: the nine documented keys, the documented code, and warn severity
+    without --strict."""
+    repo = _init_repo(tmp_path / "repo")
+    # Two active files share one identity; one of them is then deleted from the
+    # working tree, so same-identity and deleted both fire, alongside the
+    # empty-ledger row.
+    _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md", _session_body("dev"))
+    _commit_file(repo, "noni/sessions/2026-10-01-bbbbbb.md", _session_body("dev"))
+    _commit_file(repo, "noni/sessions/2026-10-01-cccccc.md", _session_body("dev"))
+    (repo / "noni/sessions/2026-10-01-cccccc.md").unlink()
+    rc, rows = _run_census_json(repo, "--skip", "hygiene")
+    assert rc == 0, f"warn classes alone must exit 0, got {rc}"
+    by_check = {r["check"]: r for r in rows if r["kind"] == "finding"}
+    expected_code = {
+        "ledger-empty": 42,
+        "session-same-identity": 43,
+        "session-deleted": 44,
+    }
+    assert set(by_check) >= set(expected_code), f"missing rows: {set(expected_code) - set(by_check)}"
+    for check, code in expected_code.items():
+        row = by_check[check]
+        assert row["schema"] == "noni.census/1"
+        assert row["kind"] == "finding"
+        assert row["code"] == code, f"{check}: expected code {code}, got {row['code']}"
+        assert row["severity"] == "warn", f"{check}: expected warn, got {row['severity']}"
+        assert row["artifact"], f"{check}: empty artifact"
+        assert row["subject"], f"{check}: empty subject"
+        assert row["message"], f"{check}: empty message"
+        assert row["fix"], f"{check}: no fix hint"
+    # The same-identity row names every file that shares the identity.
+    same = by_check["session-same-identity"]
+    assert same["subject"] == "dev", f"expected the identity as subject: {same}"
+    for name in ("2026-10-01-aaaaaa.md", "2026-10-01-bbbbbb.md"):
+        assert name in same["message"], f"row does not name {name}: {same['message']}"
+
+    hygiene_rows = _run_census_json(repo, "--only", "hygiene")[1]
+    hygiene = [r for r in hygiene_rows if r["kind"] == "finding"]
+    assert hygiene, "hygiene must always report, a clean tree included"
+    for row in hygiene:
+        assert row["check"] == "hygiene" and row["code"] == 50
+        assert row["severity"] == "warn"
+        assert row["fix"] and row["artifact"] and row["message"]
 
 
 def test_json_reproducible_bytes(tmp_path):

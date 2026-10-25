@@ -12,8 +12,12 @@ Checks (all always run; the exit code is the aggregate of the classes that
 fired, lowest class code winning):
 
   ledger-record    10  a decision record is missing or malformed, or the
-                       ledger is unusable (missing/empty dir, bad filename,
-                       git history unreadable)
+                       ledger is unusable (bad filename, git history
+                       unreadable)
+  ledger-empty     42  the steering ledger holds no record at all: noni/ is
+                       absent, the ledger directory is empty, is not a
+                       directory, or is a symlink (warn by default; failure
+                       only under --strict)
   ledger-edited    12  a record was edited after commit
   ledger-chain     20  the supersede chain is broken
   session-double   30  two active claims on the same task from different
@@ -22,6 +26,20 @@ fired, lowest class code winning):
   session-malformed 32 a session file is malformed
   session-stalled  40  an active session with no commit for --stale-after
                        (warn by default; failure only under --strict)
+  session-same-identity 43  two or more non-terminal session files sharing one
+                       identity (warn by default; failure only under --strict)
+  session-deleted  44  a session file present in git history is gone from the
+                       working tree (warn by default; failure only under
+                       --strict)
+  hygiene          50  a tracked file fails the public-repo hygiene scan, or
+                       the scan could not run (its deny-list class is then
+                       reported inactive) (warn by default; failure only
+                       under --strict)
+
+The four warn classes above (42, 43, 44, 50) make a finding without --strict
+but never move the exit code on their own, exactly like the pre-existing warn
+classes: the clean-ledger case (no noni/ at all) is a reported warning, not a
+silent clean.
 
 Probe failures never report clean: a probe that cannot read a file or cannot
 run git records a probe failure (a warning, or code 41 under --strict),
@@ -41,6 +59,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -57,10 +76,12 @@ SCHEMA_VERSION = "noni.census/1"
 LEDGER_CHECKS = frozenset({"ledger-record", "ledger-edited", "ledger-chain"})
 
 # --- Exit-code table ----------------------------------------------------------
-# 0 clean | 2 usage error | 3 required tool missing | 10 record/ledger unusable
+# 0 clean | 2 usage error | 3 required tool missing | 10 record unusable
 # | 12 edited after commit | 20 supersede chain broken | 30 double-claim
 # | 31 claim without a register file | 32 malformed session file
 # | 40 stalled session (--strict) | 41 probe failure (--strict)
+# | 42 ledger empty (--strict) | 43 sessions share one identity (--strict)
+# | 44 session file deleted (--strict) | 50 public hygiene (--strict)
 EXIT_CLEAN = 0
 EXIT_USAGE = 2
 EXIT_TOOL_MISSING = 3
@@ -72,6 +93,10 @@ EXIT_SESSION_CLAIM = 31
 EXIT_SESSION_MALFORMED = 32
 EXIT_SESSION_STALLED = 40
 EXIT_PROBE = 41
+EXIT_LEDGER_EMPTY = 42
+EXIT_SESSION_SAME_IDENTITY = 43
+EXIT_SESSION_DELETED = 44
+EXIT_HYGIENE = 50
 
 CLASS_CODE = {
     "ledger-record": EXIT_LEDGER_RECORD,
@@ -82,10 +107,18 @@ CLASS_CODE = {
     "session-malformed": EXIT_SESSION_MALFORMED,
     "session-stalled": EXIT_SESSION_STALLED,
     "probe": EXIT_PROBE,
+    "ledger-empty": EXIT_LEDGER_EMPTY,
+    "session-same-identity": EXIT_SESSION_SAME_IDENTITY,
+    "session-deleted": EXIT_SESSION_DELETED,
+    "hygiene": EXIT_HYGIENE,
 }
 CLASS_SEVERITY = {name: "fail" for name in CLASS_CODE}
 CLASS_SEVERITY["session-stalled"] = "warn"
 CLASS_SEVERITY["probe"] = "warn"
+CLASS_SEVERITY["ledger-empty"] = "warn"
+CLASS_SEVERITY["session-same-identity"] = "warn"
+CLASS_SEVERITY["session-deleted"] = "warn"
+CLASS_SEVERITY["hygiene"] = "warn"
 CLASS_FIX = {
     "ledger-record": "repair or remove the offending record, or pass the ledger directory of the right clone",
     "ledger-edited": "supersede the record with a new file; never edit a committed record",
@@ -95,6 +128,10 @@ CLASS_FIX = {
     "session-malformed": "restore the missing field or add the missing task reference to the claim row",
     "session-stalled": "close the session or commit a fresh register update if the work is still in flight",
     "probe": "fix the unreadable file or the git tree; a census that cannot read its input reports the probe failure, never clean",
+    "ledger-empty": "record at least one dated decision under the ledger directory (steer a question and commit the record), or pass the ledger directory of the clone that holds the decisions",
+    "session-same-identity": "give each session file its own identity, or close the stale session files so only one non-terminal file carries that identity",
+    "session-deleted": "restore the session file (git checkout <commit> -- <path>) — ending a session goes through its status field, never through deleting the register file",
+    "hygiene": "remove the personal path, secret shape or deny-list name from the tracked file (rewrite history if it was ever committed), and keep the local deny-list present so the deny-list class stays active",
 }
 
 NAME_RE = re.compile(r"^[A-Za-z0-9._-]+\.json$")
@@ -135,6 +172,11 @@ GIT_TIMEOUT_SECONDS = 60
 # Session register files follow the allocated shape <YYYY-MM-DD>-<6 hex>.md;
 # anything else is reported as malformed, never treated as an allocated file.
 SESSION_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[0-9a-f]{6}\.md$")
+
+# The four states the ledger-empty class reports, each in exactly one row's
+# message. The words are the pinned vocabulary the tests assert on; renaming
+# one without updating tests/test_census_unified.py is a contract change.
+LEDGER_EMPTY_STATES = ("absent", "empty", "not a directory", "symlink")
 
 
 class Git:
@@ -312,6 +354,19 @@ def _rel_to_root(root: Path, path: Path) -> str:
         return str(path)
 
 
+def _rel_to_census(path: Path) -> str:
+    """A path relative to the census script's own skills/census/scripts/ dir.
+
+    Used for the artifacts the hygiene class names when it could not run: the
+    census never prints a machine-local absolute path, so the scan's own module
+    is named from where the census lives (``../../../scripts/...``).
+    """
+    try:
+        return Path(os.path.relpath(path.resolve(), Path(__file__).resolve().parent)).as_posix()
+    except OSError:
+        return path.name
+
+
 def _file_kind(path: Path, kind: str = "file") -> tuple[str, str | None]:
     """Classify a file for the census: ("absent"|"regular"|"symlink"|"nonregular", problem).
 
@@ -414,15 +469,99 @@ def _validate_record(obj: object) -> list[str]:
     return problems
 
 
-def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict]) -> None:
+def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict],
+                  strict: bool = False) -> None:
     """Check the steering ledger; append findings (each a partial finding row).
 
-    Composition only: record I/O + schema validation, then the edited check
-    (git-backed) and the supersede-chain check, in that order."""
+    Composition only: the ledger-empty probe, then record I/O + schema
+    validation, the edited check (git-backed), the deleted check (git-backed)
+    and the supersede-chain check, in that order.
+
+    The git-backed integrity checks run whatever the empty probe found. They
+    are not gated on the ledger holding a record now, because the case where
+    the ledger reads as empty is exactly the case where the last record was
+    most likely deleted: an early return here would drop the one `ledger-edited`
+    row that says so, and demoting "no record at all" to a warn must not
+    silently demote a deleted committed record with it."""
+    _check_ledger_empty(ledger, git, root, findings, strict)
     valid, unparseable = _check_ledger_records(ledger, root, findings)
     _check_ledger_edited(valid, unparseable, git, root, findings)
     _check_ledger_deleted(ledger, git, root, findings)
     _check_ledger_chain(valid, ledger, root, findings)
+
+
+def _ledger_state(ledger: Path) -> str:
+    """The ledger-empty state word for ``ledger``: one of LEDGER_EMPTY_STATES.
+
+    ``ledger`` is the ``noni/decisions`` path, so a state may sit on ``noni/
+    `` itself or on the decisions entry: "symlink" — either level is a symlink
+    (refused, never followed; a link is never read through even when its
+    target holds records); "not a directory" — ``noni/`` exists but is not a
+    directory, so no ledger can live under it (or the ledger entry itself is
+    not a directory); "absent" — there is no noni/ at all (which is what "no
+    noni/" means for the ledger checks) or no ledger entry under it; "empty" —
+    a real ledger directory holding no ``*.json`` record.
+    """
+    for path in (ledger, ledger.parent):
+        try:
+            if path.is_symlink():
+                return "symlink"
+        except OSError:
+            return "symlink"
+    if ledger.parent.exists() and not ledger.parent.is_dir():
+        # noni/ exists but is not a directory (a plain file, a fifo), so no
+        # ledger can live under it. "no noni/ at all" falls through to
+        # "absent" below: the ledger is absent together with its parent.
+        return "not a directory"
+    kind, _problem = _file_kind(ledger, kind="dir")
+    if kind == "absent":
+        return "absent"
+    if kind == "symlink":
+        return "symlink"
+    if kind != "regular":
+        return "not a directory"
+    return "empty" if not any(ledger.glob("*.json")) else "ok"
+
+
+def _check_ledger_empty(ledger: Path, git: Git | None, root: Path, findings: list[dict],
+                        strict: bool = False) -> None:
+    """The ledger-empty class: exactly one warn row when the ledger holds none.
+
+    A pure reporter: it appends its row and returns. The git-backed integrity
+    checks are not gated on the outcome — a ledger that reads as empty today
+    may have been emptied by a deletion, and that deletion is reported by
+    `_check_ledger_deleted` regardless. The four states —
+    ``absent``, ``empty``, ``not a directory``, ``symlink`` — each produce
+    exactly one row carrying its own state word, so "no ledger at all" reads
+    as a reported warning rather than a silent clean (the state word IS the
+    finding: a census that stays quiet here cannot tell "nothing to census"
+    apart from "the ledger went missing").
+
+    This class is warn-severity: a run that has only this finding exits 0,
+    and --strict promotes it to exit 42. Symlinks are reported, never read
+    through (the probe-honesty rule).
+    """
+    state = _ledger_state(ledger)
+    if state == "ok":
+        return True
+    severity = "fail" if strict else CLASS_SEVERITY["ledger-empty"]
+    detail = {
+        "absent": "no decision record is censusable: the ledger directory is absent "
+        "(no noni/decisions under this repo — no steering ledger to arbitrate)",
+        "empty": "the ledger directory holds no *.json record",
+        "not a directory": "noni/ is not a directory, so no ledger can live under it",
+        "symlink": "noni/ or the ledger path is a symlink; the census does not read through links",
+    }[state]
+    findings.append(
+        {
+            "check": "ledger-empty",
+            "code": CLASS_CODE["ledger-empty"],
+            "severity": severity,
+            "subject": str(ledger),
+            "artifact": _rel_to_root(root, ledger),
+            "message": f"ledger-empty ({state}): {detail}",
+        }
+    )
 
 
 def _check_ledger_records(
@@ -444,11 +583,11 @@ def _check_ledger_records(
         )
 
     kind, _problem = _file_kind(ledger, kind="dir")
-    if kind == "absent":
-        add("ledger-record", "fail", str(ledger), str(ledger), "ledger directory does not exist")
-        return [], []
     if kind != "regular":
-        add("ledger-record", "fail", str(ledger), str(ledger), "ledger path is not a readable directory")
+        # ledger-empty owns every unusable ledger state (absent, empty, not a
+        # directory, symlink) as a warn that names the state; this pass keeps
+        # only the malformed-record failures, so an unusable ledger adds no
+        # ledger-record row here.
         return [], []
 
     names = sorted(p.name for p in ledger.glob("*.json"))
@@ -489,9 +628,6 @@ def _check_ledger_records(
             add("ledger-record", "fail", obj.get("id", name) if isinstance(obj, dict) else name, str(path), "; ".join(problems))
             continue
         valid.append((obj["id"], path, obj))
-
-    if not names:
-        add("ledger-record", "fail", str(ledger), str(ledger), "no *.json records under the ledger directory")
 
     return valid, unparseable
 
@@ -686,6 +822,206 @@ def _repo_sha1(path: Path) -> str | None:
 
 # --- Session checks -------------------------------------------------------------
 
+# scripts/public_safety.py lives at <repo-root>/scripts relative to this file
+# (this file is skills/census/scripts/census.py — four levels below the repo
+# root). Tests add their own sys.path entries, so the census resolves the
+# import route itself rather than relying on the caller's path.
+SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
+
+
+def _load_public_safety():
+    """Import scripts/public_safety.py for the in-process hygiene scan.
+
+    Returns None when the module cannot be imported (a stripped checkout that
+    carries the skill without scripts/): the caller then reports that the scan
+    did not run instead of reporting clean.
+
+    The module is taken from ``sys.modules`` when the entry already points at
+    this tree's ``SCRIPTS_DIR`` — the seams tests monkeypatch
+    (``_default_denylist_file``, ``DENYLIST_ENV_VAR``) live on that one object,
+    and a fresh load would silently run the scan past a patched deny-list. An
+    entry from a different tree is not this census's checker, so the file is
+    then loaded by path from ``SCRIPTS_DIR``.
+    """
+    existing = sys.modules.get("public_safety")
+    if existing is not None and Path(getattr(existing, "__file__", "")).parent == SCRIPTS_DIR:
+        return existing
+    path = SCRIPTS_DIR / "public_safety.py"
+    if not path.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location("public_safety", path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    # Register before exec (the canonical importlib recipe): a module body that
+    # imports itself would otherwise find no entry in sys.modules. Afterwards it
+    # stays registered under its own name — the canonical registry.
+    sys.modules["public_safety"] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        # The scan could not be loaded: the caller reports the scan as not run
+        # (never a clean), and the half-built module must not stay registered.
+        sys.modules.pop("public_safety", None)
+        return None
+    return module
+
+
+def _hygiene_labels(public_safety) -> set[str]:
+    """The label set public_safety can emit, from its own pattern tables.
+
+    Read from the live module rather than duplicated here: the census must not
+    hard-code vocabulary that public_safety owns. All of its pattern tables are
+    scanned (built-in, fixture home-path, and any other ``*_PATTERNS`` it
+    exposes) plus the deny-list label, because the deny-list label is not in
+    BUILTIN_PATTERNS — scrub_tracked_files appends it per entry. Returns the
+    empty set when the module shape is unexpected, which makes every split fall
+    back to the verbatim row rather than guess.
+    """
+    labels: set[str] = set()
+    for attr, value in vars(public_safety).items():
+        if not (attr.endswith("_PATTERNS") or attr == "BUILTIN_PATTERNS"):
+            continue
+        # The suffix scan pulls in every ``*_PATTERNS`` attribute, so a future
+        # table bound to a truthy non-iterable (an int, a compiled pattern) is
+        # possible. Guard the iteration itself, not just the per-entry unpack:
+        # a table that cannot be walked contributes no labels and the caller
+        # falls back to verbatim rows instead of raising out of the census.
+        try:
+            entries = list(value) if value else []
+        except TypeError:
+            continue
+        for entry in entries:
+            try:
+                _pattern, label = entry
+            except (TypeError, ValueError):
+                continue
+            if isinstance(label, str):
+                labels.add(label)
+    labels.add("deny-list entry")
+    return labels
+
+
+def _split_violation(violation: str, public_safety) -> tuple[str, int, str] | None:
+    """Split a public_safety violation "<path>:<line>: <label>" into parts.
+
+    Returns (path, line, label) or None when the string is not of that shape.
+
+    Splitting cannot be done by counting colons: a tracked path may contain
+    one ("x:y/p.txt" is a legal POSIX filename), so splitting at the first
+    colon truncates the path and garbles the message — which also breaks the
+    documented (artifact, check, subject) sort grouping, because artifact
+    becomes the path prefix before the colon. The label is a fixed string from
+    public_safety's own tables and contains no colon, so the tail is matched
+    against the known label set exactly and everything before ":<line>: " is
+    the path.
+    """
+    labels = _hygiene_labels(public_safety)
+    if not labels:
+        return None
+    for label in labels:
+        suffix = f": {label}"
+        if not violation.endswith(suffix):
+            continue
+        head = violation[: -len(suffix)]
+        path, sep, line_no = head.rpartition(":")
+        if sep and path and line_no.isdigit():
+            return path, int(line_no), label
+        return None
+    return None
+
+
+def _check_hygiene(top: Path | None, strict: bool, findings: list[dict]) -> None:
+    """The public-repo hygiene class (warn 50): the tracked-file scan, run
+    in-process (an import, never a subprocess) over the census's own git tree.
+
+    Scope follows the git tree the census already reads (``top``), never the
+    ``--ledger``/``--sessions`` overrides: the hygiene rule is about tracked
+    files of a repository, which is what the other git-backed checks use too.
+
+    The class always reports, a clean tree included: when the deny-list class
+    is not active (absent, corrupt, or present with no entries) exactly one
+    warn row says so, so a run that never checked operator names or external
+    project names is never mistaken for a hygiene-clean one. Built-in
+    violations (machine-local home paths, secret shapes, active deny-list
+    entries) get one row each.
+
+    A scan that cannot run (no git tree, or public_safety raising on a failing
+    or hung ``git ls-files``) is probe honesty: one warn row naming the scan
+    as not run, never a clean.
+    """
+    severity = "fail" if strict else CLASS_SEVERITY["hygiene"]
+
+    def add(subject: str, artifact: str, message: str) -> None:
+        findings.append(
+            {
+                "check": "hygiene",
+                "code": CLASS_CODE["hygiene"],
+                "severity": severity,
+                "subject": subject,
+                "artifact": artifact,
+                "message": message,
+            }
+        )
+
+    if top is None:
+        add(
+            "hygiene scan",
+            _rel_to_census(SCRIPTS_DIR / "public_safety.py"),
+            "hygiene scan did not run: --repo is not a git repository, so no tracked-file "
+            "scan was possible — this run is not a hygiene-clean guarantee",
+        )
+        return
+
+    public_safety = _load_public_safety()
+    if public_safety is None:
+        # The skill is installed on its own, without the repo's scripts/ dir:
+        # name the path that was probed relative to this file, because a path
+        # outside the audited tree has no root-relative form (and the census
+        # never prints a machine-local absolute path).
+        add(
+            "hygiene scan",
+            _rel_to_census(SCRIPTS_DIR / "public_safety.py"),
+            "hygiene scan did not run: public_safety is not importable from the repo's "
+            f"scripts directory ({_rel_to_census(SCRIPTS_DIR)}) — this run is not a "
+            "hygiene-clean guarantee",
+        )
+        return
+
+    try:
+        violations, _source, denylist = public_safety.scrub_tracked_files(top)
+    except (RuntimeError, OSError) as e:
+        add(
+            "hygiene scan",
+            _rel_to_census(SCRIPTS_DIR / "public_safety.py"),
+            f"hygiene scan did not run: {e} — this run is not a hygiene-clean guarantee",
+        )
+        return
+
+    for violation in sorted(violations):
+        parsed = _split_violation(violation, public_safety)
+        if parsed is None:
+            # Not the documented shape: report the violation verbatim rather
+            # than mis-split it (probe honesty — a row that names the whole
+            # finding beats a row that garbles it).
+            add(violation, violation, f"public hygiene: {violation}")
+            continue
+        rel, line_no, label = parsed
+        add(f"{rel}:{line_no}", rel,
+            f"public hygiene: {rel}:{line_no}: {label}")
+
+    if not public_safety._denylist_active(denylist):
+        state = denylist.status if denylist.status != "ok" else "present but empty"
+        add(
+            "deny-list",
+            _rel_to_census(SCRIPTS_DIR / "public_safety.py"),
+            f"deny-list class inactive ({state}): no deny-list entry was checked, so operator "
+            "names, external project/tool names and hostnames are NOT covered — this run is "
+            "not a hygiene-clean guarantee",
+        )
+
+
+
 def _parse_session(body: str) -> tuple[dict[str, str], list[str], list[str]]:
     """Parse a session register body into (fields, claims, problems)."""
     fields: dict[str, str] = {}
@@ -766,8 +1102,7 @@ def _check_sessions(
         fields, claims, problems = _parse_session(body)
         if problems:
             missing_identity = "missing field: identity" in problems
-            if missing_identity and claims:
-                add(
+            if missing_identity and claims:                add(
                     "session-claim",
                     name,
                     str(path),
@@ -825,7 +1160,94 @@ def _check_sessions(
                 f"double-claim: task {task} is actively claimed by {len(by_identity)} identities ({details})",
             )
 
+    # session-same-identity (warn 43): identity is the key the whole protocol
+    # keys on — the register writer and the claim writer both refuse to write
+    # into a file someone else allocated — so two non-terminal register files
+    # carrying one identity mean the allocation was hand-edited or copied.
+    # The legacy per-epic shim reports the narrower claim-overlap case
+    # separately; this class is the unified census's own (warn-only) view of
+    # shared identity, and it does not change what session-double fires on.
+    by_files: dict[str, list[str]] = {}
+    for path in files:
+        if not SESSION_NAME_RE.match(path.name):
+            continue
+        fkind, _fproblem = _file_kind(path)
+        if fkind != "regular":
+            continue
+        try:
+            body = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        fields, _claims, problems = _parse_session(body)
+        if problems:
+            continue
+        if fields.get("status", "").strip().lower() in INACTIVE_STATUSES:
+            continue
+        identity = fields.get("identity", "").strip()
+        if identity:
+            by_files.setdefault(identity, []).append(path.name)
+    for identity in sorted(by_files):
+        names = sorted(by_files[identity])
+        if len(names) > 1:
+            add(
+                "session-same-identity",
+                identity,
+                str(sessions),
+                f"session-same-identity: {len(names)} non-terminal session files share identity "
+                f"{identity!r} ({', '.join(names)}); identity is the key the protocol keys on — "
+                "one identity should hold one open register file",
+            )
+
+    _check_sessions_deleted(sessions, git, root, strict, findings)
+
     return findings
+
+
+def _check_sessions_deleted(
+    sessions: Path, git: Git | None, root: Path, strict: bool, findings: list[dict]
+) -> None:
+    """The deleted-session-file check (warn 44).
+
+    A session register file that HEAD-reachable history shows was added, but
+    that is gone from the working tree, is reported here. Ending a session
+    goes through its ``status`` field; deleting the register file destroys the
+    attribution and the claim history the census reads, so it is a violation
+    (unlike the legacy shim, which stays silent on deletions).
+
+    Only paths shaped like an allocated register file (``SESSION_NAME_RE``)
+    are considered — anything else under noni/sessions/ is not a register
+    file and its removal is not this class's business. Without git history
+    the question cannot be answered at all, so nothing is reported: this
+    class never turns "history unavailable" into an accusation.
+    """
+    if git is None or not git.available or git.top is None:
+        return
+    top = git.top
+    try:
+        prefix = sessions.resolve().relative_to(top.resolve()).as_posix()
+    except ValueError:
+        return  # sessions dir is outside this git tree: no history to check
+    severity = "fail" if strict else CLASS_SEVERITY["session-deleted"]
+    for rel in sorted(git.added_paths_under(prefix)):
+        name = rel.rsplit("/", 1)[-1]
+        if not SESSION_NAME_RE.match(name):
+            continue
+        if (top / rel).is_file():
+            continue
+        findings.append(
+            {
+                "check": "session-deleted",
+                "code": CLASS_CODE["session-deleted"],
+                "severity": severity,
+                "subject": name,
+                "artifact": _rel_to_root(root, top / rel),
+                "message": (
+                    f"deleted: session file {name} is in git history but missing from the "
+                    "working tree; sessions end via their status field, never by deleting the "
+                    "register file"
+                ),
+            }
+        )
 
 
 # --- CLI -----------------------------------------------------------------------
@@ -841,7 +1263,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sessions", default=None, help="sessions directory (default: <repo>/noni/sessions)")
     parser.add_argument("--now", default=None, metavar="ISO-8601", help="fixed timestamp for time-based checks (reproducible output)")
     parser.add_argument("--stale-after", default="7d", metavar="DAYS", help="staleness threshold for active sessions (default: 7 days)")
-    parser.add_argument("--strict", action="store_true", help="treat stalled sessions and probe failures as failures")
+    parser.add_argument("--strict", action="store_true", help="treat warn classes (stalled sessions, probe failures, ledger-empty, session-same-identity, session-deleted, hygiene) as failures")
     parser.add_argument("--json", action="store_true", dest="json_out", help="emit NDJSON records on stdout (noni.census/1)")
     parser.add_argument("--only", action="append", default=None, metavar="CHECK", help="run only the named check(s); repeatable")
     parser.add_argument("--skip", action="append", default=None, metavar="CHECK", help="skip the named check(s); repeatable")
@@ -913,17 +1335,24 @@ def main(argv: list[str] | None = None) -> int:
     git = Git(top) if top is not None else None
 
     findings: list[dict] = []
-    # A missing noni/decisions/ is clean (nothing to census); a present but
-    # empty or broken ledger directory is a violation. The ledger and the
-    # sessions layer are independent: a repo with sessions but no ledger is
-    # clean for ledger checks (and vice versa).
-    if LEDGER_CHECKS & set(checks):
-        if ledger.is_dir():
-            _check_ledger(ledger, git, root, findings)
+    # The ledger-empty class (warn 42) runs with the ledger group and owns the
+    # "no ledger to arbitrate" states; it no longer exits 10. The ledger and
+    # the sessions layer stay independent: a repo with sessions but no ledger
+    # gets one ledger-empty row and no ledger-record failure.
+    if LEDGER_CHECKS & set(checks) or "ledger-empty" in checks:
+        _check_ledger(ledger, git, root, findings, args.strict)
+        # --only picks one class out of the ledger group: the empty-ledger probe
+        # runs with the group, but a filtered run keeps only what was asked for.
+        findings[:] = [f for f in findings if f["check"] in checks]
 
     if any(c.startswith("session-") for c in checks):
         s_findings = _check_sessions(sessions, git, root, now, stale_after, args.strict)
         findings.extend(f for f in s_findings if f["check"] in checks)
+
+    # hygiene is its own check group: it scans the tracked files of the census's
+    # own git tree (never the --ledger/--sessions overrides).
+    if "hygiene" in checks:
+        _check_hygiene(top, args.strict, findings)
 
     # --- Aggregate -----------------------------------------------------------
     # Warnings never set the exit code on their own: clean means exit 0 even

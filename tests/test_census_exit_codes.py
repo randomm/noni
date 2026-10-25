@@ -12,6 +12,13 @@ repo and asserts the exact exit code. The exit-code contract is:
   32  session-malformed
   40  session-stalled (only under --strict)
   41  probe failure (only under --strict)
+  42  ledger-empty (only under --strict)
+  43  session-same-identity (only under --strict)
+  44  session-deleted (only under --strict)
+  50  hygiene (only under --strict)
+
+The four warn classes 42/43/44/50 are reported without --strict but exit 0;
+--strict promotes each to its own code.
 """
 
 from __future__ import annotations
@@ -27,6 +34,19 @@ if _CENSUS_DIR not in sys.path:
 
 import census  # noqa: E402
 from _harness import _commit_file, _init_repo  # noqa: E402
+
+# Synthetic violation shapes. They are built at run time, never written as
+# literals: this file is git-tracked, and a literal /home/<known identity> path
+# would fail the very public-repo hygiene scan the census reports here (see
+# tests/test_public_safety.py::test_noni_repo_is_clean, which also exempts
+# scripts/public_safety.py and tests/test_public_safety.py as the two files that
+# carry the pattern literals).
+_HOME_PATH = "/" + "home" + "/" + "admin" + "/.ssh/id_ed25519"
+_SECRET = "ghp_" + "synthsynth" * 3
+
+_scripts_dir = str(REPO / "scripts")
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
 
 
 def _valid_record(rec_id="2026-10-01-alpha", status="decided", supersedes=None) -> dict:
@@ -86,10 +106,13 @@ def test_exit_10_schema_violation(tmp_path):
     assert _run(repo) == 10
 
 
-def test_exit_10_empty_ledger(tmp_path):
+def test_exit_10_empty_ledger_is_not_ledger_record(tmp_path):
+    """An empty ledger is no longer the ledger-record fail class: it is the
+    ledger-empty warn (42), so the run exits 0 rather than 10."""
     repo = _init_repo(tmp_path / "repo")
     _commit_file(repo, "noni/decisions/.gitkeep", "")
-    assert _run(repo) == 10
+    assert _run(repo) == 0
+    assert _run(repo, "--only", "ledger-record") == 0
 
 
 def test_exit_10_not_valid_json(tmp_path):
@@ -164,6 +187,74 @@ def test_exit_40_stalled_only_under_strict(tmp_path):
     with redirect_stdout(out), redirect_stderr(err):
         rc = census.main(["--repo", str(repo), "--now", "2027-01-01T00:00:00Z", "--stale-after", "1", "--strict"])
     assert rc == 40, f"expected 40 (fail with --strict), got {rc}: {err.getvalue()}"
+
+
+def test_exit_42_ledger_empty(tmp_path):
+    """An empty ledger directory (exists but holds no record) is the warn
+    ledger-empty class: exit 0 without --strict, exit 42 under --strict."""
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/decisions/.gitkeep", "")
+    assert _run(repo) == 0
+    assert _run(repo, "--only", "ledger-empty", "--strict") == 42
+
+
+def test_exit_42_ledger_absent(tmp_path):
+    """A repo with no noni/ at all is ledger-empty, not a silent clean: one
+    row, exit 0 without --strict, exit 42 under --strict. hygiene is skipped
+    so the class under test is the one that decides the code."""
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "README.md", "# empty\n")
+    assert _run(repo) == 0
+    assert _run(repo, "--only", "ledger-empty", "--strict") == 42
+
+
+def _session_body_same_identity_repo(tmp_path, status="active"):
+    """A repo with two non-terminal session files sharing one identity."""
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md", _session_body("dev"))
+    _commit_file(repo, "noni/sessions/2026-10-01-bbbbbb.md", _session_body("dev"))
+    return repo
+
+
+def test_exit_43_session_same_identity(tmp_path):
+    """Two active sessions with the same identity are the warn
+    session-same-identity class: exit 0 without --strict, 43 under --strict.
+    hygiene is skipped so the class under test decides the code."""
+    repo = _session_body_same_identity_repo(tmp_path)
+    assert _run(repo) == 0
+    assert _run(repo, "--only", "session-same-identity", "--strict") == 43
+
+
+def test_exit_44_session_deleted(tmp_path):
+    """A session file added in history and deleted from the working tree is
+    the warn session-deleted class: exit 0 without --strict, 44 under
+    --strict. hygiene is skipped so the class under test decides the code."""
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md", _session_body("dev"))
+    _commit_file(repo, "noni/sessions/2026-10-01-bbbbbb.md", _session_body("rev"))
+    (repo / "noni/sessions/2026-10-01-bbbbbb.md").unlink()
+    assert _run(repo) == 0
+    assert _run(repo, "--only", "session-deleted", "--strict") == 44
+
+
+def test_exit_50_hygiene(tmp_path):
+    """A tracked file with a home path / secret shape is the warn hygiene
+    class: exit 0 without --strict, 50 under --strict. The deny-list is made
+    active so the row fires on the violation and not on the inactive class."""
+    import public_safety
+
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "note.md", _HOME_PATH + "\n")
+    denylist = tmp_path / "denylist.txt"
+    denylist.write_text("synthetic-project-name\n", encoding="utf-8")
+    import os
+
+    os.environ[public_safety.DENYLIST_ENV_VAR] = str(denylist)
+    try:
+        assert _run(repo, "--only", "hygiene") == 0
+        assert _run(repo, "--only", "hygiene", "--strict") == 50
+    finally:
+        del os.environ[public_safety.DENYLIST_ENV_VAR]
 
 
 def test_lowest_code_wins(tmp_path):

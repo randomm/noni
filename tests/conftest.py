@@ -68,6 +68,15 @@ __all__ = [
 # HOME: redirected to a sandbox so `git config` lookups and any `~/...`
 # resolution in the tests or the census resolve into the sandbox rather than
 # the real account.
+#
+# NONI_SCRUB_DENYLIST: the census's hygiene class runs public_safety's
+# tracked-file scan in-process, and that scan reads this variable (and the
+# install-root default file) for the deny-list of operator/external names.
+# Left set by the developer's shell it would make every census hygiene test
+# scan against private vocabulary the fixtures were not written against —
+# the same host-dependent-passes-in-CI bug as a hostile HOME. Cleared per test
+# like the git vars; a test that wants a deny-list sets it explicitly (or
+# monkeypatches public_safety._default_denylist_file).
 NONI_ENV_VARS = (
     "GIT_DIR",
     "GIT_WORK_TREE",
@@ -76,6 +85,7 @@ NONI_ENV_VARS = (
     "GIT_AUTHOR_EMAIL",
     "GIT_COMMITTER_NAME",
     "GIT_COMMITTER_EMAIL",
+    "NONI_SCRUB_DENYLIST",
 )
 
 # Make the unified census module importable from test files (no __init__.py;

@@ -1205,7 +1205,7 @@ def _denylist_state(denylist: Any) -> str:
 # touched: clearing them would break the census's honest answer for a git
 # worktree, where the tree's .git file is a pointer and the ambient (or
 # per-invocation) git environment is what makes `git -C <worktree>` resolve at
-# all — and worktree-based runners are exactly who runs the census. A hostile
+# all — and worktree-based callers are exactly who runs the census. A hostile
 # GIT_DIR can only make the census read a *different* repository, which every
 # class then reports about that tree; it cannot execute anything.
 GIT_ENV_NEUTRAL = {

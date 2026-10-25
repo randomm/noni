@@ -12,20 +12,26 @@ AGENTS.md: a claim about the gate is only true if a check says so.
 
 What is asserted, and why each one matters:
 
-- fail_under >= 80, and the total the gate reports is at least 80 today: the
-  floor is the ticket's acceptance criterion; a config that no longer carries
-  it silently un-enforces the AGENTS.md rule.
+- fail_under >= 80: the floor is the ticket's acceptance criterion, so a config
+  that no longer carries it silently un-enforces the AGENTS.md rule.
 - subprocess in [tool.coverage.run] patch, and parallel true: register.py,
   claim.py and census-sessions.py are reached only as subprocesses, so
   without subprocess measurement the gate would report a green total while
   never having executed the three scripts it most needs to cover.
-- the seven product modules named in run.source, and none of them missing:
-  the gate measures the shipped code, so a module that drops out of the list
-  stops being measured without anything failing.
-- "skills" not in ruff's extend-exclude: skills/ holds shipped Python, so
-  excluding it is the gap this ticket closes.
-- the CI pins equal the pyproject dev pins: a developer and CI running
-  different tool versions are running different gates.
+- the seven product modules named in [tool.coverage.report] include, matching
+  the harness list exactly, and each of them present on disk: the gate measures
+  the shipped code, so a module that drops out of the list stops being
+  measured without anything failing.
+- "skills" not in ruff's extend-exclude (and noni/decisions still excluded):
+  skills/ holds shipped Python, so excluding it is the gap this ticket closes.
+- the CI pins for coverage, pytest and ruff equal the pyproject dev pins, and
+  CI actually runs `ruff check .` plus the three coverage steps: a developer
+  and CI running different tool versions, or CI skipping a step, means two
+  different gates.
+
+The total the gate reports today is not asserted here: it moves with the test
+suite, so pinning it would fail on unrelated changes. `coverage report` fails
+below `fail_under` in CI, which is what enforces the floor itself.
 """
 
 from __future__ import annotations

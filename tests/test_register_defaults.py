@@ -20,15 +20,16 @@ import sys
 from pathlib import Path
 
 from _harness import REGISTER as REGISTER_SCRIPT
-from _harness import SESSIONS_SKILL, subprocess_env
+from _harness import subprocess_env
 from conftest import run_register
 
 # register.py is a script, not a package (packages = [] in pyproject.toml), so
-# reaching its helpers is the repo's established sys.path insertion. It has to
-# be done here as well as inside the driver script below, because pytest's
-# rootdir handling does not put a skill scripts/ dir on the path.
-if str(SESSIONS_SKILL) not in sys.path:
-    sys.path.insert(0, str(SESSIONS_SKILL))
+# reaching its helpers is the repo's established sys.path insertion, done here
+# because pytest's rootdir handling does not put a skill scripts/ dir on the
+# path. The subprocess driver below does its own insertion instead of relying
+# on this one: it lives in tmp_path, not next to register.py.
+if str(REGISTER_SCRIPT.parent) not in sys.path:
+    sys.path.insert(0, str(REGISTER_SCRIPT.parent))
 
 
 def _fields(body: str) -> dict:
@@ -105,36 +106,39 @@ def test_register_explicit_values_written_as_given(tmp_path):
 # function in the pytest process would not reach the launched interpreter.
 
 
-def _run_patched_allocation(repo: Path, identity: str, session_id: str) -> subprocess.CompletedProcess:
+def _run_patched_allocation(tmp_path: Path, repo: Path, identity: str, session_id: str) -> subprocess.CompletedProcess:
     """Run register.py's main() with _make_session_id pinned to session_id.
 
     Pinning the allocation is what makes the idempotency branches reachable
     from the outside: the --file guard compares against a freshly minted id on
     every run, so the only way to name the allocated path is to fix what the
-    allocation produces. The driver is written into the repo's scripts dir
-    temporarily (and removed in the finally) because that is the directory
-    register.py sits in, which keeps the import resolvable without touching
-    sys.path at all; register.py itself is never modified.
+    allocation produces. The driver is written under the test's tmp_path and
+    puts register.py's own directory on sys.path itself, so nothing is ever
+    created inside the shipped skills/ tree; register.py is never modified.
+    The child runs under sys.executable with the harness env, which is what
+    keeps it inside the coverage measurement.
     """
-    driver = REGISTER_SCRIPT.parent / "_drive_register_for_tests.py"
+    driver_dir = tmp_path / "_register_test_driver"
+    driver_dir.mkdir(exist_ok=True)
+    driver = driver_dir / "drive_register.py"
     driver.write_text(
+        "import os\n"
+        "import sys\n"
+        f"sys.path.insert(0, {str(REGISTER_SCRIPT.parent)!r})\n"
         "import register\n"
-        "register._make_session_id = lambda: __import__('os').environ['NONI_TEST_SESSION_ID']\n"
-        "raise SystemExit(register.main(__import__('sys').argv[1:]))\n",
+        "register._make_session_id = lambda: os.environ['NONI_TEST_SESSION_ID']\n"
+        "raise SystemExit(register.main(sys.argv[1:]))\n",
         encoding="utf-8",
     )
     env = subprocess_env()
     env["NONI_TEST_SESSION_ID"] = session_id
-    try:
-        return subprocess.run(
-            [sys.executable, str(driver), "--repo", str(repo), "--identity", identity],
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=120,
-        )
-    finally:
-        driver.unlink(missing_ok=True)
+    return subprocess.run(
+        [sys.executable, str(driver), "--repo", str(repo), "--identity", identity],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+    )
 
 
 def test_file_that_was_not_allocated_is_refused(tmp_path):
@@ -177,7 +181,7 @@ def test_re_registering_the_allocated_file_and_identity_is_a_noop(tmp_path):
     original = "# session 2026-01-01-aaaaaa\n\n- identity: synth\n- status: active\n"
     target.write_text(original, encoding="utf-8")
 
-    proc = _run_patched_allocation(repo, "synth", "2026-01-01-aaaaaa")
+    proc = _run_patched_allocation(tmp_path, repo, "synth", "2026-01-01-aaaaaa")
     assert proc.returncode == 0, f"expected exit 0, got {proc.returncode}\n{proc.stderr}"
     assert "already registered" in proc.stdout, proc.stdout
     assert "identity=synth" in proc.stdout, proc.stdout
@@ -195,7 +199,7 @@ def test_existing_allocated_file_with_another_identity_is_refused(tmp_path):
     original = "- identity: other-person\n- status: active\n"
     target.write_text(original, encoding="utf-8")
 
-    proc = _run_patched_allocation(repo, "synth", "2026-01-01-bbbbbb")
+    proc = _run_patched_allocation(tmp_path, repo, "synth", "2026-01-01-bbbbbb")
     assert proc.returncode == 1, f"expected exit 1, got {proc.returncode}\n{proc.stdout}\n{proc.stderr}"
     assert "other-person" in proc.stderr and "synth" in proc.stderr, proc.stderr
     assert target.read_text(encoding="utf-8") == original
@@ -212,7 +216,7 @@ def test_allocated_file_without_an_identity_field_is_not_overwritten(tmp_path):
     target = sessions / "2026-01-01-cccccc.md"
     target.write_text("- status: active\n", encoding="utf-8")
 
-    proc = _run_patched_allocation(repo, "synth", "2026-01-01-cccccc")
+    proc = _run_patched_allocation(tmp_path, repo, "synth", "2026-01-01-cccccc")
     assert proc.returncode == 1, f"a file with no identity must not be overwritten, got {proc.returncode}"
     assert target.read_text(encoding="utf-8") == "- status: active\n"
 

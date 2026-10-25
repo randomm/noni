@@ -18,7 +18,7 @@ REPO = Path(__file__).resolve().parent.parent
 
 # The Python product modules the coverage gate measures, relative to the repo
 # root. Naming them here keeps the list in one place: pyproject's
-# [tool.coverage.run] source carries the same seven paths and
+# [tool.coverage.report] include carries the same seven paths and
 # tests/test_gate_wiring.py compares the two, so a module cannot quietly
 # disappear from the gate. Tests are excluded by construction — only these
 # files are measured, so the reported total is the coverage of shipped code.

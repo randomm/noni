@@ -23,7 +23,7 @@
 # findings are always in the NDJSON output:
 #   0   clean — every session file valid (five required fields each), no
 #       double-claims, all claims have a register file
-#   3   a required tool is missing (python3 not found)
+#   3   the interpreter it would run is missing (see NONI_PYTHON below)
 #   30  double-claim: two active claims on the same task from different
 #       identities (the arbiter check)
 #   31  a claim row was committed without a register file under the sessions
@@ -69,10 +69,6 @@ done
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 NONI_PYTHON="${NONI_PYTHON:-python3}"
-# An empty NONI_PYTHON is treated as absent: the variable must name an
-# interpreter, and an empty word would make `command -v` and `exec` fail in a
-# way that does not look like a missing dependency.
-[ -n "$NONI_PYTHON" ] || NONI_PYTHON=python3
 command -v "$NONI_PYTHON" >/dev/null 2>&1 || {
   echo "census-sessions.sh: $NONI_PYTHON not found on $(hostname 2>/dev/null || echo unknown)" >&2
   exit 3

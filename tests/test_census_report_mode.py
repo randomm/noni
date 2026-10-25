@@ -146,8 +146,9 @@ def test_json_rows_for_the_new_classes_follow_the_schema(tmp_path):
     without --strict."""
     repo = _init_repo(tmp_path / "repo")
     # Two active files share one identity; one of them is then deleted from the
-    # working tree, so same-identity and deleted both fire, alongside the
-    # empty-ledger row.
+    # working tree, so same-identity and deleted both fire. The tree has no
+    # noni/decisions at all, which adds the ledger-empty warn row (42) to the
+    # run; warn rows do not move the exit code.
     _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md", _session_body("dev"))
     _commit_file(repo, "noni/sessions/2026-10-01-bbbbbb.md", _session_body("dev"))
     _commit_file(repo, "noni/sessions/2026-10-01-cccccc.md", _session_body("dev"))

@@ -103,13 +103,15 @@ def test_exit_10_schema_violation(tmp_path):
     assert _run(repo) == 10
 
 
-def test_exit_10_empty_ledger_is_not_ledger_record(tmp_path):
-    """An empty ledger is no longer the ledger-record fail class: it is the
-    ledger-empty warn (42), so the run exits 0 rather than 10."""
+def test_exit_10_empty_ledger_dir_stays_ledger_record(tmp_path):
+    """An existing decisions/ directory with no *.json record keeps the
+    ledger-record fail class (PM decision on issue #23): the ledger-empty
+    class adds rows only where the census used to report nothing, so this run
+    exits 10, not 0."""
     repo = _init_repo(tmp_path / "repo")
     _commit_file(repo, "noni/decisions/.gitkeep", "")
-    assert _run(repo) == 0
-    assert _run(repo, "--only", "ledger-record") == 0
+    assert _run(repo) == 10
+    assert _run(repo, "--only", "ledger-record") == 10
 
 
 def test_exit_10_not_valid_json(tmp_path):
@@ -187,12 +189,21 @@ def test_exit_40_stalled_only_under_strict(tmp_path):
 
 
 def test_exit_42_ledger_empty(tmp_path):
-    """An empty ledger directory (exists but holds no record) is the warn
-    ledger-empty class: exit 0 without --strict, exit 42 under --strict."""
+    """noni/ present with no decisions/ directory is the warn ledger-empty
+    class: exit 0 without --strict, exit 42 under --strict. The register side
+    is clean, so this class alone decides the code."""
     repo = _init_repo(tmp_path / "repo")
-    _commit_file(repo, "noni/decisions/.gitkeep", "")
+    _commit_file(repo, "noni/README.md", "noni lives here\n")
     assert _run(repo) == 0
     assert _run(repo, "--only", "ledger-empty", "--strict") == 42
+
+
+def test_exit_42_never_weakens_the_empty_ledger_failure(tmp_path):
+    """The decision in one line: the empty decisions/ directory is exit 10 both
+    with and without --strict, i.e. ledger-empty did not soften it."""
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/decisions/.gitkeep", "")
+    assert _run(repo, "--strict", "--skip", "hygiene") == 10
 
 
 def test_exit_42_ledger_absent(tmp_path):

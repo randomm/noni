@@ -33,8 +33,8 @@ python3 skills/census/scripts/census.py [options]
 
 | check id | code | meaning |
 |---|---|---|
-| `ledger-record` | 10 | a decision record is malformed (schema violation, bad filename, unreadable/unparseable record) |
-| `ledger-empty` | 42 | the steering ledger holds no record at all — one row per run, whose message carries the state word `absent` (no `noni/decisions`), `empty` (no `*.json` record), `not a directory`, or `symlink` (refused, never followed) (warn by default; fail under `--strict`) |
+| `ledger-record` | 10 | a decision record is malformed (schema violation, bad filename, unreadable/unparseable record), or the `noni/decisions/` directory exists and holds no `*.json` record |
+| `ledger-empty` | 42 | there is no steering ledger to arbitrate — exactly one row per run, whose message carries the state word `absent` (no `noni/`), `not a directory` (`noni/` is not a directory), `symlink` (refused, never followed), or `empty` (`noni/` present, no `decisions/` directory). It only ADDS rows: the `decisions/` directory that exists and holds no record stays the `ledger-record` exit 10 (warn by default; fail under `--strict`) |
 | `ledger-edited` | 12 | a record was edited after commit (supersede, never edit); a committed record deleted or renamed from the working tree is also reported here, with the "deleted" reason |
 | `ledger-chain` | 20 | the supersede chain is broken (dangling, duplicate, orphan, cycle, zero-live, multi-live) |
 | `session-double` | 30 | two active claims on the same task from different identities (the arbiter) |
@@ -48,11 +48,13 @@ python3 skills/census/scripts/census.py [options]
 
 The `warn` classes are reported either way and never move the exit code on
 their own: a run whose only findings are warnings exits 0, and `--strict`
-promotes them to failures at their own codes. `ledger-empty` replaced the
-older `ledger-record` exit 10 for "the ledger directory does not exist / has
-no records": a repo with no steering ledger is a reported warning, not a hard
-failure and not a silent clean. The legacy `census.sh` shim keeps exit 10 for
-an empty ledger — it documents a different entry point.
+promotes them to failures at their own codes. `ledger-empty` adds rows only in
+the states where this census used to report nothing — no `noni/`, `noni/` not a
+directory, a symlink, or `noni/` present without a `decisions/` directory. It
+never weakens an existing failure: a `noni/decisions/` directory that exists and
+holds no `*.json` record keeps its `ledger-record` exit 10 with the original
+message, and no `ledger-empty` row. The legacy `census.sh` shim likewise keeps
+exit 10 for an empty ledger — it documents a different entry point.
 
 When several classes fire at once the lowest code wins; stderr names every
 class that fired.
@@ -133,10 +135,15 @@ The same rule extends to the classes that report their own absence:
 - **`ledger-empty` (42)** reports the ledger that is not there. "No `noni/`
   at all" is exactly one row carrying the state word `absent` — not the
   silent clean it used to be, because a census that says nothing here cannot
-  tell "nothing to census" apart from "the ledger went missing". The demotion
-  is scoped to "no record to census": it does not cover a record that history
-  shows was added and is now gone, which stays a `ledger-edited` failure (12).
-  An empty ledger therefore reports the deletion that emptied it — the git-backed
+  tell "nothing to census" apart from "the ledger went missing". The class is
+  additive: it reports only the states where the record pass has nothing to
+  say, and it never softens a failure the group already reports. A
+  `noni/decisions/` directory that exists and holds no `*.json` record is
+  therefore still a `ledger-record` failure (10), not a `ledger-empty` warn —
+  `empty` names `noni/` present with no `decisions/` directory and nothing
+  else. Nor does the class gate the integrity checks: a record that history
+  shows was added and is now gone stays a `ledger-edited` failure (12), so an
+  emptied ledger reports the deletion that emptied it — the git-backed
   integrity checks run whatever the empty probe found.
 - **`hygiene` (50)** always reports, a clean tree included. When the
   deny-list class is not active (its file is `absent`, `corrupt`, or present

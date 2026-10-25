@@ -54,8 +54,9 @@ SCHEMA_VERSION = "noni.census/1"
 
 # The ledger checks run as one group: any of the three triggers all three, so
 # --only/--skip must be applied at group granularity. ledger-empty (42) is
-# reported by the same group and owns the "no ledger to arbitrate" states; it
-# no longer exits 10.
+# reported by the same group and adds rows only in the states where this group
+# would otherwise say nothing; it never weakens an existing failure — the
+# existing-but-recordless ledger stays the ledger-record exit 10.
 LEDGER_CHECKS = frozenset({"ledger-record", "ledger-edited", "ledger-chain"})
 # The session register group, likewise: the checks share one read of the
 # register, so the group runs together and the row filter decides what is kept.
@@ -187,24 +188,34 @@ GIT_TIMEOUT_SECONDS = 60
 SESSION_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[0-9a-f]{6}\.md$")
 
 # The five states the ledger probe answers: the four the ledger-empty class
-# reports, each in exactly one row's message, plus the silent "ok". The words
-# and their wording are pinned by LEDGER_EMPTY_MESSAGES below and the tests
-# iterate that table, so renaming a state without updating its wording (and
+# reports, each in exactly one row's message, plus the silent "ok". "empty"
+# means noni/ is present without a decisions/ directory: a decisions/ directory
+# that exists and holds no *.json record is NOT one of these states — it keeps
+# its original ledger-record failure (see _check_ledger_records). The words and
+# their wording are pinned by LEDGER_EMPTY_MESSAGES below and the tests iterate
+# that table, so renaming a state without updating its wording (and
 # tests/test_census_unified.py) is a contract change.
 LEDGER_EMPTY_STATES = ("absent", "empty", "not a directory", "symlink", "ok")
 
 # state word -> the detail the row carries, or None for the state that reports
-# nothing. The keys ARE the state vocabulary: _ledger_state returns one of
+# nothing. The keys ARE the state vocabulary: _ledger_probe returns one of
 # them and _check_ledger_empty looks its message up here, so the contract has
 # exactly one owner.
 LEDGER_EMPTY_MESSAGES: dict[str, str | None] = {
     "absent": "no decision record is censusable: the ledger directory is absent "
     "(no noni/decisions under this repo — no steering ledger to arbitrate)",
-    "empty": "the ledger directory holds no *.json record",
+    "empty": "noni/ is present but has no decisions/ directory, so no *.json "
+    "record can be censusable under it",
     "not a directory": "noni/ is not a directory, so no ledger can live under it",
     "symlink": "noni/ or the ledger path is a symlink; the census does not read through links",
     "ok": None,
 }
+
+# The ledger-record message of a decisions/ directory that exists on disk but
+# holds no *.json record. The ledger-empty class must not soften this state
+# into a warn (PM decision, issue #23), so the wording lives here, next to the
+# probe that decides the state, and the test pins it.
+LEDGER_RECORD_EMPTY_MESSAGE = "no *.json records under the ledger directory"
 
 
 class Git:
@@ -545,9 +556,10 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
 
     Composition only: the ledger-empty probe, then record I/O + schema
     validation, the edited check (git-backed), the deleted check (git-backed)
-    and the supersede-chain check, in that order. The git-backed integrity
-    checks run whatever the empty probe found — see the deleted-sole-record
-    regression tests in tests/test_census_unified.py."""
+    and the supersede-chain check, in that order. ledger-empty only ADDS rows:
+    the states where the record pass has nothing to say. The git-backed
+    integrity checks run whatever the empty probe found — see the
+    deleted-sole-record regression tests in tests/test_census_unified.py."""
     probe = _ledger_probe(ledger)
     _check_ledger_empty(probe, ledger, root, findings, strict)
     valid, unparseable = _check_ledger_records(ledger, root, findings, probe.state)
@@ -566,10 +578,11 @@ def _ledger_probe(ledger: Path) -> LedgerProbe:
     never read through even when its target holds records); "not a directory"
     — ``noni/`` exists but is not a directory, so no ledger can live under it
     (or the ledger entry itself is not a directory); "absent" — there is no
-    noni/ at all (which is what "no noni/" means for the ledger checks) or no
-    ledger entry under it; "empty" — a real ledger directory holding no
-    ``*.json`` record; "ok" — a ledger with at least one record (the silent
-    state, reported by no class).
+    noni/ at all (which is what "no noni/" means for the ledger checks);
+    "empty" — noni/ is present but there is no ledger entry under it (no
+    ``noni/decisions`` directory); "ok" — a real ledger directory, whatever it
+    holds (a directory that holds no record is still a ledger: its emptiness is
+    the ledger-record failure, not a ledger-empty state).
 
     The child is classified before the parent: ``noni`` committed as a plain
     file must read as "not a directory", not "absent".
@@ -595,19 +608,23 @@ def _ledger_probe(ledger: Path) -> LedgerProbe:
     if parent_kind == "absent":
         return LedgerProbe("absent")
     if kind == "absent":
-        return LedgerProbe("absent")
+        # noni/ is there, decisions/ is not: this is the one state the census
+        # used to report nothing about, so it is ledger-empty's (the row names
+        # "empty"). A decisions/ directory that exists and holds no record is
+        # NOT here — it stays "ok" and the record pass reports its failure.
+        return LedgerProbe("empty")
     try:
-        records = list(ledger.glob("*.json"))
+        list(ledger.glob("*.json"))
     except OSError as e:
         # A directory that exists and stats fine but cannot be listed (a mount
-        # or permission fault on readdir) is not an empty ledger.
+        # or permission fault on readdir) is not a ledger the census can read.
         return LedgerProbe("not a directory", str(e))
-    return LedgerProbe("empty" if not records else "ok")
+    return LedgerProbe("ok")
 
 
 def _check_ledger_empty(probe: LedgerProbe, ledger: Path, root: Path, findings: list[dict],
                         strict: bool) -> None:
-    """The ledger-empty class: exactly one warn row when the ledger holds none.
+    """The ledger-empty class: exactly one warn row when there is no ledger.
 
     A pure reporter: it appends its row and returns. The git-backed integrity
     checks are not gated on the outcome — a ledger that reads as empty today
@@ -618,6 +635,13 @@ def _check_ledger_empty(probe: LedgerProbe, ledger: Path, root: Path, findings: 
     reported warning rather than a silent clean (the state word IS the
     finding: a census that stays quiet here cannot tell "nothing to census"
     apart from "the ledger went missing").
+
+    The class only ADDS rows: it never weakens a failure the group already
+    reports. The states it owns are exactly the ones where the record pass has
+    nothing to say (no ``noni/``, ``noni/`` not a directory, a symlink, or
+    ``noni/`` present with no ``decisions/``). An existing ``decisions/``
+    directory with no record keeps its original ledger-record exit 10 and
+    produces no row here.
 
     This class is warn-severity: a run that has only this finding exits 0,
     and --strict promotes it to exit 42. Symlinks are reported, never read
@@ -641,17 +665,22 @@ def _check_ledger_records(ledger: Path, root: Path, findings: list[dict],
     of unparseable is (name, path) of a file that exists on disk but failed
     parsing — it still gets the git edited check.
 
-    ``state`` is the ledger path's state word as answered by `_ledger_state`
-    (via `_check_ledger`): this pass only reads records, so any other state is
-    ledger-empty's finding and adds no row here."""
+    ``state`` is the ledger path's state word as answered by `_ledger_probe`
+    (via `_check_ledger`): this pass only reads records, so any state other
+    than "ok" is ledger-empty's finding and adds no row here. "ok" is a real
+    ledger directory, records or none: a directory that exists and holds no
+    ``*.json`` record is this class's own failure, so the empty result of the
+    pass below reports it — ledger-empty adds a row only in the states where
+    this pass has nothing to say.
+    """
     def add(check: str, subject: str, artifact: str, message: str) -> None:
         findings.append(_row(check, False, subject, artifact, message, root))
 
     if state != "ok":
-        # ledger-empty owns every unusable ledger state (absent, empty, not a
-        # directory, symlink, and any probe fault folded into one of them) as a
-        # warn that names the state; this pass keeps only the malformed-record
-        # failures, so an unusable ledger adds no ledger-record row here.
+        # ledger-empty owns every no-ledger state (absent, not a directory,
+        # symlink, and any probe fault folded into one of them) as a warn that
+        # names the state; this pass keeps only the malformed-record failures,
+        # so a ledger that is not there adds no ledger-record row here.
         return [], []
 
     names = sorted(p.name for p in ledger.glob("*.json"))
@@ -692,6 +721,11 @@ def _check_ledger_records(ledger: Path, root: Path, findings: list[dict],
             add("ledger-record", obj.get("id", name) if isinstance(obj, dict) else name, str(path), "; ".join(problems))
             continue
         valid.append((obj["id"], path, obj))
+
+    if not names:
+        # The decisions/ directory exists and holds no *.json record: the
+        # original ledger-record failure, exit 10 — not a ledger-empty warn.
+        add("ledger-record", str(ledger), str(ledger), LEDGER_RECORD_EMPTY_MESSAGE)
 
     return valid, unparseable
 

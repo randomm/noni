@@ -18,8 +18,9 @@ Git's push-rejection acts as a compare-and-swap: the second claimant's push is
 delayed until it fetches and rebases, but it is not blocked — after the
 fetch-rebase-push protocol (at most 3 attempts) both claims land in git. The
 **census double-claim check is the deterministic arbiter**: it reads the
-committed files at read time and flags two active claims on the same task from
-different identities (exit 30). "No-steal" is an aspiration, not a promise.
+session files in the working tree at read time and flags two active claims on
+the same task from different identities (exit 30). "No-steal" is an aspiration,
+not a promise.
 
 ## The session register
 
@@ -80,9 +81,11 @@ exit 32).
 
 `--no-commit` appends the row through the same validation chain and stops
 before git: no `git add`, no `git commit`, and one line on stdout saying the
-change is left uncommitted for the caller to commit. An uncommitted row is
-invisible to every arbiter (the census reads committed files), so committing it
-is the caller's obligation. `--branch` is
+change is left uncommitted for the caller to commit. The census reads the
+session files in the working tree, so a row left uncommitted is visible to a
+census run in that same working copy, but invisible to every other clone until
+it is committed and pushed. Committing it is the caller's obligation.
+`--branch` is
 validated under `--no-commit` and otherwise ignored, and the success line names
 it so a dropped `--branch` cannot be mistaken for a targeted write;
 `--no-commit` with `--push` is refused as a usage error (exit 4) before anything

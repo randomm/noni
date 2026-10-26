@@ -48,12 +48,16 @@ a caller cannot mistake a dropped `--branch` for a targeted write. `--no-commit`
 with `--push` is refused before anything is written
 (exit 4): there would be no commit to push.
 
-The caller's obligation is part of the flag: an uncommitted row is visible to
-no arbiter. The census reads committed files, so a row nobody commits is
-invisible to the double-claim, register and malformed checks, and it also stops
-the stall check from answering for that file; and the next `claim.py --push` in
-the same clone meets a dirty worktree and exits 6. Commit the row, or revert
-it.
+The caller's obligation is part of the flag: the commit is what makes the claim
+visible outside this working copy. The census reads the session files in the
+working tree, so a census run in the same clone does see an uncommitted row and
+fires its normal codes for it: `30` when it makes two active claims on one task
+from different identities, `32` when the row carries no task reference, `31`
+when the file has claim rows but no register. What an uncommitted row does not
+reach is any other clone, until it is committed and pushed: the exit-code
+meanings that name a commit (exit 31's "a claim row was committed without a
+register file") describe the register once git has the row. Commit the row, or
+revert it.
 
 ## The push protocol
 
@@ -99,9 +103,10 @@ on, and HEAD is that branch's tip before the rebase, sha for sha. That commit
 is the claim commit this run made, so `git show HEAD:<session file>` still
 carries the claim row. The abort itself resets index and worktree, so on this
 path any unstaged change to a tracked file is reset to that commit: commit or
-stash local work before a `--push` run. The script never runs `git reset
---hard`. When `git rebase --abort` itself fails the script still exits 5, says
-the abort failed and that the clone is still mid-rebase, echoes git's own
+stash local work before a `--push` run. `claim.py` itself never invokes
+`git reset`; the resets described above are what `git rebase --abort` does.
+When `git rebase --abort` itself fails the script still exits 5, says the abort
+failed and that the clone is still mid-rebase, echoes git's own
 rebase output, and leaves cleanup to be done by hand — that one path is the
 exception to the post-condition above.
 
@@ -121,7 +126,11 @@ conflict); if nothing was stopped, nothing is aborted.
 
 ## Exit codes
 
-This is the one table; `SKILL.md` points here rather than repeating it.
+The claim exit codes are the contract `scripts/claim.py` publishes as its
+`Exit codes:` block; this is that table for the operator (codes 0-6), and
+`skills/sessions-claims/SKILL.md` repeats it verbatim so the skill reads on its
+own. A test asserts both copies against the `EXIT_*` constants. The census exit
+tables are in `references/census.md`.
 
 | code | meaning |
 |---|---|

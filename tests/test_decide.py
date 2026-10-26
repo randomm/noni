@@ -46,6 +46,7 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from _harness import (
@@ -370,6 +371,13 @@ def test_supersede_writes_both_paths_in_one_commit(tmp_path):
     new_rel = f"noni/decisions/{BASELINE_ID[:10]}-scheduler.json"
     baseline_rel = f"noni/decisions/{BASELINE_ID}.json"
     assert set(_head_paths(repo)) == {new_rel, baseline_rel}, _head_paths(repo)
+    # Each path the run wrote is named once by the commit it landed in: the two
+    # paths and nothing else, with neither repeated (see
+    # test_hardening_a_supersede_lists_each_path_once_in_the_commit for the
+    # rollback and message halves of the same property).
+    listed = _head_paths(repo)
+    assert sorted(listed) == sorted([new_rel, baseline_rel]), listed
+    assert len(listed) == len(set(listed)), f"a path is listed twice: {listed}"
     subject = _git_e2(repo, "log", "-1", "--format=%s").stdout.strip()
     assert subject == f"steering: supersede {BASELINE_ID} with {BASELINE_ID[:10]}-scheduler"
 
@@ -1064,7 +1072,26 @@ def _subcommand(cmd: list[str]) -> str:
     return ""
 
 
-def _git_spy(failures: dict[str, tuple[int, str]]) -> None:
+def _git_arguments(cmd: list[str]) -> list[str]:
+    """The git arguments of a writer command line: everything past the hardening
+    options, in order (the verb first). Pairs with ``_subcommand``, which reads
+    the same positions to pick the verb.
+    """
+    index = 1
+    while index < len(cmd):
+        arg = cmd[index]
+        if arg in ("-C", "-c"):
+            index += 2
+            continue
+        if arg.startswith("-"):
+            index += 1
+            continue
+        return cmd[index:]
+    return []
+
+
+def _git_spy(failures: dict[str, tuple[int, str]],
+             calls: Callable[[str, tuple[str, ...]], None] | None = None) -> None:
     """Make the writer's git calls answer ``failures[verb]`` with that rc.
 
     subprocess.run is replaced in the namespace ``run_git`` looks the name up in,
@@ -1079,6 +1106,12 @@ def _git_spy(failures: dict[str, tuple[int, str]]) -> None:
     A test that installs it drives the writer with ``_decide_in_process``, which
     sets both knobs for that run; a launched interpreter is a different process
     and never sees them.
+
+    ``calls``, when given, is told the verb and the git arguments of every call
+    the writer makes in the repo under test, before it is answered: that is the
+    route for a test that must read the pathspec a run handed ``git reset`` or
+    ``git add``, which the writer's own ``_git`` alias cannot show because the
+    rollback calls the helper's ``run_git`` directly.
     """
     gitwrite = _gitwrite_module()
     real_run = gitwrite.run_git.__globals__["subprocess"].run
@@ -1092,10 +1125,13 @@ def _git_spy(failures: dict[str, tuple[int, str]]) -> None:
     def _spy(cmd, *args, **kwargs):
         argv = [str(part) for part in cmd]
         verb = _subcommand(argv)
-        if verb in claimed and _writer_git_call(argv, repo_under_test):
-            rc, stderr = claimed[verb]
-            return subprocess.CompletedProcess(argv, returncode=rc, stdout="",
-                                               stderr=stderr)
+        if _writer_git_call(argv, repo_under_test):
+            if calls is not None:
+                calls(verb, tuple(_git_arguments(argv)))
+            if verb in claimed:
+                rc, stderr = claimed[verb]
+                return subprocess.CompletedProcess(argv, returncode=rc, stdout="",
+                                                   stderr=stderr)
         return real_run(cmd, *args, **kwargs)
 
     gitwrite.run_git.__globals__["subprocess"].run = _spy
@@ -1223,7 +1259,10 @@ def _decide_in_process(repo: Path, *args: str, env: dict | None = None,
                        failures: dict[str, tuple[int, str]] | None = None,
                        write_fails_on: str | None = None,
                        staged_target: bool = True,
-                       monkeypatch=None) -> subprocess.CompletedProcess[str]:
+                       monkeypatch=None,
+                       render_observer: Callable[[str], None] | None = None,
+                       call_observer: Callable[[str, tuple[str, ...]], None] | None = None,
+                       ) -> subprocess.CompletedProcess[str]:
     """Run the writer in this process, so a spy sees its git calls, and report
     what a launched run would have reported.
 
@@ -1248,6 +1287,12 @@ def _decide_in_process(repo: Path, *args: str, env: dict | None = None,
     ``write_fails_on`` is a repo-relative path whose one atomic write raises
     ``OSError`` the first time; ``staged_target`` picks the shape of that
     failure (see ``_target_write_fails_after_staging`` and ``_write_once_fails``).
+    ``render_observer``, when given, sees every string the writer's renderer
+    returns for this run, which is how the non-finite-number test proves the
+    token it planted actually reached the render, and not just the fixture.
+    ``call_observer``, when given, sees every call the writer makes in this repo
+    as ``(verb, arguments)`` before it runs, which is how the path-list test
+    reads the pathspec this run handed ``git reset``.
 
     The helper spy is installed before the writer is loaded, so the module object
     decide.py binds its constants through is the one carrying the spy.
@@ -1264,6 +1309,24 @@ def _decide_in_process(repo: Path, *args: str, env: dict | None = None,
     # the finally below cannot leave a raising writer for the next test.
     writer = _decide_module()
     original_write = writer._write_atomic
+    original_render = writer._render
+    rendered: list[str] = []
+
+    def _observed_render(record):
+        text = original_render(record)
+        # The local copy lets the helper report what the run rendered when the
+        # caller's observer was never reached.
+        rendered.append(text)
+        if render_observer is not None:
+            render_observer(text)
+        return text
+
+    # The observer wraps the writer's own renderer so the run below resolves
+    # ``_render`` from the module globals and sees it; a target-shape refusal
+    # happens in the same call chain, so the bytes it compared are the ones
+    # reported here.
+    writer._render = _observed_render if render_observer is not None else original_render
+
     injected = None
     if write_fails_on is not None:
         # Installed before the run begins, and the run below calls this same
@@ -1278,7 +1341,7 @@ def _decide_in_process(repo: Path, *args: str, env: dict | None = None,
         # one left raising by an earlier in-process run.
         writer._write_atomic = original_write
     try:
-        _git_spy(failures or {})
+        _git_spy(failures or {}, calls=call_observer)
         for key, value in run_env.items():
             if monkeypatch is not None:
                 if value is None:
@@ -1303,6 +1366,7 @@ def _decide_in_process(repo: Path, *args: str, env: dict | None = None,
     finally:
         _RUN_REPO[0] = previous_repo
         writer._write_atomic = original_write
+        writer._render = original_render
         if monkeypatch is None:
             for key, value in saved.items():
                 if value is None:
@@ -1480,21 +1544,31 @@ def test_seam_value_that_is_not_one_is_inert_and_the_run_writes(tmp_path):
 
 def _supersede_in_process(repo: Path, write_fails_on: str | None, staged_target: bool = True,
                           failures: dict[str, tuple[int, str]] | None = None,
-                          monkeypatch=None) -> subprocess.CompletedProcess[str]:
-    """The in-process supersede of the baseline, with this run's injections.
+                          monkeypatch=None,
+                          env: dict | None = None,
+                          target_id: str | None = None,
+                          render_observer: Callable[[str], None] | None = None,
+                          call_observer: Callable[[str, tuple[str, ...]], None] | None = None,
+                          ) -> subprocess.CompletedProcess[str]:
+    """The in-process supersede, with this run's injections.
 
     The flag set is ``_supersede``'s own (the baseline's ``--date``, every answer,
-    ``--supersedes BASELINE_ID``): a launched run cannot see a patch of this
+    ``--supersedes``): a launched run cannot see a patch of this
     process, so the write-failure and probe-failure tests drive the writer
     in-process, and a second ``--date`` appended here would be overridden by the
     one ``_decide_in_process`` already passed rather than selecting the baseline's
-    day. ``write_fails_on`` and ``failures`` are the two seams it passes through.
+    day. ``target_id`` names the record to supersede and defaults to the baseline:
+    a fixture that planted its own target must name it, or the run supersedes a
+    different record and proves nothing about the one under test. ``write_fails_on``,
+    ``failures``, ``render_observer`` and ``call_observer`` are the seams it passes
+    through.
     """
     return _decide_in_process(
         repo, "--date", BASELINE_ID[:10], *ANSWERED,
-        "--supersedes", BASELINE_ID,
-        env=_identity_env(), write_fails_on=write_fails_on, failures=failures,
-        staged_target=staged_target, monkeypatch=monkeypatch,
+        "--supersedes", target_id or BASELINE_ID,
+        env={**_identity_env(), **(env or {})}, write_fails_on=write_fails_on,
+        failures=failures, staged_target=staged_target, monkeypatch=monkeypatch,
+        render_observer=render_observer, call_observer=call_observer,
     )
 
 
@@ -1716,6 +1790,314 @@ def test_hardening_a_canonical_target_still_supersedes_by_the_status_line_only(t
     assert len(before_lines) == len(after_lines), (before_lines, after_lines)
     differing = [(a, b) for a, b in zip(before_lines, after_lines, strict=True) if a != b]
     assert differing == [('  "status": "decided",', '  "status": "superseded",')], differing
+
+
+def _refused_target_repo(tmp_path: Path, name: str, raw: str) -> tuple[Path, str]:
+    """A repo whose committed supersede target is ``raw``, the bytes verbatim.
+
+    ``raw`` is given as text so a fixture can plant a shape no flag of this
+    writer can produce (``NaN`` as a bare token, a quoted date, a numeric
+    answer): the commit goes in raw so HEAD holds exactly those characters,
+    which is what the writer is asked to read.
+    """
+    target_id = f"{BASELINE_ID[:10]}-{name}"
+    repo, rel, _id = _non_canonical_target_repo(tmp_path, raw, name, target_id)
+    return repo, target_id
+
+
+def _planted_body(target_id: str, **overrides: object) -> str:
+    """A canonical record body for ``target_id`` with ``overrides`` applied.
+
+    The record is built by the fixture helper and rendered by the writer's own
+    ``_render``, so the bytes are canonical except for the one field under test --
+    which is what routes the refusal to the rule being probed rather than to the
+    canonical-form check or the id/name match. A caller that mutates a nested
+    value (``questions``) applies its own patch and passes no override for it.
+    """
+    record = json.loads(_canonical_body(target_id))
+    record.update(overrides)
+    return _decide_module()._render(record)
+
+
+def _refuse_raw_target(tmp_path: Path, name: str, raw: str) -> tuple[str, Path, str]:
+    """The stderr of the standard supersede of a planted target, plus its paths.
+
+    The run is the launched one (no in-process spy), so it reads the committed
+    bytes the way a real run does. The assertion every caller makes is exit 4
+    with the target and the tree untouched: a refusal is only worth having if
+    it refuses rather than rewrites.
+    """
+    repo, target_id = _refused_target_repo(tmp_path, name, raw)
+    rel = f"noni/decisions/{target_id}.json"
+    committed = _git_e2(repo, "show", f"HEAD:{rel}").stdout
+    proc = _supersede(repo, target_id)
+    assert proc.returncode == 4, f"{name}: expected exit 4, got {proc.returncode}: {proc.stderr}"
+    assert _porcelain(repo) == "", f"{name}: a refused run must leave the tree alone"
+    assert not _record_path(repo, f"{BASELINE_ID[:10]}-scheduler").exists(), name
+    assert _git_e2(repo, "show", f"HEAD:{rel}").stdout == committed, (
+        f"{name}: the refused target's committed bytes must be exactly what they were"
+    )
+    return proc.stderr, repo, rel
+
+
+def test_hardening_a_target_with_a_non_string_date_refuses_with_four(tmp_path):
+    """A target whose ``date`` is not a string is refused (exit 4), never sliced.
+
+    The chain check took ``target_record.get("date", "")[:10]``, so an integer
+    date raised TypeError inside the writer and a null one sliced to ``''`` and
+    was reported as "dated another day", sending the operator to retype a --date
+    the record does not carry in the form the census requires.
+    """
+    for label, value in (("int", "20261001"), ("null", "null")):
+        target_id = f"{BASELINE_ID[:10]}-date-{label}"
+        stderr, _repo, _rel = _refuse_raw_target(
+            tmp_path, f"date-{label}", _planted_body(target_id, date=json.loads(value)))
+        assert "date" in stderr, f"{label}: {stderr}"
+        assert "string" in stderr, f"{label}: {stderr}"
+
+
+def test_hardening_a_target_with_malformed_questions_refuses_with_four(tmp_path):
+    """A target whose ``questions`` are not a non-empty list of objects with a
+    string ``id`` and a string-or-null ``answer`` is refused (exit 4) before any
+    write: the writer copies this record to flip its status, so bytes it cannot
+    describe are bytes it cannot promise to leave alone.
+
+    Five shapes: a bare string instead of a list, a list of strings, an entry
+    with no ``id``, an ``id`` that is a number, and the numeric answer the
+    reviewer named. All are census violations (census.py: "question answer must
+    be a string or null", "question entry is not an object"), so the ledger
+    could never have been clean with any of them committed, and a writer that
+    rewrote one would be repairing the ledger by accident.
+    """
+    shapes = {
+        # questions is a string, not a list: the census's "array of 1-4 entries"
+        "questions-string": {"questions": "which release"},
+        # a list, but its entries are not objects
+        "questions-strings": {"questions": ["which release", "which train"]},
+        # an object entry that does not name its question
+        "questions-no-id": {"questions": [{"text": "Which release?",
+                                          "options": ["next", "later"],
+                                          "answer": "next"}]},
+        # an entry that names its question with a number
+        "questions-numeric-id": {"questions": [{"id": 1, "text": "Which release?",
+                                                "options": ["next", "later"],
+                                                "answer": "next"}]},
+        # the answer the reviewer named: a number where the schema says string or null
+        "questions-numeric-answer": {"questions": [{"id": "q1", "text": "Which release?",
+                                                    "options": ["next", "later"],
+                                                    "answer": 3}]},
+    }
+    for label, patch in shapes.items():
+        target_id = f"{BASELINE_ID[:10]}-{label}"
+        stderr, _repo, _rel = _refuse_raw_target(
+            tmp_path, label, _planted_body(target_id, **patch))
+        assert "questions" in stderr, f"{label}: {stderr}"
+
+
+def test_hardening_a_target_with_a_non_finite_answer_refuses_with_four(tmp_path, monkeypatch):
+    """A target carrying a bare ``NaN`` or ``Infinity`` is refused (exit 4), not
+    rewritten: the writer's render would replace it with ``null`` and call that
+    a status-only change, which rewrites a byte of the record's answer.
+
+    ``NaN`` is not JSON, but Python's ``json.loads`` accepts the bare token by
+    default and ``json.dumps`` writes it back, so a ledger file holding one
+    round-trips through the writer as ``null``. The fixture plants the token
+    verbatim and pins the character on disk first: if json ever stopped reading
+    it, this test would be asserting nothing about the render. The run is
+    in-process because the refusal is observed by a probe of this process.
+    """
+    for label, token in (("nan", "NaN"), ("inf", "Infinity")):
+        target_id = f"{BASELINE_ID[:10]}-{label}"
+        record = json.loads(_canonical_body(target_id))
+        raw = json.dumps(record, indent=2).replace('"answer": "yes"',
+                                                   f'"answer": {token}') + "\n"
+        assert token in raw, f"{label}: the fixture planted no {token}"
+        repo, target_id = _refused_target_repo(tmp_path, label, raw)
+        rel = f"noni/decisions/{target_id}.json"
+        committed = _git_e2(repo, "show", f"HEAD:{rel}").stdout
+        renders: list[str] = []
+        proc = _supersede_in_process(repo, write_fails_on=None, monkeypatch=monkeypatch,
+                                     target_id=target_id, render_observer=renders.append)
+        assert proc.returncode == 4, f"{label}: {proc.returncode}: {proc.stderr}"
+        # The refusal is the field check naming a float answer (a non-finite number
+        # is a float once json has read it), and with allow_nan=False the renderer
+        # would have refused it too: either way the target is not rewritten.
+        assert "answer" in proc.stderr.lower() and "float" in proc.stderr.lower(), (
+            f"{label}: {proc.stderr}"
+        )
+        assert "canonical" in proc.stderr.lower() or "not a string or null" in (
+            proc.stderr.lower()), f"{label}: {proc.stderr}"
+        assert _porcelain(repo) == "", f"{label}: a refused run writes nothing"
+        assert not _record_path(repo, f"{BASELINE_ID[:10]}-scheduler").exists(), label
+        assert (repo / rel).read_text(encoding="utf-8") == committed, label
+        # The render was never asked of the planted record, or was answered with
+        # nothing: with allow_nan=False json refuses the token, so the writer has no
+        # bytes to compare and no bytes to write. A render that had emitted the
+        # token (or quietly turned it into null) would have been written.
+        assert all(token not in text and '"answer": null' not in text
+                   for text in renders), (
+            f"{label}: a render would have rewritten {token}: {renders}"
+        )
+
+
+def test_hardening_the_render_refuses_a_non_finite_number(tmp_path, monkeypatch):
+    """``_render`` never writes a non-finite float: a caller that handed one over
+    gets the exit-4 refusal, not the ``NaN``/``Infinity`` token ``json.dumps``
+    produces by default.
+
+    The launched refusal above proves the ledger's bytes are left alone; this one
+    pins the renderer itself, which is the thing that would have rewritten them.
+    The call is observed, because a ``_render`` that raised ValueError instead of
+    calling ``_fail`` would leave a run with no message and an exit code nothing
+    published.
+    """
+    module = _decide_module()
+    calls: list[tuple[int, str]] = []
+
+    def _spy_fail(code, message, hint=None):
+        # A named function rather than a lambda: the loop below rebinds ``calls``
+        # per case, and a lambda would close over the name and not the value.
+        calls.append((code, message))
+        return 4
+
+    monkeypatch.setattr(module, "_fail", _spy_fail)
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        record = json.loads(_canonical_body(f"{BASELINE_ID[:10]}-render-{bad}"))
+        record["questions"][0]["answer"] = bad
+        calls.clear()
+        assert module._render(record) == "", f"{bad}: a non-finite record rendered"
+        assert len(calls) == 1, f"{bad}: the refusal did not go through _fail: {calls}"
+        assert calls[0][0] == 4, f"{bad}: {calls}"
+        assert "answer" in calls[0][1], f"{bad}: {calls}"
+    # The positive control: a finite record still renders, unchanged in form.
+    finite = json.loads(_canonical_body(f"{BASELINE_ID[:10]}-finite"))
+    assert module._render(finite) == json.dumps(
+        {key: finite[key] for key in module.FIELD_ORDER if key in finite},
+        indent=2, ensure_ascii=False) + "\n"
+
+
+def test_hardening_a_failing_show_probe_refuses_with_three(tmp_path, monkeypatch):
+    """A ``git show HEAD:<path>`` that answers a failure is a refusal (exit 3).
+
+    ``probe_unanswered`` covered the timeout for every verb and the honest
+    return codes for ``ls-files`` and ``status``, but nothing for ``show``, so a
+    show that died with 128 handed back empty stdout and was read as "the
+    committed bytes are empty": the canonical comparison then failed and the
+    operator was told the target was malformed, on a repository git had just
+    failed to read. The injection is ``show`` only, and the two probes beside it
+    answer honestly, so the refusal can only be the show answer.
+    """
+    module = _decide_module()
+    assert module.GIT_TIMEOUT_RC == 124
+    repo = _baseline_repo(tmp_path)
+    target_rel = f"noni/decisions/{BASELINE_ID}.json"
+    before = _git_e2(repo, "show", f"HEAD:{target_rel}").stdout
+
+    proc = _supersede_in_process(repo, write_fails_on=None,
+                                 failures={"show": (128, "fatal: bad object HEAD")},
+                                 monkeypatch=monkeypatch)
+    assert proc.returncode == 3, proc.stderr
+    assert "git show" in proc.stderr, "the refusal names the command that failed"
+    assert "128" in proc.stderr, f"the refusal should report the code git answered: {proc.stderr}"
+    assert _porcelain(repo) == "", "a refused run writes nothing"
+    assert not _record_path(repo, f"{BASELINE_ID[:10]}-scheduler").exists()
+    assert (repo / target_rel).read_text(encoding="utf-8") == before
+
+
+def test_hardening_a_timeout_on_the_show_probe_refuses_with_three(tmp_path, monkeypatch):
+    """The same probe that hung is a git problem too: rc 124 was already refused
+    by the timeout half of ``probe_unanswered`` and stays refused now that a
+    failing code is refused as well. Without the positive control the widened
+    rule could not be told apart from "never trust show".
+    """
+    module = _decide_module()
+    repo = _baseline_repo(tmp_path)
+    proc = _supersede_in_process(
+        repo, write_fails_on=None,
+        failures={"show": (module.GIT_TIMEOUT_RC,
+                           f"git show timed out after {module.GIT_TIMEOUT}s")},
+        monkeypatch=monkeypatch)
+    assert proc.returncode == 3, proc.stderr
+    assert "show" in proc.stderr, proc.stderr
+    assert "timed out" in proc.stderr.lower(), proc.stderr
+    assert _porcelain(repo) == ""
+
+
+def test_hardening_a_show_that_reports_no_such_path_still_refuses_with_four(
+        tmp_path, monkeypatch):
+    """The positive control for the rule above: ``git show HEAD:<path>`` answers
+    128 for a path that is simply not in HEAD, and that is a real answer, not a
+    git fault. It stays the exit 4 it has always been.
+
+    Without this the widened refusal could not be told apart from "never trust
+    show", and every missing-target and untracked-target refusal would have moved
+    from 4 to 3, telling the operator to wait for git instead of naming the record
+    that is not committed. Both shapes are planted for real -- a file with no
+    commit, a name with no file -- and answered by git itself, not by an
+    injection, so the phrases the rule matches are git's own.
+    """
+    # A file on disk with no commit: git says it "exists on disk, but not in 'HEAD'".
+    repo = _baseline_repo(tmp_path)
+    rel = f"noni/decisions/{BASELINE_ID[:10]}-draft.json"
+    (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+    (repo / rel).write_text(
+        _record_json(f"{BASELINE_ID[:10]}-draft", "decided", "yes", None), encoding="utf-8")
+    proc = _run(repo, "--slug", "scheduler", "--date", BASELINE_ID[:10],
+                *BASE, *QUESTION, *OPTIONS, *ANSWERED,
+                "--supersedes", f"{BASELINE_ID[:10]}-draft")
+    assert proc.returncode == 4, proc.stderr
+    assert "not tracked" in proc.stderr, proc.stderr
+    assert "git show" not in proc.stderr, proc.stderr
+
+    # A name with no file at all: git says it "does not exist in 'HEAD'".
+    repo = _baseline_repo(tmp_path, subdir="show-absent")
+    proc = _decide(repo, *ANSWERED, "--supersedes", "2026-09-09-nope")
+    assert proc.returncode == 4, proc.stderr
+    assert "git show" not in proc.stderr, proc.stderr
+    assert _porcelain(repo) == ""
+
+
+def test_hardening_a_supersede_lists_each_path_once_in_the_commit(tmp_path, monkeypatch):
+    """The rollback and the exit-5 message name each path this run wrote once.
+
+    ``rels`` was seeded with the target and the write block appended it again, so
+    a supersede carried ``noni/decisions/<target>.json`` twice: harmless to git
+    and wrong to everybody else, since the same list is what the rollback resets
+    and what the refusal quotes back at the operator. Both halves are driven to
+    the rollback by the two seams that already exist for it -- the injected write
+    failure, and the forced-commit seam for the message -- and both assert that
+    the target's name appears exactly once, so a duplicated list fails here.
+    """
+    target_rel = f"noni/decisions/{BASELINE_ID}.json"
+    record_rel = f"noni/decisions/{BASELINE_ID[:10]}-scheduler.json"
+
+    # (a) the rollback's own path list. The target's write is failed after it
+    # lands and stages, so the rollback runs without ``git add`` having been
+    # called: ``git reset -- <paths>`` is the call that carries this run's list.
+    seen: list[list[str]] = []
+
+    def _spy_git(verb, args):
+        if verb == "reset":
+            seen.append([arg for arg in args if arg.startswith("noni/")])
+
+    repo = _baseline_repo(tmp_path)
+    rolled = _supersede_in_process(repo, write_fails_on=target_rel, call_observer=_spy_git)
+    assert rolled.returncode == 5, rolled.stderr
+    assert seen == [[record_rel, target_rel]], (
+        f"the rollback must name each path once, in this order: {seen}"
+    )
+
+    # (b) the refusal message for a commit that failed after both writes landed:
+    # it names the target once, not once per entry of a duplicated list
+    repo = _baseline_repo(tmp_path, subdir="listed-once")
+    module = _decide_module()
+    failed = _supersede_in_process(repo, write_fails_on=None, monkeypatch=monkeypatch,
+                                   env={module.FAIL_COMMIT_ENV_VAR: "1"})
+    assert failed.returncode == 5, failed.stderr
+    assert failed.stderr.count(target_rel) == 1, (
+        f"the failure message names the target more than once: {failed.stderr}"
+    )
+    assert failed.stderr.count(record_rel) == 1, failed.stderr
 
 
 def test_hardening_written_files_are_not_owner_only(tmp_path):

@@ -30,11 +30,14 @@ Exit codes:
        --supersedes with an unanswered question
     3  a git or identity problem: --repo is not a git work tree, git config
        user.name is not set (git config user.name <name>), or a git probe timed
-       out
+       out or failed for a reason that answered nothing
     4  a collision or a bad supersede target: the record file already exists,
        or the target is missing, already superseded, untracked, locally
-       modified, not in the writer's canonical form, or dated another day than
-       --date
+       modified, not in the writer's canonical form, dated another day than
+       --date, or carries a date that is not a string, questions that are not
+       a non-empty list of objects each with a string id and a string-or-null
+       answer, or a number JSON cannot hold (NaN or Infinity). A show that
+       reports the path is not in HEAD is this code, not 3: git answered
     5  the commit failed: both paths are rolled back (index reset, target
        restored, new record removed) and anything the undo could not do is named
        (a failed reset and the paths that may still be staged, or a path it could
@@ -148,9 +151,25 @@ gitwrite.EXIT_PROBE_TIMEOUT = EXIT_GIT
 
 
 def _render(record: dict) -> str:
-    """The record's bytes: FIELD_ORDER, two-space indent, one trailing newline."""
+    """The record's bytes: FIELD_ORDER, two-space indent, one trailing newline.
+
+    ``allow_nan=False`` is the whole refusal of a non-finite number: json's default
+    writes ``NaN`` and ``Infinity``, which are not JSON, and rendering such a record
+    again turns the token into ``null`` -- so a target carrying one could be
+    "superseded with only its status changed" while an answer's byte moved. json
+    refuses to produce them here, so the render answers nothing and no caller can
+    write what it cannot name.
+    """
     ordered = {key: record[key] for key in FIELD_ORDER if key in record}
-    return json.dumps(ordered, indent=2, ensure_ascii=False) + "\n"
+    try:
+        return json.dumps(ordered, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
+    except ValueError as exc:
+        _fail(EXIT_COLLISION,
+              f"a record carries a number JSON cannot hold ({exc}), so this writer "
+              "cannot tell which answer it means",
+              "the record's answer must be a string or null: repair it and commit it "
+              "in that form, then re-run decide")
+        return ""
 
 
 def _written(exc: OSError, what: str) -> str:
@@ -194,8 +213,8 @@ def _build_questions(questions: list[tuple[str, str]], options: list[tuple[str, 
 
 
 def _refuse_target_shape(path: Path, target_id: str) -> tuple[str, str] | None:
-    """The target refusal this writer words itself, asked only of a path that is not a
-    file: a directory is the rollback's leftover, not a bad record.
+    """Asked only of a path that is not a file: a directory is the rollback's
+    leftover, not a bad record.
     """
     if path.is_dir():
         return None
@@ -203,34 +222,20 @@ def _refuse_target_shape(path: Path, target_id: str) -> tuple[str, str] | None:
             "name the id of a committed record (see the census report's id column)")
 
 
-def _refuse_live_record(record: dict, target_id: str) -> tuple[str, str] | None:
-    """The live-record half of the schema: ``superseded`` is terminal, an ``id`` off
-    its file is two records in one file.
-    """
-    if record.get("status") == STATUS_SUPERSEDED:
-        return (f"supersede target {target_id} is already {STATUS_SUPERSEDED}; "
-                "superseded is terminal", "supersede the record that replaced it "
-                "(the census report shows it)")
-    return None if record.get("id") == target_id else (
-        f"supersede target {target_id} names itself {record.get('id')!r} in its own "
-        "record", "pass the id the record carries, not the filename")
-
-
 def _load_target(repo: Path, ledger: Path,
                  target_id: str) -> tuple[Path, dict, bytes] | tuple[str, str] | int:
     """A target as ``(path, record, committed_bytes)``, a ``(headline, hint)`` refusal
     pair, or the exit code a probe refusal printed; nothing is written on refusal.
-    gitwrite probes; the refusals above and ``_render`` are the target's schema.
+    gitwrite probes the tree and holds the target's whole schema (the live-record
+    rules, the field types, and the comparison of the committed bytes against
+    ``_render``), so a value the renderer cannot name comes back as a refusal before
+    either path is opened for a write.
     """
     path = ledger / f"{target_id}.json"
     found = _load_committed_target(Path(__file__).name, repo, path, target_id,
-                                   _refuse_target_shape, _render)
-    if isinstance(found, int):
-        return found  # a probe that hung or died printed its refusal
-    if not isinstance(found[0], bytes):
-        return found  # a (headline, hint) refusal pair
-    committed, record = found
-    return _refuse_live_record(record, target_id) or (path, record, committed)
+                                   _refuse_target_shape, _render, STATUS_SUPERSEDED)
+    return found if isinstance(found, int) or not isinstance(found[0], bytes) else (
+        path, found[1], found[0])
 
 
 def _validate_usage(args: argparse.Namespace) -> tuple[str, list[dict], list[str]] | int:
@@ -413,7 +418,8 @@ def main(argv: list[str] | None = None) -> int:
         target_path, target_record, target_committed = found
         target_rel = target_path.relative_to(repo).as_posix()
         # Chain position, filename stem and census replay order all read this date,
-        # so another day cuts the record out of the chain it corrects.
+        # so another day cuts the record out of the chain it corrects. A value that
+        # is not a string was refused by _load_target; this slice is total here.
         if target_record.get("date", "")[:10] != date_part:
             want = str(target_record.get("date", ""))[:10]
             return _fail(
@@ -453,7 +459,6 @@ def main(argv: list[str] | None = None) -> int:
             flipped = dict(target[1])
             flipped["status"] = STATUS_SUPERSEDED
             _write_atomic(target[0], _render(flipped))
-            rels.append(target_rel)
     except OSError as exc:
         # os.replace never half-writes, so a path failed to land: roll both paths as
         # a failed commit does, and name the one that stayed.

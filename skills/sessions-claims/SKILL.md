@@ -79,25 +79,31 @@ id. A claim row without a task reference is malformed (the census flags it,
 exit 32).
 
 `--no-commit` appends the row through the same validation chain and stops
-before git: no `git add`, no `git commit`, and one line saying the change is
-left uncommitted, so a caller that commits itself can do so. `--branch` is
-validated and otherwise ignored under `--no-commit`, and `--no-commit` with
-`--push` is refused as a usage error (exit 4) before anything is written.
+before git: no `git add`, no `git commit`, and one line on stdout saying the
+change is left uncommitted for the caller to commit. An uncommitted row is
+invisible to every arbiter (the census reads committed files), so committing it
+is the caller's obligation. `--branch` is
+validated under `--no-commit` and otherwise ignored, and the success line names
+it so a dropped `--branch` cannot be mistaken for a targeted write;
+`--no-commit` with `--push` is refused as a usage error (exit 4) before anything
+is written.
 
-A claim command never leaves the clone mid-rebase. Exit codes:
+A claim command aborts a rebase it started and never aborts one it cannot see
+is stopped. Exit codes (the full table, with the abort post-condition, is in
+`references/claim.md`):
 
 | code | meaning |
 |---|---|
 | `0` | claim committed (and pushed, with `--push`), or appended and left uncommitted with `--no-commit` |
 | `1` | the register file for `--session-id` does not exist (register first) |
 | `2` | the session file is malformed (no `- claims:` marker, not readable as UTF-8) or the session already claims the same task |
-| `3` | push failed after 3 fetch-rebase-push attempts; also a failed fetch, a detached HEAD, an unresolvable branch, or a git call that timed out |
+| `3` | push failed after 3 fetch-rebase-push attempts; also a failed fetch, a detached HEAD, an unresolvable branch, a git call that timed out, or a `git add`/`git commit` that git refused |
 | `4` | usage error: bad `--task` or `--branch` value, or `--no-commit` with `--push` |
-| `5` | rebase conflict: the rebase started and stopped; the script aborts it and the clone is left on the original branch at the claim commit it made |
-| `6` | rebase refused: the rebase never started; the hint names committing or stashing the local change |
+| `5` | rebase conflict: the rebase started and stopped; the script aborts it, which leaves the clone on the branch it was invoked on at the claim commit it made (if the abort itself fails, the message says the clone needs manual cleanup) |
+| `6` | rebase refused: the rebase never started (the hint names committing or stashing), or its state could not be read (no abort run, and the message says so) |
 
-Read `references/claim.md` for the push protocol and the exit-5 abort
-post-condition.
+Read `references/claim.md` for the push protocol, the exit-5 abort
+post-condition and its one exception.
 
 ## The sessions census
 

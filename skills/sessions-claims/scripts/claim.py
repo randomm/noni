@@ -32,15 +32,22 @@ Exit codes:
        or with embedded whitespace), --branch is not a safe ref name, or
        --no-commit was combined with --push
     5  the rebase hit a conflict: the rebase started and stopped mid-flight,
-       so claim.py ran git rebase --abort and left HEAD on the original
-       branch at the pre-attempt tip with the claim commit intact
+       so claim.py ran git rebase --abort, which leaves HEAD on the branch it
+       was invoked on, at the claim commit this run made (the abort resets
+       index and worktree). When the abort itself fails the code is still 5
+       and the message says the clone is left mid-rebase and needs cleanup by
+       hand
     6  the rebase was refused before it started (a dirty worktree, for
-       instance): no abort is run, so nothing is left mid-rebase
+       instance), or its state could not be determined: no abort is run, so
+       this run leaves nothing mid-rebase
 
 The 5/6 split is decided by probing both rebase-merge and rebase-apply (the
 two directories a stopped rebase can leave behind) via 'git rev-parse
---git-path': present means the rebase entered and stopped (5, aborted);
-absent means it never started (6, no abort to run).
+--git-path' and requiring positive evidence that a rebase is genuinely stopped
+in one of them: its head-name and onto files both read back non-empty. A
+readable pair means the rebase entered and stopped (5, aborted); anything else
+means this run aborts nothing (6). A directory an earlier crashed run left
+behind belongs to someone else's rebase, so claim.py never aborts it.
 """
 
 from __future__ import annotations
@@ -51,29 +58,44 @@ import re
 import subprocess
 import sys
 import tempfile
+import unicodedata
 from pathlib import Path
 
 CLAIM_PREFIX = "- claim: "
 MAX_PUSH_ATTEMPTS = 3
 GIT_TIMEOUT = 60
 
+# subprocess.run(timeout=) reports a killed call with this return code (the
+# TimeoutExpired sentinel). Named once so the push loop, the probe and the
+# tests all compare against the same value instead of a bare 124.
+GIT_TIMEOUT_RC: int = 124
+
 # --- Exit-code table ----------------------------------------------------------
 # Every return path in this module names one of these constants, and the
 # docstring's 'Exit codes:' block above carries exactly this set of codes
 # (asserted by tests/test_claim_validation.py, which reads both).
-EXIT_OK = 0
-EXIT_REGISTER_MISSING = 1
-EXIT_SESSION_MALFORMED = 2
-EXIT_PUSH_FAILED = 3
-EXIT_USAGE = 4
-EXIT_REBASE_CONFLICT = 5
-EXIT_REBASE_REFUSED = 6
+EXIT_OK: int = 0
+EXIT_REGISTER_MISSING: int = 1
+EXIT_SESSION_MALFORMED: int = 2
+EXIT_PUSH_FAILED: int = 3
+EXIT_USAGE: int = 4
+EXIT_REBASE_CONFLICT: int = 5
+EXIT_REBASE_REFUSED: int = 6
 
 # The two directories a rebase leaves behind while it is stopped mid-flight:
 # the merge backend writes rebase-merge/, the am backend writes rebase-apply/.
 # Checking only one would misclassify the other backend's conflict as a
-# refusal, so the classifier probes both.
-REBASE_STATE_DIRS = ("rebase-merge", "rebase-apply")
+# refusal, so the classifier probes both. The tests' post-condition helper
+# reads this same constant, so the probe set and the assertion set cannot
+# drift apart.
+REBASE_STATE_DIRS: tuple[str, ...] = ("rebase-merge", "rebase-apply")
+
+# How much of git's own output the push loop and the classifier echo. These
+# streams are not this process's words (a fetch or push against an origin can
+# forward remote-side and credential-helper text) and an agent pipes them
+# straight into tool output, so they are sanitised and bounded rather than
+# printed raw — see _safe().
+GIT_OUTPUT_LIMIT: int = 500
 
 # --task must be a non-empty token: the claim row grammar is "- claim: <task>"
 # where <task> is the task reference (an issue number like #42 or a noni row
@@ -89,7 +111,30 @@ TASK_RE = re.compile(r"^\S+$")
 BRANCH_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
-def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
+def _safe(text: str, limit: int = GIT_OUTPUT_LIMIT) -> str:
+    """Render git's own output for the terminal: bounded, no control bytes.
+
+    The push loop and the classifier echo what git said, and that text can
+    originate outside this process (remote-side error text, credential-helper
+    output for the configured origin). Control characters other than newline
+    and space are dropped, so an ANSI or OSC sequence cannot reach the
+    terminal, and the tail past ``limit`` is dropped so one huge blob cannot
+    crowd out everything else. The census handles the same class of untrusted
+    bytes by printing fixed wording instead (skills/census/scripts/census.py,
+    the malformed-record path); here the wording is the point, so it is
+    sanitised rather than replaced.
+    """
+    kept = []
+    for ch in text:
+        if ch == "\n" or ch == " " or unicodedata.category(ch)[0] != "C":
+            kept.append(ch)
+    cleaned = "".join(kept)
+    if len(cleaned) > limit:
+        return cleaned[:limit] + "... [truncated]"
+    return cleaned
+
+
+def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     """Run git with the caller's configured identity.
 
     The claim is committed under whoever's git config applies to the tree, so
@@ -105,19 +150,18 @@ def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=GIT_TIMEOUT)
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(
-            cmd, returncode=124, stdout="",
+            cmd, returncode=GIT_TIMEOUT_RC, stdout="",
             stderr="git " + args[0] + " timed out after " + str(GIT_TIMEOUT) + "s",
         )
 
 
-def _append_claim(path: Path, task: str) -> int:
-    """Append a claim row to the register file. Returns an exit code."""
-    try:
-        body = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        print(f"claim.py: cannot read {path.name}: {exc}", file=sys.stderr)
-        return EXIT_SESSION_MALFORMED
+def _append_claim(path: Path, task: str, body: str) -> int:
+    """Append a claim row to the register file. Returns an exit code.
 
+    ``body`` is the file content the duplicate-claim check already read: the
+    caller holds it, so the write path does not read (and split) the same
+    register file a second time.
+    """
     lines = body.splitlines()
     # A valid register file must have a '- claims:' marker line. If it is
     # absent the file is malformed for our purposes (exit 32 class).
@@ -144,32 +188,54 @@ def _append_claim(path: Path, task: str) -> int:
     return EXIT_OK
 
 
-def _rebase_stopped(repo: Path) -> bool:
-    """True when a rebase is stopped mid-flight in this clone.
+def _stopped_state_dir(repo: Path) -> tuple[Path | None, bool]:
+    """Locate a rebase this clone is actually stopped in.
 
-    Probes both directories a stopped rebase can leave behind (see
-    REBASE_STATE_DIRS) via 'git rev-parse --git-path', which resolves them
-    wherever the git dir actually is (a plain clone, a worktree, or a
-    re-written GIT_DIR). A probe that cannot run says so on stderr and
-    counts as not-stopped, which routes the caller to the refusal class
-    rather than the conflict class.
+    Returns (dir, indeterminate). ``dir`` is the state directory (see
+    REBASE_STATE_DIRS) holding a genuinely stopped rebase, or None; it is set
+    only when the directory carries positive evidence of being stopped: both
+    head-name and onto read back non-empty, which is what a live stopped
+    rebase always leaves and what a stray directory does not. ``indeterminate``
+    says the question could not be answered: a probe could not run or a state
+    file could not be read.
+
+    Existence alone is not evidence. A directory an earlier crashed run, a
+    different tool, or a hand-run command left behind is somebody else's
+    rebase, and aborting it would reset the caller's worktree and index and
+    report the loss as a claim conflict — so claim.py aborts only what it can
+    see is stopped. Probes go through 'git rev-parse --git-path', which
+    resolves the directories wherever the git dir lives (plain clone, worktree
+    or re-written GIT_DIR).
     """
+    indeterminate = False
     for name in REBASE_STATE_DIRS:
         probe = _git(["rev-parse", "--git-path", name], repo)
         if probe.returncode != 0:
+            # One line, not one per failed probe: outside a repository every
+            # probe fails, and git's own 'not a git repository' text repeated
+            # twice is noise on a path whose answer is already known.
+            indeterminate = True
             print(
-                f"claim.py: cannot probe {name}: {probe.stderr.strip()}",
+                f"claim.py: cannot probe rebase state: {_safe(probe.stderr.strip())}",
                 file=sys.stderr,
             )
-            continue
+            break
         state = Path(probe.stdout.strip())
         if not state.is_absolute():
             # --git-path prints a path relative to the working tree git
             # resolved for this call, which is the clone itself.
             state = repo / state
-        if state.exists():
-            return True
-    return False
+        try:
+            head_name = (state / "head-name").read_text(encoding="utf-8", errors="replace")
+            onto = (state / "onto").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            # Absent is an answer (nothing stopped here); unreadable is not.
+            if state.is_dir():
+                indeterminate = True
+            continue
+        if head_name.strip() and onto.strip():
+            return state, indeterminate
+    return None, indeterminate
 
 
 def _push_with_retry(repo: Path, branch: str, attempts: int = MAX_PUSH_ATTEMPTS) -> int:
@@ -178,8 +244,11 @@ def _push_with_retry(repo: Path, branch: str, attempts: int = MAX_PUSH_ATTEMPTS)
     The losing pusher ends rebased-and-pushed (both claims land); the census
     then flags the double-claim. Returns EXIT_OK on success, EXIT_PUSH_FAILED
     when the attempts run out (or a fetch fails), EXIT_REBASE_CONFLICT when a
-    rebase started and stopped on a conflict, and EXIT_REBASE_REFUSED when
-    git refused to start the rebase at all.
+    rebase started and stopped on a conflict, and EXIT_REBASE_REFUSED when git
+    refused to start the rebase, left its state unreadable, or was killed by
+    the timeout with the state left indeterminate. Every path that can have
+    entered a rebase attempts an abort, so a timeout that landed mid-rebase
+    does not leave the clone wedged.
     """
     for attempt in range(1, attempts + 1):
         if attempt > 1:
@@ -187,36 +256,38 @@ def _push_with_retry(repo: Path, branch: str, attempts: int = MAX_PUSH_ATTEMPTS)
             # branch tip, then push again.
             fetch = _git(["fetch", "origin"], repo)
             if fetch.returncode != 0:
-                print("claim.py: fetch failed: " + fetch.stderr.strip(), file=sys.stderr)
+                print("claim.py: fetch failed: " + _safe(fetch.stderr.strip()), file=sys.stderr)
                 return EXIT_PUSH_FAILED
             rebase = _git(["rebase", "origin/" + branch], repo)
             if rebase.returncode != 0:
-                # A timed-out rebase says nothing about conflicts: it is a
-                # push-class failure, so it is reported before the classifier
-                # would read the half-written state as a conflict.
-                if rebase.returncode == 124:
-                    print(
-                        "claim.py: rebase timed out after " + str(GIT_TIMEOUT)
-                        + "s: " + rebase.stderr.strip(),
-                        file=sys.stderr,
-                    )
-                    return EXIT_PUSH_FAILED
+                if rebase.returncode == GIT_TIMEOUT_RC:
+                    # A killed rebase says nothing about conflicts on its own,
+                    # but it may have entered and stopped before it was killed,
+                    # so the state is still what decides the report: an
+                    # unresolved abort is what wedges the next command.
+                    return _classify_rebase_failure(repo, rebase, timed_out=True)
                 return _classify_rebase_failure(repo, rebase)
         push = _git(["push", "origin", branch], repo)
         if push.returncode == 0:
             return EXIT_OK
-        if push.returncode == 124:
-            print("claim.py: push attempt " + str(attempt) + "/" + str(attempts) + " timed out: " + push.stderr.strip(), file=sys.stderr)
+        if push.returncode == GIT_TIMEOUT_RC:
+            print(
+                "claim.py: push attempt " + str(attempt) + "/" + str(attempts)
+                + " timed out: " + _safe(push.stderr.strip()),
+                file=sys.stderr,
+            )
             continue
         print(
             "claim.py: push attempt " + str(attempt) + "/" + str(attempts) + " rejected: "
-            + (push.stderr.strip() or push.stdout.strip()),
+            + _safe(push.stderr.strip() or push.stdout.strip()),
             file=sys.stderr,
         )
     return EXIT_PUSH_FAILED
 
 
-def _classify_rebase_failure(repo: Path, rebase: subprocess.CompletedProcess) -> int:
+def _classify_rebase_failure(
+    repo: Path, rebase: subprocess.CompletedProcess[str], timed_out: bool = False
+) -> int:
     """Turn a failed 'git rebase origin/<branch>' into an exit code.
 
     The two cases are not the same bug. A rebase that started and stopped
@@ -225,20 +296,57 @@ def _classify_rebase_failure(repo: Path, rebase: subprocess.CompletedProcess) ->
     and hands back exit 5. A rebase git never started left nothing to clean
     up, so running an abort there would be noise: exit 6 says commit or
     stash and re-run.
+
+    ``timed_out`` marks a rebase that was killed by GIT_TIMEOUT rather than
+    refused by git. Its wording keeps the timeout visible (a slow remote is
+    not a conflict) and it is reported as the push class, because that is what
+    a killed call proves; the state probe still decides whether an abort has
+    to run first.
     """
-    detail = (rebase.stderr.strip() or rebase.stdout.strip()).splitlines()
+    detail = _safe(rebase.stderr.strip() or rebase.stdout.strip()).splitlines()
     quoted = " ".join(detail[:3])
-    if _rebase_stopped(repo):
+    state, indeterminate = _stopped_state_dir(repo)
+    if state is None and indeterminate:
+        # The probe could not answer, so this run claims no knowledge of the
+        # clone's state and asserts nothing about it: an unrunnable probe must
+        # not become "not stopped", because a real conflict would then be
+        # reported as a refusal whose hint cannot resolve it.
+        print(
+            "claim.py: rebase failed and its state cannot be read, so no abort "
+            "was attempted: " + quoted,
+            file=sys.stderr,
+        )
+        print(
+            "claim.py: fix: run 'git status' and 'git rebase --abort' by hand in "
+            + repo.name + ", then re-run claim",
+            file=sys.stderr,
+        )
+        return EXIT_REBASE_REFUSED
+    if state is not None:
         abort = _git(["rebase", "--abort"], repo)
         if abort.returncode != 0:
-            # The clone is still mid-rebase: say so plainly, because the
-            # whole point of this branch is that nothing is left wedged.
+            # The clone is still mid-rebase: say so plainly, and keep git's own
+            # rebase output, because this is the one path where the caller most
+            # needs to know the clone is wedged and what git said about it.
             print(
                 "claim.py: rebase conflict and git rebase --abort failed: "
-                + abort.stderr.strip(),
+                + _safe(abort.stderr.strip()),
+                file=sys.stderr,
+            )
+            print("claim.py: git said: " + quoted, file=sys.stderr)
+            print(
+                "claim.py: the clone is still mid-rebase in " + repo.name
+                + "; run git rebase --abort by hand",
                 file=sys.stderr,
             )
             return EXIT_REBASE_CONFLICT
+        if timed_out:
+            print(
+                "claim.py: rebase timed out after " + str(GIT_TIMEOUT)
+                + "s and was stopped in a conflict, so it was aborted: " + quoted,
+                file=sys.stderr,
+            )
+            return EXIT_PUSH_FAILED
         print(
             "claim.py: rebase conflict: someone else changed the same session "
             "file, so the rebase stopped: " + quoted,
@@ -251,10 +359,19 @@ def _classify_rebase_failure(repo: Path, rebase: subprocess.CompletedProcess) ->
             file=sys.stderr,
         )
         return EXIT_REBASE_CONFLICT
+    if timed_out:
+        # Nothing was stopped, so there was nothing to abort: this is the push
+        # class the timeout belongs to.
+        print(
+            "claim.py: rebase timed out after " + str(GIT_TIMEOUT)
+            + "s: " + quoted,
+            file=sys.stderr,
+        )
+        return EXIT_PUSH_FAILED
     print("claim.py: rebase refused (it never started): " + quoted, file=sys.stderr)
     print(
         "claim.py: fix: commit or stash the uncommitted changes in this clone, "
-        "then re-run claim; nothing is mid-rebase, so the claim commit is intact",
+        "then re-run claim; this run started no rebase, so the claim commit is intact",
         file=sys.stderr,
     )
     return EXIT_REBASE_REFUSED
@@ -331,26 +448,45 @@ def main(argv: list[str] | None = None) -> int:
             )
             return EXIT_SESSION_MALFORMED
 
-    rc = _append_claim(session_file, task)
+    rc = _append_claim(session_file, task, existing)
     if rc != EXIT_OK:
         return rc
 
     if args.no_commit:
         # Same validation chain and the same write as the committing path,
         # minus git add and git commit: the row is left in the worktree for
-        # the caller to stage and commit itself.
-        print(f"claim.py: appended {task} to {session_file.name}; left uncommitted")
+        # the caller to stage and commit itself. The line says so on stdout
+        # because it is the success message for this mode; the caller's
+        # obligation to commit the row is the contract of the flag (see
+        # references/claim.md) — no census check reads an uncommitted row.
+        committed_to = "" if branch is None else f" (target branch {branch})"
+        print(
+            f"claim.py: appended {task} to {session_file.name}; "
+            f"left uncommitted for the caller to commit{committed_to}"
+        )
         return EXIT_OK
 
     # Commit the claim under the caller's configured identity (see _git).
+    # A git refusal here is not a malformed session (exit 2 means the file is
+    # malformed or already claims the task, and this file passed both checks),
+    # so it is reported as the failure-to-advance class it is: exit 3, with the
+    # row's staged state named so the caller knows what to clean up.
     add = _git(["add", str(session_file.relative_to(repo))], repo)
     if add.returncode != 0:
-        print("claim.py: git add failed: " + add.stderr.strip(), file=sys.stderr)
-        return EXIT_SESSION_MALFORMED
+        print(
+            "claim.py: git add failed (the claim row is in the worktree, unstaged): "
+            + _safe(add.stderr.strip()),
+            file=sys.stderr,
+        )
+        return EXIT_PUSH_FAILED
     commit = _git(["commit", "-q", "-m", "claim: " + task], repo)
     if commit.returncode != 0:
-        print("claim.py: git commit failed: " + commit.stderr.strip(), file=sys.stderr)
-        return EXIT_SESSION_MALFORMED
+        print(
+            "claim.py: git commit failed (the claim row is left staged in the "
+            "index, uncommitted): " + _safe(commit.stderr.strip()),
+            file=sys.stderr,
+        )
+        return EXIT_PUSH_FAILED
     print(f"claim.py: committed claim {task} in {session_file.name}")
 
     if not args.push:
@@ -359,7 +495,7 @@ def main(argv: list[str] | None = None) -> int:
     if branch is None:
         result = _git(["rev-parse", "--abbrev-ref", "HEAD"], repo)
         if result.returncode != 0:
-            print("claim.py: cannot resolve branch: " + result.stderr.strip(), file=sys.stderr)
+            print("claim.py: cannot resolve branch: " + _safe(result.stderr.strip()), file=sys.stderr)
             return EXIT_PUSH_FAILED
         branch = result.stdout.strip()
         # git prints the literal string "HEAD" (not "(detached HEAD)") when

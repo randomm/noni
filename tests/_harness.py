@@ -8,9 +8,13 @@ without pulling in ``conftest.py`` and its module-level ``import pytest``.
 
 from __future__ import annotations
 
+import ast
+import importlib.util
 import os
+import shutil
 import subprocess
 import sys
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
@@ -63,8 +67,63 @@ if str(_SCRIPTS) not in sys.path:
 from public_safety import HOME_PATH_PATTERNS, SECRET_PATTERNS  # noqa: E402
 
 
-def _git_e2(repo: Path, *args: str) -> subprocess.CompletedProcess:
-    """Run git in a repo with a deterministic identity and no GPG signing."""
+def _claim_module() -> object:
+    """claim.py loaded as a module, for the tests that drive its internals.
+
+    Defined here, next to the script path it loads. ``test_claim_validation``
+    re-exports it so the name resolves inside that file's globals.
+    """
+    spec = importlib.util.spec_from_file_location("noni_claim_under_test", CLAIM)
+    if spec is None or spec.loader is None:  # pragma: no cover - path is fixed
+        raise RuntimeError(f"cannot load claim module from {CLAIM}")
+    module = importlib.util.module_from_spec(spec)
+    # Registered under its own name before exec, so a dataclass or a pickle
+    # inside the module can resolve it later; the name is ours, never "claim".
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _script_constant(tree: ast.Module, name: str, origin: str) -> object:
+    """One module-level ``NAME = <literal>`` read from an already-parsed script.
+
+    The route for a fixture or an assertion that must hold the value the
+    product owns (a row grammar, a set of directory names): the literal is read
+    from the shipped file rather than copied, so the two cannot drift.
+
+    Tuples are returned too, not just scalars: a set the product owns (the
+    rebase state directories) is a tuple literal, and an assertion set copied
+    from it by hand is exactly the drift this helper exists to prevent.
+    """
+    for node in tree.body:
+        value = node.value if isinstance(node, (ast.Assign, ast.AnnAssign)) else None
+        if isinstance(value, ast.Constant) or (
+            isinstance(value, ast.Tuple) and all(isinstance(e, ast.Constant) for e in value.elts)
+        ):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                if isinstance(target, ast.Name) and target.id == name:
+                    if isinstance(value, ast.Tuple):
+                        return tuple(e.value for e in value.elts)
+                    return value.value
+    raise AssertionError(f"{origin} defines no module-level constant {name}")
+
+
+def _script_ast(path: Path) -> ast.Module:
+    """Parse ``path`` once and hand the tree to the readers above."""
+    return ast.parse(path.read_text(encoding="utf-8"))
+
+
+def _git_e2(
+    repo: Path, *args: str, env: Mapping[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run git in a repo with a deterministic identity and no GPG signing.
+
+    ``env`` is for a call that must not inherit the ambient git identity. A
+    supplied mapping *replaces* the process environment rather than augmenting
+    it, so callers merge it into ``os.environ`` themselves (see
+    ``advance_origin_with_claim``): a partial dict would drop PATH or HOME and
+    fail as a confusing git-not-found or dubious-ownership error."""
     cmd = [
         "git", "-C", str(repo),
         "-c", "user.name=Replay",
@@ -72,10 +131,10 @@ def _git_e2(repo: Path, *args: str) -> subprocess.CompletedProcess:
         "-c", "commit.gpgsign=false",
         *args,
     ]
-    return subprocess.run(cmd, capture_output=True, text=True)
+    return subprocess.run(cmd, capture_output=True, text=True, env=env)
 
 
-def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     """Run git with the deterministic harness identity (Replay), checking.
 
     The shared form the test modules' private ``_git`` helpers used:
@@ -152,14 +211,16 @@ def _secret_violation() -> str:
 
 
 
-def _git_ok(repo: Path, *args: str) -> subprocess.CompletedProcess:
-    proc = _git_e2(repo, *args)
+def _git_ok(
+    repo: Path, *args: str, env: Mapping[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    proc = _git_e2(repo, *args, env=env)
     if proc.returncode != 0:
         raise RuntimeError(f"git {args} failed: {proc.stderr.strip()}")
     return proc
 
 
-def _git_env_with_identity() -> dict:
+def _git_env_with_identity() -> dict[str, str]:
     """An env that pins a deterministic git identity for subprocesses.
 
     claim.py commits under the caller's configured identity (it no longer
@@ -176,7 +237,7 @@ def _git_env_with_identity() -> dict:
     }
 
 
-def git_pin_date(repo: Path, iso_utc: str, *args: str) -> subprocess.CompletedProcess:
+def git_pin_date(repo: Path, iso_utc: str, *args: str) -> subprocess.CompletedProcess[str]:
     """Run a git command with identity and commit dates pinned.
 
     ``iso_utc`` is the fixed timestamp; GIT_CONFIG_GLOBAL/SYSTEM point at
@@ -225,22 +286,120 @@ def build_bare_origin(origin: Path, worktrees: list[Path]) -> None:
         _git_ok(wt, "checkout", "-q", "-b", "main")
 
 
+def advance_origin_with_claim(
+    origin: Path, seeder: Path, session_file: str, task: str, branch: str = "main"
+) -> str:
+    """Deterministically advance ``origin`` with a conflicting claim row.
+
+    Clones ``origin`` into ``seeder``, appends one ``- claim: <task>`` row at
+    EOF of ``session_file`` (the repo-relative path a claim.py run will also
+    append to), commits and pushes it, then removes the seed clone. Because
+    both writers append at EOF of the same file, the caller's next
+    fetch-rebase-push stops in a real conflict rather than merging cleanly,
+    which is what makes the exit-5 path testable without a race. Returns the
+    pushed sha.
+
+    ``build_bare_origin`` builds every clone from the same bare origin, so
+    the committed baseline of ``session_file`` is identical here and in the
+    caller's clone: that is what makes the EOF append conflict deterministic.
+
+    The row is written with claim.py's own ``CLAIM_PREFIX``, so the seeded
+    claimant writes exactly what a real one would (see ``_script_constant``).
+    """
+    for label, value in (("session_file", session_file), ("task", task), ("branch", branch)):
+        if not isinstance(value, str) or not value:
+            raise TypeError(
+                f"advance_origin_with_claim needs a non-empty str {label}, got {value!r}"
+            )
+    prefix = _script_constant(_script_ast(CLAIM), "CLAIM_PREFIX", CLAIM.name)
+    if seeder.exists():
+        shutil.rmtree(seeder)
+    seeder.parent.mkdir(parents=True, exist_ok=True)
+    # The clone is pinned to the branch it is seeding. Two host inputs would
+    # otherwise decide that for it: a ~/.gitconfig carrying
+    # init.defaultbranch, and the pytest HOME sandbox that carries no
+    # gitconfig at all. Under the sandbox git falls back to its own default
+    # (master), origin has no master, and the clone checks out an empty
+    # worktree on a branch that does not exist - which is how a seed clone
+    # silently stops being a seed. So the branch is named in the clone
+    # command and confirmed against HEAD before anything is appended.
+    env = {**os.environ, **_git_env_with_identity()}
+    try:
+        # ``-b`` names the branch outright, so it does not matter that the
+        # sandboxed HOME carries no init.defaultbranch, nor what origin's own
+        # HEAD points at (a bare init repo defaults to master even when the
+        # only branch ever pushed is main): an explicit checkout of a branch
+        # that exists on origin is what makes the worktree non-empty.
+        _git_ok(
+            seeder.parent, "clone", "-q", "-b", branch, str(origin), str(seeder),
+            env=env,
+        )
+    except RuntimeError as exc:
+        # A bare 'clone has no <file>' would hide why: surface git's own
+        # words (dubious ownership, empty remote, no such ref) with them.
+        raise RuntimeError(f"seed clone of {origin} failed: {exc}") from None
+    landed = _git_ok(seeder, "rev-parse", "--abbrev-ref", "HEAD", env=env).stdout.strip()
+    if landed != branch:
+        raise RuntimeError(
+            f"seed clone checked out {landed!r}, not {branch!r}: the conflict "
+            "fixture would seed the wrong branch"
+        )
+    target = seeder / session_file
+    if not target.is_file():
+        listing = " ".join(_git_ok(seeder, "ls-files", env=env).stdout.split()) or "<no files>"
+        raise RuntimeError(
+            f"seed clone has no {session_file} to append to; it checked out: {listing}"
+        )
+    body = target.read_text(encoding="utf-8")
+    if not body.endswith("\n"):
+        body += "\n"
+    target.write_text(body + prefix + task + "\n", encoding="utf-8")
+    _git_ok(seeder, "add", session_file, env=env)
+    _git_ok(seeder, "commit", "-q", "-m", f"claim: {task}", env=env)
+    _git_ok(seeder, "push", "-q", "origin", branch, env=env)
+    sha = _git_ok(seeder, "rev-parse", "HEAD", env=env).stdout.strip()
+    shutil.rmtree(seeder)
+    return sha
+
+
+class PushProtocolDrift(AssertionError):
+    """Raised by :func:`push_with_retry` when the rebase step fails.
+
+    The harness copy of the push protocol cannot mirror claim.py's exit-code
+    contract (it is a fixture, not the product), so it names the two cases the
+    product distinguishes and says plainly that it aborts nothing. A scenario
+    that needs the real 5/6 semantics drives ``run_claim(..., push=True)``
+    instead of this helper.
+    """
+
+
 def push_with_retry(repo: Path, branch: str, attempts: int = 3) -> None:
     """fetch-rebase-push with at most `attempts` attempts.
 
     The losing pusher ends rebased-and-pushed (both claims land); the census
     then flags the double-claim. This is the push protocol documented in the
-    skill (fetch-rebase-push, at most 3 attempts)."""
+    skill (fetch-rebase-push, at most 3 attempts).
+
+    A failing rebase is not classified the way claim.py classifies it: this
+    helper runs no abort and raises PushProtocolDrift, which says so. Callers
+    that need the product's behaviour drive claim.py --push itself.
+    """
     for attempt in range(1, attempts + 1):
         if attempt > 1:
             _git_ok(repo, "fetch", "origin")
-            _git_ok(repo, "rebase", f"origin/{branch}")
+            rebase = _git_e2(repo, "rebase", f"origin/{branch}")
+            if rebase.returncode != 0:
+                raise PushProtocolDrift(
+                    "git rebase origin/" + branch + " failed in the harness push "
+                    "helper: " + rebase.stderr.strip()
+                    + "; this fixture aborts nothing and does not tell conflict "
+                    "from refusal — drive claim.py --push (exit 5/6) for that"
+                )
         proc = _git_e2(repo, "push", "origin", branch)
         if proc.returncode == 0:
             return
         if attempt == attempts:
             raise RuntimeError(f"push failed after {attempts} attempts: {proc.stderr.strip()}")
-
 
 SESSIONS_SKILL = REPO / "skills" / "sessions-claims" / "scripts"
 CENSUS_SESSIONS = SESSIONS_SKILL / "census-sessions.sh"
@@ -248,7 +407,7 @@ REGISTER = SESSIONS_SKILL / "register.py"
 CLAIM = SESSIONS_SKILL / "claim.py"
 
 
-def run_register(repo: Path, identity: str, **kwargs) -> subprocess.CompletedProcess:
+def run_register(repo: Path, identity: str, **kwargs) -> subprocess.CompletedProcess[str]:
     """Run register.py with --repo repo --identity identity and extra kwargs."""
     extra = []
     for key, value in kwargs.items():
@@ -264,14 +423,21 @@ def run_register(repo: Path, identity: str, **kwargs) -> subprocess.CompletedPro
 
 def run_claim(
     repo: Path, session_id: str, task: str, push: bool = False, **kwargs
-) -> subprocess.CompletedProcess:
+) -> subprocess.CompletedProcess[str]:
     """Run claim.py with the standard arguments and optional --push.
 
     Runs with the deterministic identity env (claim.py commits under the
-    caller's configured identity; the harness pins one here)."""
+    caller's configured identity; the harness pins one here).
+
+    A valueless flag is passed as ``**{"no-commit": None}`` (a Python name
+    cannot carry a dash, hence the dict-expansion form): a ``None`` value
+    emits the bare flag, any other value emits ``--key value``."""
     extra = []
     for key, value in kwargs.items():
-        extra.extend([f"--{key}", str(value)])
+        if value is None:
+            extra.append(f"--{key}")
+        else:
+            extra.extend([f"--{key}", str(value)])
     cmd = [
         sys.executable, str(CLAIM),
         "--repo", str(repo),

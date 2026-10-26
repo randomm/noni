@@ -18,8 +18,9 @@ Git's push-rejection acts as a compare-and-swap: the second claimant's push is
 delayed until it fetches and rebases, but it is not blocked — after the
 fetch-rebase-push protocol (at most 3 attempts) both claims land in git. The
 **census double-claim check is the deterministic arbiter**: it reads the
-committed files at read time and flags two active claims on the same task from
-different identities (exit 30). "No-steal" is an aspiration, not a promise.
+session files in the working tree at read time and flags two active claims on
+the same task from different identities (exit 30). "No-steal" is an aspiration,
+not a promise.
 
 ## The session register
 
@@ -68,7 +69,8 @@ hostname, because the register file is committed to a public repo. Explicit
 ## Claiming a task
 
 ```
-scripts/claim.py --repo REPO --session-id SID --task TASK [--branch BRANCH] [--push]
+scripts/claim.py --repo REPO --session-id SID --task TASK [--branch BRANCH]
+                 [--push] [--no-commit]
 ```
 
 The claim writer appends a `- claim: <task>` row to the session's register
@@ -76,6 +78,37 @@ file, commits it, and (with `--push`) pushes with fetch-rebase-push (at most
 3 attempts). The task reference is the issue number (e.g. `#42`) or a noni row
 id. A claim row without a task reference is malformed (the census flags it,
 exit 32).
+
+`--no-commit` appends the row through the same validation chain and stops
+before git: no `git add`, no `git commit`, and one line on stdout saying the
+change is left uncommitted for the caller to commit. The census reads the
+session files in the working tree, so a row left uncommitted is visible to a
+census run in that same working copy, but invisible to every other clone until
+it is committed and pushed. Committing it is the caller's obligation.
+`--branch` is
+validated under `--no-commit` and otherwise ignored, and when it was given the
+success line says plainly that it had no effect (`--branch <X> was validated
+but nothing was committed or pushed`) so it cannot be mistaken for a targeted
+write;
+`--no-commit` with `--push` is refused as a usage error (exit 4) before anything
+is written.
+
+A claim command aborts a rebase it started and never aborts one it cannot see
+is stopped. Exit codes (the full table, with the abort post-condition, is in
+`references/claim.md`):
+
+| code | meaning |
+|---|---|
+| `0` | claim committed (and pushed, with `--push`), or appended and left uncommitted with `--no-commit` |
+| `1` | the register file for `--session-id` does not exist (register first) |
+| `2` | the session file is malformed (no `- claims:` marker, not readable as UTF-8) or the session already claims the same task |
+| `3` | push failed after 3 fetch-rebase-push attempts; also a failed fetch, a detached HEAD, an unresolvable branch, a git call that timed out, or a `git add`/`git commit` that git refused |
+| `4` | usage error: bad `--task` or `--branch` value, or `--no-commit` with `--push` |
+| `5` | rebase conflict: the rebase started and stopped; the script aborts it, which leaves the clone on the branch it was invoked on at the claim commit it made (if the abort itself fails, the message says the clone needs manual cleanup) |
+| `6` | rebase refused: the rebase never started (the hint names committing or stashing), or its state could not be read (no abort run, and the message says so) |
+
+Read `references/claim.md` for the push protocol, the exit-5 abort
+post-condition and its one exception.
 
 ## The sessions census
 

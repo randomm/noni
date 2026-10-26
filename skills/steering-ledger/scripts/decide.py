@@ -36,10 +36,11 @@ Exit codes:
        modified, not in the writer's canonical form, or dated another day than
        --date
     5  the commit failed: both paths are rolled back (index reset, target
-       restored, new record removed) and a path that could not be restored is
-       named, so the tree is left as this run found it. The one input that
-       reaches this code is a committed record clobbered out of band; the test
-       seam FAIL_COMMIT_ENV_VAR forces it
+       restored, new record removed) and anything the undo could not do is named
+       (a failed reset and the paths that may still be staged, or a path it could
+       not be restored in), so the tree is never claimed as rolled back unless the
+       rollback completed. The one input reaching this code is a committed record
+       clobbered out of band; the seam FAIL_COMMIT_ENV_VAR ("1") forces it
 
 Every refusal (2, 3 or 4) leaves the ledger and the target untouched: writes happen
 only after every check passes, each file goes to a temp file in its own directory and
@@ -50,6 +51,7 @@ is git config user.name; ``date`` is --date or this run's UTC clock.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import re
 import subprocess
@@ -57,11 +59,19 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# The git runner and the atomic writer live beside this file, imported through a
-# sys.path entry for this file's directory so the skill stays relocatable. Their
-# constants are re-exported because the writer's contract names them.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import gitwrite  # noqa: E402  (the line above is what makes this import resolve)
+# The git helper and the atomic writer live beside this file, loaded by path from
+# this file's own directory: a sys.path entry would put a directory ahead of the
+# standard library, where any gitwrite.py earlier on that path could be trusted as
+# this writer's mechanics. The name is ours, so no caller shadows it; the
+# constants below are re-exported because the writer's contract names them.
+_GITWRITE_NAME = "noni_gitwrite"
+_spec = importlib.util.spec_from_file_location(
+    _GITWRITE_NAME, Path(__file__).resolve().parent / "gitwrite.py")
+if _spec is None or _spec.loader is None:  # pragma: no cover - path is fixed
+    raise RuntimeError("cannot load the git helper beside decide.py")
+sys.modules[_GITWRITE_NAME] = gitwrite = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(gitwrite)
+del _spec
 
 GIT_TIMEOUT = gitwrite.GIT_TIMEOUT
 GIT_TIMEOUT_RC = gitwrite.GIT_TIMEOUT_RC
@@ -109,6 +119,16 @@ def _fail(code: int, message: str, hint: str | None = None) -> int:
     return code
 
 
+def _undone(what: str, unredone: str, detail: str, rels: list[str]) -> tuple[str, str]:
+    """The (headline, hint) pair for a run whose undo did not finish: the headline
+    names the reset failure and the paths that may still be staged, so no wording
+    claims a tree this run did not roll back.
+    """
+    return (f"{what} and the rollback did not finish ({unredone}): {detail}",
+            f"run 'git status --porcelain -- {', '.join(rels)}' and restore those "
+            "paths by hand (git show HEAD:<path> writes the committed bytes back)")
+
+
 def _refuse_git_timeout(repo: Path, *hung: tuple[str, subprocess.CompletedProcess[str]]) -> int | None:
     """The git mechanic's timeout verdict, printed here so every refusal of this
     writer carries this file's name and exits 3."""
@@ -149,9 +169,8 @@ def _parse_pairs(values: list[str], flag: str) -> tuple[list[tuple[str, str]], s
     return out, None
 
 
-def _build_questions(
-    questions: list[tuple[str, str]], options: list[tuple[str, str]], answers: list[tuple[str, str]]
-) -> list[dict] | str:
+def _build_questions(questions: list[tuple[str, str]], options: list[tuple[str, str]],
+                     answers: list[tuple[str, str]]) -> list[dict] | str:
     """The record's question objects (id, text, 2-4 options in given order, an
     answer that is a string or null, last --answer wins), or a refusal message.
     """
@@ -461,9 +480,7 @@ def main(argv: list[str] | None = None) -> int:
         detail = _written(exc, "the record could not be written")
         if unredone is not None:
             return _fail(EXIT_COMMIT_FAILED,
-                         f"{detail} and {unredone} could not be rolled back: {exc}",
-                         f"run 'git status --porcelain -- {unredone}' and restore that path "
-                         "by hand (git show HEAD:<path> writes the committed bytes back)")
+                         *_undone(detail, str(unredone), str(exc), rels))
         return _fail(EXIT_COMMIT_FAILED, detail,
                      f"check that {ledger} is writable, then re-run decide")
     if args.no_commit:
@@ -475,8 +492,12 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_OK
     added = _git(repo, "add", "--", *rels)
     if added.returncode != 0:
-        _rollback(repo, rels, target_rel, record_rel, committed_bytes)
-        return _fail(EXIT_COMMIT_FAILED, f"git add failed: {added.stderr.strip()}",
+        unredone = _rollback(repo, rels, target_rel, record_rel, committed_bytes)
+        detail = added.stderr.strip() or added.stdout.strip()
+        if unredone is not None:
+            return _fail(EXIT_COMMIT_FAILED,
+                         *_undone("git add failed", str(unredone), detail, rels))
+        return _fail(EXIT_COMMIT_FAILED, f"git add failed: {detail}",
                      f"the paths {', '.join(rels)} are rolled back; re-run decide")
     # --only with explicit paths: the commit carries exactly what this run wrote,
     # never a file somebody else had staged.
@@ -487,9 +508,7 @@ def main(argv: list[str] | None = None) -> int:
         detail = committed.stderr.strip() or committed.stdout.strip()
         if unredone is not None:
             return _fail(EXIT_COMMIT_FAILED,
-                         f"git commit failed and {unredone} could not be rolled back: {detail}",
-                         f"run 'git status --porcelain -- {unredone}' and restore that path "
-                         "by hand (git show HEAD:<path> writes the committed bytes back)")
+                         *_undone("git commit failed", str(unredone), detail, rels))
         return _fail(EXIT_COMMIT_FAILED, f"git commit failed: {detail}",
                      f"{', '.join(rels)} are rolled back to their state before this run")
     print(f"{Path(__file__).name}: wrote {record_path}")

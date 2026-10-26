@@ -53,7 +53,7 @@ flags.
 | `2` | invalid input: an argparse failure, an empty or malformed `--slug` or `--date`, a malformed `--question`/`--option`/`--answer`, a `--source-issue`/`--source-comment` that is not a positive integer, a question outside 1-4 or with outside 2-4 options, or `--supersedes` with an unanswered question |
 | `3` | git or identity: `--repo` is not a git work tree, `git config user.name` is not set (the hint names the command), or a git probe timed out |
 | `4` | a collision or a bad supersede target: the record file exists, or the target is missing, already superseded, untracked, locally modified, not in the writer's canonical form, or dated another day than `--date` |
-| `5` | the commit failed: both paths are rolled back (index reset, target restored, new record removed), and a path that could not be restored is named |
+| `5` | the commit failed: both paths are rolled back (index reset, target restored, new record removed), and anything the rollback could not do is named — a failed reset with the paths that may still be staged, or a path it could not restore |
 
 Every refusal leaves the target and the ledger untouched: the writes happen
 only after every check passes, each file goes to a temp file in its own

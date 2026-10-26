@@ -38,6 +38,9 @@ pinned ``--now``, so a run measures the ledger and not the wall clock.
 from __future__ import annotations
 
 import ast
+import contextlib
+import importlib.util
+import io
 import json
 import os
 import re
@@ -713,6 +716,11 @@ def _forced_commit_failure():
     constant (read off the loaded module, not copied), so renaming the seam in
     the product fails these two tests instead of leaving them quietly exercising
     a real commit.
+
+    The env seam has exactly one value, ``1``: it makes the commit step fail and
+    nothing else. A per-verb or per-rc form is not a property of the writer, so
+    the tests that need one specific git call to fail inject it in-process
+    (``_git_spy``) instead of widening the variable.
     """
     return {**_identity_env(), _decide_module().FAIL_COMMIT_ENV_VAR: "1"}
 
@@ -1048,47 +1056,153 @@ def _subcommand(cmd: list[str]) -> str:
     return ""
 
 
-def _timed_out_git_cmd(verb: str) -> str:
-    """The seam value that makes the git call for ``verb`` time out.
+def _git_spy(failures: dict[str, tuple[int, str]]) -> None:
+    """Make the writer's git calls answer ``failures[verb]`` with that rc.
 
-    A timeout is a returncode and no answer, so the seam hands back exactly
-    that: GIT_TIMEOUT_RC with empty stdout, as a hang would. Naming the verb
-    keeps the other calls real, so the run reaches the one probe under test.
-    The alternative (a spy on the test's subprocess.run) cannot reach the
-    launched interpreter, and the process whose git calls must never be read as
-    clean answers is that one.
+    subprocess.run is replaced in the namespace ``run_git`` looks the name up in,
+    taken from the helper's one cached load, so the product file is never modified
+    and every writer run in this session resolves through the same spy. A verb
+    outside ``failures`` runs for real, so the run reaches the call under test
+    with its normal surroundings; each stand-in carries no stdout, as a hung or
+    refused call does.
+
+    The spy answers only the repo of the run in flight (``_RUN_REPO``), which is
+    what keeps the harness's own fixture calls real while sys.modules is shared.
+    A test that installs it drives the writer with ``_decide_in_process``, which
+    sets both knobs for that run; a launched interpreter is a different process
+    and never sees them.
     """
-    # The seam stands GIT_TIMEOUT_RC in for the call's answer, which is exactly
-    # what a hang leaves the writer holding: a returncode and no stdout.
-    return f"{_decide_module().GIT_TIMEOUT_RC}:{verb}"
+    gitwrite = _gitwrite_module()
+    real_run = gitwrite.run_git.__globals__["subprocess"].run
+    claimed = dict(failures)
+    # The repo is snapshotted here, not read at call time: _writer_git_call reads
+    # the module-level name, and a test that assigned it as a local would leave
+    # the spy answering no call at all (the symptom that sent one run down to a
+    # later guard's refusal instead of the injected failure).
+    repo_under_test = _RUN_REPO[0]
+
+    def _spy(cmd, *args, **kwargs):
+        argv = [str(part) for part in cmd]
+        verb = _subcommand(argv)
+        if verb in claimed and _writer_git_call(argv, repo_under_test):
+            rc, stderr = claimed[verb]
+            return subprocess.CompletedProcess(argv, returncode=rc, stdout="",
+                                               stderr=stderr)
+        return real_run(cmd, *args, **kwargs)
+
+    gitwrite.run_git.__globals__["subprocess"].run = _spy
 
 
-def _timed_out_git_call(cmd: list[str]) -> bool:
-    """Whether the in-process timeout spy should make this git call time out.
+def _writer_git_call(cmd: list[str], repo: Path | None) -> bool:
+    """Whether ``cmd`` is the writer's own hardened call in the repo under test.
 
-    A spy on the writer's subprocess.run is in force for the whole test, and the
-    harness's own fixture calls commit through subprocess too, so the spy fires
-    only on a call carrying the writer's three hardening -c options: that is
-    what distinguishes a decide.py call from a fixture call, and it is also what
-    the hardening test asserts is on every one of the writer's calls.
+    sys.modules is process-wide, so while an in-process run is going on the
+    harness's fixture calls (git init, add, commit) pass through the same spy
+    installed in front of it. Matching the run's ``-C`` directory is what keeps
+    those calls real: only the writer's calls in the repo under test are answered.
     """
-    hardened = any(arg == "protocol.ext.allow=never" for arg in cmd)
-    if not hardened or cmd[0] != "git":
+    if repo is None or cmd[:1] != ["git"] or len(cmd) < 3 or cmd[1] != "-C":
         return False
-    index = 1
-    while index < len(cmd):
-        arg = cmd[index]
-        if arg in ("-C", "-c"):
-            index += 2
-            continue
-        if not arg.startswith("-"):
-            return arg == _TIMEOUT_TARGET[0]
-        index += 1
-    return False
+    if not any(arg == "protocol.ext.allow=never" for arg in cmd):
+        return False
+    try:
+        return Path(cmd[2]).resolve() == repo
+    except OSError:
+        return False
 
 
-# The subcommand the in-process timeout spy is pointed at, set per test.
-_TIMEOUT_TARGET = ["<none>"]
+# The repository of the in-process run currently in flight, or [None].
+_RUN_REPO: list[Path | None] = [None]
+
+
+def _gitwrite_module():
+    """The git helper module the writer itself uses, so a spy on its
+    subprocess.run is the one ``run_git`` resolves through.
+
+    The writer's own load is reused once one has happened (it is registered under
+    the name decide.py binds it to); otherwise the helper is exec'd once under a
+    name of our own. Either way this session has exactly one module object per
+    name, and a spy installed in front of it never touches the product file or the
+    harness's git calls.
+    """
+    module = sys.modules.get("noni_gitwrite") or sys.modules.get(_GITWRITE_TEST_NAME)
+    if module is None:
+        path = DECIDE.parent / "gitwrite.py"
+        spec = importlib.util.spec_from_file_location(_GITWRITE_TEST_NAME, path)
+        if spec is None or spec.loader is None:  # pragma: no cover - path is fixed
+            raise RuntimeError(f"cannot load the git helper from {path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[_GITWRITE_TEST_NAME] = module
+        spec.loader.exec_module(module)
+    return module
+
+
+_GITWRITE_TEST_NAME = "noni_gitwrite_under_test"
+
+
+def _decide_in_process(repo: Path, *args: str, env: dict | None = None,
+                       failures: dict[str, tuple[int, str]] | None = None,
+                       monkeypatch=None) -> subprocess.CompletedProcess[str]:
+    """Run the writer in this process, so a spy sees its git calls, and report
+    what a launched run would have reported.
+
+    The launched route (``_decide`` / ``run_decide``) cannot observe a patch of
+    this process's subprocess.run, so the tests that inject a specific git call's
+    failure drive the writer here instead. The flag set matches ``_decide``'s
+    (``--slug scheduler --date NEW_DATE`` plus BASE, QUESTION and OPTIONS), with
+    ``args`` appended as ``_decide`` appends them. stdout and stderr are captured
+    the way the CLI's prints and ``_fail`` write them, and the exit code is
+    main()'s return value. The identity is pinned in the repo's config first, as
+    ``_decide`` does, because decide.py reads ``by`` from git config.
+
+    The seam variable is cleared for the run unless ``env`` sets it, so an
+    in-process run cannot inherit a forced failure a sibling test left in this
+    process's environment. The test's ``monkeypatch`` fixture is used when given:
+    a launched fixture call inherits this process's environment, and an
+    unpersisted seam would force a failure inside the harness's own git commit.
+
+    ``failures`` is this run's per-verb injection (verb -> ``(returncode,
+    stderr)``), installed through ``_git_spy`` and scoped to ``repo`` for the
+    duration of the run; with none the run is a plain in-process run.
+
+    The helper spy is installed before the writer is loaded, so the module object
+    decide.py binds its constants through is the one carrying the spy.
+    """
+    _pin_identity(repo, "Replay")
+    argv = ["--repo", str(repo), "--slug", "scheduler", "--date", NEW_DATE,
+            *BASE, *QUESTION, *OPTIONS, *args]
+    seam = _decide_module().FAIL_COMMIT_ENV_VAR
+    run_env = {seam: None, **(env or {})}
+    saved = {key: os.environ.get(key) for key in run_env}
+    previous_repo = _RUN_REPO[0]
+    _RUN_REPO[0] = repo.resolve()
+    try:
+        _git_spy(failures or {})
+        for key, value in run_env.items():
+            if monkeypatch is not None:
+                if value is None:
+                    monkeypatch.delenv(key, raising=False)
+                else:
+                    monkeypatch.setenv(key, value)
+            elif value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = _decide_module().main(argv)
+    finally:
+        _RUN_REPO[0] = previous_repo
+        if monkeypatch is None:
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+    return subprocess.CompletedProcess(argv, returncode=code,
+                                       stdout=out.getvalue(), stderr=err.getvalue())
+
+
 def _supersede(repo: Path, target_id: str,
                env: dict | None = None) -> subprocess.CompletedProcess[str]:
     """The standard supersede of ``target_id``, for the hardening tests."""
@@ -1155,7 +1269,7 @@ def test_hardening_rollback_names_the_path_it_could_not_restore(tmp_path):
 
     proc = _supersede(repo, BASELINE_ID, env=env)
     assert proc.returncode == 5, proc.stderr
-    assert "could not be rolled back" in proc.stderr, proc.stderr
+    assert "rollback did not finish" in proc.stderr, proc.stderr
     assert record_rel in proc.stderr, proc.stderr
     assert (repo / record_rel).is_dir(), (
         "the leftover is the planted directory: the rollback's unlink cannot "
@@ -1163,12 +1277,12 @@ def test_hardening_rollback_names_the_path_it_could_not_restore(tmp_path):
     )
 
 
-def test_hardening_a_timeout_on_a_guard_probe_refuses_with_three(tmp_path):
+def test_hardening_a_timeout_on_a_guard_probe_refuses_with_three(tmp_path, monkeypatch):
     """A guard probe (rev-parse, ls-files, status, config, show) that times out
     is a git problem (exit 3) naming the command, never a clean answer.
 
-    The writer's timeout is exercised through its own seam: the stand-in command
-    hangs past GIT_TIMEOUT and answers nothing, so the writer has no returncode
+    The writer's timeout is injected in-process: the spy answers the call for
+    the probe with GIT_TIMEOUT_RC and nothing, so the writer has no returncode
     to read as 'a work tree' and must refuse. rc 124 is not zero, and a probe
     whose timeout were read as rc 0 would have gone on to write the record,
     which the exit code and the absent file together rule out.
@@ -1176,8 +1290,9 @@ def test_hardening_a_timeout_on_a_guard_probe_refuses_with_three(tmp_path):
     module = _decide_module()
     assert module.GIT_TIMEOUT_RC == 124
     repo = _baseline_repo(tmp_path)
-    env = {**_identity_env(), module.FAIL_COMMIT_ENV_VAR: _timed_out_git_cmd("rev-parse")}
-    proc = _decide(repo, *ANSWERED, env=env)
+    hung = f"git rev-parse timed out after {module.GIT_TIMEOUT}s"
+    proc = _decide_in_process(repo, *ANSWERED, env=_identity_env(), monkeypatch=monkeypatch,
+                              failures={"rev-parse": (module.GIT_TIMEOUT_RC, hung)})
     assert proc.returncode == 3, proc.stderr
     assert "timed out" in proc.stderr.lower(), proc.stderr
     assert "rev-parse" in proc.stderr, proc.stderr
@@ -1185,24 +1300,72 @@ def test_hardening_a_timeout_on_a_guard_probe_refuses_with_three(tmp_path):
     assert not _record_path(repo, NEW_ID).exists()
 
 
-def test_hardening_a_timeout_on_commit_goes_through_rollback_with_five(tmp_path):
+def test_hardening_a_timeout_on_commit_goes_through_rollback_with_five(tmp_path, monkeypatch):
     """A commit that times out is a failed commit: the run rolls the path back
     and exits 5 naming the command, rather than reporting success.
 
-    The seam's command form stands a hang in for the commit itself, so the
-    writer sees a call that ran past GIT_TIMEOUT and returned nothing; the
-    record it wrote must be gone and HEAD must be where it was.
+    The spy stands a hang in for the commit itself, so the writer sees a call
+    that ran past GIT_TIMEOUT and returned nothing; the record it wrote must be
+    gone and HEAD must be where it was.
     """
     module = _decide_module()
     repo = _baseline_repo(tmp_path)
-    env = {**_identity_env(), module.FAIL_COMMIT_ENV_VAR: _timed_out_git_cmd("commit")}
-    proc = _decide(repo, *ANSWERED, env=env)
+    hung = f"git commit timed out after {module.GIT_TIMEOUT}s"
+    proc = _decide_in_process(repo, *ANSWERED, env=_identity_env(), monkeypatch=monkeypatch,
+                              failures={"commit": (module.GIT_TIMEOUT_RC, hung)})
     assert proc.returncode == 5, proc.stderr
     assert "commit" in proc.stderr.lower() and "timed out" in proc.stderr.lower(), proc.stderr
     rel = f"noni/decisions/{NEW_ID}.json"
     assert _porcelain(repo, rel) == "", _porcelain(repo)
     assert not _record_path(repo, NEW_ID).exists()
     assert _head_paths(repo) == [f"noni/decisions/{BASELINE_ID}.json"]
+
+
+def test_hardening_a_failing_reset_is_reported_and_not_claimed_rolled_back(tmp_path,
+                                                                            monkeypatch):
+    """A reset that fails is an undo that failed, so the run must say so and
+    name the paths that may still be staged.
+
+    Only GIT_TIMEOUT_RC counted as a bad reset, so a reset that answered 128 (or
+    1, or 129) was read as success: the exit-5 message then promised a tree
+    rolled back to its state before the run while the index kept this run's
+    paths staged. The commit failure comes from the env seam (``1``) and the
+    reset failure is injected in-process with a non-124 code, which is the
+    answer the old code treated as clean. The record file's absence is the
+    control that says the rest of the rollback still ran.
+    """
+    module = _decide_module()
+    repo = _baseline_repo(tmp_path)
+    # 128 is git's own general failure: a real reset failure, never a timeout.
+    env = {**_identity_env(), module.FAIL_COMMIT_ENV_VAR: "1"}
+    proc = _decide_in_process(repo, *ANSWERED, env=env, monkeypatch=monkeypatch,
+                              failures={"reset": (128,
+                                                  "git reset failed: unable to lock index")})
+    rel = f"noni/decisions/{NEW_ID}.json"
+    assert proc.returncode == 5, proc.stderr
+    low = proc.stderr.lower()
+    assert "reset" in low, proc.stderr
+    assert rel in proc.stderr, "the message must name the path that may still be staged"
+    assert "rolled back to their state before this run" not in low, proc.stderr
+    assert not _record_path(repo, NEW_ID).exists()
+
+
+def test_seam_value_that_is_not_one_is_inert_and_the_run_writes(tmp_path):
+    """A NONI_DECIDE_FAIL_COMMIT value that is not ``1`` answers nothing.
+
+    The old ``<rc>:<verb>`` form let a stray environment value fail one named git
+    call, which is not a property of the writer. With each of those values the
+    run is a normal run: it commits its record and prints the one 'wrote' line.
+    """
+    module = _decide_module()
+    for index, inert in enumerate(("42:config", "7:ls-files", "", "0", "yes", "1:commit")):
+        repo = _baseline_repo(tmp_path, subdir=f"repo-inert-{index}")
+        env = {**_identity_env(), module.FAIL_COMMIT_ENV_VAR: inert}
+        proc = _decide(repo, *ANSWERED, env=env)
+        assert proc.returncode == 0, f"seam {inert!r}: {proc.stderr}"
+        assert _record_path(repo, NEW_ID).is_file(), f"seam {inert!r} wrote nothing"
+        assert _read(repo, NEW_ID)["id"] == NEW_ID
+        assert _head_paths(repo) == [f"noni/decisions/{NEW_ID}.json"]
 
 
 def test_hardening_a_repo_local_pre_commit_hook_does_not_run(tmp_path):
@@ -1365,8 +1528,9 @@ def test_hardening_docs_state_the_refusals_the_code_performs(tmp_path):
     # Same for the timeout hint: the table promises a git probe that timed out is
     # a git problem, and the runtime message says so and names the command.
     module = _decide_module()
-    hung = {**_identity_env(), module.FAIL_COMMIT_ENV_VAR: _timed_out_git_cmd("rev-parse")}
-    timed = _decide(repo, *ANSWERED, env=hung)
+    hung = f"git rev-parse timed out after {module.GIT_TIMEOUT}s"
+    timed = _decide_in_process(repo, *ANSWERED, env=_identity_env(),
+                               failures={"rev-parse": (module.GIT_TIMEOUT_RC, hung)})
     assert timed.returncode == 3, timed.stderr
     assert "timed out" in timed.stderr and "rev-parse" in timed.stderr, timed.stderr
 

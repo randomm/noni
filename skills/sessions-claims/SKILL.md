@@ -86,8 +86,10 @@ session files in the working tree, so a row left uncommitted is visible to a
 census run in that same working copy, but invisible to every other clone until
 it is committed and pushed. Committing it is the caller's obligation.
 `--branch` is
-validated under `--no-commit` and otherwise ignored, and the success line names
-it so a dropped `--branch` cannot be mistaken for a targeted write;
+validated under `--no-commit` and otherwise ignored, and when it was given the
+success line says plainly that it had no effect (`--branch <X> was validated
+but nothing was committed or pushed`) so it cannot be mistaken for a targeted
+write;
 `--no-commit` with `--push` is refused as a usage error (exit 4) before anything
 is written.
 

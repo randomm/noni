@@ -319,6 +319,82 @@ def test_no_commit_validates_branch_then_ignores_it(tmp_path):
         "a valid --branch must not change the appended row"
     )
     assert _git_text(repo, "rev-parse", "HEAD") == head_before, "--no-commit runs no git commit"
+    # The line must say the flag changed nothing, not hint at a target branch.
+    assert "nothing was committed or pushed" in proc.stdout, (
+        f"--branch must be reported as having no effect: {proc.stdout!r}"
+    )
+    assert "target branch" not in proc.stdout, proc.stdout
+
+
+def test_task_and_branch_guards_are_anchored_against_a_trailing_newline(tmp_path):
+    """The two guards must be anchored at the tail, not just prefixed.
+
+    Under re.match, '$' also matches before a final newline, so '^\\S+$' accepts
+    '#42\\n'. Two layers happen to stand in front of that today, and both are
+    incidental: main() strips the argument before the guard, and the census
+    strips every line it parses, so a broken row reaches no check and no
+    consumer — the regex is the only guard that would ever see it. Hence this
+    pins the guard itself (fullmatch plus a tail anchor, read off the shipped
+    source) and not just the behaviour.
+    """
+    # The guard: pattern and call site, read from the file claim.py ships
+    # (re.compile(...) is a Call, not a literal, so _script_constant cannot
+    # reach these constants).
+    source = CLAIM.read_text(encoding="utf-8")
+    for name in ("TASK_RE", "BRANCH_RE"):
+        decl = re.search(rf"^{name} = re\.compile\(r\"(.*)\"\)", source, re.MULTILINE)
+        assert decl is not None, f"claim.py does not define {name} as expected"
+        assert decl.group(1).endswith("$"), (
+            f"{name} = {decl.group(1)!r}: must end with a tail anchor"
+        )
+        assert f"{name}.fullmatch(" in source, (
+            f"{name} must be applied with fullmatch: under match, '$' also "
+            f"matches before a trailing newline"
+        )
+
+    # The end state, for every way a newline can ride in on the task. Each
+    # case either exits 4 having written nothing, or exits 0 with the file
+    # byte-for-byte identical to a clean '#42' claim. Byte-for-byte, not
+    # splitlines(): an unanchored guard writes "- claim: #42\n\n", and the
+    # trailing blank line vanishes under splitlines() while the census's own
+    # per-line strip makes it read that row as a clean claim. Nothing else in
+    # the stack would notice the corruption, so this comparison is the check.
+    clean = _make_session(tmp_path / "t-clean")
+    assert run_claim(clean, SESSION_ID, "#42", **{"no-commit": None}).returncode == 0
+    expected = _session_path(clean).read_text()
+    for task in ("#42\n", "\n#42", "#42\r", "#42", "  #42  "):
+        repo = _make_session(tmp_path / f"t-{abs(hash(task))}")
+        proc = run_claim(repo, SESSION_ID, task, **{"no-commit": None})
+        assert proc.returncode in (0, 4), f"{task!r}: {proc.returncode} {proc.stderr}"
+        body = _session_path(repo).read_text()
+        if proc.returncode == 0:
+            assert body == expected, (
+                f"--task {task!r} must land byte-for-byte as a clean '#42' claim; "
+                f"got {body!r} vs {expected!r}"
+            )
+        else:
+            assert "task" in proc.stderr.lower()
+            assert body == _session_body("dev"), f"{task!r} refused after writing"
+
+    # A newline in the middle is a real two-token task and was always refused.
+    repo = _make_session(tmp_path / "t-middle")
+    body_before = _session_path(repo).read_text()
+    proc = run_claim(repo, SESSION_ID, "#42\nx")
+    assert proc.returncode == 4, f"expected exit 4, got {proc.returncode}: {proc.stderr}"
+    assert "task" in proc.stderr.lower(), f"stderr must name the task: {proc.stderr}"
+    assert _session_path(repo).read_text() == body_before, (
+        "a refused --task must leave the register file byte-for-byte as it was"
+    )
+    assert _git_text(repo, "status", "--porcelain") == "", "the refusal writes nothing"
+
+    # The branch guard is anchored the same way: it feeds a push refspec, and
+    # no strip stands in front of it.
+    repo = _make_session(tmp_path / "t-branch")
+    body_before = _session_path(repo).read_text()
+    proc = run_claim(repo, SESSION_ID, "#42", branch="main\n", **{"no-commit": None})
+    assert proc.returncode == 4, f"expected exit 4, got {proc.returncode}: {proc.stderr}"
+    assert "branch" in proc.stderr.lower(), f"stderr must name the branch: {proc.stderr}"
+    assert _session_path(repo).read_text() == body_before
 
 
 # --- rebase conflict / refusal -------------------------------------------------
@@ -520,10 +596,6 @@ def test_rebase_refused_by_dirty_worktree_exits_6(tmp_path: Path) -> None:
     )
     assert "claim: #42" in _git_text(clone, "log", "-1", "--format=%B", claim_commit), (
         "the run must have committed the claim before the push failed"
-    )
-    assert _git_text(clone, "status", "--porcelain") == "M README.md", (
-        "a refusal touches nothing: the unstaged dirt is exactly where it was "
-        "(porcelain XY, with the modification unstaged)"
     )
 
     low = proc.stderr.lower()

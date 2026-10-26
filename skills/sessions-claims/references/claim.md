@@ -43,8 +43,10 @@ uncommitted), and `--task` must be a single token (exit 4).
 
 `--branch` is validated under `--no-commit` and otherwise ignored: an unsafe
 value exits 4, a valid one changes nothing, because there is no push to
-target. The success line names the target branch when `--branch` was given, so
-a caller cannot mistake a dropped `--branch` for a targeted write. `--no-commit`
+target. When `--branch` was given the success line says so in as many words —
+`(--branch <X> was validated but nothing was committed or pushed)` — so the
+line cannot be mistaken for proof of a targeted write. With no `--branch` the
+line is the plain one above. `--no-commit`
 with `--push` is refused before anything is written
 (exit 4): there would be no commit to push.
 
@@ -91,10 +93,16 @@ not.
 | `6` | **state unreadable**: the probe could not run or a state file could not be read | runs no abort and asserts nothing about the clone: the message says the state could not be read and names running `git status` and `git rebase --abort` by hand |
 | `3` | **killed by the timeout**: the rebase was stopped by the timeout rather than answered by git | reported as a timeout, not a conflict; if a rebase was found stopped it is aborted first (and the message says so), if none was stopped nothing is aborted |
 
-A stray state directory that is not a stopped rebase (no readable `head-name`
-and `onto`) is the refusal case, not the conflict case: `git rebase --abort`
-resets the worktree and the index, so aborting a rebase this run did not start
-would throw away the caller's unrelated work and report it as a claim conflict.
+A state directory this run did not stop in front of is not automatically the
+refusal case. A directory with no readable `head-name` and `onto` is (an empty
+or unreadable leftover): no abort runs. But a rebase left by an abandoned run
+(`git rebase --quit`, a run that was killed, or one a person ran by hand)
+still carries both files non-empty, so the probe reads it as a stopped rebase
+and claim.py aborts it — and `git rebase --abort` resets the worktree and the
+index, so any unstaged change to a tracked file is reset. Before a `--push`
+run, clear any leftover rebase yourself (`git rebase --abort`, or
+`git rebase --quit` to drop the state without touching files) and commit or
+stash local work.
 
 The exit-5 post-condition is that the clone is left where it was before the
 rebase: `.git/rebase-merge` and `.git/rebase-apply` are both absent,

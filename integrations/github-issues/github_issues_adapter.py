@@ -108,24 +108,29 @@ ALLOWLIST_FILENAME = ".noni-adapter-allowlist"
 _TICKED_RE = re.compile(r"^\s*[-*]\s*\[[xX]\]\s*(.+)$", re.MULTILINE)
 
 
-def default_allowlist_file(repo_root: Path | None) -> str | None:
+def default_allowlist_file(repo_root: str | Path | None) -> str | None:
     """Path of the default (untracked) allow-list file: ``repo_root``'s
     ``.noni-adapter-allowlist``.
 
     ``repo_root`` is the root of the repository noni is *attached to* — the one
     whose ``noni/`` state and tracker issues the adapter is reading — not this
     adapter's install directory. The caller resolves it; the adapter never
-    guesses a working directory. ``.gitignore`` names the file, so it can never
-    be committed — the same pattern as the scrub's deny-list.
+    guesses a working directory. It is accepted as a ``str`` or a ``Path``, so
+    a caller that holds the root as a string (a path read from config, say) is
+    not required to wrap it first. ``.gitignore`` names the file, so it can
+    never be committed — the same pattern as the scrub's deny-list.
 
     Returns ``None`` when no usable root is given (``None``, or a path that is
     not a directory): with no candidate file the loader consults only
     ``ALLOWLIST_ENV_VAR`` and otherwise reports the allow-list as ``absent``, so
     an unusable root fails closed rather than authorising from a wider default.
     """
-    if repo_root is None or not repo_root.is_dir():
+    if repo_root is None:
         return None
-    return str(repo_root / ALLOWLIST_FILENAME)
+    root = Path(repo_root)
+    if not root.is_dir():
+        return None
+    return str(root / ALLOWLIST_FILENAME)
 
 
 def _ticked_options(body: str) -> list[str]:

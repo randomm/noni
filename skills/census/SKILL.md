@@ -145,7 +145,13 @@ The same rule extends to the classes that report their own absence:
   `ledger-record` failure (10). Nor does the class gate the integrity checks: a
   record that history shows was added and is now gone stays a `ledger-edited`
   failure (12), so an emptied ledger reports the deletion that emptied it — the
-  git-backed integrity checks run whatever the empty probe found.
+  git-backed integrity checks run whatever the empty probe found. When the
+  deletion check cannot put its question to git at all (no git tree, or a
+  history read that could not answer) and the ledger reads as `empty`, the run
+  adds a `ledger-edited` `cannot-tell` row saying the check could not run: the
+  deletion check is the only signal that committed records were deleted, so a
+  silent one would let a gutted ledger read as a plain no-ledger warning. It is
+  a warn by default (exit 0) and a failure at 12 under `--strict`.
 - **`hygiene` (50)** always reports, a clean tree included. When the
   deny-list class is not active (its file is `absent`, `corrupt`, or present
   with no entries) the run emits one `hygiene` row naming that state; a scan

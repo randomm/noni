@@ -212,6 +212,24 @@ def test_default_allowlist_file_resolves_to_the_attached_repo_root(tmp_path, mon
     assert loaded.accounts == {"op-1"}
 
 
+def test_default_allowlist_file_accepts_a_string_root(tmp_path, monkeypatch):
+    """A caller that holds the attached root as a ``str`` (a path read from
+    config, say) gets the same answer as a ``Path``: the helper converts it
+    rather than raising AttributeError on a string's missing ``is_dir``."""
+    monkeypatch.delenv(adapter.ALLOWLIST_ENV_VAR, raising=False)
+    attached = tmp_path / "attached-str"
+    attached.mkdir()
+
+    resolved = adapter.default_allowlist_file(str(attached))
+
+    assert resolved is not None
+    assert Path(resolved) == attached / ".noni-adapter-allowlist"
+    (attached / ".noni-adapter-allowlist").write_text("op-1\n", encoding="utf-8")
+    loaded = adapter_protocol.load_allowlist(adapter.ALLOWLIST_ENV_VAR, resolved)
+    assert loaded.status == "active"
+    assert loaded.accounts == {"op-1"}
+
+
 def test_default_allowlist_file_is_none_without_a_repo_root(tmp_path, monkeypatch):
     """With no usable repository root the default is no candidate at all: the
     loader then consults only the env var, and with neither source the

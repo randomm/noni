@@ -566,12 +566,25 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
     and the supersede-chain check, in that order. ledger-empty only ADDS rows:
     the states where the record pass has nothing to say. The git-backed
     integrity checks run whatever the empty probe found — see the
-    deleted-sole-record regression tests in tests/test_census_unified.py."""
+    deleted-sole-record regression tests in tests/test_census_unified.py.
+
+    The one row the composition adds itself: when the deletion check could not
+    put its question to git and the ledger reads as "empty", the run says so
+    (probe honesty, issue #33). "Empty" is the only state that can mean
+    "committed records were deleted", and this check is the only signal for
+    that, so a silent one here would let a gutted ledger read as a plain
+    no-ledger warning — the row is warn by default, fail under --strict."""
     probe = _ledger_probe(ledger)
     _check_ledger_empty(probe, ledger, root, findings, strict)
     valid, unparseable = _check_ledger_records(ledger, root, findings, probe.state)
     _check_ledger_edited(valid, unparseable, git, root, findings, strict)
-    _check_ledger_deleted(ledger, git, root, findings, strict)
+    could_not_answer = _check_ledger_deleted(ledger, git, root, findings, strict)
+    if could_not_answer and probe.state == "empty":
+        _append_cannot_tell(
+            "ledger-edited",
+            "the git-backed deletion check could not run on this empty ledger "
+            "(no readable git history), so whether committed records were deleted "
+            "from it cannot be answered", strict, findings)
     _check_ledger_chain(valid, ledger, root, findings)
 
 
@@ -815,7 +828,7 @@ def _append_cannot_tell(check: str, reason: str, strict: bool, findings: list[di
 
 
 def _check_ledger_deleted(ledger: Path, git: Git | None, root: Path, findings: list[dict],
-                          strict: bool) -> None:
+                          strict: bool) -> bool:
     """The deleted-record check (append-only ledger rule).
 
     Decision records are append-only: a record is superseded by a new record,
@@ -826,18 +839,27 @@ def _check_ledger_deleted(ledger: Path, git: Git | None, root: Path, findings: l
     not a deletion — it is not part of this branch's history. It is a
     sub-reason ("deleted")
     of the ledger-edited class (exit 12): both are violations of the same
-    "never change committed record state" rule. A path that was never
-    committed is not a deletion — there is nothing in history to have been
-    removed. Session files are intentionally NOT checked here: ending a
-    session via its status field is the protocol, and deleting a session file
-    is not a violation."""
-    if git is None or not git.available or git.top is None:
-        # Nothing to compare against: no commits, or no git tree at all. A
-        # ledger that never existed cannot have had a record deleted from it,
-        # and ledger-empty owns the "no ledger to arbitrate" states — so a
-        # cannot-tell row here would only make "I ran no git" look like a
-        # protocol finding.
-        return
+    "never change committed record state" rule.
+
+    Returns True when this run could not put the question to git at all — no
+    git tree named, or the history read could not answer — and False when it
+    did (including the paths it reported). ``_check_ledger`` turns a True into
+    a cannot-tell row when the ledger reads as "empty", the one state where a
+    deletion is what the tree looks like, so the check cannot fall silent on a
+    state it never answered. A path that was never committed is not a deletion —
+    there is nothing in history to have been removed, and the ledger's own
+    record pass is what reports a record that exists on disk: this check only
+    reports paths history shows and the working tree does not hold. Session
+    files are intentionally NOT checked here: ending a session via its status
+    field is the protocol, and deleting a session file is not a violation."""
+    if git is None:
+        # No git tree was named at all (not a repository, or rev-parse could
+        # not answer): there is nothing to ask.
+        return True
+    if not git.available or git.top is None:
+        # A tree is named but git could not answer: the history read failed or
+        # timed out (available False), or the object carries no tree.
+        return True
     top = git.top
     try:
         prefix = ledger.resolve().relative_to(top.resolve()).as_posix()
@@ -845,16 +867,18 @@ def _check_ledger_deleted(ledger: Path, git: Git | None, root: Path, findings: l
         # The append-only question cannot be answered for an --ledger override
         # that points outside the audited tree. Unlike the sessions layer, the
         # ledger group's cannot-tell is the only row this run produces about
-        # the override, so it is reported — at the cannot-tell severity, not
-        # the class's fail severity, because the same condition is a perfectly
-        # normal state for a legitimate out-of-tree override.
+        # the override, so it is reported here — at the cannot-tell severity,
+        # not the class's fail severity, because the same condition is a
+        # perfectly normal state for a legitimate out-of-tree override.
         _append_cannot_tell(
             "ledger-edited",
             f"the ledger path ({_rel_to_root(root, ledger)}) is outside the audited git tree, "
             "so whether a committed record was deleted cannot be answered", strict, findings)
-        return
+        return False
     if ledger.is_dir() is False:
-        return  # no ledger directory to have lost a record: ledger-empty owns it
+        # No ledger directory to have lost a record: ledger-empty owns that
+        # state, and the question was answered (there is nothing to delete).
+        return False
     for rel in sorted(git.added_paths_under(prefix)):
         if (top / rel).is_file():
             continue
@@ -867,6 +891,7 @@ def _check_ledger_deleted(ledger: Path, git: Git | None, root: Path, findings: l
                  "(git checkout <commit> -- <path>) and record any change as a new superseding "
                  "record instead of deleting or renaming", root)
         )
+    return False
 
 
 def _check_ledger_chain(

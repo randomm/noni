@@ -97,6 +97,17 @@ def _census_main(argv: list[str]) -> int:
     return importlib.import_module("census").main(argv)
 
 
+class _UnreadableGit:
+    """A stand-in for a Git object whose history read failed.
+
+    The real object leaves ``available`` False when ``rev-parse``/``log`` or
+    ``git log`` cannot answer, so the test drives the shape git actually
+    presents rather than one no real run reaches."""
+
+    top = None
+    available = False
+
+
 def _hygiene_target():
     """The public_safety module the census's hygiene class will actually run.
 
@@ -155,11 +166,10 @@ def _clear_denylist() -> None:
 
 class TestLedgerEmpty:
     """The ledger-empty class (warn 42): one row per run in the states where
-    the census otherwise says nothing about the ledger, each state carrying its
-    own message word, exit 0 without --strict and 42 with it. The class only
-    ADDS rows — it never softens the ledger-record failure of a decisions/
-    directory that exists and holds no record. Symlinks are reported, never
-    followed."""
+    no decision record can be read, each state carrying its own message word,
+    exit 0 without --strict and 42 with it. The class only ADDS rows — it never
+    softens a malformed-record ledger-record failure. Symlinks are reported,
+    never followed."""
 
     def _assert_one_row(self, repo: Path, state_word: str) -> None:
         rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
@@ -188,32 +198,120 @@ class TestLedgerEmpty:
     def test_noni_present_without_decisions_reports_empty(self, tmp_path):
         """noni/ committed with no decisions/ directory: the row says 'empty'.
 
-        This is the ONLY tree the 'empty' state word may name: a decisions/
-        directory that exists and holds no *.json record is not here — it is
-        the ledger-record failure (TestClean.test_empty_ledger_dir_is_not_clean).
-        The register side is clean, so the ledger-empty row is the run's only
-        finding.
+        'empty' names a tree with no record to arbitrate, so this tree and the
+        recordless decisions/ directory of
+        TestClean.test_recordless_ledger_dir_is_a_ledger_empty_warn carry the
+        same state word. The register side is clean, so the ledger-empty row is
+        the run's only finding.
         """
         repo = _init_repo(tmp_path / "repo")
         _commit_file(repo, "noni/README.md", "noni lives here\n")
         self._assert_one_row(repo, "empty")
 
-    def test_existing_empty_ledger_adds_no_ledger_empty_row(self, tmp_path):
-        """PM decision (issue #23): ledger-empty never weakens an existing
-        failure. A decisions/ directory that exists and holds no *.json record
-        keeps its ledger-record fail (exit 10) and emits no ledger-empty row."""
+    def test_recordless_ledger_dir_reports_ledger_empty(self, tmp_path):
+        """Operator decision (issue #33): a decisions/ directory that exists and
+        holds no *.json record is the ledger-empty 'empty' warn, not a
+        ledger-record failure — a freshly attached project must census clean.
+
+        The row is the run's only finding, carries the root-relative ledger
+        path (never an absolute path) and the wording of the 'empty' state, and
+        no ledger-record row is produced."""
         repo = _init_repo(tmp_path / "repo")
         _commit_file(repo, "noni/decisions/.gitkeep", "")
         rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
-        assert rc == 10, f"the empty ledger keeps its exit 10, got {rc}\nstderr: {err}"
+        assert rc == 0, f"a recordless ledger is a warn: expected 0, got {rc}\nstderr: {err}"
         rows = [r for r in _ndjson_rows(out) if r.get("kind") == "finding"]
-        assert [r["check"] for r in rows] == ["ledger-record"], (
-            f"expected only the ledger-record row: {rows}"
+        assert [r["check"] for r in rows] == ["ledger-empty"], (
+            f"expected only the ledger-empty row: {rows}"
         )
-        assert rows[0]["severity"] == "fail" and rows[0]["code"] == 10
-        assert census_module().LEDGER_RECORD_EMPTY_MESSAGE in rows[0]["message"], (
-            f"the row must carry the original message: {rows[0]['message']}"
+        row = rows[0]
+        assert row["code"] == 42 and row["severity"] == "warn", f"row: {row}"
+        assert "(empty)" in row["message"], f"expected the state word: {row['message']}"
+        assert "no *.json record" in row["message"], (
+            f"the row must name the missing record: {row['message']}"
         )
+        assert row["subject"] == row["artifact"] == "noni/decisions", (
+            f"the row names the ledger path relative to the repo root: {row}"
+        )
+        assert not row["subject"].startswith("/"), f"absolute path in row: {row}"
+
+        rc_strict, _out, err = _run_census(repo, "--only", "ledger-empty", "--strict",
+                                            skip_hygiene=True)
+        assert rc_strict == 42, f"expected 42 under --strict, got {rc_strict}\nstderr: {err}"
+
+    def test_recordless_ledger_without_git_answers_says_the_deletion_check_could_not_run(
+        self, tmp_path, monkeypatch
+    ):
+        """Probe honesty (issue #33 review): a recordless decisions/ directory
+        whose git history the census could not read must not read as a plain
+        "empty" warn.
+
+        With this PR the deletion check is the ONLY signal that committed
+        records were deleted, so when it cannot run the run must say so: the
+        ledger-empty row plus a ledger-edited cannot-tell row, warn by default
+        (exit 0) and promoted to exit 12 under --strict, like every other
+        cannot-tell row."""
+        import census
+
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/.gitkeep", "")
+        monkeypatch.setattr(census, "Git", lambda top: _UnreadableGit())
+        rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
+        assert rc == 0, (
+            f"the cannot-tell row is a warn: expected exit 0, got {rc}\nstderr: {err}\n{out}"
+        )
+        rows = [r for r in _ndjson_rows(out) if r.get("kind") == "finding"]
+        assert [r["check"] for r in rows] == ["ledger-edited", "ledger-empty"], (
+            f"expected the ledger-empty row plus the cannot-tell row: {rows}"
+        )
+        empty = [r for r in rows if r["check"] == "ledger-empty"][0]
+        assert empty["severity"] == "warn" and empty["code"] == 42
+        assert "(empty)" in empty["message"], f"state word kept: {empty['message']}"
+        row = [r for r in rows if r["check"] == "ledger-edited"][0]
+        assert row["subject"] == "cannot-tell", f"row: {row}"
+        assert row["code"] == 12, f"stays in the ledger-edited class: {row}"
+        assert row["severity"] == "warn", f"cannot-tell is a warn: {row}"
+        assert "could not run" in row["message"], (
+            f"the row must say the deletion check could not run: {row['message']}"
+        )
+
+        rc_strict, out_strict, err = _run_census(repo, "--strict", skip_hygiene=True)
+        assert rc_strict == 12, (
+            f"--strict escalates the cannot-tell to ledger-edited's code, got {rc_strict}"
+            f"\nstderr: {err}\n{out_strict}"
+        )
+
+    def test_recordless_ledger_in_a_plain_directory_reports_the_cannot_tell_too(
+        self, tmp_path
+    ):
+        """The same finding in a genuinely non-git directory: there is no
+        history anywhere, so the deletion question is just as unanswered and
+        the row must still appear (the other no-git trees of this class carry
+        states the probe itself answers, not 'empty' with a directory present)."""
+        plain = tmp_path / "plain"
+        (plain / "noni" / "decisions").mkdir(parents=True)
+        rc, out, err = _run_census(plain, json_out=True, skip_hygiene=True)
+        assert rc == 0, f"expected exit 0, got {rc}\nstderr: {err}\n{out}"
+        checks = [r["check"] for r in _ndjson_rows(out) if r.get("kind") == "finding"]
+        assert sorted(checks) == ["ledger-edited", "ledger-empty"], f"rows: {checks}"
+
+    def test_recordless_ledger_in_a_git_repo_with_no_record_history_is_just_the_warn(
+        self, tmp_path
+    ):
+        """The counterpart: where git did answer, a recordless decisions/
+        directory that history never held a record for is exactly the
+        ledger-empty warn — no cannot-tell row, since the deletion question was
+        answered (nothing was ever added, so nothing was deleted)."""
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "README.md", "# repo\n")
+        _commit_file(repo, "noni/decisions/.gitkeep", "")
+        rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
+        assert rc == 0, f"expected exit 0, got {rc}\nstderr: {err}\n{out}"
+        rows = [r for r in _ndjson_rows(out) if r.get("kind") == "finding"]
+        assert [r["check"] for r in rows] == ["ledger-empty"], (
+            f"expected only the ledger-empty row: {rows}"
+        )
+        assert "(empty)" in rows[0]["message"], f"state word: {rows[0]['message']}"
 
     def test_noni_not_a_directory_reports_not_a_directory(self, tmp_path):
         """noni/ committed as a plain file: the ledger path is 'not a directory'."""
@@ -788,12 +886,14 @@ class TestClean:
             f"expected exit 42 for ledger-empty under --strict, got {rc_strict}\nstderr: {err}"
         )
 
-    def test_empty_ledger_dir_is_not_clean(self, tmp_path):
-        """An empty ledger directory (exists but no records) is a violation (exit 10)."""
+    def test_recordless_ledger_dir_is_a_ledger_empty_warn(self, tmp_path):
+        """A decisions/ directory that exists but holds no record is a warn, not
+        a violation: the census exits 0 (issue #33 — a freshly attached project
+        with no decisions yet must not sit permanently red)."""
         repo = _init_repo(tmp_path / "repo")
         _commit_file(repo, "noni/decisions/.gitkeep", "")
         rc, out, err = _run_census(repo)
-        assert rc == 10, f"expected exit 10 for empty ledger, got {rc}\nstderr: {err}\nstdout: {out}"
+        assert rc == 0, f"expected exit 0 for a recordless ledger, got {rc}\nstderr: {err}\nstdout: {out}"
 
     def test_census_is_read_only(self, tmp_path):
         """Running the census leaves git status --porcelain empty."""
@@ -915,42 +1015,45 @@ class TestExitCodes:
 
         The ledger-empty probe must not gate the git-backed integrity checks.
         Emptying the ledger by deleting its last record is exactly the case
-        where the deletion needs reporting: the lowest code still wins, so the
-        ledger-record failure of the now-recordless directory exits 10 and the
-        deletion row is still there."""
+        where the deletion needs reporting: the now-recordless directory is a
+        ledger-empty warn (issue #33), so the deletion is the run's only fail
+        class and the ledger-edited row is still there."""
         repo = _init_repo(tmp_path / "repo")
         _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
                       json.dumps(_valid_record(), indent=2))
         (repo / "noni/decisions/2026-10-01-alpha.json").unlink()
         rc, out, err = _run_census(repo)
-        assert rc == 10, (
+        assert rc == 12, (
             "a deleted sole record still fails the census: the recordless "
-            f"decisions/ directory is the ledger-record failure that wins the "
-            f"lowest-code rule: expected exit 10, got {rc}\nstderr: {err}\n{out}"
+            "decisions/ directory is a ledger-empty warn, so the ledger-edited "
+            f"deletion is the only fail class: expected exit 12, got {rc}\nstderr: {err}\n{out}"
         )
         assert "deleted" in out, f"expected 'deleted' reason:\n{out}"
         assert "ledger-edited" in out, f"expected a ledger-edited row:\n{out}"
 
     def test_exit_12_deleted_sole_record_reports_both_rows(self, tmp_path):
         """Same tree: both classes report. The recordless ledger is the
-        ledger-record fail row AND the deletion is the ledger-edited fail
-        row — neither silences the other, and no ledger-empty row appears
-        because the decisions/ directory is there."""
+        ledger-empty warn row AND the deletion is the ledger-edited fail
+        row — neither silences the other, and the warn row does not hide the
+        deletion."""
         repo = _init_repo(tmp_path / "repo")
         _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
                       json.dumps(_valid_record(), indent=2))
         (repo / "noni/decisions/2026-10-01-alpha.json").unlink()
         rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
-        assert rc == 10, (
-            "both fail classes report, so the lowest code (10) wins: "
-            f"got {rc}\nstderr: {err}"
+        assert rc == 12, (
+            f"the only fail class is the deletion (42 is a warn here): got {rc}\nstderr: {err}"
         )
         checks = [r["check"] for r in _ndjson_rows(out) if r.get("kind") == "finding"]
-        assert "ledger-record" in checks, f"missing ledger-record row: {checks}"
-        assert "ledger-edited" in checks, f"missing ledger-edited row: {checks}"
-        assert "ledger-empty" not in checks, (
-            f"an existing decisions/ directory is not a ledger-empty state: {checks}"
+        assert "ledger-empty" in checks, (
+            f"a recordless decisions/ directory is the ledger-empty warn: {checks}"
         )
+        assert "ledger-edited" in checks, f"missing ledger-edited row: {checks}"
+        assert "ledger-record" not in checks, (
+            f"no record is malformed, so the record pass adds no row: {checks}"
+        )
+        empty = [r for r in _ndjson_rows(out) if r.get("check") == "ledger-empty"][0]
+        assert empty["severity"] == "warn" and empty["code"] == 42
         edited = [r for r in _ndjson_rows(out) if r.get("check") == "ledger-edited"]
         assert edited[0]["severity"] == "fail"
         assert edited[0]["code"] == 12
@@ -965,9 +1068,9 @@ class TestExitCodes:
         (repo / "noni/decisions/2026-10-01-alpha.json").unlink()
         _commit_dir_state(repo, "noni/decisions")
         rc, out, err = _run_census(repo)
-        # 10 (the recordless directory) is the lowest failing code here; the
-        # deleted row is present alongside it.
-        assert rc == 10, f"expected exit 10 (lowest code), got {rc}\nstderr: {err}\n{out}"
+        # The recordless directory is a warn, so the deletion (12) is the code
+        # this run reports; the ledger-empty row is present alongside it.
+        assert rc == 12, f"expected exit 12 (the deletion), got {rc}\nstderr: {err}\n{out}"
         assert "deleted" in out, f"expected 'deleted' reason:\n{out}"
 
     def test_unreachable_blob_is_warn_not_fail_without_strict(self, tmp_path, monkeypatch):
@@ -1413,9 +1516,9 @@ class TestLedgerStateVocabulary:
             "the pinned state words and the message table have drifted apart"
         )
         # Exactly one state is silent, and it is the one the class must not
-        # report: a real decisions/ directory — whatever it holds. A directory
-        # with no record is the ledger-record failure, not a ledger-empty state
-        # (TestLedgerEmpty.test_existing_empty_ledger_adds_no_ledger_empty_row).
+        # report: a decisions/ directory that holds at least one record. A
+        # recordless tree — no decisions/ at all, or one with no *.json — is
+        # the 'empty' state (TestLedgerEmpty.test_recordless_ledger_dir_reports_ledger_empty).
         silent = {s for s, detail in census.LEDGER_EMPTY_MESSAGES.items() if detail is None}
         assert silent == {"ok"}, f"expected only 'ok' to be silent, got {silent}"
         for state in census.LEDGER_EMPTY_STATES:
@@ -1431,7 +1534,8 @@ class TestLedgerStateVocabulary:
 
         cases = {
             "absent": lambda repo: _commit_file(repo, "README.md", "# repo\n"),
-            # noni/ present, decisions/ missing — the one tree 'empty' names.
+            # noni/ present, decisions/ missing — one of the two trees 'empty'
+            # names; the other is the recordless decisions/ directory below.
             "empty": lambda repo: _commit_file(repo, "noni/README.md", "noni here\n"),
             "not a directory": lambda repo: _commit_file(repo, "noni", "a file, not a dir\n"),
         }
@@ -1543,9 +1647,10 @@ class TestHygieneRowContract:
                             lambda: (_ for _ in ()).throw(ValueError("deny-list store unreachable")))
         rc, out, err = _run_census(repo, json_out=True)
         rows = [r for r in _ndjson_rows(out) if r.get("check") == "hygiene"]
-        # The only fail row this tree can produce is the ledger's; the exit
-        # below is that 10, never a 50 from a scan that did not run.
-        assert rc == 10, f"a scan that cannot run must not lift the exit, got {rc}\n{err}"
+        # A scan that cannot run must not lift the exit: this tree's only
+        # finding is the recordless ledger's warn, so the run stays at 0 and
+        # the failure of the scan is contained in the hygiene class alone.
+        assert rc == 0, f"a scan that cannot run must not lift the exit, got {rc}\n{err}"
         assert any(r["subject"] == "hygiene scan" and "did not run" in r["message"] for r in rows), (
             f"expected the not-run row: {rows}"
         )
@@ -1553,10 +1658,10 @@ class TestHygieneRowContract:
         # un-caught exception would have taken the whole census down instead,
         # and the summary's own counts are the proof that they were collected.
         # The ledger here is a decisions/ directory with no record: its row is
-        # the ledger-record fail, not a ledger-empty warn.
+        # the ledger-empty warn.
         summary = [r for r in _ndjson_rows(out) if r.get("kind") == "summary"][0]
         assert summary["counts"].get("hygiene") == 1, f"summary: {summary}"
-        assert summary["counts"].get("ledger-record"), (
+        assert summary["counts"].get("ledger-empty"), (
             f"the run collected no ledger row, so the failure was not contained "
             f"inside the hygiene class: {out}"
         )

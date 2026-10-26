@@ -54,9 +54,10 @@ SCHEMA_VERSION = "noni.census/1"
 
 # The ledger checks run as one group: any of the three triggers all three, so
 # --only/--skip must be applied at group granularity. ledger-empty (42) is
-# reported by the same group and adds rows only in the states where this group
-# would otherwise say nothing; it never weakens an existing failure — the
-# existing-but-recordless ledger stays the ledger-record exit 10.
+# reported by the same group and adds rows only in the states where no record
+# can be read (including a recordless decisions/ directory, which is a warn,
+# not the ledger-record failure — operator decision on issue #33); it never
+# weakens a malformed-record failure.
 LEDGER_CHECKS = frozenset({"ledger-record", "ledger-edited", "ledger-chain"})
 # The session register group, likewise: the checks share one read of the
 # register, so the group runs together and the row filter decides what is kept.
@@ -194,12 +195,11 @@ SESSION_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[0-9a-f]{6}\.md$")
 
 # The five states the ledger probe answers: the four the ledger-empty class
 # reports, each in exactly one row's message, plus the silent "ok". "empty"
-# means noni/ is present without a decisions/ directory: a decisions/ directory
-# that exists and holds no *.json record is NOT one of these states — it keeps
-# its original ledger-record failure (see _check_ledger_records). The words and
-# their wording are pinned by LEDGER_EMPTY_MESSAGES below and the tests iterate
-# that table, so renaming a state without updating its wording (and
-# tests/test_census_unified.py) is a contract change.
+# names a tree with no decision record to arbitrate: noni/ present without a
+# decisions/ directory, or a decisions/ directory that holds no *.json record.
+# The words and their wording are pinned by LEDGER_EMPTY_MESSAGES below and the
+# tests iterate that table, so renaming a state without updating its wording
+# (and tests/test_census_unified.py) is a contract change.
 LEDGER_EMPTY_STATES = ("absent", "empty", "not a directory", "symlink", "ok")
 
 # state word -> the detail the row carries, or None for the state that reports
@@ -209,19 +209,12 @@ LEDGER_EMPTY_STATES = ("absent", "empty", "not a directory", "symlink", "ok")
 LEDGER_EMPTY_MESSAGES: dict[str, str | None] = {
     "absent": "no decision record is censusable: the ledger directory is absent "
     "(no noni/decisions under this repo — no steering ledger to arbitrate)",
-    "empty": "noni/ is present but has no decisions/ directory, so no *.json "
-    "record can be censusable under it",
+    "empty": "the ledger holds no *.json record: either noni/ has no decisions/ "
+    "directory, or that directory exists and holds none",
     "not a directory": "noni/ is not a directory, so no ledger can live under it",
     "symlink": "noni/ or the ledger path is a symlink; the census does not read through links",
     "ok": None,
 }
-
-# The ledger-record message of a decisions/ directory that exists on disk but
-# holds no *.json record. The ledger-empty class must not soften this state
-# into a warn (PM decision, issue #23), so the wording lives here, next to the
-# probe that decides the state, and the test pins it.
-LEDGER_RECORD_EMPTY_MESSAGE = "no *.json records under the ledger directory"
-
 
 class Git:
     """A read-only view over the git history of a repository.
@@ -573,12 +566,25 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
     and the supersede-chain check, in that order. ledger-empty only ADDS rows:
     the states where the record pass has nothing to say. The git-backed
     integrity checks run whatever the empty probe found — see the
-    deleted-sole-record regression tests in tests/test_census_unified.py."""
+    deleted-sole-record regression tests in tests/test_census_unified.py.
+
+    The one row the composition adds itself: when the deletion check could not
+    put its question to git and the ledger reads as "empty", the run says so
+    (probe honesty, issue #33). "Empty" is the only state that can mean
+    "committed records were deleted", and this check is the only signal for
+    that, so a silent one here would let a gutted ledger read as a plain
+    no-ledger warning — the row is warn by default, fail under --strict."""
     probe = _ledger_probe(ledger)
     _check_ledger_empty(probe, ledger, root, findings, strict)
     valid, unparseable = _check_ledger_records(ledger, root, findings, probe.state)
     _check_ledger_edited(valid, unparseable, git, root, findings, strict)
-    _check_ledger_deleted(ledger, git, root, findings, strict)
+    could_not_answer = _check_ledger_deleted(ledger, git, root, findings, strict)
+    if could_not_answer and probe.state == "empty":
+        _append_cannot_tell(
+            "ledger-edited",
+            "the git-backed deletion check could not run on this empty ledger "
+            "(no readable git history), so whether committed records were deleted "
+            "from it cannot be answered", strict, findings)
     _check_ledger_chain(valid, ledger, root, findings)
 
 
@@ -593,10 +599,11 @@ def _ledger_probe(ledger: Path) -> LedgerProbe:
     — ``noni/`` exists but is not a directory, so no ledger can live under it
     (or the ledger entry itself is not a directory); "absent" — there is no
     noni/ at all (which is what "no noni/" means for the ledger checks);
-    "empty" — noni/ is present but there is no ledger entry under it (no
-    ``noni/decisions`` directory); "ok" — a real ledger directory, whatever it
-    holds (a directory that holds no record is still a ledger: its emptiness is
-    the ledger-record failure, not a ledger-empty state).
+    "empty" — noni/ is present and there is no record to arbitrate: no
+    ``noni/decisions`` directory at all, or one that holds no *.json record;
+    "ok" — a real ledger directory that holds at least one *.json record (the
+    recordless directory is "empty" above, not "ok": operator decision on
+    issue #33, which reverses the exit-10 ruling of issue #23).
 
     The child is classified before the parent: ``noni`` committed as a plain
     file must read as "not a directory", not "absent".
@@ -622,17 +629,21 @@ def _ledger_probe(ledger: Path) -> LedgerProbe:
     if parent_kind == "absent":
         return LedgerProbe("absent")
     if kind == "absent":
-        # noni/ is there, decisions/ is not: this is the one state the census
-        # used to report nothing about, so it is ledger-empty's (the row names
-        # "empty"). A decisions/ directory that exists and holds no record is
-        # NOT here — it stays "ok" and the record pass reports its failure.
+        # noni/ is there and decisions/ is not: no record can be censusable
+        # under it, the same finding as a recordless decisions/ directory.
         return LedgerProbe("empty")
     try:
-        list(ledger.glob("*.json"))
+        names = [p.name for p in ledger.glob("*.json")]
     except OSError as e:
         # A directory that exists and stats fine but cannot be listed (a mount
         # or permission fault on readdir) is not a ledger the census can read.
         return LedgerProbe("not a directory", str(e))
+    if not names:
+        # A decisions/ directory that exists and holds no *.json record: the
+        # census exits 0 here so a freshly attached project is not permanently
+        # red. The git-backed deletion check still runs and reports how the
+        # ledger got empty (operator decision, issue #33).
+        return LedgerProbe("empty")
     return LedgerProbe("ok")
 
 
@@ -651,11 +662,11 @@ def _check_ledger_empty(probe: LedgerProbe, ledger: Path, root: Path, findings: 
     apart from "the ledger went missing").
 
     The class only ADDS rows: it never weakens a failure the group already
-    reports. The states it owns are exactly the ones where the record pass has
-    nothing to say (no ``noni/``, ``noni/`` not a directory, a symlink, or
-    ``noni/`` present with no ``decisions/``). An existing ``decisions/``
-    directory with no record keeps its original ledger-record exit 10 and
-    produces no row here.
+    reports. The states it owns are exactly the ones where no record can be
+    read: no ``noni/``, ``noni/`` not a directory, a symlink, or no record to
+    census (``noni/`` with no ``decisions/``, or a ``decisions/`` directory
+    holding no ``*.json`` record). Malformed records remain the ledger-record
+    failure: only the absence of records is a warn.
 
     This class is warn-severity: a run that has only this finding exits 0,
     and --strict promotes it to exit 42. Symlinks are reported, never read
@@ -681,11 +692,9 @@ def _check_ledger_records(ledger: Path, root: Path, findings: list[dict],
 
     ``state`` is the ledger path's state word as answered by `_ledger_probe`
     (via `_check_ledger`): this pass only reads records, so any state other
-    than "ok" is ledger-empty's finding and adds no row here. "ok" is a real
-    ledger directory, records or none: a directory that exists and holds no
-    ``*.json`` record is this class's own failure, so the empty result of the
-    pass below reports it — ledger-empty adds a row only in the states where
-    this pass has nothing to say.
+    than "ok" is ledger-empty's finding and adds no row here. "ok" means the
+    directory holds at least one ``*.json`` name, so every row this pass adds
+    is a malformed-record failure.
     """
     def add(check: str, subject: str, artifact: str, message: str) -> None:
         findings.append(_row(check, False, subject, artifact, message, root))
@@ -735,11 +744,6 @@ def _check_ledger_records(ledger: Path, root: Path, findings: list[dict],
             add("ledger-record", obj.get("id", name) if isinstance(obj, dict) else name, str(path), "; ".join(problems))
             continue
         valid.append((obj["id"], path, obj))
-
-    if not names:
-        # The decisions/ directory exists and holds no *.json record: the
-        # original ledger-record failure, exit 10 — not a ledger-empty warn.
-        add("ledger-record", str(ledger), str(ledger), LEDGER_RECORD_EMPTY_MESSAGE)
 
     return valid, unparseable
 
@@ -824,7 +828,7 @@ def _append_cannot_tell(check: str, reason: str, strict: bool, findings: list[di
 
 
 def _check_ledger_deleted(ledger: Path, git: Git | None, root: Path, findings: list[dict],
-                          strict: bool) -> None:
+                          strict: bool) -> bool:
     """The deleted-record check (append-only ledger rule).
 
     Decision records are append-only: a record is superseded by a new record,
@@ -835,18 +839,27 @@ def _check_ledger_deleted(ledger: Path, git: Git | None, root: Path, findings: l
     not a deletion — it is not part of this branch's history. It is a
     sub-reason ("deleted")
     of the ledger-edited class (exit 12): both are violations of the same
-    "never change committed record state" rule. A path that was never
-    committed is not a deletion — it is a missing record, covered by
-    ledger-record. Session files are intentionally NOT checked here: ending a
-    session via its status field is the protocol, and deleting a session file
-    is not a violation."""
-    if git is None or not git.available or git.top is None:
-        # Nothing to compare against: no commits, or no git tree at all. A
-        # ledger that never existed cannot have had a record deleted from it,
-        # and ledger-empty owns the "no ledger to arbitrate" states — so a
-        # cannot-tell row here would only make "I ran no git" look like a
-        # protocol finding.
-        return
+    "never change committed record state" rule.
+
+    Returns True when this run could not put the question to git at all — no
+    git tree named, or the history read could not answer — and False when it
+    did (including the paths it reported). ``_check_ledger`` turns a True into
+    a cannot-tell row when the ledger reads as "empty", the one state where a
+    deletion is what the tree looks like, so the check cannot fall silent on a
+    state it never answered. A path that was never committed is not a deletion —
+    there is nothing in history to have been removed, and the ledger's own
+    record pass is what reports a record that exists on disk: this check only
+    reports paths history shows and the working tree does not hold. Session
+    files are intentionally NOT checked here: ending a session via its status
+    field is the protocol, and deleting a session file is not a violation."""
+    if git is None:
+        # No git tree was named at all (not a repository, or rev-parse could
+        # not answer): there is nothing to ask.
+        return True
+    if not git.available or git.top is None:
+        # A tree is named but git could not answer: the history read failed or
+        # timed out (available False), or the object carries no tree.
+        return True
     top = git.top
     try:
         prefix = ledger.resolve().relative_to(top.resolve()).as_posix()
@@ -854,16 +867,18 @@ def _check_ledger_deleted(ledger: Path, git: Git | None, root: Path, findings: l
         # The append-only question cannot be answered for an --ledger override
         # that points outside the audited tree. Unlike the sessions layer, the
         # ledger group's cannot-tell is the only row this run produces about
-        # the override, so it is reported — at the cannot-tell severity, not
-        # the class's fail severity, because the same condition is a perfectly
-        # normal state for a legitimate out-of-tree override.
+        # the override, so it is reported here — at the cannot-tell severity,
+        # not the class's fail severity, because the same condition is a
+        # perfectly normal state for a legitimate out-of-tree override.
         _append_cannot_tell(
             "ledger-edited",
             f"the ledger path ({_rel_to_root(root, ledger)}) is outside the audited git tree, "
             "so whether a committed record was deleted cannot be answered", strict, findings)
-        return
+        return False
     if ledger.is_dir() is False:
-        return  # a missing ledger dir is ledger-record's business, not deletion
+        # No ledger directory to have lost a record: ledger-empty owns that
+        # state, and the question was answered (there is nothing to delete).
+        return False
     for rel in sorted(git.added_paths_under(prefix)):
         if (top / rel).is_file():
             continue
@@ -876,6 +891,7 @@ def _check_ledger_deleted(ledger: Path, git: Git | None, root: Path, findings: l
                  "(git checkout <commit> -- <path>) and record any change as a new superseding "
                  "record instead of deleting or renaming", root)
         )
+    return False
 
 
 def _check_ledger_chain(

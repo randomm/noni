@@ -33,8 +33,8 @@ python3 skills/census/scripts/census.py [options]
 
 | check id | code | meaning |
 |---|---|---|
-| `ledger-record` | 10 | a decision record is malformed (schema violation, bad filename, unreadable/unparseable record), or the `noni/decisions/` directory exists and holds no `*.json` record |
-| `ledger-empty` | 42 | there is no steering ledger to arbitrate — exactly one row per run, whose message carries the state word `absent` (no `noni/`), `not a directory` (`noni/` is not a directory), `symlink` (refused, never followed), or `empty` (`noni/` present, no `decisions/` directory). It only ADDS rows: the `decisions/` directory that exists and holds no record stays the `ledger-record` exit 10 (warn by default; fail under `--strict`) |
+| `ledger-record` | 10 | a decision record is malformed (schema violation, bad filename, unreadable/unparseable record) |
+| `ledger-empty` | 42 | there is no steering ledger to arbitrate — exactly one row per run, whose message carries the state word `absent` (no `noni/`), `not a directory` (`noni/` is not a directory), `symlink` (refused, never followed), or `empty` (no record to census: `noni/` present with no `decisions/` directory, or a `decisions/` directory that holds no `*.json` record). It only ADDS rows and never weakens a malformed-record `ledger-record` failure (warn by default; fail under `--strict`) |
 | `ledger-edited` | 12 | a record was edited after commit (supersede, never edit); a committed record deleted or renamed from the working tree is also reported here, with the "deleted" reason |
 | `ledger-chain` | 20 | the supersede chain is broken (dangling, duplicate, orphan, cycle, zero-live, multi-live) |
 | `session-double` | 30 | two active claims on the same task from different identities (the arbiter) |
@@ -48,13 +48,15 @@ python3 skills/census/scripts/census.py [options]
 
 The `warn` classes are reported either way and never move the exit code on
 their own: a run whose only findings are warnings exits 0, and `--strict`
-promotes them to failures at their own codes. `ledger-empty` adds rows only in
-the states where this census used to report nothing — no `noni/`, `noni/` not a
-directory, a symlink, or `noni/` present without a `decisions/` directory. It
-never weakens an existing failure: a `noni/decisions/` directory that exists and
-holds no `*.json` record keeps its `ledger-record` exit 10 with the original
-message, and no `ledger-empty` row. The legacy `census.sh` shim likewise keeps
-exit 10 for an empty ledger — it documents a different entry point.
+promotes them to failures at their own codes. `ledger-empty` adds rows in the
+states where no decision record can be read — no `noni/`, `noni/` not a
+directory, a symlink, `noni/` present without a `decisions/` directory, or a
+`decisions/` directory holding no `*.json` record. It never weakens a
+malformed-record failure: a record that is bad JSON or violates the schema
+keeps its `ledger-record` exit 10. A freshly attached project whose
+`noni/decisions/` has no records yet therefore censuses clean at exit 0
+(operator decision on issue #33; the legacy `census.sh` shim is a different
+entry point and keeps its own exit 10 for an empty ledger directory).
 
 When several classes fire at once the lowest code wins; stderr names every
 class that fired.
@@ -132,19 +134,24 @@ failure (exit 41) and the run is never reported clean.
 
 The same rule extends to the classes that report their own absence:
 
-- **`ledger-empty` (42)** reports the ledger that is not there. "No `noni/`
-  at all" is exactly one row carrying the state word `absent` — not the
-  silent clean it used to be, because a census that says nothing here cannot
-  tell "nothing to census" apart from "the ledger went missing". The class is
-  additive: it reports only the states where the record pass has nothing to
-  say, and it never softens a failure the group already reports. A
-  `noni/decisions/` directory that exists and holds no `*.json` record is
-  therefore still a `ledger-record` failure (10), not a `ledger-empty` warn —
-  `empty` names `noni/` present with no `decisions/` directory and nothing
-  else. Nor does the class gate the integrity checks: a record that history
-  shows was added and is now gone stays a `ledger-edited` failure (12), so an
-  emptied ledger reports the deletion that emptied it — the git-backed
-  integrity checks run whatever the empty probe found.
+- **`ledger-empty` (42)** reports the ledger that has no record to arbitrate.
+  "No `noni/` at all" is exactly one row carrying the state word `absent` — not
+  the silent clean it used to be, because a census that says nothing here cannot
+  tell "nothing to census" apart from "the ledger went missing". `empty` names
+  the other no-record trees: `noni/` present with no `decisions/` directory, and
+  a `decisions/` directory that holds no `*.json` record — a freshly attached
+  project is a warning, not a failure, and the row names the ledger path
+  relative to the repo root. A record that exists and is malformed is still a
+  `ledger-record` failure (10). Nor does the class gate the integrity checks: a
+  record that history shows was added and is now gone stays a `ledger-edited`
+  failure (12), so an emptied ledger reports the deletion that emptied it — the
+  git-backed integrity checks run whatever the empty probe found. When the
+  deletion check cannot put its question to git at all (no git tree, or a
+  history read that could not answer) and the ledger reads as `empty`, the run
+  adds a `ledger-edited` `cannot-tell` row saying the check could not run: the
+  deletion check is the only signal that committed records were deleted, so a
+  silent one would let a gutted ledger read as a plain no-ledger warning. It is
+  a warn by default (exit 0) and a failure at 12 under `--strict`.
 - **`hygiene` (50)** always reports, a clean tree included. When the
   deny-list class is not active (its file is `absent`, `corrupt`, or present
   with no entries) the run emits one `hygiene` row naming that state; a scan

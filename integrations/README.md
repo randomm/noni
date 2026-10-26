@@ -56,9 +56,15 @@ Adapters take their allow-list of trusted accounts from **local
 configuration only — never hard-coded**. For the GitHub-issues adapter the
 sources, in precedence order, are:
 
-1. the untracked file `.noni-adapter-allowlist` in the repository root
+1. the untracked file `.noni-adapter-allowlist` in the root of the repository
+   noni is attached to — the one whose `noni/` state and issues are being read
    (one account per line; blank lines and `#` comments ignored);
 2. the untracked file named by the env var `NONI_ADAPTER_ALLOWLIST`.
+
+The adapter itself resolves no paths: the caller passes the attached
+repository's root to `default_allowlist_file(repo_root)`, which returns no
+candidate when that root is unavailable, leaving the env var as the only
+source.
 
 When neither exists the adapter refuses to authorize anything (an empty
 allow-list authorizes no account) and reports that clearly. The allow-list

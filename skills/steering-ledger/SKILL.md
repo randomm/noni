@@ -99,6 +99,10 @@ When several invariant classes fail at once, the lowest code wins
 were skipped. The census does not check operator confirmation: it cannot see
 whether the operator confirmed an answer, so it never claims to (below).
 
+The table above is `census.sh`. The unified census reports a recordless
+`noni/decisions/` directory as the `ledger-empty` warn 42 (exit 0, 42 under
+`--strict`) rather than this shim's exit 10: see `skills/census/SKILL.md`.
+
 The exit-code contract and how to read the report are in `references/census.md`.
 
 The census also dispatches the sessions check (E2): `census.sh --sessions

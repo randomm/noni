@@ -32,11 +32,15 @@ one you are in.
 **Legacy shim.** This table is the contract of `census.sh`, the per-epic entry
 point. The unified census (`skills/census/scripts/census.py`, documented in
 `skills/census/SKILL.md`) added `ledger-empty` (42, warn; fail under `--strict`)
-for the states where it used to report nothing, carrying one of the state words
-`absent`, `not a directory`, `symlink`, or `empty` (`noni/` present with no
-`decisions/` directory). That class only adds rows: a `decisions/` directory
-that exists and holds no `*.json` record keeps the `ledger-record` exit 10 in
-both censuses, so the code-10 row of this table is unchanged in meaning. The
+for the states where there is no decision record to arbitrate, carrying one of
+the state words `absent`, `not a directory`, `symlink`, or `empty` (`noni/`
+present with no `decisions/` directory, or a `decisions/` directory that holds
+no `*.json` record — operator decision on issue #33, so a freshly attached
+project censuses clean at exit 0). That class only adds rows: a record that is
+bad JSON or violates the schema stays the `ledger-record` exit 10 in both
+censuses, so the code-10 row of this table still covers the malformed and
+unreadable records. The shim keeps its own exit 10 for an empty ledger
+directory (`10:empty-ledger`), where the unified census reports the warn. The
 unified census also owns three classes this shim does not have: `session-same-identity` (43),
 `session-deleted` (44) and `hygiene` (50). Where the two disagree, the unified
 census is the arbiter and this table describes the shim's own exit codes only.

@@ -62,8 +62,8 @@ from pathlib import Path
 # The git helper and the atomic writer live beside this file, loaded by path from
 # this file's own directory: a sys.path entry would put a directory ahead of the
 # standard library, where any gitwrite.py earlier on that path could be trusted as
-# this writer's mechanics. The name is ours, so no caller shadows it; the
-# constants below are re-exported because the writer's contract names them.
+# this writer's mechanics. The name is ours, so no caller shadows it; the constants
+# below are re-exported because the writer's contract names them.
 _GITWRITE_NAME = "noni_gitwrite"
 _spec = importlib.util.spec_from_file_location(
     _GITWRITE_NAME, Path(__file__).resolve().parent / "gitwrite.py")
@@ -78,7 +78,7 @@ GIT_TIMEOUT_RC = gitwrite.GIT_TIMEOUT_RC
 FAIL_COMMIT_ENV_VAR = gitwrite.FAIL_COMMIT_ENV_VAR
 _git = gitwrite.run_git
 _write_atomic = gitwrite.write_atomic
-_record_object = gitwrite.record_object
+_load_committed_target = gitwrite.load_committed_target
 _rollback = gitwrite.rollback
 
 # Every return path names one of these; the 'Exit codes:' block above carries
@@ -129,26 +129,35 @@ def _undone(what: str, unredone: str, detail: str, rels: list[str]) -> tuple[str
             "paths by hand (git show HEAD:<path> writes the committed bytes back)")
 
 
-def _refuse_git_timeout(repo: Path, *hung: tuple[str, subprocess.CompletedProcess[str]]) -> int | None:
-    """The git mechanic's timeout verdict, printed here so every refusal of this
-    writer carries this file's name and exits 3."""
-    message = gitwrite.refuse_git_timeout(Path(__file__).name, *hung)
+def _timeout(repo: Path, *probes: tuple[str, subprocess.CompletedProcess[str]]) -> int | None:
+    """The exit-3 refusal for git probes meant to answer (gitwrite words the hung
+    call, this writer prints it); None when they all answered.
+    """
+    message = gitwrite.refuse_git_timeout(Path(__file__).name, *probes)
     if message is None:
         return None
-    command = next(name for name, result in hung if result.returncode == GIT_TIMEOUT_RC)
+    cmd = next(name for name, result in probes if result.returncode == GIT_TIMEOUT_RC)
     return _fail(EXIT_GIT, message,
-                 f"re-run decide once git answers again (git -C {repo} {command})")
+                 f"re-run decide once git answers again (git -C {repo} {cmd})")
 
 
-def _written(exc: OSError, what: str) -> str:
-    """One 'could not be written' headline naming the OSError and its reason."""
-    return f"{what} ({exc.__class__.__name__}: {exc.strerror or exc})"
+# The helper refuses its own target probes through this file, so a hung git call is
+# worded once; its stand-in probe answered nothing, so no probe verdict downstream can
+# be read as a clean 'tracked' or 'clean'.
+gitwrite.probe_timeout_refusal = lambda repo, command: _timeout(
+    repo, (command, subprocess.CompletedProcess(["git", command], GIT_TIMEOUT_RC)))
+gitwrite.EXIT_PROBE_TIMEOUT = EXIT_GIT
 
 
 def _render(record: dict) -> str:
     """The record's bytes: FIELD_ORDER, two-space indent, one trailing newline."""
     ordered = {key: record[key] for key in FIELD_ORDER if key in record}
     return json.dumps(ordered, indent=2, ensure_ascii=False) + "\n"
+
+
+def _written(exc: OSError, what: str) -> str:
+    """One 'could not be written' headline naming the OSError and its reason."""
+    return f"{what} ({exc.__class__.__name__}: {exc.strerror or exc})"
 
 
 def _parse_pairs(values: list[str], flag: str) -> tuple[list[tuple[str, str]], str | None]:
@@ -186,67 +195,42 @@ def _build_questions(questions: list[tuple[str, str]], options: list[tuple[str, 
     return built
 
 
-def _refuse_target_state(path: Path, rel: str, target_id: str,
-                         tracked: subprocess.CompletedProcess[str],
-                         status: subprocess.CompletedProcess[str]) -> tuple[str, str] | None:
-    """Why this path is not a target this run may rewrite, per the probe answers:
-    absent, untracked, or edited. A directory answers None: the clobber is the
-    rollback's to report, so it is named as a leftover, not called malformed."""
-    if tracked.returncode != 0:
-        return (f"supersede target {target_id} is not tracked by git",
-                "commit the record first: decide.py supersedes only committed records")
-    if not path.is_file():
-        if path.is_dir():
-            return None
-        return (f"supersede target {target_id} has no record file at {path}",
-                "name the id of a committed record (see the census report's id column)")
-    if status.stdout.strip():
-        return (f"supersede target {target_id} is not byte-identical to its last commit",
-                f"commit or discard the change to {rel} and re-run decide")
-    return None
+def _refuse_target_shape(path: Path, target_id: str) -> tuple[str, str] | None:
+    """The target refusal this writer words itself, asked only of a path that is not a
+    file: a directory is the rollback's leftover, not a bad record.
+    """
+    if path.is_dir():
+        return None
+    return (f"supersede target {target_id} has no record file at {path}",
+            "name the id of a committed record (see the census report's id column)")
+
+
+def _refuse_live_record(record: dict, target_id: str) -> tuple[str, str] | None:
+    """The live-record half of the schema: ``superseded`` is terminal, an ``id`` off
+    its file is two records in one file.
+    """
+    if record.get("status") == STATUS_SUPERSEDED:
+        return (f"supersede target {target_id} is already {STATUS_SUPERSEDED}; "
+                "superseded is terminal", "supersede the record that replaced it "
+                "(the census report shows it)")
+    return None if record.get("id") == target_id else (
+        f"supersede target {target_id} names itself {record.get('id')!r} in its own "
+        "record", "pass the id the record carries, not the filename")
 
 
 def _load_target(repo: Path, ledger: Path,
                  target_id: str) -> tuple[Path, dict, bytes] | tuple[str, str] | int:
-    """Read a supersede target: ``(path, record, committed_bytes)``, a
-    ``(headline, hint)`` pair, or the exit 3 a probe already printed; nothing is
-    written on refusal. Past the committed-and-clean checks it must read as a record,
-    not be superseded, carry the ``id`` asked for, and match this writer's output."""
+    """A target as ``(path, record, committed_bytes)``, a ``(headline, hint)`` refusal
+    pair, or the exit 3 a probe printed; nothing is written on refusal. gitwrite
+    probes; the refusals above and ``_render`` are the target's schema.
+    """
     path = ledger / f"{target_id}.json"
-    rel = path.relative_to(repo).as_posix()
-    tracked = _git(repo, "ls-files", "--error-unmatch", "--", rel)
-    status = _git(repo, "status", "--porcelain", "--", rel)
-    shown = _git(repo, "show", f"HEAD:{rel}")
-    timed_out = _refuse_git_timeout(repo, ("ls-files", tracked), ("status", status),
-                                    ("show", shown))
-    if timed_out is not None:
-        return timed_out
-    state = _refuse_target_state(path, rel, target_id, tracked, status)
-    if state is not None:
-        return state
-    repair = "repair the record or name a different target"
-    committed = b"" if shown.returncode != 0 else shown.stdout.encode("utf-8")
-    # A directory at the target's path reads from HEAD, so the flip still derives
-    # from committed bytes and changes the status and nothing else.
-    record = _record_object(path.read_bytes() if path.is_file() else committed)
-    if record is None:
-        return (f"supersede target {target_id} is not a readable JSON object", repair)
-    if record.get("status") == STATUS_SUPERSEDED:
-        return (f"supersede target {target_id} is already {STATUS_SUPERSEDED}; "
-                "superseded is terminal",
-                "supersede the record that replaced it (the census report shows it)")
-    if record.get("id") != target_id:
-        return (f"supersede target {target_id} names itself {record.get('id')!r} in its own record",
-                "pass the id the record carries, not the filename")
-    # The canonical-form rule: a target with a field, order or indent this writer
-    # does not use cannot be rewritten without moving more than the status value.
-    if shown.returncode != 0 or _render(record).encode("utf-8") != committed:
-        return (f"supersede target {target_id} is not in the canonical form this writer "
-                "writes (its fields, their order or its indent), so rewriting it would "
-                "move bytes beyond its status",
-                "have the target written by decide.py, or repair and commit it in "
-                "that form, then re-run decide")
-    return path, record, committed
+    found = _load_committed_target(Path(__file__).name, repo, path, target_id,
+                                   _refuse_target_shape, _render)
+    if not isinstance(found[0], bytes):
+        return found  # a refusal pair, or exit 3 for a probe that hung
+    committed, record = found
+    return _refuse_live_record(record, target_id) or (path, record, committed)
 
 
 def _validate_usage(args: argparse.Namespace) -> tuple[str, list[dict], list[str]] | int:
@@ -334,7 +318,6 @@ def _validate_usage(args: argparse.Namespace) -> tuple[str, list[dict], list[str
         if not ID_RE.fullmatch(args.supersedes):
             return _fail(EXIT_USAGE, f"--supersedes {args.supersedes!r} is not a record id",
                          "a record id is YYYY-MM-DD-<slug>, e.g. 2026-10-01-steer-order")
-
     return date_part, built, unanswered
 
 
@@ -367,7 +350,6 @@ def main(argv: list[str] | None = None) -> int:
 
     repo = Path(args.repo)
     ledger = repo / "noni" / "decisions"
-
     checked = _validate_usage(args)
     if isinstance(checked, int):
         return checked
@@ -388,11 +370,10 @@ def main(argv: list[str] | None = None) -> int:
                 return _fail(EXIT_USAGE, f"{flag} {value!r} is not a positive integer",
                              f"name a real tracker id, e.g. {flag} 42")
         source = {"issue_number": args.source_issue, "comment_id": args.source_comment}
-
     # --- git and identity: nothing is written until here and below ---------
     work_tree = _git(repo, "rev-parse", "--is-inside-work-tree")
     named = _git(repo, "config", "user.name")
-    timed_out = _refuse_git_timeout(repo, ("rev-parse", work_tree), ("config", named))
+    timed_out = _timeout(repo, ("rev-parse", work_tree), ("config", named))
     if timed_out is not None:
         return timed_out
     if work_tree.returncode != 0:
@@ -411,8 +392,8 @@ def main(argv: list[str] | None = None) -> int:
     record_path = ledger / f"{record_id}.json"
     record_rel = record_path.relative_to(repo).as_posix()
     if record_path.is_file():
-        # Tracked or not, this name is taken: overwriting it takes somebody
-        # else's record, or their draft, out of the ledger.
+        # Tracked or not, this name is taken: overwriting it takes somebody else's
+        # record, or their draft, out of the ledger.
         return _fail(
             EXIT_COLLISION,
             f"{record_path} already exists; record ids are unique across the ledger",
@@ -431,8 +412,8 @@ def main(argv: list[str] | None = None) -> int:
                          found[1] or "name a committed, live record of the chain being corrected")
         target_path, target_record, target_committed = found
         target_rel = target_path.relative_to(repo).as_posix()
-        # Chain position, filename stem and census replay order all read this
-        # date, so another day cuts the record out of the chain it corrects.
+        # Chain position, filename stem and census replay order all read this date,
+        # so another day cuts the record out of the chain it corrects.
         if target_record.get("date", "")[:10] != date_part:
             want = str(target_record.get("date", ""))[:10]
             return _fail(
@@ -474,8 +455,8 @@ def main(argv: list[str] | None = None) -> int:
             _write_atomic(target[0], _render(flipped))
             rels.append(target_rel)
     except OSError as exc:
-        # os.replace never half-writes, so a path failed to land: roll both
-        # paths the way a failed commit does, and name the one that stayed.
+        # os.replace never half-writes, so a path failed to land: roll both paths as
+        # a failed commit does, and name the one that stayed.
         unredone = _rollback(repo, rels, target_rel, record_rel, committed_bytes)
         detail = _written(exc, "the record could not be written")
         if unredone is not None:
@@ -484,9 +465,9 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(EXIT_COMMIT_FAILED, detail,
                      f"check that {ledger} is writable, then re-run decide")
     if args.no_commit:
-        # The census reads the working tree, so these files now read as
-        # uncommitted (an edited target is census.sh exit 12): the line names
-        # both paths and says committing them is the caller's job.
+        # The census reads the working tree, so these files read as uncommitted (an
+        # edited target is census.sh exit 12): name both paths, and say that
+        # committing them is the caller's job.
         print(f"{Path(__file__).name}: wrote {', '.join(rels)}; left uncommitted: commit "
               "these paths before running the census")
         return EXIT_OK

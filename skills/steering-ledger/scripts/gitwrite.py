@@ -1,9 +1,11 @@
 """The git helper and the atomic writer ``decide.py`` builds a record with.
 
 Mechanics, not the writer's contract: a git call that cannot hang, sign itself,
-run a repository's own hooks or reach an external transport, and a write that
-lands whole or not at all. The one test seam lives with the git helper, where
-the call it stands in for is made; an unset seam variable is inert.
+run a repository's own hooks or reach an external transport; a write that lands
+whole or not at all; and the probes that read a supersede target's committed
+bytes, which answer only for themselves and take their refusal wording from the
+writer. The one test seam lives with the git helper, where the call it stands in
+for is made; an unset seam variable is inert.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ import os
 import stat
 import subprocess
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 GIT_TIMEOUT = 60
@@ -128,6 +131,103 @@ def refuse_git_timeout(label: str,
             continue
         return f"git {command} timed out after {GIT_TIMEOUT}s, so {label} cannot " \
                "tell whether the tree is one it may write"
+
+
+# The exit a hung target probe yields, for a writer that installed no printer of its
+# own (``probe_timeout_refusal``). ``decide.py`` assigns its own EXIT_GIT here when it
+# loads this module, so the code the helper hands back is the writer's, never a copy
+# that can drift.
+EXIT_PROBE_TIMEOUT: int = 3
+
+
+def target_probes(label: str, repo: Path, path: Path) -> dict:
+    """What the three git probes say about ``path``: ``rel`` for the messages,
+    the ``tracked`` and ``dirty`` answers, the ``committed`` bytes (None when there
+    are none) and ``from_head`` (whether git itself handed them over). When a probe
+    never answered, ``probe_timeout_refusal`` is asked for the verdict and its exit
+    code is handed back as ``timed_out``, and no other key is set: reading a
+    timeout as 'tracked', 'clean' or 'committed' would let a slow machine decide
+    what enters the ledger. ``label`` names the writer, so the refusal reads in its
+    voice.
+    """
+    rel = path.relative_to(repo).as_posix()
+    tracked = run_git(repo, "ls-files", "--error-unmatch", "--", rel)
+    status = run_git(repo, "status", "--porcelain", "--", rel)
+    shown = run_git(repo, "show", f"HEAD:{rel}")
+    probes = (("ls-files", tracked), ("status", status), ("show", shown))
+    if refuse_git_timeout(label, *probes) is not None:
+        hung = next(name for name, result in probes if result.returncode == GIT_TIMEOUT_RC)
+        # The helper writes no stderr of its own: whose file refused is the writer's
+        # to say, so it prints the refusal and hands back its exit code.
+        timed_out = probe_timeout_refusal(repo, hung)
+        return {"timed_out": EXIT_PROBE_TIMEOUT if timed_out is None else timed_out}
+    committed = tracked.returncode == 0 and not status.stdout.strip()
+    return {
+        "timed_out": None,
+        "rel": rel,
+        "tracked": tracked.returncode == 0,
+        "dirty": bool(status.stdout.strip()),
+        "committed": (b"" if shown.returncode != 0
+                      else shown.stdout.encode("utf-8")) if committed else None,
+        "from_head": committed and shown.returncode == 0,
+    }
+
+
+def probe_timeout_refusal(repo: Path, command: str) -> int | None:
+    """The refusal for a probe that never answered. The default answers None, and
+    the caller reads that as 'trust no probe answer' and still exits
+    ``EXIT_PROBE_TIMEOUT``; ``decide.py`` installs a printer of its own when it
+    loads this module, so the wording names the writer that is refusing.
+    """
+    del repo, command
+    return None
+
+
+def load_committed_target(
+    label: str, repo: Path, path: Path, target_id: str,
+    shape_refusal: Callable[[Path, str], tuple[str, str] | None],
+    canonical: Callable[[dict], str],
+) -> tuple[bytes, dict] | tuple[str, str] | int:
+    """The ``(committed_bytes, record)`` of a supersede target this run may
+    rewrite, the ``(headline, hint)`` pair naming why it may not, or the exit code
+    of the timeout refusal ``target_probes`` already had printed.
+
+    The git mechanics live here: the three probes and the verdicts read from them
+    (untracked, locally modified, no committed bytes, no file at the path), the
+    committed bytes read from HEAD, and the target's own bytes read from disk (a
+    directory reads from HEAD, so the flip still derives from committed bytes and
+    changes only the status). ``canonical`` is the writer's renderer, so the
+    canonical-form rule compares against what the writer would itself have written.
+    """
+    state = target_probes(label, repo, path)
+    if state["timed_out"] is not None:
+        return state["timed_out"]
+    if not state["tracked"]:
+        return (f"supersede target {target_id} is not tracked by git",
+                "commit the record first: decide.py supersedes only committed records")
+    if state["dirty"]:
+        return (f"supersede target {target_id} is not byte-identical to its last commit",
+                f"commit or discard the change to {state['rel']} and re-run decide")
+    refusal = shape_refusal(path, target_id) if not path.is_file() else None
+    if refusal is not None:
+        return refusal
+    committed = state["committed"]
+    if committed is None:  # the probes answered no committed bytes: read nothing
+        return (f"supersede target {target_id} has no committed bytes to rewrite",
+                "commit the record first: decide.py supersedes only committed records")
+    record = record_object(path.read_bytes() if path.is_file() else committed)
+    if record is None:
+        return (f"supersede target {target_id} is not a readable JSON object",
+                "repair the record or name a different target")
+    # A target whose committed bytes git would not hand over is refused too: with
+    # nothing to compare against, the writer cannot know it would move only status.
+    if not state["from_head"] or canonical(record).encode("utf-8") != committed:
+        return (f"supersede target {target_id} is not in the canonical form this writer "
+                "writes (its fields, their order or its indent), so rewriting it would "
+                "move bytes beyond its status",
+                "have the target written by decide.py, or repair and commit it in "
+                "that form, then re-run decide")
+    return committed, record
 
 
 def rollback(repo: Path, rels: list[str], target_rel: str | None, record_rel: str,

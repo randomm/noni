@@ -726,7 +726,15 @@ def _forced_commit_failure():
 
 
 def _decide_module():
-    """decide.py loaded as a module, for the constants its tests name."""
+    """decide.py loaded as a module, for the constants its tests name.
+
+    A fresh exec on every call, the harness's own shape: a cached module would
+    outlive the file it came from and hand a later test a copy of an earlier
+    one's globals (the symptom is an injected failure that reads as a clean run,
+    because the run went to a module nobody patched). A caller that patches a
+    name on the module and then runs it therefore holds this object across both
+    steps; see ``_decide_in_process``.
+    """
     from _harness import _decide_module as load
 
     return load()
@@ -1140,8 +1148,81 @@ def _gitwrite_module():
 _GITWRITE_TEST_NAME = "noni_gitwrite_under_test"
 
 
+def _target_write_fails_after_staging(decide, repo: Path, rel: str):
+    """A ``_write_atomic`` stand-in that stages ``repo/rel`` and then refuses it.
+
+    The write-failure branch is a state no flag produces, so it is reached by
+    replacing the writer's one atomic-write call for one run. The stand-in
+    lands the bytes, stages them with the same ``git add`` the writer itself
+    uses a few statements later, and only then raises the ``OSError`` a full or
+    read-only filesystem raises: that is the failure this branch exists for,
+    where the target's path holds this run's bytes in the index and on disk but
+    the writer never got to say so. Landing nothing would leave the target
+    untouched and hide the very thing under test.
+
+    The rollback restores the target through the same call, so every other path
+    (and this path's second call) goes to the real write.
+    """
+    doomed = str((repo / rel).resolve())
+    original = decide._write_atomic
+    state = {"fired": False}
+
+    def _fail_once(path, text):
+        # Resolved on both sides: decide.py builds its paths from ``--repo`` as
+        # given, and a tmp dir reached through a symlink must not make the
+        # stand-in answer nothing (the symptom of which is a green run).
+        if not state["fired"] and str(Path(path).resolve()) == doomed:
+            state["fired"] = True
+            original(path, text)
+            run_git = decide._git
+            run_git(repo, "add", "--", rel)
+            raise OSError(1, "Operation not permitted")
+        return original(path, text)
+
+    _fail_once.fired = lambda: state["fired"]
+    return _fail_once
+
+
+def _write_once_fails(decide, repo: Path, rel: str):
+    """A ``_write_atomic`` stand-in that raises ``OSError`` once, on ``repo/rel``.
+
+    A path the writer cannot land is a state no input flag produces (the disk,
+    not the flags, says no), so the write-failure branch is reached by replacing
+    the writer's one atomic-write call for the duration of one run. The name is
+    patched where ``main`` resolves it, the module's own globals, and not on the
+    helper: decide.py binds ``_write_atomic = gitwrite.write_atomic`` at load, so
+    a helper-level patch would leave a green run that injected nothing.
+
+    The stand-in raises the error a read-only or full filesystem raises,
+    ``OSError(EPERM)``, on the first call for that one path and hands every
+    other call to the real write: the rollback restores the target through the
+    same call, and a blanket refusal would test the refusal instead of the
+    rollback.
+    """
+    doomed = str((repo / rel).resolve())
+    original = decide._write_atomic
+    state = {"fired": False}
+
+    def _fail_once(path, text):
+        # Resolved on both sides: decide.py builds its paths from ``--repo`` as
+        # given, and a tmp dir reached through a symlink must not make the
+        # stand-in answer nothing (the symptom of which is a green run).
+        if not state["fired"] and str(Path(path).resolve()) == doomed:
+            state["fired"] = True
+            raise OSError(1, "Operation not permitted")
+        return original(path, text)
+
+    _fail_once.fired = lambda: state["fired"]
+    # ``fired()`` answers whether the refusal was ever asked for: if it was
+    # not, the run never reached the write this test exists to fail, and a
+    # green run would have proved nothing.
+    return _fail_once
+
+
 def _decide_in_process(repo: Path, *args: str, env: dict | None = None,
                        failures: dict[str, tuple[int, str]] | None = None,
+                       write_fails_on: str | None = None,
+                       staged_target: bool = True,
                        monkeypatch=None) -> subprocess.CompletedProcess[str]:
     """Run the writer in this process, so a spy sees its git calls, and report
     what a launched run would have reported.
@@ -1164,6 +1245,9 @@ def _decide_in_process(repo: Path, *args: str, env: dict | None = None,
     ``failures`` is this run's per-verb injection (verb -> ``(returncode,
     stderr)``), installed through ``_git_spy`` and scoped to ``repo`` for the
     duration of the run; with none the run is a plain in-process run.
+    ``write_fails_on`` is a repo-relative path whose one atomic write raises
+    ``OSError`` the first time; ``staged_target`` picks the shape of that
+    failure (see ``_target_write_fails_after_staging`` and ``_write_once_fails``).
 
     The helper spy is installed before the writer is loaded, so the module object
     decide.py binds its constants through is the one carrying the spy.
@@ -1176,6 +1260,23 @@ def _decide_in_process(repo: Path, *args: str, env: dict | None = None,
     saved = {key: os.environ.get(key) for key in run_env}
     previous_repo = _RUN_REPO[0]
     _RUN_REPO[0] = repo.resolve()
+    # A write injection is this run's only, so an exception between here and
+    # the finally below cannot leave a raising writer for the next test.
+    writer = _decide_module()
+    original_write = writer._write_atomic
+    injected = None
+    if write_fails_on is not None:
+        # Installed before the run begins, and the run below calls this same
+        # ``main``: decide.py resolves ``_write_atomic`` from its own globals on
+        # each call, so a patch applied after the call started would be a patch
+        # the writer never looked at.
+        injected = (_target_write_fails_after_staging(writer, repo, write_fails_on)
+                    if staged_target else _write_once_fails(writer, repo, write_fails_on))
+        writer._write_atomic = injected
+    else:
+        # A run with no write injection must still get a real writer, and never
+        # one left raising by an earlier in-process run.
+        writer._write_atomic = original_write
     try:
         _git_spy(failures or {})
         for key, value in run_env.items():
@@ -1190,9 +1291,18 @@ def _decide_in_process(repo: Path, *args: str, env: dict | None = None,
                 os.environ[key] = value
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = _decide_module().main(argv)
+            code = writer.main(argv)
+        if injected is not None:
+            # A stand-in that was never reached would leave the run looking
+            # exactly like a successful one, so the injection reports whether
+            # its refusal was actually asked for.
+            assert injected.fired(), (
+                f"the injected write failure on {write_fails_on} was never reached: "
+                "the run wrote nothing to that path and proved nothing"
+            )
     finally:
         _RUN_REPO[0] = previous_repo
+        writer._write_atomic = original_write
         if monkeypatch is None:
             for key, value in saved.items():
                 if value is None:
@@ -1366,6 +1476,168 @@ def test_seam_value_that_is_not_one_is_inert_and_the_run_writes(tmp_path):
         assert _record_path(repo, NEW_ID).is_file(), f"seam {inert!r} wrote nothing"
         assert _read(repo, NEW_ID)["id"] == NEW_ID
         assert _head_paths(repo) == [f"noni/decisions/{NEW_ID}.json"]
+
+
+def _supersede_in_process(repo: Path, write_fails_on: str | None, staged_target: bool = True,
+                          failures: dict[str, tuple[int, str]] | None = None,
+                          monkeypatch=None) -> subprocess.CompletedProcess[str]:
+    """The in-process supersede of the baseline, with this run's injections.
+
+    The flag set is ``_supersede``'s own (the baseline's ``--date``, every answer,
+    ``--supersedes BASELINE_ID``): a launched run cannot see a patch of this
+    process, so the write-failure and probe-failure tests drive the writer
+    in-process, and a second ``--date`` appended here would be overridden by the
+    one ``_decide_in_process`` already passed rather than selecting the baseline's
+    day. ``write_fails_on`` and ``failures`` are the two seams it passes through.
+    """
+    return _decide_in_process(
+        repo, "--date", BASELINE_ID[:10], *ANSWERED,
+        "--supersedes", BASELINE_ID,
+        env=_identity_env(), write_fails_on=write_fails_on, failures=failures,
+        staged_target=staged_target, monkeypatch=monkeypatch,
+    )
+
+
+def test_hardening_a_failing_status_probe_refuses_with_three(tmp_path, monkeypatch):
+    """A ``git status`` that answers a failure is a refusal (exit 3), not clean.
+
+    Only the timeout code was read as "no answer", so a status that died with
+    128 (a corrupt or unreadable index, a lock, an fsmonitor that could not be
+    exec'd) handed back empty stdout and was read as ``dirty: False``: the
+    supersede then judged a target it had not been told was clean to be one, and
+    rewrote it. The same shape covers ``ls-files``, whose ``--error-unmatch``
+    makes 0 and 1 the only honest answers: anything else says nothing about
+    whether the path is tracked. The failure is injected in-process because a
+    real corrupt index would take the harness's own fixture calls down with it.
+    """
+    repo = _baseline_repo(tmp_path)
+    target_rel = f"noni/decisions/{BASELINE_ID}.json"
+    before = _git_e2(repo, "show", f"HEAD:{target_rel}").stdout
+
+    proc = _supersede_in_process(repo, write_fails_on=None,
+                                 failures={"status": (128, "fatal: bad index")},
+                                 monkeypatch=monkeypatch)
+    assert proc.returncode == 3, proc.stderr
+    assert "status" in proc.stderr, proc.stderr
+    assert "git status" in proc.stderr, "the refusal names the command that failed"
+    assert _porcelain(repo) == "", "a refused run writes nothing"
+    assert not _record_path(repo, f"{BASELINE_ID[:10]}-scheduler").exists()
+    assert (repo / target_rel).read_text(encoding="utf-8") == before
+
+
+def test_hardening_a_failing_ls_files_probe_refuses_with_three(tmp_path, monkeypatch):
+    """An ``ls-files`` answer outside {0, 1} is a refusal too: 0 is tracked and 1
+    is not tracked, and 128 is neither, so reading it as untracked would send the
+    run down the "commit the record first" path on a tree it never inspected.
+    """
+    repo = _baseline_repo(tmp_path)
+    proc = _supersede_in_process(repo, write_fails_on=None,
+                                 failures={"ls-files": (128, "fatal: bad index")},
+                                 monkeypatch=monkeypatch)
+    assert proc.returncode == 3, proc.stderr
+    assert "ls-files" in proc.stderr, proc.stderr
+    assert _porcelain(repo) == ""
+
+
+def test_hardening_an_untracked_answer_from_ls_files_still_refuses_with_four(
+        tmp_path, monkeypatch):
+    """The positive control for the probe above: rc 1 is a real "not tracked"
+    answer, and stays the exit 4 it has always been. Without this the widened
+    refusal could not be told apart from a blanket "never trust ls-files".
+    """
+    repo = _baseline_repo(tmp_path)
+    proc = _supersede_in_process(repo, write_fails_on=None,
+                                 failures={"ls-files": (1, "")},
+                                 monkeypatch=monkeypatch)
+    assert proc.returncode == 4, proc.stderr
+    assert "not tracked" in proc.stderr, proc.stderr
+    assert _porcelain(repo) == ""
+
+
+def test_hardening_a_target_write_failure_leaves_nothing_behind(tmp_path):
+    """When the supersede target's write fails after the new record landed, the
+    rollback must undo the target too: ``git status --porcelain`` is empty and
+    the target's bytes are HEAD's, exactly as for a commit failure.
+
+    The target is staged by ``git add`` before its bytes are written, and the
+    record's path is the only one in ``rels`` until the target's write has
+    landed: the reset that undoes this run therefore left the target staged, so
+    ``git status --porcelain`` still reported ``MM`` for a path this run was
+    told to forget. The target write is failed with an injected ``OSError``,
+    which no flag produces; the record's own write is left real, so the run
+    reaches the branch with the record on disk as it would in a real failure.
+    """
+    repo = _baseline_repo(tmp_path)
+    target_rel = f"noni/decisions/{BASELINE_ID}.json"
+    committed = _git_e2(repo, "show", f"HEAD:{target_rel}").stdout
+    new_rel = f"noni/decisions/{BASELINE_ID[:10]}-scheduler.json"
+
+    proc = _supersede_in_process(repo, write_fails_on=target_rel)
+    assert proc.returncode == 5, proc.stderr
+    assert "could not be written" in proc.stderr, proc.stderr
+    assert not _record_path(repo, f"{BASELINE_ID[:10]}-scheduler").exists(), (
+        "the record this run wrote must be unlinked by the rollback"
+    )
+    assert _porcelain(repo, new_rel, target_rel) == "", _porcelain(repo)
+    assert (repo / target_rel).read_text(encoding="utf-8") == committed, (
+        "the target must read as HEAD holds it, not as this run left it"
+    )
+
+
+def test_hardening_the_record_write_failure_leaves_nothing_behind(tmp_path):
+    """The other half of the same branch: the record's own write fails, so
+    nothing landed at all, and the run must still exit 5 with a clean tree.
+
+    The target was never written and never staged here, so this is the shape
+    where ``rels`` legitimately holds one path. It is pinned because the fix
+    for the pair above puts the target in ``rels`` unconditionally: a rollback
+    that reset a path it never staged would be a worse bug than the one it
+    fixes, and this run is where that would show.
+    """
+    repo = _baseline_repo(tmp_path)
+    new_rel = f"noni/decisions/{BASELINE_ID[:10]}-scheduler.json"
+    target_rel = f"noni/decisions/{BASELINE_ID}.json"
+    committed = _git_e2(repo, "show", f"HEAD:{target_rel}").stdout
+
+    proc = _supersede_in_process(repo, write_fails_on=new_rel, staged_target=False)
+    assert proc.returncode == 5, proc.stderr
+    assert not _record_path(repo, f"{BASELINE_ID[:10]}-scheduler").exists()
+    assert _porcelain(repo, new_rel, target_rel) == "", _porcelain(repo)
+    assert (repo / target_rel).read_text(encoding="utf-8") == committed
+
+
+def test_hardening_a_repo_local_fsmonitor_hook_does_not_run(tmp_path):
+    """A repo-local ``core.fsmonitor`` helper is not run by this writer.
+
+    ``core.fsmonitor`` names a program git execs to ask which files changed, so
+    like ``core.hooksPath`` it turns a read-only probe into arbitrary execution
+    of the tree's own code. The helper here exits 0 and writes a marker, so a
+    run that honoured the config would leave the marker behind and exit 0
+    anyway: the marker's absence is the assertion, and the record's presence is
+    the control that says the run itself happened. The index is marked dirty
+    first, which is what makes git consult the helper at all: with a clean
+    index no call reaches it and the assertion would pass for no reason.
+    """
+    repo = _baseline_repo(tmp_path)
+    marker = repo / "FSMONITOR_RAN"
+    helper = repo / "fsmonitor-helper.sh"
+    helper.write_text(
+        "#!/bin/sh\n" + "printf x > " + str(marker) + "\nexit 0\n", encoding="utf-8"
+    )
+    helper.chmod(0o755)
+    _git(repo, "config", "core.fsmonitor", str(helper))
+    # A fresh mtime on the index is what asks git to query the monitor: without
+    # it the stat cache answers and the helper is never reached.
+    index = repo / ".git" / "index"
+    stat_before = index.stat()
+    os.utime(index, ns=(stat_before.st_atime_ns, stat_before.st_mtime_ns + 2_000_000_000))
+
+    proc = _supersede(repo, BASELINE_ID)
+    assert proc.returncode == 0, proc.stderr
+    assert _read(repo, BASELINE_ID)["status"] == "superseded", (
+        "the supersede itself must still happen: the run has to reach its probes"
+    )
+    assert not marker.exists(), "decide.py ran a core.fsmonitor helper it must not run"
 
 
 def test_hardening_a_repo_local_pre_commit_hook_does_not_run(tmp_path):

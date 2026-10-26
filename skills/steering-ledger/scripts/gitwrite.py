@@ -55,12 +55,15 @@ def run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     ``commit.gpgsign=false`` keeps a signing requirement from wedging a record;
     ``core.hooksPath=`` at the null device keeps the repository's own hooks off this
     commit; ``protocol.ext.allow=never`` refuses the external transports a remote
-    could name. None neutralises global config: ``by`` still comes from the tree's
+    could name; ``core.fsmonitor=false`` keeps the tree's file-system monitor
+    helper off every probe, since it is a program git execs to ask what changed.
+    None neutralises global config: ``by`` still comes from the tree's
     ``user.name``. A hang is ``GIT_TIMEOUT_RC``, never an answer; errors="replace"
     keeps a clobbered blob from raising inside subprocess.
     """
     cmd = ["git", "-C", str(repo), "-c", "commit.gpgsign=false",
-           "-c", f"core.hooksPath={os.devnull}", "-c", "protocol.ext.allow=never", *args]
+           "-c", f"core.hooksPath={os.devnull}", "-c", "protocol.ext.allow=never",
+           "-c", "core.fsmonitor=false", *args]
     answered = seam_answer(args)
     if answered is not None:
         return answered
@@ -133,11 +136,57 @@ def refuse_git_timeout(label: str,
                "tell whether the tree is one it may write"
 
 
-# The exit a hung target probe yields, for a writer that installed no printer of its
-# own (``probe_timeout_refusal``). ``decide.py`` assigns its own EXIT_GIT here when it
-# loads this module, so the code the helper hands back is the writer's, never a copy
-# that can drift.
+# The exit a probe that answered nothing yields, for a writer that installed no
+# printer of its own (``probe_timeout_refusal``). ``decide.py`` assigns its own
+# EXIT_GIT here when it loads this module, so the code the helper hands back is the
+# writer's, never a copy that can drift.
 EXIT_PROBE_TIMEOUT: int = 3
+
+
+def probe_unanswered(command: str, returncode: int) -> bool:
+    """Whether ``command``'s ``returncode`` is not an answer it may be read for.
+
+    ``ls-files --error-unmatch`` answers tracked with 0 and not-tracked with 1, so
+    any other code ran no check; ``status --porcelain`` answers with its stdout,
+    which only 0 fills honestly. Every other verb is only ever asked to not hang.
+    A code outside the set is a refusal, exactly as a hang is: the call returned
+    an empty stdout that a reader would otherwise take for 'not tracked', 'clean'
+    or 'nothing committed', which is how a corrupt index could let a supersede
+    rewrite a target nobody had inspected.
+    """
+    allowed = {"ls-files": (0, 1), "status": (0,)}.get(command)
+    return returncode == GIT_TIMEOUT_RC or (
+        allowed is not None and returncode not in allowed)
+
+
+def refuse_git_probe(label: str, command: str, returncode: int) -> str:
+    """Why a probe that answered nothing is a refusal, in the writer's own voice.
+
+    A hang and a failure are two different faults and are named as two different
+    things: a slow machine is not a broken repository, and the operator's next
+    step differs (re-run, versus find out why git cannot read the index).
+    """
+    fault = (f"timed out after {GIT_TIMEOUT}s" if returncode == GIT_TIMEOUT_RC
+             else f"failed (exit {returncode})")
+    return (f"git {command} {fault}, so {label} cannot tell whether the tree "
+            "is one it may write")
+
+
+def make_probe_refusal(fail: Callable[..., int], code: int, label: str) -> Callable[..., int]:
+    """Build the printer a writer installs as its ``probe_timeout_refusal``.
+
+    The wording and its exit code live here so the helper that raised the refusal
+    is also what words it; ``fail`` is the writer's own headline-and-hint printer,
+    ``code`` the exit it publishes for a git problem, and ``label`` the writer's
+    name, so the refusal reads in the voice of the command that refused. The hint
+    names the very call that died, because that is the one to get answering.
+    """
+
+    def _refuse(repo: Path, command: str, returncode: int) -> int:
+        hint = f"re-run decide once git answers again (git -C {repo} {command})"
+        return fail(code, refuse_git_probe(label, command, returncode), hint)
+
+    return _refuse
 
 
 def target_probes(label: str, repo: Path, path: Path) -> dict:
@@ -147,19 +196,21 @@ def target_probes(label: str, repo: Path, path: Path) -> dict:
     never answered, ``probe_timeout_refusal`` is asked for the verdict and its exit
     code is handed back as ``timed_out``, and no other key is set: reading a
     timeout as 'tracked', 'clean' or 'committed' would let a slow machine decide
-    what enters the ledger. ``label`` names the writer, so the refusal reads in its
-    voice.
+    what enters the ledger. A probe that reported a failure rather than hanging is
+    refused the same way, because it too answered with nothing but an empty stdout.
+    ``label`` names the writer, so the refusal reads in its voice.
     """
     rel = path.relative_to(repo).as_posix()
     tracked = run_git(repo, "ls-files", "--error-unmatch", "--", rel)
     status = run_git(repo, "status", "--porcelain", "--", rel)
     shown = run_git(repo, "show", f"HEAD:{rel}")
     probes = (("ls-files", tracked), ("status", status), ("show", shown))
-    if refuse_git_timeout(label, *probes) is not None:
-        hung = next(name for name, result in probes if result.returncode == GIT_TIMEOUT_RC)
+    dead = next(((name, result) for name, result in probes
+                 if probe_unanswered(name, result.returncode)), None)
+    if dead is not None:
         # The helper writes no stderr of its own: whose file refused is the writer's
         # to say, so it prints the refusal and hands back its exit code.
-        timed_out = probe_timeout_refusal(repo, hung)
+        timed_out = probe_timeout_refusal(repo, dead[0], dead[1].returncode)
         return {"timed_out": EXIT_PROBE_TIMEOUT if timed_out is None else timed_out}
     committed = tracked.returncode == 0 and not status.stdout.strip()
     return {
@@ -173,13 +224,13 @@ def target_probes(label: str, repo: Path, path: Path) -> dict:
     }
 
 
-def probe_timeout_refusal(repo: Path, command: str) -> int | None:
-    """The refusal for a probe that never answered. The default answers None, and
-    the caller reads that as 'trust no probe answer' and still exits
-    ``EXIT_PROBE_TIMEOUT``; ``decide.py`` installs a printer of its own when it
-    loads this module, so the wording names the writer that is refusing.
+def probe_timeout_refusal(repo: Path, command: str, returncode: int) -> int | None:
+    """The refusal for a probe that answered nothing, whether it hung or died. The
+    default answers None, and the caller reads that as 'trust no probe answer' and
+    still exits ``EXIT_PROBE_TIMEOUT``; ``decide.py`` installs a printer of its own
+    when it loads this module, so the wording names the writer that is refusing.
     """
-    del repo, command
+    del repo, command, returncode
     return None
 
 

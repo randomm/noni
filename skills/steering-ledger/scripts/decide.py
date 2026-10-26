@@ -141,11 +141,9 @@ def _timeout(repo: Path, *probes: tuple[str, subprocess.CompletedProcess[str]]) 
                  f"re-run decide once git answers again (git -C {repo} {cmd})")
 
 
-# The helper refuses its own target probes through this file, so a hung git call is
-# worded once; its stand-in probe answered nothing, so no probe verdict downstream can
-# be read as a clean 'tracked' or 'clean'.
-gitwrite.probe_timeout_refusal = lambda repo, command: _timeout(
-    repo, (command, subprocess.CompletedProcess(["git", command], GIT_TIMEOUT_RC)))
+# The helper refuses its own target probes through this file, so a hung or failed git
+# call is worded once and its empty answer is never read as a clean tree downstream.
+gitwrite.probe_timeout_refusal = gitwrite.make_probe_refusal(_fail, EXIT_GIT, Path(__file__).name)
 gitwrite.EXIT_PROBE_TIMEOUT = EXIT_GIT
 
 
@@ -221,14 +219,16 @@ def _refuse_live_record(record: dict, target_id: str) -> tuple[str, str] | None:
 def _load_target(repo: Path, ledger: Path,
                  target_id: str) -> tuple[Path, dict, bytes] | tuple[str, str] | int:
     """A target as ``(path, record, committed_bytes)``, a ``(headline, hint)`` refusal
-    pair, or the exit 3 a probe printed; nothing is written on refusal. gitwrite
-    probes; the refusals above and ``_render`` are the target's schema.
+    pair, or the exit code a probe refusal printed; nothing is written on refusal.
+    gitwrite probes; the refusals above and ``_render`` are the target's schema.
     """
     path = ledger / f"{target_id}.json"
     found = _load_committed_target(Path(__file__).name, repo, path, target_id,
                                    _refuse_target_shape, _render)
+    if isinstance(found, int):
+        return found  # a probe that hung or died printed its refusal
     if not isinstance(found[0], bytes):
-        return found  # a refusal pair, or exit 3 for a probe that hung
+        return found  # a (headline, hint) refusal pair
     committed, record = found
     return _refuse_live_record(record, target_id) or (path, record, committed)
 
@@ -445,7 +445,7 @@ def main(argv: list[str] | None = None) -> int:
             return _fail(EXIT_COMMIT_FAILED,
                          _written(exc, f"the ledger directory {ledger} could not be created"),
                          f"check that {repo} is writable, then re-run decide")
-    rels = [record_rel]
+    rels = [record_rel] if target is None else [record_rel, target_rel]
     committed_bytes = None if target is None else target[2]
     try:
         _write_atomic(record_path, _render(record))

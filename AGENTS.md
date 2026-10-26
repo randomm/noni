@@ -7,7 +7,7 @@
   - CI is green on the PR's current head commit.
   - The PR is not a draft.
   - The adversarial and lens reviews have passed at that same head commit with no open CRITICAL or HIGH findings.
-  - The PR does not change a gate file (see Gate files). Changes to gate files need the operator's merge.
+  - The PR does not change this Merge authority rule or the Review blocking level. Changes to those need the operator's merge.
   - The PR does not delete or weaken an existing test assertion. Otherwise it needs the operator's merge.
 
   The governing rule is the AGENTS.md on `main`, not the copy in the PR branch. CI and both reviews must be at the PR's current head commit. Any new push needs CI and both reviews again. CI red, pending or missing means no merge. The agent re-checks every condition immediately before merging. Agents never push to `main` directly and never force-push.

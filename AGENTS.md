@@ -8,7 +8,7 @@
   - The PR is not a draft.
   - The adversarial and lens reviews have passed at that same head commit with no open CRITICAL or HIGH findings.
   - The PR does not change the **Merge authority** or **Review blocking level** bullets in Operator choices. Changes to those need the operator's merge.
-  - The PR does not delete or weaken an existing test assertion. Otherwise it needs the operator's merge.
+  - The PR does not delete or weaken an existing test assertion, unless the operator ordered that change in their own words on the linked issue (a comment written by the operator, not a decision an agent posted on their behalf), and the PR body quotes that comment and lists each deleted or weakened assertion. Otherwise it needs the operator's merge.
 
   The governing rule is the AGENTS.md on `main`, not the copy in the PR branch. CI and both reviews must be at the PR's current head commit. Any new push needs CI and both reviews again. CI red, pending or missing means no merge. The agent re-checks every condition immediately before merging. Agents never push to `main` directly and never force-push.
 - **Review blocking level:** Review findings are blocking at HIGH severity and above.
@@ -27,7 +27,7 @@
 
 ## Architecture Notes
 
-- Attached project's `noni/` dir: direction/ (standing direction, release trains), decisions/ (steering ledger, one file per dated record), sessions/ (one committed file per session, single writer), census/ (on-demand NDJSON reports)
+- Attached project's `noni/` dir: direction/ (standing direction, release trains), decisions/ (steering ledger, one file per dated record), sessions/ (one committed file per session, single writer)
 - Census is the arbiter: claims are committed signals, not locks; double-claim detection happens at read time via the census
 - Metrics are derived from git history plus noni/ files, never self-reported
 - the primary integration is a specific driver/tracker ecosystem (adapters map onto its mechanisms); live transports are caches over git-committed state, never the state

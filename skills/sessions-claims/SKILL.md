@@ -68,7 +68,8 @@ hostname, because the register file is committed to a public repo. Explicit
 ## Claiming a task
 
 ```
-scripts/claim.py --repo REPO --session-id SID --task TASK [--branch BRANCH] [--push]
+scripts/claim.py --repo REPO --session-id SID --task TASK [--branch BRANCH]
+                 [--push] [--no-commit]
 ```
 
 The claim writer appends a `- claim: <task>` row to the session's register
@@ -76,6 +77,27 @@ file, commits it, and (with `--push`) pushes with fetch-rebase-push (at most
 3 attempts). The task reference is the issue number (e.g. `#42`) or a noni row
 id. A claim row without a task reference is malformed (the census flags it,
 exit 32).
+
+`--no-commit` appends the row through the same validation chain and stops
+before git: no `git add`, no `git commit`, and one line saying the change is
+left uncommitted, so a caller that commits itself can do so. `--branch` is
+validated and otherwise ignored under `--no-commit`, and `--no-commit` with
+`--push` is refused as a usage error (exit 4) before anything is written.
+
+A claim command never leaves the clone mid-rebase. Exit codes:
+
+| code | meaning |
+|---|---|
+| `0` | claim committed (and pushed, with `--push`), or appended and left uncommitted with `--no-commit` |
+| `1` | the register file for `--session-id` does not exist (register first) |
+| `2` | the session file is malformed (no `- claims:` marker, not readable as UTF-8) or the session already claims the same task |
+| `3` | push failed after 3 fetch-rebase-push attempts; also a failed fetch, a detached HEAD, an unresolvable branch, or a git call that timed out |
+| `4` | usage error: bad `--task` or `--branch` value, or `--no-commit` with `--push` |
+| `5` | rebase conflict: the rebase started and stopped; the script aborts it and the clone is left on the original branch at the claim commit it made |
+| `6` | rebase refused: the rebase never started; the hint names committing or stashing the local change |
+
+Read `references/claim.md` for the push protocol and the exit-5 abort
+post-condition.
 
 ## The sessions census
 

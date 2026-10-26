@@ -9,6 +9,7 @@ without pulling in ``conftest.py`` and its module-level ``import pytest``.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from datetime import datetime
@@ -63,8 +64,11 @@ if str(_SCRIPTS) not in sys.path:
 from public_safety import HOME_PATH_PATTERNS, SECRET_PATTERNS  # noqa: E402
 
 
-def _git_e2(repo: Path, *args: str) -> subprocess.CompletedProcess:
-    """Run git in a repo with a deterministic identity and no GPG signing."""
+def _git_e2(repo: Path, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
+    """Run git in a repo with a deterministic identity and no GPG signing.
+
+    ``env`` overrides the process environment for a call that must not
+    inherit the ambient git identity."""
     cmd = [
         "git", "-C", str(repo),
         "-c", "user.name=Replay",
@@ -72,7 +76,7 @@ def _git_e2(repo: Path, *args: str) -> subprocess.CompletedProcess:
         "-c", "commit.gpgsign=false",
         *args,
     ]
-    return subprocess.run(cmd, capture_output=True, text=True)
+    return subprocess.run(cmd, capture_output=True, text=True, env=env)
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
@@ -152,8 +156,8 @@ def _secret_violation() -> str:
 
 
 
-def _git_ok(repo: Path, *args: str) -> subprocess.CompletedProcess:
-    proc = _git_e2(repo, *args)
+def _git_ok(repo: Path, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
+    proc = _git_e2(repo, *args, env=env)
     if proc.returncode != 0:
         raise RuntimeError(f"git {args} failed: {proc.stderr.strip()}")
     return proc
@@ -225,6 +229,73 @@ def build_bare_origin(origin: Path, worktrees: list[Path]) -> None:
         _git_ok(wt, "checkout", "-q", "-b", "main")
 
 
+def advance_origin_with_claim(
+    origin: Path, seeder: Path, session_file: str, task: str, branch: str = "main"
+) -> str:
+    """Deterministically advance ``origin`` with a conflicting claim row.
+
+    Clones ``origin`` into ``seeder``, appends one ``- claim: <task>`` row at
+    EOF of ``session_file`` (the repo-relative path a claim.py run will also
+    append to), commits and pushes it, then removes the seed clone. Because
+    both writers append at EOF of the same file, the caller's next
+    fetch-rebase-push stops in a real conflict rather than merging cleanly,
+    which is what makes the exit-5 path testable without a race. Returns the
+    pushed sha.
+
+    ``build_bare_origin`` builds every clone from the same bare origin, so
+    the committed baseline of ``session_file`` is identical here and in the
+    caller's clone: that is what makes the EOF append conflict deterministic.
+    """
+    if seeder.exists():
+        shutil.rmtree(seeder)
+    seeder.parent.mkdir(parents=True, exist_ok=True)
+    # The clone is pinned to the branch it is seeding. Two host inputs would
+    # otherwise decide that for it: a ~/.gitconfig carrying
+    # init.defaultbranch, and the pytest HOME sandbox that carries no
+    # gitconfig at all. Under the sandbox git falls back to its own default
+    # (master), origin has no master, and the clone checks out an empty
+    # worktree on a branch that does not exist - which is how a seed clone
+    # silently stops being a seed. So the branch is named in the clone
+    # command and confirmed against HEAD before anything is appended.
+    env = {**os.environ, **_git_env_with_identity()}
+    try:
+        # ``-b`` names the branch outright, so it does not matter that the
+        # sandboxed HOME carries no init.defaultbranch, nor what origin's own
+        # HEAD points at (a bare init repo defaults to master even when the
+        # only branch ever pushed is main): an explicit checkout of a branch
+        # that exists on origin is what makes the worktree non-empty.
+        _git_ok(
+            seeder.parent, "clone", "-q", "-b", branch, str(origin), str(seeder),
+            env=env,
+        )
+    except RuntimeError as exc:
+        # A bare 'clone has no <file>' would hide why: surface git's own
+        # words (dubious ownership, empty remote, no such ref) with them.
+        raise RuntimeError(f"seed clone of {origin} failed: {exc}") from None
+    landed = _git_ok(seeder, "rev-parse", "--abbrev-ref", "HEAD", env=env).stdout.strip()
+    if landed != branch:
+        raise RuntimeError(
+            f"seed clone checked out {landed!r}, not {branch!r}: the conflict "
+            "fixture would seed the wrong branch"
+        )
+    target = seeder / session_file
+    if not target.is_file():
+        listing = " ".join(_git_ok(seeder, "ls-files", env=env).stdout.split()) or "<no files>"
+        raise RuntimeError(
+            f"seed clone has no {session_file} to append to; it checked out: {listing}"
+        )
+    body = target.read_text(encoding="utf-8")
+    if not body.endswith("\n"):
+        body += "\n"
+    target.write_text(body + CLAIM_PREFIX + task + "\n", encoding="utf-8")
+    _git_ok(seeder, "add", session_file, env=env)
+    _git_ok(seeder, "commit", "-q", "-m", f"claim: {task}", env=env)
+    _git_ok(seeder, "push", "-q", "origin", branch, env=env)
+    sha = _git_ok(seeder, "rev-parse", "HEAD", env=env).stdout.strip()
+    shutil.rmtree(seeder)
+    return sha
+
+
 def push_with_retry(repo: Path, branch: str, attempts: int = 3) -> None:
     """fetch-rebase-push with at most `attempts` attempts.
 
@@ -241,6 +312,10 @@ def push_with_retry(repo: Path, branch: str, attempts: int = 3) -> None:
         if attempt == attempts:
             raise RuntimeError(f"push failed after {attempts} attempts: {proc.stderr.strip()}")
 
+
+# Same row grammar claim.py writes (see CLAIM_PREFIX in that script): the
+# seed clone must append exactly what a real second claimant would.
+CLAIM_PREFIX = "- claim: "
 
 SESSIONS_SKILL = REPO / "skills" / "sessions-claims" / "scripts"
 CENSUS_SESSIONS = SESSIONS_SKILL / "census-sessions.sh"
@@ -268,10 +343,17 @@ def run_claim(
     """Run claim.py with the standard arguments and optional --push.
 
     Runs with the deterministic identity env (claim.py commits under the
-    caller's configured identity; the harness pins one here)."""
+    caller's configured identity; the harness pins one here).
+
+    A valueless flag is passed as ``**{"no-commit": None}`` (a Python name
+    cannot carry a dash, hence the dict-expansion form): a ``None`` value
+    emits the bare flag, any other value emits ``--key value``."""
     extra = []
     for key, value in kwargs.items():
-        extra.extend([f"--{key}", str(value)])
+        if value is None:
+            extra.append(f"--{key}")
+        else:
+            extra.extend([f"--{key}", str(value)])
     cmd = [
         sys.executable, str(CLAIM),
         "--repo", str(repo),

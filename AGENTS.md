@@ -8,6 +8,7 @@
   - The PR is not a draft.
   - The adversarial and lens reviews have passed at that same head commit with no open CRITICAL or HIGH findings.
   - The PR does not change this Merge authority rule or the Review blocking level. Changes to those need the operator's merge.
+  - The PR does not change the CI workflow under `.github/workflows/`, the gate configuration in `pyproject.toml`, or `scripts/public_safety.py`. Changes to those need the operator's merge.
   - The PR does not delete or weaken an existing test assertion. Otherwise it needs the operator's merge.
 
   The governing rule is the AGENTS.md on `main`, not the copy in the PR branch. CI and both reviews must be at the PR's current head commit. Any new push needs CI and both reviews again. CI red, pending or missing means no merge. The agent re-checks every condition immediately before merging. Agents never push to `main` directly and never force-push.
@@ -169,5 +170,5 @@ These are working conventions. The checks that enforce rules are the ones under 
 - Scope discipline: change only the files the issue covers (check `git diff --name-only origin/main...HEAD` before opening a PR). A bug found along the way gets its own issue and a note in the PR.
 - Tests are offline and deterministic: no network, no real accounts; use fixtures and stubs.
 - Fail closed: a missing or malformed setting stops the command with a clear message; never fall back to something wider.
-- Work cycles do not edit their own gates: a gate file (see Gate files) is changed by people (or by the agents-md tool on the operator's request), not by a work cycle.
+- Work cycles do not rewrite their own governance: the Merge authority rule, the Review blocking level, the CI workflow under `.github/workflows/`, the gate configuration in `pyproject.toml` and `scripts/public_safety.py` are changed by people (or by the agents-md tool on the operator's request), not by a work cycle. Other gate files (see Gate files) may be edited by a work cycle, but a PR that changes any file named in this bullet needs the operator's merge.
 

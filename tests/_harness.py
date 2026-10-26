@@ -96,7 +96,10 @@ def _decide_module() -> object:
     if spec is None or spec.loader is None:  # pragma: no cover - path is fixed
         raise RuntimeError(f"cannot load decide module from {DECIDE}")
     module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
+    # Exec'd fresh on every call and never registered under the name: the tests
+    # that read the writer's constants get the module they asked for, and
+    # decide.py's own `if __name__ == "__main__"` guard keeps a name of ours from
+    # being mistaken for the script's entry point.
     spec.loader.exec_module(module)
     return module
 

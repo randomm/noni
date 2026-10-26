@@ -95,6 +95,8 @@ def test_skill_files_present():
     assert "SKILL.md" in rels, f"SKILL.md missing; have: {rels}"
     assert "scripts/census.sh" in rels, f"scripts/census.sh missing; have: {rels}"
     assert "scripts/decide.py" in rels, f"scripts/decide.py missing; have: {rels}"
+    # decide.py's git runner and atomic writer live in one module beside it.
+    assert "scripts/gitwrite.py" in rels, f"scripts/gitwrite.py missing; have: {rels}"
     for ref in ("references/decisions.md", "references/modes.md", "references/supersede.md", "references/census.md"):
         assert ref in rels, f"{ref} missing; have: {rels}"
 

@@ -25,42 +25,49 @@ Usage:
 Exit codes:
     0  the record was written (and committed unless --no-commit)
     2  invalid input: an argparse failure, an empty or malformed slug, a
-       malformed --date, --question, --option or --answer, a question with no
-       options or more than four, or --supersedes with an unanswered question
-    3  a git or identity problem: --repo is not a git repository, or
-       git config user.name is not set (git config --global user.name <name>)
+       malformed --date, --question, --option or --answer, a source id that is
+       not a positive integer, a question outside 1-4 or 2-4 options, or
+       --supersedes with an unanswered question
+    3  a git or identity problem: --repo is not a git work tree, git config
+       user.name is not set (git config user.name <name>), or a git probe timed
+       out
     4  a collision or a bad supersede target: the record file already exists,
-       or the target is missing, already superseded, uncommitted, locally
-       modified, or belongs to another chain
+       or the target is missing, already superseded, untracked, locally
+       modified, not in the writer's canonical form, or dated another day than
+       --date
     5  the commit failed: both paths are rolled back (index reset, target
-       restored, new record removed), so the tree is left as this run found it.
-       The one input that reaches this code is a committed record clobbered out
-       of band; the test seam FAIL_COMMIT_ENV_VAR forces it
+       restored, new record removed) and a path that could not be restored is
+       named, so the tree is left as this run found it. The one input that
+       reaches this code is a committed record clobbered out of band; the test
+       seam FAIL_COMMIT_ENV_VAR forces it
 
-Every refusal (2, 3 or 4) leaves the ledger and the target untouched: writes
-happen only after every check passes, each file goes to a temp file in its own
-directory and moves into place with os.replace, and a commit failure rolls both
-paths back. ``by`` comes from git config user.name and ``date`` from --date or
-this run's UTC clock; neither is guessed from anything else.
+Every refusal (2, 3 or 4) leaves the ledger and the target untouched: writes happen
+only after every check passes, each file goes to a temp file in its own directory and
+moves into place with os.replace, and a commit failure rolls both paths back. ``by``
+is git config user.name; ``date`` is --date or this run's UTC clock.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import subprocess
 import sys
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-GIT_TIMEOUT = 60
-# The seam the exit-5 rollback test uses, and nothing else: the state it undoes
-# (a committed record clobbered out of band) reaches this code no other way.
-FAIL_COMMIT_ENV_VAR = "NONI_DECIDE_FAIL_COMMIT"
-FAIL_COMMIT: bool = os.environ.get(FAIL_COMMIT_ENV_VAR) == "1"
+# The git runner and the atomic writer live beside this file, imported through a
+# sys.path entry for this file's directory so the skill stays relocatable. Their
+# constants are re-exported because the writer's contract names them.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import gitwrite  # noqa: E402  (the line above is what makes this import resolve)
+
+GIT_TIMEOUT = gitwrite.GIT_TIMEOUT
+GIT_TIMEOUT_RC = gitwrite.GIT_TIMEOUT_RC
+FAIL_COMMIT_ENV_VAR = gitwrite.FAIL_COMMIT_ENV_VAR
+_git = gitwrite.run_git
+_write_atomic = gitwrite.write_atomic
 
 # Every return path names one of these; the 'Exit codes:' block above carries
 # exactly this set (tests/test_decide.py reads both and pins them together).
@@ -105,62 +112,33 @@ def _written(exc: OSError, what: str) -> str:
     return f"{what} ({exc.__class__.__name__}: {exc.strerror or exc})"
 
 
-def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    """One bounded git call in ``repo`` with GPG signing forced off: a signing
-    requirement must not wedge a record, identity stays what this tree's config
-    says (``by`` comes from it) and GIT_TIMEOUT turns a hang into a refusal.
-    """
-    cmd = ["git", "-C", str(repo), "-c", "commit.gpgsign=false", *args]
-    try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=GIT_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        return subprocess.CompletedProcess(
-            cmd, returncode=124, stdout="",
-            stderr=f"git {args[0] if args else '?'} timed out after {GIT_TIMEOUT}s",
-        )
-
-
-def _write_atomic(path: Path, text: str) -> None:
-    """Write ``text`` via a same-directory temp file and os.replace (claim.py's
-    idiom): a crash mid-write leaves the old bytes, never a truncated record.
-    """
-    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
-        os.replace(tmp_name, path)
-    except BaseException:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
-
-
 def _render(record: dict) -> str:
     """The record's bytes: FIELD_ORDER, two-space indent, one trailing newline."""
     ordered = {key: record[key] for key in FIELD_ORDER if key in record}
     return json.dumps(ordered, indent=2, ensure_ascii=False) + "\n"
 
 
-def _rollback(repo: Path, rels: list[str], target_rel: str | None, record_rel: str) -> str | None:
-    """Undo this run's writes after a failed commit; None if the tree is clean.
-
-    The index forgets both paths, the target is restored from HEAD and the new
-    record is unlinked: ``git reset`` alone leaves it untracked on disk, where
-    the censuses read it. A path that could not be restored is returned.
-    """
-    _git(repo, "reset", "-q", "--", *rels)
-    if target_rel is not None:
-        shown = _git(repo, "show", f"HEAD:{target_rel}")
-        if shown.returncode != 0:
-            return target_rel
-        _write_atomic(repo / target_rel, shown.stdout)
+def _rollback(repo: Path, rels: list[str], target_rel: str | None, record_rel: str,
+              target_committed: bytes | None = None) -> str | None:
+    """Undo this run's writes; None if the tree is clean, else the first path it
+    could not put back: the record goes first (an unlink works whatever holds the
+    target's path), the index forgets both paths, the target gets the bytes read at
+    check time. A silent wrong path is a ledger nobody will fix."""
+    leftover: str | None = None
     try:
         (repo / record_rel).unlink()
     except OSError:
-        return record_rel
-    return None
+        leftover = record_rel
+    if _git(repo, "reset", "-q", "--", *rels).returncode == GIT_TIMEOUT_RC:
+        leftover = leftover or record_rel
+    if target_rel is not None:
+        if target_committed is None:
+            return target_rel
+        try:
+            _write_atomic(repo / target_rel, target_committed.decode("utf-8"))
+        except OSError:
+            return target_rel
+    return leftover
 
 
 def _parse_pairs(values: list[str], flag: str) -> tuple[list[tuple[str, str]], str | None]:
@@ -199,43 +177,76 @@ def _build_questions(
     return built
 
 
-def _read_json_object(path: Path) -> dict | None:
-    """The object in ``path``, or None when it will not read as one."""
+def _record_object(raw: bytes) -> dict | None:
+    """The record object ``raw`` holds, or None when it is not one. Decoding
+    happens here, not in json.loads' reader, so a non-UTF-8 record answers "not a
+    record" instead of a traceback, and its bytes are never echoed.
+    """
     try:
-        record = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        record = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
         return None
     return record if isinstance(record, dict) else None
 
 
-def _refuse_unless_committed(repo: Path, path: Path, rel: str, target_id: str) -> tuple[str, str] | None:
-    """Why this target may not be folded into this commit, or None: an untracked
-    target brings unvalidated bytes, a locally modified one an unreviewed edit.
-    """
-    if not path.is_file():
-        return (f"supersede target {target_id} has no record file at {path}",
-                "name the id of a committed record (see the census report's id column)")
-    if _git(repo, "ls-files", "--error-unmatch", "--", rel).returncode != 0:
+def _refuse_git_timeout(repo: Path,
+                        *hung: tuple[str, subprocess.CompletedProcess[str]]) -> int | None:
+    """A probe that timed out is a refusal (exit 3), never a clean answer: the
+    message names the first hung call, and reading a timeout as 'tracked', 'clean' or
+    'a work tree' would let a slow machine decide what enters the ledger."""
+    for command, result in hung:
+        if result.returncode != GIT_TIMEOUT_RC:
+            continue
+        return _fail(EXIT_GIT,
+                     f"git {command} timed out after {GIT_TIMEOUT}s, so decide.py cannot "
+                     "tell whether the tree is one it may write",
+                     f"re-run decide once git answers again (git -C {repo} {command})")
+    return None
+
+
+def _refuse_target_state(path: Path, rel: str, target_id: str,
+                         tracked: subprocess.CompletedProcess[str],
+                         status: subprocess.CompletedProcess[str]) -> tuple[str, str] | None:
+    """Why this path is not a target this run may rewrite, per the probe answers:
+    absent, untracked, or edited. A directory answers None: the clobber is the
+    rollback's to report, so it is named as a leftover, not called malformed."""
+    if tracked.returncode != 0:
         return (f"supersede target {target_id} is not tracked by git",
                 "commit the record first: decide.py supersedes only committed records")
-    if _git(repo, "status", "--porcelain", "--", rel).stdout.strip():
+    if not path.is_file():
+        if path.is_dir():
+            return None
+        return (f"supersede target {target_id} has no record file at {path}",
+                "name the id of a committed record (see the census report's id column)")
+    if status.stdout.strip():
         return (f"supersede target {target_id} is not byte-identical to its last commit",
                 f"commit or discard the change to {rel} and re-run decide")
     return None
 
 
-def _load_target(repo: Path, ledger: Path, target_id: str) -> tuple[Path, dict] | tuple[str, str]:
-    """Read a supersede target: ``(path, record)``, or a ``(headline, hint)``
-    pair. Nothing is written on refusal. Past the committed-and-clean checks the
-    target must read as a record object, not already superseded, with the ``id``
-    it was asked for by: the censuses key the chain on that field.
-    """
+def _load_target(repo: Path, ledger: Path,
+                 target_id: str) -> tuple[Path, dict, bytes] | tuple[str, str] | int:
+    """Read a supersede target: ``(path, record, committed_bytes)``, a
+    ``(headline, hint)`` pair, or the exit 3 a probe already printed; nothing is
+    written on refusal. Past the committed-and-clean checks it must read as a record,
+    not be superseded, carry the ``id`` asked for, and match this writer's output."""
     path = ledger / f"{target_id}.json"
-    refused = _refuse_unless_committed(repo, path, path.relative_to(repo).as_posix(), target_id)
-    if refused is not None:
-        return refused
+    rel = path.relative_to(repo).as_posix()
+    tracked = _git(repo, "ls-files", "--error-unmatch", "--", rel)
+    status = _git(repo, "status", "--porcelain", "--", rel)
+    shown = _git(repo, "show", f"HEAD:{rel}")
+    timed_out = _refuse_git_timeout(repo, ("ls-files", tracked), ("status", status),
+                                    ("show", shown))
+    if timed_out is not None:
+        return timed_out
+    state = _refuse_target_state(path, rel, target_id, tracked, status)
+    if state is not None:
+        return state
     repair = "repair the record or name a different target"
-    record = _read_json_object(path)
+    committed = b"" if shown.returncode != 0 else shown.stdout.encode("utf-8")
+    # A directory at the target's path reads from HEAD, so the flip still derives
+    # from committed bytes and changes the status and nothing else.
+    record = _record_object(path.read_bytes() if path.is_file() else committed)
     if record is None:
         return (f"supersede target {target_id} is not a readable JSON object", repair)
     if record.get("status") == STATUS_SUPERSEDED:
@@ -245,7 +256,15 @@ def _load_target(repo: Path, ledger: Path, target_id: str) -> tuple[Path, dict] 
     if record.get("id") != target_id:
         return (f"supersede target {target_id} names itself {record.get('id')!r} in its own record",
                 "pass the id the record carries, not the filename")
-    return path, record
+    # The canonical-form rule: a target with a field, order or indent this writer
+    # does not use cannot be rewritten without moving more than the status value.
+    if shown.returncode != 0 or _render(record).encode("utf-8") != committed:
+        return (f"supersede target {target_id} is not in the canonical form this writer "
+                "writes (its fields, their order or its indent), so rewriting it would "
+                "move bytes beyond its status",
+                "have the target written by decide.py, or repair and commit it in "
+                "that form, then re-run decide")
+    return path, record, committed
 
 
 def _validate_usage(args: argparse.Namespace) -> tuple[str, list[dict], list[str]] | int:
@@ -354,8 +373,10 @@ def main(argv: list[str] | None = None) -> int:
                         "--answer the question is written open as \"answer\": null)")
     parser.add_argument("--date", default=None, metavar="YYYY-MM-DD",
                         help="record date (default: today, UTC); --supersedes requires it")
-    parser.add_argument("--source-issue", type=int, default=None, help="tracker issue number")
-    parser.add_argument("--source-comment", type=int, default=None, help="tracker comment id")
+    parser.add_argument("--source-issue", type=int, default=None,
+                        help="tracker issue number (a positive integer)")
+    parser.add_argument("--source-comment", type=int, default=None,
+                        help="tracker comment id (a positive integer)")
     parser.add_argument("--supersedes", default=None, metavar="ID",
                         help="id of the record this one replaces (needs every answer)")
     parser.add_argument("--no-commit", action="store_true",
@@ -377,20 +398,32 @@ def main(argv: list[str] | None = None) -> int:
                      f"got issue={args.source_issue!r} comment={args.source_comment!r}; "
                      "pass both, or neither")
     if args.source_issue is not None:
+        # A tracker id is a positive number: zero or negative names no issue and
+        # no comment, so the record would carry provenance nothing can check.
+        for flag, value in (("--source-issue", args.source_issue),
+                            ("--source-comment", args.source_comment)):
+            if value is None or value < 1:
+                return _fail(EXIT_USAGE, f"{flag} {value!r} is not a positive integer",
+                             f"name a real tracker id, e.g. {flag} 42")
         source = {"issue_number": args.source_issue, "comment_id": args.source_comment}
 
     # --- git and identity: nothing is written until here and below ---------
-    if _git(repo, "rev-parse", "--is-inside-work-tree").returncode != 0:
+    work_tree = _git(repo, "rev-parse", "--is-inside-work-tree")
+    named = _git(repo, "config", "user.name")
+    timed_out = _refuse_git_timeout(repo, ("rev-parse", work_tree), ("config", named))
+    if timed_out is not None:
+        return timed_out
+    if work_tree.returncode != 0:
         return _fail(EXIT_GIT, f"{repo} is not a git work tree",
                      "run decide from the attached project's repo root (git -C REPO "
                      "rev-parse --is-inside-work-tree must succeed)")
-    named = _git(repo, "config", "user.name")
     by = named.stdout.strip()
     if named.returncode != 0 or not by:
         return _fail(EXIT_GIT,
                      f"git config user.name is not set for {repo}, so the record cannot be "
                      "attributed",
-                     "set an identity: git -C REPO config user.name <name> (or --global)")
+                     "git config user.name is not set: give the tree an identity with "
+                     f"git -C {repo} config user.name <name> (or --global)")
 
     record_id = f"{date_part}-{args.slug}"
     record_path = ledger / f"{record_id}.json"
@@ -405,14 +438,16 @@ def main(argv: list[str] | None = None) -> int:
             "record it replaces and differs by its slug",
         )
 
-    target: tuple[Path, dict] | None = None
+    target: tuple[Path, dict, bytes] | None = None
     target_rel: str | None = None
     if args.supersedes is not None:
         found = _load_target(repo, ledger, args.supersedes)
+        if isinstance(found, int):
+            return found  # a git probe on the target hung; the refusal is printed
         if isinstance(found[0], str):
             return _fail(EXIT_COLLISION, found[0],
                          found[1] or "name a committed, live record of the chain being corrected")
-        target_path, target_record = found
+        target_path, target_record, target_committed = found
         target_rel = target_path.relative_to(repo).as_posix()
         # Chain position, filename stem and census replay order all read this
         # date, so another day cuts the record out of the chain it corrects.
@@ -423,7 +458,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"--date {date_part} is not the date of the record being superseded "
                 f"({target_record.get('date')!r})",
                 f"a supersede carries the date of the record it replaces: pass --date {want}")
-        target = (target_path, target_record)
+        target = (target_path, target_record, target_committed)
 
     # --- the writes: every check above has passed --------------------------
     record: dict = {
@@ -448,6 +483,7 @@ def main(argv: list[str] | None = None) -> int:
                          _written(exc, f"the ledger directory {ledger} could not be created"),
                          f"check that {repo} is writable, then re-run decide")
     rels = [record_rel]
+    committed_bytes = None if target is None else target[2]
     try:
         _write_atomic(record_path, _render(record))
         if target is not None:
@@ -456,10 +492,16 @@ def main(argv: list[str] | None = None) -> int:
             _write_atomic(target[0], _render(flipped))
             rels.append(target_rel)
     except OSError as exc:
-        # os.replace never half-writes, so the ledger is unwritable: back both
-        # paths out the way a failed commit does.
-        _rollback(repo, rels, target_rel, record_rel)
-        return _fail(EXIT_COMMIT_FAILED, _written(exc, "the record could not be written"),
+        # os.replace never half-writes, so a path failed to land: roll both
+        # paths the way a failed commit does, and name the one that stayed.
+        unredone = _rollback(repo, rels, target_rel, record_rel, committed_bytes)
+        detail = _written(exc, "the record could not be written")
+        if unredone is not None:
+            return _fail(EXIT_COMMIT_FAILED,
+                         f"{detail} and {unredone} could not be rolled back: {exc}",
+                         f"run 'git status --porcelain -- {unredone}' and restore that path "
+                         "by hand (git show HEAD:<path> writes the committed bytes back)")
+        return _fail(EXIT_COMMIT_FAILED, detail,
                      f"check that {ledger} is writable, then re-run decide")
     if args.no_commit:
         # The census reads the working tree, so these files now read as
@@ -470,20 +512,15 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_OK
     added = _git(repo, "add", "--", *rels)
     if added.returncode != 0:
-        _rollback(repo, rels, target_rel, record_rel)
+        _rollback(repo, rels, target_rel, record_rel, committed_bytes)
         return _fail(EXIT_COMMIT_FAILED, f"git add failed: {added.stderr.strip()}",
                      f"the paths {', '.join(rels)} are rolled back; re-run decide")
-    # --only with explicit paths: the commit carries exactly what this run
-    # wrote, never a file somebody else had already staged. FAIL_COMMIT is the
-    # only way a run reaches a failing commit through a flag.
-    if FAIL_COMMIT:
-        committed = subprocess.CompletedProcess(["git", "commit"], returncode=128, stdout="",
-                                               stderr="forced failure (test seam)")
-    else:
-        verb = f"supersede {args.supersedes} with {record_id}" if args.supersedes else record_id
-        committed = _git(repo, "commit", "-q", "-m", f"steering: {verb}", "--only", "--", *rels)
+    # --only with explicit paths: the commit carries exactly what this run wrote,
+    # never a file somebody else had staged.
+    verb = f"supersede {args.supersedes} with {record_id}" if args.supersedes else record_id
+    committed = _git(repo, "commit", "-q", "-m", f"steering: {verb}", "--only", "--", *rels)
     if committed.returncode != 0:
-        unredone = _rollback(repo, rels, target_rel, record_rel)
+        unredone = _rollback(repo, rels, target_rel, record_rel, committed_bytes)
         detail = committed.stderr.strip() or committed.stdout.strip()
         if unredone is not None:
             return _fail(EXIT_COMMIT_FAILED,

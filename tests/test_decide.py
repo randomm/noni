@@ -21,6 +21,14 @@ Covered, in the order the acceptance criteria name them:
   unstaged by the run.
 - the docstring's exit table and Usage block are the EXIT_* constants and the
   parser's flags, and the declined/open state is documented in the null form.
+- the hardening round (``test_hardening_*.py``-shaped concerns, all in this
+  file): a non-UTF-8 target is a clean exit 4 that never echoes the bytes; a
+  rollback that cannot restore names the leftover path in the exit 5; a git
+  call that times out is never read as a clean answer (``GIT_TIMEOUT_RC``);
+  every git call disables hooks and external transports without neutralising
+  global config; a supersede refuses a target the writer would rewrite beyond
+  its status; written files are 0644-and-umask, never 0600; and source ids
+  must be positive.
 
 The census baseline convention (PM's ruling): every test commits a record
 with ``git_pin_date`` before running decide, and both census invocations pass a
@@ -31,6 +39,7 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import re
 import subprocess
 import sys
@@ -83,15 +92,20 @@ def _run(repo: Path, *args: str, env: dict | None = None) -> subprocess.Complete
     return run_decide(repo, *args, env=env)
 
 
-def _baseline_repo(tmp_path: Path) -> Path:
+def _baseline_repo(tmp_path: Path, subdir: str = "repo") -> Path:
     """A repo whose ledger holds one committed decided record, at a pinned date.
+
+    ``subdir`` names the repo's directory under ``tmp_path``: pytest gives one
+    directory per test, so a test that builds two baselines (a loop over
+    refusal shapes) needs two names, or the second call would find the first
+    repo already there and commit nothing.
 
     The census needs a committed record to have anything to arbitrate: an
     empty ledger is a warn (42 under --strict) and census.sh's edited-after-
     commit check skips a path with no commit, so both would report a state
     unrelated to what decide.py just did.
     """
-    repo = _init_repo(tmp_path / "repo")
+    repo = _init_repo(tmp_path / subdir)
     record = {
         "id": BASELINE_ID,
         "date": BASELINE_DATE,
@@ -970,6 +984,401 @@ def test_a_free_text_answer_may_contain_an_equals_sign(tmp_path):
     assert _read(repo, f"{NEW_DATE}-escape")["questions"][0]["answer"] == (
         "ship=friday when it is ready"
     )
+
+
+# --- the hardening round --------------------------------------------------------
+#
+# Eight properties a reviewer asked for, each with the failure it closes. They
+# are written first and observed failing, so a green suite means the writer
+# was changed and not merely re-described.
+
+
+def _non_canonical_target_repo(
+    tmp_path: Path, body: str, name: str = "odd", target_id: str | None = None
+) -> tuple[Path, str, str]:
+    """A repo whose committed target is ``body`` verbatim.
+
+    ``target_id`` is the record's id and defaults to ``<BASELINE date>-<name>``;
+    a fixture that builds its bytes from another id passes it so the record's
+    own ``id`` field and its filename agree. The commit bypasses
+    ``_commit_tree``'s identical-bytes guard on purpose: these fixtures commit
+    bytes the writer itself would not have produced, and the whole point is
+    that HEAD holds them exactly as given.
+    """
+    repo = _baseline_repo(tmp_path, f"target-{name}")
+    target_id = target_id or f"{BASELINE_ID[:10]}-{name}"
+    rel = f"noni/decisions/{target_id}.json"
+    target = repo / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(body, encoding="utf-8")
+    _git(repo, "add", rel)
+    git_pin_date(repo, BASELINE_DATE, "commit", "-q", "-m", f"fixture: odd target {name}")
+    return repo, rel, target_id
+
+
+def _canonical_body(target_id: str, status: str = "decided") -> str:
+    """``target_id``'s record in the writer's canonical bytes (the _render form).
+
+    The record is built by the fixture helper and rendered by the writer's own
+    _render, so the bytes a canonical fixture commits are exactly the bytes this
+    writer would have written for that record.
+    """
+    record = json.loads(_record_json(target_id, status, "yes", None))
+    return _decide_module()._render(record)
+
+
+def _subcommand(cmd: list[str]) -> str:
+    """The git subcommand of a _git command line: the first argument past the
+    ``-C <repo>`` pair and any ``-c <key=value>`` hardening options.
+
+    A spy that monkeypatches subprocess.run needs this rather than a fixed
+    index: the hardening options sit between -C and the subcommand, so the
+    position of the verb moves when they are added.
+    """
+    index = 1
+    while index < len(cmd):
+        arg = cmd[index]
+        if arg in ("-C", "-c"):
+            index += 2
+            continue
+        if arg.startswith("-"):
+            index += 1
+            continue
+        return arg
+    return ""
+
+
+def _timed_out_git_cmd(verb: str) -> str:
+    """The seam value that makes the git call for ``verb`` time out.
+
+    A timeout is a returncode and no answer, so the seam hands back exactly
+    that: GIT_TIMEOUT_RC with empty stdout, as a hang would. Naming the verb
+    keeps the other calls real, so the run reaches the one probe under test.
+    The alternative (a spy on the test's subprocess.run) cannot reach the
+    launched interpreter, and the process whose git calls must never be read as
+    clean answers is that one.
+    """
+    # The seam stands GIT_TIMEOUT_RC in for the call's answer, which is exactly
+    # what a hang leaves the writer holding: a returncode and no stdout.
+    return f"{_decide_module().GIT_TIMEOUT_RC}:{verb}"
+
+
+def _timed_out_git_call(cmd: list[str]) -> bool:
+    """Whether the in-process timeout spy should make this git call time out.
+
+    A spy on the writer's subprocess.run is in force for the whole test, and the
+    harness's own fixture calls commit through subprocess too, so the spy fires
+    only on a call carrying the writer's three hardening -c options: that is
+    what distinguishes a decide.py call from a fixture call, and it is also what
+    the hardening test asserts is on every one of the writer's calls.
+    """
+    hardened = any(arg == "protocol.ext.allow=never" for arg in cmd)
+    if not hardened or cmd[0] != "git":
+        return False
+    index = 1
+    while index < len(cmd):
+        arg = cmd[index]
+        if arg in ("-C", "-c"):
+            index += 2
+            continue
+        if not arg.startswith("-"):
+            return arg == _TIMEOUT_TARGET[0]
+        index += 1
+    return False
+
+
+# The subcommand the in-process timeout spy is pointed at, set per test.
+_TIMEOUT_TARGET = ["<none>"]
+def _supersede(repo: Path, target_id: str,
+               env: dict | None = None) -> subprocess.CompletedProcess[str]:
+    """The standard supersede of ``target_id``, for the hardening tests."""
+    return _run(
+        repo,
+        "--slug", "scheduler",
+        "--date", BASELINE_ID[:10],
+        *BASE, *QUESTION, *OPTIONS, *ANSWERED,
+        "--supersedes", target_id,
+        env=env,
+    )
+
+
+def test_hardening_non_utf8_target_refuses_with_four_and_echoes_nothing(tmp_path):
+    """A committed target whose bytes are not UTF-8 is a refused supersede
+    (exit 4), not a traceback, and its bytes reach neither stream.
+
+    The clobber is a real out-of-band state (the same class the exit-5 seam
+    models): a reader that lets UnicodeDecodeError escape would end the run
+    with a traceback instead of the refusal, and a reader that quoted the
+    bytes would put them on the operator's terminal. The junk bytes are built
+    from integers, not written as escapes, so the fixture carries no invalid
+    escape sequence of its own.
+    """
+    repo = _baseline_repo(tmp_path)
+    rel = f"noni/decisions/{BASELINE_ID}.json"
+    junk = b'{"id": "x", "scope": "' + bytes([0x83, 0x92, 0xC3, 0x28, 0xA0]) + b'"}\n'
+    (repo / rel).write_bytes(junk)
+    _git(repo, "add", rel)
+    git_pin_date(repo, BASELINE_DATE, "commit", "-q", "-m", "fixture: target clobbered out of band")
+
+    proc = _supersede(repo, BASELINE_ID)
+    assert proc.returncode == 4, proc.stderr
+    assert "Traceback" not in proc.stderr, proc.stderr
+    assert "JSON object" in proc.stderr, proc.stderr
+    # Neither stream carries a byte of the target, nor a stand-in for one.
+    for stream in (proc.stdout, proc.stderr):
+        assert "\ufffd" not in stream, stream
+        assert "\\x" not in stream, stream
+    # The refusal writes nothing: the clobbered target stays on disk as planted
+    # and the tree is clean, so HEAD still holds the bytes just committed.
+    assert (repo / rel).read_bytes() == junk
+    assert _porcelain(repo) == ""
+    assert not _record_path(repo, f"{BASELINE_ID[:10]}-scheduler").exists()
+
+
+def test_hardening_rollback_names_the_path_it_could_not_restore(tmp_path):
+    """A path the rollback cannot put back is named, not hidden: the new
+    record's path is held by a directory planted after the collision check, so
+    the write fails, the rollback's unlink fails with it, and the run exits 5
+    naming that leftover exactly as the commit-failure branch names one.
+
+    Silently leaving the ledger holding a directory where a record belongs would
+    be worse than the failure the rollback recovers from: the censuses read it
+    and the operator is never told which path to clear by hand.
+    """
+    repo = _baseline_repo(tmp_path)
+    # The new record's own path, which the collision check passed while nothing
+    # was there, is taken by a directory before the run writes it.
+    record_rel = f"noni/decisions/{BASELINE_ID[:10]}-scheduler.json"
+    (repo / record_rel).parent.mkdir(parents=True, exist_ok=True)
+    (repo / record_rel).mkdir()
+    env = {**_identity_env()}
+
+    proc = _supersede(repo, BASELINE_ID, env=env)
+    assert proc.returncode == 5, proc.stderr
+    assert "could not be rolled back" in proc.stderr, proc.stderr
+    assert record_rel in proc.stderr, proc.stderr
+    assert (repo / record_rel).is_dir(), (
+        "the leftover is the planted directory: the rollback's unlink cannot "
+        "remove what it is not a file, which is why the message must name it"
+    )
+
+
+def test_hardening_a_timeout_on_a_guard_probe_refuses_with_three(tmp_path):
+    """A guard probe (rev-parse, ls-files, status, config, show) that times out
+    is a git problem (exit 3) naming the command, never a clean answer.
+
+    The writer's timeout is exercised through its own seam: the stand-in command
+    hangs past GIT_TIMEOUT and answers nothing, so the writer has no returncode
+    to read as 'a work tree' and must refuse. rc 124 is not zero, and a probe
+    whose timeout were read as rc 0 would have gone on to write the record,
+    which the exit code and the absent file together rule out.
+    """
+    module = _decide_module()
+    assert module.GIT_TIMEOUT_RC == 124
+    repo = _baseline_repo(tmp_path)
+    env = {**_identity_env(), module.FAIL_COMMIT_ENV_VAR: _timed_out_git_cmd("rev-parse")}
+    proc = _decide(repo, *ANSWERED, env=env)
+    assert proc.returncode == 3, proc.stderr
+    assert "timed out" in proc.stderr.lower(), proc.stderr
+    assert "rev-parse" in proc.stderr, proc.stderr
+    assert _porcelain(repo) == ""
+    assert not _record_path(repo, NEW_ID).exists()
+
+
+def test_hardening_a_timeout_on_commit_goes_through_rollback_with_five(tmp_path):
+    """A commit that times out is a failed commit: the run rolls the path back
+    and exits 5 naming the command, rather than reporting success.
+
+    The seam's command form stands a hang in for the commit itself, so the
+    writer sees a call that ran past GIT_TIMEOUT and returned nothing; the
+    record it wrote must be gone and HEAD must be where it was.
+    """
+    module = _decide_module()
+    repo = _baseline_repo(tmp_path)
+    env = {**_identity_env(), module.FAIL_COMMIT_ENV_VAR: _timed_out_git_cmd("commit")}
+    proc = _decide(repo, *ANSWERED, env=env)
+    assert proc.returncode == 5, proc.stderr
+    assert "commit" in proc.stderr.lower() and "timed out" in proc.stderr.lower(), proc.stderr
+    rel = f"noni/decisions/{NEW_ID}.json"
+    assert _porcelain(repo, rel) == "", _porcelain(repo)
+    assert not _record_path(repo, NEW_ID).exists()
+    assert _head_paths(repo) == [f"noni/decisions/{BASELINE_ID}.json"]
+
+
+def test_hardening_a_repo_local_pre_commit_hook_does_not_run(tmp_path):
+    """A repo-local pre-commit hook is not run by this writer.
+
+    The hook here exits 0 and writes a marker, so a run that honoured it would
+    leave the marker behind and exit 0 anyway: the marker's absence is the
+    assertion, and the record's presence is the control that says the commit
+    itself happened.
+    """
+    repo = _baseline_repo(tmp_path)
+    marker = repo / "HOOK_RAN"
+    hook = repo / ".git" / "hooks" / "pre-commit"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text(
+        "#!/bin/sh\n" + "printf x > " + str(marker) + "\nexit 0\n", encoding="utf-8"
+    )
+    hook.chmod(0o755)
+
+    proc = _decide(repo, *ANSWERED)
+    assert proc.returncode == 0, proc.stderr
+    assert _record_path(repo, NEW_ID).is_file(), "the commit itself must still happen"
+    assert not marker.exists(), "decide.py ran a hook it must not run"
+    # Identity still comes from the tree's config: hardening the call must not
+    # neutralise global config, whose user.name is what `by` reads.
+    assert _read(repo, NEW_ID)["by"] == "Replay"
+    _assert_both_censuses_clean(repo, "a commit run with hooks disabled")
+
+
+def test_hardening_supersede_refuses_a_target_the_writer_would_rewrite(tmp_path):
+    """A target outside the writer's canonical form is refused (exit 4) rather
+    than rewritten: the supersede must change the status value and no other
+    byte, which it cannot promise for bytes it would not have written.
+
+    Two shapes are refused here: an unknown extra field, which the writer's
+    FIELD_ORDER render would drop, and a different indent, which it would
+    re-flow. The positive control below is the byte test that proves the
+    refusal is not over-broad.
+    """
+    probe_id = f"{BASELINE_ID[:10]}-probe"
+    canonical = json.loads(_canonical_body(probe_id))
+    extra_field = json.dumps({**canonical, "operator_note": "not in the writer's field order"},
+                             indent=2) + "\n"
+    odd_indent = json.dumps(canonical, indent=4) + "\n"
+    for label, body in (("extra-field", extra_field), ("odd-indent", odd_indent)):
+        # Same bytes, committed under the name the writer is asked to supersede:
+        # the id inside is probe's, so the refusal under test can only be the
+        # canonical-form rule and not the id/name mismatch.
+        repo, rel, target_id = _non_canonical_target_repo(tmp_path, body, label, probe_id)
+        # The fixture's own bytes must differ from the canonical form they were
+        # built from, or the test would assert on a target that needed no
+        # refusal at all.
+        assert body != _canonical_body(probe_id), label
+        before = _git_e2(repo, "show", f"HEAD:{rel}").stdout
+        proc = _supersede(repo, target_id)
+        assert proc.returncode == 4, f"{label}: {proc.stderr}"
+        assert "canonical" in proc.stderr.lower(), f"{label}: {proc.stderr}"
+        assert _git_e2(repo, "show", f"HEAD:{rel}").stdout == before, label
+        assert _porcelain(repo) == "", label
+        assert not (repo / f"noni/decisions/{BASELINE_ID[:10]}-scheduler.json").exists()
+
+
+def test_hardening_a_canonical_target_still_supersedes_by_the_status_line_only(tmp_path):
+    """The positive control: a canonical target is superseded, and the raw
+    committed text differs from HEAD's in the status line and nowhere else."""
+    target_id = f"{BASELINE_ID[:10]}-canonical"
+    repo, rel, _id = _non_canonical_target_repo(tmp_path, _canonical_body(target_id),
+                                                "canonical", target_id)
+    before = _git_e2(repo, "show", f"HEAD:{rel}").stdout
+    assert json.loads(before)["status"] == "decided"
+    proc = _supersede(repo, target_id)
+    assert proc.returncode == 0, proc.stderr
+    after = _git_e2(repo, "show", f"HEAD:{rel}").stdout
+    before_lines = before.splitlines()
+    after_lines = after.splitlines()
+    assert len(before_lines) == len(after_lines), (before_lines, after_lines)
+    differing = [(a, b) for a, b in zip(before_lines, after_lines, strict=True) if a != b]
+    assert differing == [('  "status": "decided",', '  "status": "superseded",')], differing
+
+
+def test_hardening_written_files_are_not_owner_only(tmp_path):
+    """A record written by decide.py is readable like any other project file:
+    mkstemp's 0600 must be widened before os.replace, masked by the umask, and
+    a superseded target keeps the mode it already had."""
+    umask = os.umask(0o022)
+    try:
+        expected = 0o644 & ~umask
+        repo = _baseline_repo(tmp_path)
+        # A baseline the writer did not make, so its mode proves nothing yet.
+        target_rel = f"noni/decisions/{BASELINE_ID}.json"
+        (repo / target_rel).chmod(0o644)
+        proc = _decide(repo, *ANSWERED, "--source-issue", "7", "--source-comment", "8")
+        assert proc.returncode == 0, proc.stderr
+        written = _record_path(repo, NEW_ID).stat().st_mode & 0o777
+        assert written == expected, oct(written)
+        assert written != 0o600, "a 0600 record is unreadable to the census's usual reader"
+
+        proc = _supersede(repo, BASELINE_ID)
+        assert proc.returncode == 0, proc.stderr
+        flipped = (repo / target_rel).stat().st_mode & 0o777
+        assert flipped == expected, oct(flipped)
+    finally:
+        os.umask(umask)
+
+
+def test_hardening_source_ids_must_be_positive(tmp_path):
+    """--source-issue and --source-comment are tracker ids: zero or negative is
+    a usage error (exit 2), refused before anything is written."""
+    repo = _baseline_repo(tmp_path)
+    for flag in ("--source-issue", "--source-comment"):
+        other = "--source-comment" if flag == "--source-issue" else "--source-issue"
+        for bad in ("0", "-1"):
+            proc = _decide(repo, *ANSWERED, flag, bad, other, "7")
+            assert proc.returncode == 2, f"{flag} {bad}: {proc.stderr}"
+            assert flag in proc.stderr, proc.stderr
+    assert _porcelain(repo, "noni/decisions") == ""
+    assert sorted(p.name for p in (repo / "noni/decisions").glob("*.json")) == [
+        f"{BASELINE_ID}.json"
+    ]
+
+
+def test_hardening_docs_state_the_refusals_the_code_performs(tmp_path):
+    """The docstring's exit 4 table and exit 3's hint are what the code does.
+
+    The old wording claimed a target "belongs to another chain" (nothing
+    refuses that) and omitted the two refusals the hardening round added, so a
+    reader of the table could not predict a run's exit code. The hint text is
+    checked against the runtime hint for the same reason: a doc that names a
+    different command than the one stderr names is two contracts, one stale.
+    """
+    doc = _docstring(_decide_ast())
+    lines = doc.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.strip() == "Exit codes:")
+    block: dict[int, str] = {}
+    current: int | None = None
+    for line in lines[start + 1:]:
+        if not line.strip():
+            continue
+        if not line.startswith(" " * 4):
+            break
+        head = line.strip().split(maxsplit=1)
+        if head and head[0].isdigit():
+            current = int(head[0])
+            block[current] = head[1] if len(head) > 1 else ""
+        elif current is not None:
+            block[current] += " " + line.strip()
+    four = block[4].lower()
+    for condition in ("missing", "already superseded", "untracked", "locally modified",
+                      "canonical", "another day"):
+        assert condition in four, f"docstring's exit 4 omits {condition!r}: {block[4]}"
+    three = block[3].lower()
+    assert "is not a git work tree" in three
+    assert "git config user.name is not set" in three
+    # The runtime hint for the identity refusal is the same wording, not a
+    # different command: doc and stderr say one thing.
+    repo = _baseline_repo(tmp_path)
+    proc = _decide(repo, *ANSWERED, env=_no_identity_env(tmp_path), identity=None)
+    assert proc.returncode == 3, proc.stderr
+    assert "git config user.name is not set" in proc.stderr, proc.stderr
+    # Same for the timeout hint: the table promises a git probe that timed out is
+    # a git problem, and the runtime message says so and names the command.
+    module = _decide_module()
+    hung = {**_identity_env(), module.FAIL_COMMIT_ENV_VAR: _timed_out_git_cmd("rev-parse")}
+    timed = _decide(repo, *ANSWERED, env=hung)
+    assert timed.returncode == 3, timed.stderr
+    assert "timed out" in timed.stderr and "rev-parse" in timed.stderr, timed.stderr
+
+
+def _no_identity_env(tmp_path: Path) -> dict:
+    """An env with no gitconfig anywhere and no author vars: the identity-less run."""
+    return {
+        "PATH": sys.executable.rsplit("/", 2)[0] + ":/usr/bin:/bin",
+        "HOME": str(tmp_path / "no-home"),
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_SYSTEM": "/dev/null",
+    }
 
 
 # --- the doc / code contract --------------------------------------------------

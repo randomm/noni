@@ -35,7 +35,7 @@ and it refuses the shapes the census would reject.
 ```
 scripts/decide.py --repo REPO --slug SLUG --scope SCOPE --asked-by ROLE
                   --question ID=TEXT [--option ID=OPTION]... [--answer ID=ANSWER]...
-                  [--date YYYY-MM-DD] [--source-issue N --source-comment N]
+                  [--date YYYY-MM-DD] [--source-issue N --source-comment N]  # N positive
                   [--supersedes ID] [--no-commit]
 ```
 
@@ -50,10 +50,10 @@ flags.
 | code | meaning |
 |---|---|
 | `0` | the record was written (and committed unless `--no-commit`) |
-| `2` | invalid input: an argparse failure, an empty or malformed `--slug` or `--date`, a malformed `--question`/`--option`/`--answer`, a question outside 1-4 or with outside 2-4 options, or `--supersedes` with an unanswered question |
-| `3` | git or identity: `--repo` is not a git work tree, or `git config user.name` is not set (the hint names the command) |
-| `4` | a collision or a bad supersede target: the record file exists, or the target is missing, already superseded, uncommitted, locally modified, or dated another day |
-| `5` | the commit failed: both paths are rolled back (index reset, target restored, new record removed) |
+| `2` | invalid input: an argparse failure, an empty or malformed `--slug` or `--date`, a malformed `--question`/`--option`/`--answer`, a `--source-issue`/`--source-comment` that is not a positive integer, a question outside 1-4 or with outside 2-4 options, or `--supersedes` with an unanswered question |
+| `3` | git or identity: `--repo` is not a git work tree, `git config user.name` is not set (the hint names the command), or a git probe timed out |
+| `4` | a collision or a bad supersede target: the record file exists, or the target is missing, already superseded, untracked, locally modified, not in the writer's canonical form, or dated another day than `--date` |
+| `5` | the commit failed: both paths are rolled back (index reset, target restored, new record removed), and a path that could not be restored is named |
 
 Every refusal leaves the target and the ledger untouched: the writes happen
 only after every check passes, each file goes to a temp file in its own
@@ -70,8 +70,11 @@ them before running the census.
 `steering: supersede <target> with <id>`. It requires every question in the new
 record to be answered (else exit 2), because an open supersede would leave the
 chain with no live answer. The target is read from the working tree and must be
-tracked, committed and byte-identical to `git show HEAD:<path>`; its `status`
-is the only field the writer touches.
+tracked, committed and byte-identical to `git show HEAD:<path>`, and in this
+writer's own canonical form (its fields, their order and its indent): a target
+the writer would render differently is refused with exit 4 rather than
+rewritten, because the rewrite could then move bytes beyond the `status` value
+that is the only field the writer touches.
 
 ## The record
 

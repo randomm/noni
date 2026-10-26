@@ -79,6 +79,7 @@ itself, so every test runs offline against recorded JSON fixtures.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 # Import the shared contract and the allow-list loader from the sibling
 # integrations module (no package; tests insert integrations/ on sys.path —
@@ -95,21 +96,36 @@ from adapter_protocol import (  # noqa: E402
 )
 
 #: The env var naming an alternative allow-list file (mirrors the scrub's
-#: NONI_SCRUB_DENYLIST pattern). The untracked file at the repo root takes
-#: precedence when it exists; the env-var-named file is the fallback.
+#: NONI_SCRUB_DENYLIST pattern). The untracked file at the attached repository's
+#: root takes precedence when it exists; the env-var-named file is the fallback.
 ALLOWLIST_ENV_VAR = "NONI_ADAPTER_ALLOWLIST"
+
+#: The untracked allow-list file's name, relative to the attached repository's
+#: root. The adapter is a pure function of (payload, allow-list) and never
+#: resolves a working directory itself, so the caller supplies that root.
+ALLOWLIST_FILENAME = ".noni-adapter-allowlist"
 
 _TICKED_RE = re.compile(r"^\s*[-*]\s*\[[xX]\]\s*(.+)$", re.MULTILINE)
 
 
-def default_allowlist_file() -> str:
-    """Path of the default (untracked) allow-list file: the repo root's
-    ``.noni-adapter-allowlist``. The path is in .gitignore, so the file can
-    never be committed — the same pattern as the scrub's deny-list.
-    """
-    from pathlib import Path
+def default_allowlist_file(repo_root: Path | None) -> str | None:
+    """Path of the default (untracked) allow-list file: ``repo_root``'s
+    ``.noni-adapter-allowlist``.
 
-    return str(Path(__file__).resolve().parent.parent / ".noni-adapter-allowlist")
+    ``repo_root`` is the root of the repository noni is *attached to* — the one
+    whose ``noni/`` state and tracker issues the adapter is reading — not this
+    adapter's install directory. The caller resolves it; the adapter never
+    guesses a working directory. ``.gitignore`` names the file, so it can never
+    be committed — the same pattern as the scrub's deny-list.
+
+    Returns ``None`` when no usable root is given (``None``, or a path that is
+    not a directory): with no candidate file the loader consults only
+    ``ALLOWLIST_ENV_VAR`` and otherwise reports the allow-list as ``absent``, so
+    an unusable root fails closed rather than authorising from a wider default.
+    """
+    if repo_root is None or not repo_root.is_dir():
+        return None
+    return str(repo_root / ALLOWLIST_FILENAME)
 
 
 def _ticked_options(body: str) -> list[str]:

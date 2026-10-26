@@ -186,6 +186,65 @@ def test_default_allowlist_file_is_gitignored():
     assert result.returncode == 0, ".noni-adapter-allowlist is not git-ignored"
 
 
+def test_default_allowlist_file_resolves_to_the_attached_repo_root(tmp_path, monkeypatch):
+    """The resolved default path is the ATTACHED repository's root, not the
+    adapter's install directory (the bug that blocked adoption: the default
+    used to be ``integrations/.noni-adapter-allowlist``).
+
+    The value is asserted directly — a .gitignore substring check alone let the
+    wrong path ship — and a file at that path is the one the loader loads."""
+    monkeypatch.delenv(adapter.ALLOWLIST_ENV_VAR, raising=False)
+    attached = tmp_path / "attached"
+    attached.mkdir()
+
+    resolved = adapter.default_allowlist_file(attached)
+
+    assert resolved is not None
+    assert Path(resolved) == attached / ".noni-adapter-allowlist"
+    assert Path(resolved) != _INTEGRATIONS / ".noni-adapter-allowlist"
+    assert not Path(resolved).is_relative_to(REPO / "integrations"), (
+        f"the default must not live under noni's install directory: {resolved}"
+    )
+
+    (attached / ".noni-adapter-allowlist").write_text("op-1\n", encoding="utf-8")
+    loaded = adapter_protocol.load_allowlist(adapter.ALLOWLIST_ENV_VAR, resolved)
+    assert loaded.status == "active"
+    assert loaded.accounts == {"op-1"}
+
+
+def test_default_allowlist_file_is_none_without_a_repo_root(tmp_path, monkeypatch):
+    """With no usable repository root the default is no candidate at all: the
+    loader then consults only the env var, and with neither source the
+    allow-list is ``absent`` (fail closed, never a wider default)."""
+    monkeypatch.delenv(adapter.ALLOWLIST_ENV_VAR, raising=False)
+
+    missing = tmp_path / "not-created-yet"
+    for root in (None, missing):
+        assert adapter.default_allowlist_file(root) is None, (
+            f"an unavailable root ({root}) must yield no candidate file"
+        )
+
+    loaded = adapter_protocol.load_allowlist(
+        adapter.ALLOWLIST_ENV_VAR, adapter.default_allowlist_file(None)
+    )
+    assert loaded.status == "absent"
+    assert loaded.accounts == set()
+
+
+def test_default_allowlist_file_none_still_honours_the_env_var(tmp_path, monkeypatch):
+    """A missing root is not a refusal: with no default candidate the env-var
+    file still loads (the precedence rule lives in the loader, untouched)."""
+    env_file = tmp_path / "ops-allowlist"
+    env_file.write_text("op-9\n", encoding="utf-8")
+    monkeypatch.setenv(adapter.ALLOWLIST_ENV_VAR, str(env_file))
+
+    loaded = adapter_protocol.load_allowlist(
+        adapter.ALLOWLIST_ENV_VAR, adapter.default_allowlist_file(None)
+    )
+    assert loaded.status == "active"
+    assert loaded.accounts == {"op-9"}
+
+
 # --- Label authorization ------------------------------------------------------
 
 def test_label_applied_by_allowlisted_account_is_authorized():

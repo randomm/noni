@@ -70,9 +70,17 @@ first label on the issue.
 
 Never hard-coded. Sources, in precedence order:
 
-1. the untracked file `.noni-adapter-allowlist` in the repository root
-   (in .gitignore, so it can never be committed);
+1. the untracked file `.noni-adapter-allowlist` in the root of the repository
+   noni is attached to — the one whose `noni/` state and issues the adapter is
+   reading (in .gitignore, so it can never be committed);
 2. the file named by the env var `NONI_ADAPTER_ALLOWLIST`.
+
+The adapter is a pure function of (payload, allow-list) and resolves no working
+directory of its own, so the caller passes the attached repository's root to
+`default_allowlist_file(repo_root)`. With no usable root (none given, or a path
+that is not a directory) there is no default candidate and only the env var can
+supply a file; with neither source the allow-list is reported `absent` — it
+never falls back to a wider default.
 
 Format: one account per line; blank lines and `#` comments ignored. With
 no local configuration the allow-list is empty and nothing is authorized
@@ -98,7 +106,8 @@ import github_issues_adapter as adapter
 assert adapter_protocol.check_interface(adapter) == []  # two seams present
 
 allowlist = adapter_protocol.load_allowlist(
-    adapter.ALLOWLIST_ENV_VAR, adapter.default_allowlist_file()
+    adapter.ALLOWLIST_ENV_VAR,
+    adapter.default_allowlist_file(attached_repo_root),  # Path of the attached repo
 )
 verdict = adapter.question_legitimacy(payload, allowlist)   # QuestionVerdict
 ok = adapter.label_authorization(payload, "steer", allowlist)  # bool

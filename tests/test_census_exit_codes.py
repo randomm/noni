@@ -71,6 +71,17 @@ def _run(repo: Path, *args: str) -> int:
         return census.main(argv)
 
 
+def _rows(repo: Path, *args: str) -> list[dict]:
+    """The finding rows of a --json run (the exit code is asserted separately)."""
+    import io
+    from contextlib import redirect_stderr, redirect_stdout
+    out, err = io.StringIO(), io.StringIO()
+    argv = ["--repo", str(repo), "--now", "2026-10-02T00:00:00Z", "--json", *args]
+    with redirect_stdout(out), redirect_stderr(err):
+        census.main(argv)
+    return [json.loads(line) for line in out.getvalue().splitlines() if line.strip()]
+
+
 def test_exit_0_clean(tmp_path):
     repo = _init_repo(tmp_path / "repo")
     _commit_file(repo, "noni/decisions/2026-10-01-a.json", json.dumps(_valid_record(), indent=2))
@@ -103,15 +114,16 @@ def test_exit_10_schema_violation(tmp_path):
     assert _run(repo) == 10
 
 
-def test_exit_10_empty_ledger_dir_stays_ledger_record(tmp_path):
-    """An existing decisions/ directory with no *.json record keeps the
-    ledger-record fail class (PM decision on issue #23): the ledger-empty
-    class adds rows only where the census used to report nothing, so this run
-    exits 10, not 0."""
+def test_recordless_ledger_dir_is_ledger_empty_warn(tmp_path):
+    """An existing decisions/ directory with no *.json record is the
+    ledger-empty warn (operator decision on issue #33, which reverses the
+    exit-10 ruling of issue #23): a freshly attached project with no decisions
+    yet must census clean, so this run exits 0 and 42 under --strict."""
     repo = _init_repo(tmp_path / "repo")
     _commit_file(repo, "noni/decisions/.gitkeep", "")
-    assert _run(repo) == 10
-    assert _run(repo, "--only", "ledger-record") == 10
+    assert _run(repo, "--skip", "hygiene") == 0
+    assert _run(repo, "--skip", "hygiene", "--strict") == 42
+    assert _run(repo, "--only", "ledger-empty", "--strict") == 42
 
 
 def test_exit_10_not_valid_json(tmp_path):
@@ -198,12 +210,16 @@ def test_exit_42_ledger_empty(tmp_path):
     assert _run(repo, "--only", "ledger-empty", "--strict") == 42
 
 
-def test_exit_42_never_weakens_the_empty_ledger_failure(tmp_path):
-    """The decision in one line: the empty decisions/ directory is exit 10 both
-    with and without --strict, i.e. ledger-empty did not soften it."""
+def test_recordless_ledger_dir_reports_the_empty_state(tmp_path):
+    """The recordless decisions/ directory reports the same state word as a
+    missing decisions/: the warn row names 'empty' either way, and the run is
+    clean without --strict."""
     repo = _init_repo(tmp_path / "repo")
     _commit_file(repo, "noni/decisions/.gitkeep", "")
-    assert _run(repo, "--strict", "--skip", "hygiene") == 10
+    assert _run(repo, "--skip", "hygiene") == 0
+    rows = [r for r in _rows(repo, "--skip", "hygiene") if r.get("check") == "ledger-empty"]
+    assert len(rows) == 1, f"expected one ledger-empty row: {rows}"
+    assert "(empty)" in rows[0]["message"], f"state word missing: {rows[0]['message']}"
 
 
 def test_exit_42_ledger_absent(tmp_path):

@@ -4,6 +4,11 @@ __pycache__/
 uv.lock
 noni.egg-info/
 .pytest_cache/
+# coverage data: `coverage run` writes .coverage, parallel subprocess runs
+# write .coverage.<host>.<pid>.<seq>, `coverage html` writes htmlcov/
+.coverage
+.coverage.*
+htmlcov/
 /.pi/work-state/
 # local public-repo hygiene deny-list: never committed (issue #8 scrub check)
 /.noni-scrub-denylist

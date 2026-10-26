@@ -16,6 +16,42 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
+# The Python product modules the coverage gate measures, relative to the repo
+# root. Naming them here keeps the list in one place: pyproject's
+# [tool.coverage.report] include carries the same seven paths and
+# tests/test_gate_wiring.py compares the two, so a module cannot quietly
+# disappear from the gate. Tests are excluded by construction — only these
+# files are measured, so the reported total is the coverage of shipped code.
+PRODUCT_MODULES = (
+    "scripts/public_safety.py",
+    "integrations/adapter_protocol.py",
+    "integrations/github-issues/github_issues_adapter.py",
+    "skills/census/scripts/census.py",
+    "skills/sessions-claims/scripts/register.py",
+    "skills/sessions-claims/scripts/claim.py",
+    "skills/sessions-claims/scripts/census-sessions.py",
+)
+
+# The env var coverage's subprocess support needs. A launched interpreter
+# starts measuring only when this names the config file to read, so it is set
+# here — in the launcher itself, not only in the shell that started pytest —
+# and a bare local `pytest` gets the same measurement as the documented
+# three-command gate.
+COVERAGE_PROCESS_START = str(REPO / "pyproject.toml")
+
+
+def subprocess_env(base: dict | None = None) -> dict:
+    """An env for a launched product script, with coverage's hook enabled.
+
+    ``base`` starts from a specific environment instead of the current one.
+    Every test launcher of a product Python script goes through this, which
+    is what makes the subprocess half of the coverage gate fire.
+    """
+    env = dict(os.environ if base is None else base)
+    env["COVERAGE_PROCESS_START"] = COVERAGE_PROCESS_START
+    return env
+
+
 # The tests' established route for repo-local modules (scripts/ is not a
 # package — packages = [] in pyproject.toml): put scripts/ on sys.path here so
 # every harness consumer gets the same public_safety object, and the fixture
@@ -218,9 +254,10 @@ def run_register(repo: Path, identity: str, **kwargs) -> subprocess.CompletedPro
     for key, value in kwargs.items():
         extra.extend([f"--{key}", str(value)])
     return subprocess.run(
-        ["python3", str(REGISTER), "--repo", str(repo), "--identity", identity, *extra],
+        [sys.executable, str(REGISTER), "--repo", str(repo), "--identity", identity, *extra],
         capture_output=True,
         text=True,
+        env=subprocess_env(),
         timeout=120,
     )
 
@@ -236,7 +273,7 @@ def run_claim(
     for key, value in kwargs.items():
         extra.extend([f"--{key}", str(value)])
     cmd = [
-        "python3", str(CLAIM),
+        sys.executable, str(CLAIM),
         "--repo", str(repo),
         "--session-id", session_id,
         "--task", task,
@@ -244,6 +281,6 @@ def run_claim(
     ]
     if push:
         cmd.append("--push")
-    full_env = dict(os.environ)
+    full_env = subprocess_env()
     full_env.update(_git_env_with_identity())
     return subprocess.run(cmd, capture_output=True, text=True, env=full_env, timeout=120)

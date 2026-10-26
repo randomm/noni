@@ -26,9 +26,11 @@ from __future__ import annotations
 import ast
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+from _harness import subprocess_env
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -63,9 +65,10 @@ def test_census_passes_on_fixture_repo_no_remote_no_integrations(git_repo):
     commit({f"noni/decisions/{valid_record['id']}.json": valid_path.read_text()}, "record")
 
     proc = subprocess.run(
-        ["python3", str(REPO / "skills" / "census" / "scripts" / "census.py"), "--repo", str(repo), "--now", "2026-10-01T12:00:00Z"],
+        [sys.executable, str(REPO / "skills" / "census" / "scripts" / "census.py"), "--repo", str(repo), "--now", "2026-10-01T12:00:00Z"],
         capture_output=True,
         text=True,
+        env=subprocess_env(),
         timeout=60,
     )
     assert proc.returncode == 0, f"expected exit 0, got {proc.returncode}\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
@@ -90,9 +93,10 @@ def test_census_passes_on_fixture_repo_no_remote_no_integrations(git_repo):
     commit({f"noni/decisions/{sourced_record['id']}.json": source_path.read_text()}, "sourced record")
 
     proc = subprocess.run(
-        ["python3", str(REPO / "skills" / "census" / "scripts" / "census.py"), "--repo", str(repo), "--now", "2026-10-02T12:00:00Z"],
+        [sys.executable, str(REPO / "skills" / "census" / "scripts" / "census.py"), "--repo", str(repo), "--now", "2026-10-02T12:00:00Z"],
         capture_output=True,
         text=True,
+        env=subprocess_env(),
         timeout=60,
     )
     assert proc.returncode == 0, (

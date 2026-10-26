@@ -20,7 +20,10 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
+
+from _harness import subprocess_env
 
 REPO = Path(__file__).resolve().parent.parent
 FIXTURES = REPO / "tests" / "fixtures"
@@ -28,14 +31,11 @@ FIXTURES = REPO / "tests" / "fixtures"
 
 def _run_sessions_census_bin(path: Path, sessions_dir: Path, env: dict | None = None) -> tuple[int, str, str]:
     """Run a sessions census entry point as a subprocess."""
-    import os
-    import subprocess
-
-    full_env = dict(os.environ)
+    full_env = subprocess_env()
     if env:
         full_env.update(env)
     proc = subprocess.run(
-        ["python3", str(path), str(sessions_dir)],
+        [sys.executable, str(path), str(sessions_dir)],
         capture_output=True,
         text=True,
         env=full_env,
@@ -90,14 +90,17 @@ def test_exit_3_python_missing(tmp_path, run_sessions_census):
     assert fx["exit_code"] == 3
     sessions = tmp_path / "noni" / "sessions"
     _write_sessions_dir(sessions, fx.get("files", {}))
-    # Build a PATH that has bash (so the wrapper runs) but no python3.
+    # Build a PATH that has bash (so the wrapper runs) but no python3, and
+    # clear NONI_PYTHON: conftest exports it (see tests/conftest.py), and the
+    # wrapper honours it, so leaving it set would let the wrapper find a real
+    # interpreter and the exit-3 path would never be exercised.
     import shutil
     real_bash = shutil.which("bash")
     assert real_bash, "bash not found on this system"
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
     (fake_bin / "bash").symlink_to(real_bash)
-    code, out, err = run_sessions_census(sessions, env={"PATH": str(fake_bin)})
+    code, out, err = run_sessions_census(sessions, env={"PATH": str(fake_bin), "NONI_PYTHON": ""})
     assert code == 3, f"expected exit 3, got {code}\nstderr: {err}\nstdout: {out}"
     assert "python3" in err.lower(), f"expected 'python3' in stderr, got: {err}"
 

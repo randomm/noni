@@ -29,10 +29,17 @@ jobs:
         run: python -m venv .venv
 
       - name: Install dev dependencies
-        run: .venv/bin/pip install --no-cache-dir pytest==9.1.1 ruff==0.17.2
+        run: .venv/bin/pip install --no-cache-dir coverage==7.17.0 pytest==9.1.1 ruff==0.17.2
 
       - name: Lint
         run: .venv/bin/ruff check .
 
-      - name: Test
-        run: .venv/bin/pytest
+      # The coverage gate behind the AGENTS.md >=80% rule: run the suite under
+      # coverage, combine the subprocess data files the launched product
+      # scripts wrote, then report. `coverage report` exits non-zero when the
+      # total falls below fail_under in pyproject.toml, which fails the job.
+      - name: Test with coverage
+        run: |
+          .venv/bin/coverage run -m pytest
+          .venv/bin/coverage combine
+          .venv/bin/coverage report

@@ -91,10 +91,13 @@ Read-only, NDJSON on stdout, honest exit code:
 | code | meaning |
 |---|---|
 | `0` | clean — every session file valid, no double-claims |
-| `3` | python3 not found on the reading machine |
+| `3` | the interpreter the wrapper runs is not found on the reading machine |
 | `30` | double-claim: two active claims on the same task from different identities |
 | `31` | a claim row was committed without a register file (work is not blocked — report only) |
 | `32` | a session file is malformed (missing required field, or a claim row with no task reference) |
+
+The wrapper runs the interpreter named by `NONI_PYTHON` when that variable is
+set, and `python3` otherwise.
 
 When several classes fire at once, the lowest code wins (`30 < 31 < 32`);
 every check runs in a single pass and all findings are always in the NDJSON

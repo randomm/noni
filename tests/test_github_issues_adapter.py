@@ -23,7 +23,6 @@ Covered (per the ticket's test surface):
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -41,6 +40,7 @@ for _p in (str(_INTEGRATIONS), str(_GH_ADAPTER)):
 
 import adapter_protocol  # noqa: E402
 import github_issues_adapter as adapter  # noqa: E402
+from _harness import subprocess_env  # noqa: E402
 
 #: The synthetic allow-list every test in this module uses. Real operator
 #: names live only in the untracked local allow-list file; the test uses
@@ -339,11 +339,11 @@ def test_adapter_record_with_source_passes_census(git_repo):
     import subprocess
 
     proc = subprocess.run(
-        ["python3", str(REPO / "skills" / "census" / "scripts" / "census.py"), "--repo", str(repo), "--now", "2026-10-02T12:00:00Z"],
+        [sys.executable, str(REPO / "skills" / "census" / "scripts" / "census.py"), "--repo", str(repo), "--now", "2026-10-02T12:00:00Z"],
         capture_output=True,
         text=True,
         timeout=60,
-        env=dict(os.environ),
+        env=subprocess_env(),
     )
     # Exit 0: the record is schema-valid (the source field is admitted) and
     # the full census — schema, edited, deleted and chain checks — passes on

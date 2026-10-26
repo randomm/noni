@@ -23,7 +23,7 @@
 # findings are always in the NDJSON output:
 #   0   clean — every session file valid (five required fields each), no
 #       double-claims, all claims have a register file
-#   3   a required tool is missing (python3 not found)
+#   3   the interpreter it would run is missing (see NONI_PYTHON below)
 #   30  double-claim: two active claims on the same task from different
 #       identities (the arbiter check)
 #   31  a claim row was committed without a register file under the sessions
@@ -36,7 +36,9 @@
 # plus a stderr line naming the code and noting that all findings are in the
 # NDJSON rows.
 #
-# Requires python3 on the machine that does the reading.
+# Requires a Python 3 interpreter on the machine that does the reading. The
+# interpreter is $NONI_PYTHON when that variable is set, and python3
+# otherwise; the exit-3 check below tests the one actually about to run.
 #
 # This header is also the --help output: the script prints itself from the
 # second line to the first non-comment line of the body below, so the help
@@ -66,9 +68,10 @@ done
 # is the direct entry point.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-command -v python3 >/dev/null 2>&1 || {
-  echo "census-sessions.sh: python3 not found on $(hostname 2>/dev/null || echo unknown)" >&2
+NONI_PYTHON="${NONI_PYTHON:-python3}"
+command -v "$NONI_PYTHON" >/dev/null 2>&1 || {
+  echo "census-sessions.sh: $NONI_PYTHON not found on $(hostname 2>/dev/null || echo unknown)" >&2
   exit 3
 }
 
-exec python3 "$SCRIPT_DIR/census-sessions.py" "$SESSIONS_DIR"
+exec "$NONI_PYTHON" "$SCRIPT_DIR/census-sessions.py" "$SESSIONS_DIR"

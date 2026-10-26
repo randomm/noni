@@ -359,10 +359,13 @@ def run_census_json(clone: Path, now: str, stale_after: str) -> tuple[int, list[
     tests/test_census_unified.py::TestHygiene; this fixture measures the
     ledger/session arbiter.
     """
+    from _harness import subprocess_env as _harness_subprocess_env
+
     proc = subprocess.run(
-        ["python3", str(_CENSUS), "--repo", str(clone), "--json", "--strict",
+        [sys.executable, str(_CENSUS), "--repo", str(clone), "--json", "--strict",
          "--skip", "hygiene", "--now", now, "--stale-after", stale_after],
         capture_output=True, text=True, timeout=120,
+        env=_harness_subprocess_env(),
     )
     rows = [json.loads(line) for line in proc.stdout.strip().splitlines() if line.strip()]
     return proc.returncode, rows

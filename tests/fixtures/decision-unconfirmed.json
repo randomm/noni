@@ -3,7 +3,7 @@
   "date": "2026-10-04T10:00:00Z",
   "asked_by": "developer",
   "questions": [
-    { "id": "q1", "text": "Adopt the new scheduler?", "options": ["yes", "no", "later"] }
+    { "id": "q1", "text": "Adopt the new scheduler?", "options": ["yes", "no", "later"], "answer": null }
   ],
   "by": "Operator",
   "scope": "release ordering",

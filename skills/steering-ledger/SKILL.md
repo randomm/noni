@@ -27,7 +27,51 @@ check (see Anti-fabrication below).
 Read `references/decisions.md` before writing a record. Read
 `references/modes.md` before steering. Read `references/supersede.md` before
 correcting a record. Read `references/census.md` before reporting on the ledger
-state.
+state. Write records with `scripts/decide.py` (below): it is the only writer,
+and it refuses the shapes the census would reject.
+
+## Writing a record
+
+```
+scripts/decide.py --repo REPO --slug SLUG --scope SCOPE --asked-by ROLE
+                  --question ID=TEXT [--option ID=OPTION]... [--answer ID=ANSWER]...
+                  [--date YYYY-MM-DD] [--source-issue N --source-comment N]
+                  [--supersedes ID] [--no-commit]
+```
+
+One command per steering act. The record's `id` is `<date>-<slug>`, its `by`
+is `git config user.name` of the tree, and its `status` is **derived, never
+supplied**: all questions answered is `decided`, any unanswered question is
+`open`, and the target of a supersede becomes `superseded`. There is no
+`--status` flag: the writer records what the operator decided and never
+chooses an answer, so every question's text, options and answer come from
+flags.
+
+| code | meaning |
+|---|---|
+| `0` | the record was written (and committed unless `--no-commit`) |
+| `2` | invalid input: an argparse failure, an empty or malformed `--slug` or `--date`, a malformed `--question`/`--option`/`--answer`, a question outside 1-4 or with outside 2-4 options, or `--supersedes` with an unanswered question |
+| `3` | git or identity: `--repo` is not a git work tree, or `git config user.name` is not set (the hint names the command) |
+| `4` | a collision or a bad supersede target: the record file exists, or the target is missing, already superseded, uncommitted, locally modified, or dated another day |
+| `5` | the commit failed: both paths are rolled back (index reset, target restored, new record removed) |
+
+Every refusal leaves the target and the ledger untouched: the writes happen
+only after every check passes, each file goes to a temp file in its own
+directory and is moved into place with `os.replace`, and a failed commit rolls
+both paths back so `git status --porcelain` is empty for them again. The commit
+stages exactly the paths the command wrote (`git add -- <paths>` then
+`git commit --only -- <paths>`), so a file somebody else had staged is neither
+committed nor unstaged. `--no-commit` writes through the same validation chain
+and stops before git, printing one line that names the paths and says to commit
+them before running the census.
+
+`--supersedes ID` writes the new record and flips the target's `status` to
+`superseded` in **one** commit of exactly those two paths, with the message
+`steering: supersede <target> with <id>`. It requires every question in the new
+record to be answered (else exit 2), because an open supersede would leave the
+chain with no live answer. The target is read from the working tree and must be
+tracked, committed and byte-identical to `git show HEAD:<path>`; its `status`
+is the only field the writer touches.
 
 ## The record
 
@@ -48,16 +92,16 @@ fields (in order), plus one optional field (`source`):
 
 A `question` object is `{id, text, options, answer}`. `options` is an array of
 2-4 strings. `answer` is either the chosen option's string (or a free-text
-escape string) and must name the question it answers by id pairing, or is absent
-when the question was left open. The full shape, validation rules, and the
-declined/open state are in `references/decisions.md`.
+escape string) and must name the question it answers by id pairing, or is
+`null` when the question was left open. The full shape, validation rules, and
+the declined/open state are in `references/decisions.md`.
 
 The `answer` names its question by id: in multiple-choice mode each question
 carries its own `id` and its own `answer`, so a three-question record is
 unambiguous. A `many` or `stranger` tick-parse persists as `status: open` with
-the question's `answer` absent — never as an answer. A decline or cancel
-persists `status: open` with every `answer` absent; that is the only state
-"records nothing" can mean.
+the question's `answer` `null` — never as an answer. A decline or cancel that
+is recorded at all persists as `status: open` with every `answer` `null`, as an
+open chain-root record; that is the only state "records nothing" can mean.
 
 ## Attribution
 
@@ -70,8 +114,9 @@ in `references/decisions.md`.
 
 ## Supersede
 
-A correction writes a **new** file; the superseded record's bytes stay unchanged
-and its blob stays reachable in history. Never edit history. Each supersede
+A correction writes a **new** file with `scripts/decide.py --supersedes ID`;
+the superseded record's bytes stay unchanged apart from its `status`, and its
+blob stays reachable in history. Never edit history. Each supersede
 chain must resolve to exactly one live record, and a duplicate, dangling, or
 cyclic supersedes is refused by the census. The protocol is in
 `references/supersede.md`.
@@ -120,7 +165,9 @@ point the dispatch at a separately installed copy or an adapter.
   census does not check confirmation and does not claim to. Signed operator
   confirmation, where git can see it, is a follow-up.
 - **The answer is confirmed, not written.** A record with an `answer` is a
-  confirmed record; an unconfirmed candidate commits nothing.
+  confirmed record; an unconfirmed candidate commits nothing. A declined steer
+  that is recorded at all is an open chain-root record with every `answer`
+  `null` — never a supersede.
 - **One file per record; the directory is the aggregate.** The census tolerates a
   half-written or malformed record without blinding itself to the rest.
 - **Supersede, never edit.** A corrected record is a new file; the old one stays

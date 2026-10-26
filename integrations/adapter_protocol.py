@@ -28,9 +28,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # The four verdicts of the question-legitimacy seam. A steer is:
-#   "none"     no answer was given (no tick); persist as status open, no answer.
+#   "none"     nothing was ticked; persist as status open, answer null.
 #   "one"      exactly one tick, applied last by an allow-listed account.
-#   "many"     several ticks — ambiguous; persist as status open, no answer.
+#   "many"     several ticks — ambiguous; persist as status open, answer null.
 #   "stranger" the last tick was applied by an account not on the allow-list.
 # A `many` or `stranger` verdict is never stored as an answer.
 VERDICT_NONE = "none"
@@ -149,9 +149,10 @@ class QuestionVerdict:
 
     ``verdict`` is one of LEGAL_VERDICTS. ``answer`` is the chosen option's
     string — non-None if and only if ``verdict`` is ``one``. For ``none`` and
-    ``many`` the answer is absent (None): an ambiguous steer is persisted as
-    an open record, never as an answer. ``stranger`` likewise carries no
-    answer (a foreign tick voids the reply).
+    ``many`` the answer is ``None``, which the ledger records as ``"answer":
+    null``: an ambiguous steer is persisted as an open record, never as an
+    answer. A ``stranger`` verdict carries ``None`` too (a foreign tick voids
+    the reply).
     """
 
     verdict: str

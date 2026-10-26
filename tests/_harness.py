@@ -84,6 +84,23 @@ def _claim_module() -> object:
     return module
 
 
+def _decide_module() -> object:
+    """decide.py loaded as a module, for the tests that name its constants.
+
+    The exit-5 tests need the writer's own failure-seam constant rather than a
+    copy of its name: a rename in the product then fails the test that drives
+    it instead of leaving that test exercising a real commit. Same loading
+    shape as :func:`_claim_module`, under a name of our own.
+    """
+    spec = importlib.util.spec_from_file_location("noni_decide_under_test", DECIDE)
+    if spec is None or spec.loader is None:  # pragma: no cover - path is fixed
+        raise RuntimeError(f"cannot load decide module from {DECIDE}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def _script_constant(tree: ast.Module, name: str, origin: str) -> object:
     """One module-level ``NAME = <literal>`` read from an already-parsed script.
 
@@ -402,9 +419,11 @@ def push_with_retry(repo: Path, branch: str, attempts: int = 3) -> None:
             raise RuntimeError(f"push failed after {attempts} attempts: {proc.stderr.strip()}")
 
 SESSIONS_SKILL = REPO / "skills" / "sessions-claims" / "scripts"
+STEERING_SKILL = REPO / "skills" / "steering-ledger" / "scripts"
 CENSUS_SESSIONS = SESSIONS_SKILL / "census-sessions.sh"
 REGISTER = SESSIONS_SKILL / "register.py"
 CLAIM = SESSIONS_SKILL / "claim.py"
+DECIDE = STEERING_SKILL / "decide.py"
 
 
 def run_register(repo: Path, identity: str, **kwargs) -> subprocess.CompletedProcess[str]:
@@ -449,4 +468,32 @@ def run_claim(
         cmd.append("--push")
     full_env = subprocess_env()
     full_env.update(_git_env_with_identity())
+    return subprocess.run(cmd, capture_output=True, text=True, env=full_env, timeout=120)
+
+
+def run_decide(repo: Path, *args: str, env: Mapping[str, str] | None = None,
+               extra: list[str] | None = None) -> subprocess.CompletedProcess[str]:
+    """Run decide.py with ``--repo repo`` plus the flags given as plain strings.
+
+    The flags are passed as plain strings (``"--slug", "scheduler"``) rather
+    than kwargs: decide.py's repeats (`--question`, `--option`, `--answer`)
+    carry values with '=' and spaces in them, and a kwargs-to-flag conversion
+    would either mangle those or need a name no Python identifier can spell
+    (``--asked-by``). The caller owns the exact command line, which is what the
+    exit-code tests assert.
+
+    Runs with the deterministic identity env (``GIT_CONFIG_GLOBAL=/dev/null``,
+    so no host gitconfig, plus GIT_AUTHOR_*/GIT_COMMITTER_*), because decide.py
+    commits under the tree's configured identity and ``by`` comes from that
+    same config: a test that wants a real author name pins it in the repo's
+    own git config (see ``tests/test_decide.py``'s ``_decide`` helper), and a
+    test that wants the missing-identity refusal passes its own ``env``, which
+    replaces that identity rather than extending it.
+    """
+    cmd = [sys.executable, str(DECIDE), "--repo", str(repo), *args, *(extra or [])]
+    full_env = subprocess_env()
+    if env is None:
+        full_env.update(_git_env_with_identity())
+    else:
+        full_env.update(env)
     return subprocess.run(cmd, capture_output=True, text=True, env=full_env, timeout=120)

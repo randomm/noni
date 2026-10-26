@@ -37,8 +37,8 @@ answer references where that answer came from.
 
 | field | type | rules |
 |---|---|---|
-| `id` | string | `YYYY-MM-DD-<slug>`; unique across the ledger; equals the filename stem |
-| `date` | string | UTC ISO-8601; generated from commit metadata at write time |
+| `id` | string | `YYYY-MM-DD-<slug>`; unique across the ledger; equals the filename stem. `decide.py` builds it from `--date` and `--slug`, and the slug is held to `[a-z0-9-]+` so the name stays a plain path segment (census.sh rejects anything else as `10:bad-name`) |
+| `date` | string | UTC ISO-8601. `decide.py` writes `<--date or today, UTC>T00:00:00Z`; a supersede carries the date of the record it replaces, so the chain, the filename stem and replay order stay in step |
 | `asked_by` | string | the agent role or session that asked |
 | `questions` | array | 1-4 question objects (see below) |
 | `by` | string | git author of the record's commit (see Attribution) |
@@ -59,18 +59,38 @@ so a multi-question record is unambiguous.
 | `id` | string | short identifier unique within the record (`q1`, `q2`, ...) |
 | `text` | string | the question as asked |
 | `options` | array | 2-4 strings; the free-text escape hatch is always available, so a reply may name an option not in the list |
-| `answer` | string \| absent | the chosen option's string (or a free-text string), or absent when the question is open |
+| `answer` | string \| null | the chosen option's string (or a free-text string), or `null` when the question is open |
+
+## Writing a record
+
+`scripts/decide.py` is the writer: one command writes the file and commits it,
+and `--supersedes` is its flag for a correction rather than a separate script.
+Nothing here is hand-written. What the writer decides for you, and what it
+never does:
+
+- **Supplied by flags, named after the field:** `id` (from `--date` and
+  `--slug`), `asked_by`, `scope`, each question's `id`/`text`/`options`, and
+  each answer (`--answer ID=<answer>`). `by` comes from `git config user.name`
+  of the tree, so it is not a flag either.
+- **Derived, never supplied:** `status`. All questions answered is `decided`;
+  any unanswered question is `open` and its `answer` is written as `null`; the
+  target of a supersede becomes `superseded`. There is no `--status` flag.
+- **Never chosen:** an answer. The writer records what the operator decided;
+  a question with no `--answer` is written open, not guessed into a decision.
 
 ## The open / declined state
 
-A declined or cancelled steer leaves the question open and records nothing
-committable: the agent commits no file. When a record *is* committed to capture
-that an answer was not given (e.g. a session that stopped after asking), the
-record is persisted with `status: open` and every question's `answer` absent.
-`answer` absent + `status: open` is the only state "records nothing" can mean.
+A declined or cancelled steer leaves the question open, and the record that
+captures it (a session that stopped after asking, an operator who declined every
+option) is written as an **open chain-root record**: `supersedes: null`,
+`status: open`, and every question's `answer` written as `null`. A decline is
+never a supersede — a supersede whose chain holds no answered record would
+resolve to zero live records, which the census reports as exit 20.
+
+`answer` null + `status: open` is the only state "records nothing" can mean.
 
 A `many` or `stranger` tick-parse is persisted the same way — `status: open`,
-`answer` absent, never as an `answer` — because an ambiguous or foreign tick is
+`answer` null, never as an `answer` — because an ambiguous or foreign tick is
 not a legitimate operator decision.
 
 ## Attribution

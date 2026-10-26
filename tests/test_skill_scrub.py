@@ -89,10 +89,12 @@ FIXTURE_FILES = sorted(
 
 
 def test_skill_files_present():
-    """The steering-ledger skill has the expected file layout."""
+    """The steering-ledger skill has the expected file layout, including the
+    decide.py writer next to the read-only census shim."""
     rels = {p.relative_to(d).as_posix() for d in SKILL_DIRS for p in SKILL_FILES if p.is_relative_to(d)}
     assert "SKILL.md" in rels, f"SKILL.md missing; have: {rels}"
     assert "scripts/census.sh" in rels, f"scripts/census.sh missing; have: {rels}"
+    assert "scripts/decide.py" in rels, f"scripts/decide.py missing; have: {rels}"
     for ref in ("references/decisions.md", "references/modes.md", "references/supersede.md", "references/census.md"):
         assert ref in rels, f"{ref} missing; have: {rels}"
 
@@ -134,7 +136,8 @@ def test_skill_md_within_agents_size_limit():
 
 
 def test_census_script_is_executable():
-    """The census script has the executable bit set (it is meant to be run
-    directly)."""
-    census = (REPO / "skills" / "steering-ledger" / "scripts" / "census.sh")
-    assert census.stat().st_mode & 0o111, "census.sh is not executable"
+    """Both steering-ledger scripts have the executable bit (they are meant to
+    be run directly): the read-only census shim and the decide.py writer."""
+    for name in ("census.sh", "decide.py"):
+        script = REPO / "skills" / "steering-ledger" / "scripts" / name
+        assert script.stat().st_mode & 0o111, f"{name} is not executable"

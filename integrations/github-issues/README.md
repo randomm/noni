@@ -25,7 +25,7 @@ must carry the edit history, not just the final comment body:
   is that option's label.
 - **`none`** — no option ticked.
 - **`many`** — more than one option ticked (ambiguous — persisted as
-  `status: open` with no answer, never as an answer).
+  `status: open` with the answer written as `null`, never as an answer).
 - **`stranger`** — the comment's last edit was made by an account not on
   the allow-list (a foreign edit voids the reply).
 

@@ -28,7 +28,7 @@ implements exactly **two seams**:
    question, return the operator's answer and a verdict. The verdict is
    one of `none` | `one` | `many` | `stranger`. A `many` or `stranger`
    verdict is never stored as an answer; the caller persists such a steer
-   as `status: open` with the answer absent.
+   as `status: open` with the answer written as `null`.
 2. **Label authorization** — `label_authorization(label_payload, label,
    allowlist)`: given a label **on** an issue (the label is an explicit
    argument — never inferred from the issue's current label set), return

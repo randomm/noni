@@ -68,6 +68,8 @@ GIT_TIMEOUT_RC = gitwrite.GIT_TIMEOUT_RC
 FAIL_COMMIT_ENV_VAR = gitwrite.FAIL_COMMIT_ENV_VAR
 _git = gitwrite.run_git
 _write_atomic = gitwrite.write_atomic
+_record_object = gitwrite.record_object
+_rollback = gitwrite.rollback
 
 # Every return path names one of these; the 'Exit codes:' block above carries
 # exactly this set (tests/test_decide.py reads both and pins them together).
@@ -107,6 +109,17 @@ def _fail(code: int, message: str, hint: str | None = None) -> int:
     return code
 
 
+def _refuse_git_timeout(repo: Path, *hung: tuple[str, subprocess.CompletedProcess[str]]) -> int | None:
+    """The git mechanic's timeout verdict, printed here so every refusal of this
+    writer carries this file's name and exits 3."""
+    message = gitwrite.refuse_git_timeout(Path(__file__).name, *hung)
+    if message is None:
+        return None
+    command = next(name for name, result in hung if result.returncode == GIT_TIMEOUT_RC)
+    return _fail(EXIT_GIT, message,
+                 f"re-run decide once git answers again (git -C {repo} {command})")
+
+
 def _written(exc: OSError, what: str) -> str:
     """One 'could not be written' headline naming the OSError and its reason."""
     return f"{what} ({exc.__class__.__name__}: {exc.strerror or exc})"
@@ -116,29 +129,6 @@ def _render(record: dict) -> str:
     """The record's bytes: FIELD_ORDER, two-space indent, one trailing newline."""
     ordered = {key: record[key] for key in FIELD_ORDER if key in record}
     return json.dumps(ordered, indent=2, ensure_ascii=False) + "\n"
-
-
-def _rollback(repo: Path, rels: list[str], target_rel: str | None, record_rel: str,
-              target_committed: bytes | None = None) -> str | None:
-    """Undo this run's writes; None if the tree is clean, else the first path it
-    could not put back: the record goes first (an unlink works whatever holds the
-    target's path), the index forgets both paths, the target gets the bytes read at
-    check time. A silent wrong path is a ledger nobody will fix."""
-    leftover: str | None = None
-    try:
-        (repo / record_rel).unlink()
-    except OSError:
-        leftover = record_rel
-    if _git(repo, "reset", "-q", "--", *rels).returncode == GIT_TIMEOUT_RC:
-        leftover = leftover or record_rel
-    if target_rel is not None:
-        if target_committed is None:
-            return target_rel
-        try:
-            _write_atomic(repo / target_rel, target_committed.decode("utf-8"))
-        except OSError:
-            return target_rel
-    return leftover
 
 
 def _parse_pairs(values: list[str], flag: str) -> tuple[list[tuple[str, str]], str | None]:
@@ -175,33 +165,6 @@ def _build_questions(
         built.append({"id": qid, "text": text, "options": opts,
                       "answer": asked[-1] if asked else None})
     return built
-
-
-def _record_object(raw: bytes) -> dict | None:
-    """The record object ``raw`` holds, or None when it is not one. Decoding
-    happens here, not in json.loads' reader, so a non-UTF-8 record answers "not a
-    record" instead of a traceback, and its bytes are never echoed.
-    """
-    try:
-        record = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return None
-    return record if isinstance(record, dict) else None
-
-
-def _refuse_git_timeout(repo: Path,
-                        *hung: tuple[str, subprocess.CompletedProcess[str]]) -> int | None:
-    """A probe that timed out is a refusal (exit 3), never a clean answer: the
-    message names the first hung call, and reading a timeout as 'tracked', 'clean' or
-    'a work tree' would let a slow machine decide what enters the ledger."""
-    for command, result in hung:
-        if result.returncode != GIT_TIMEOUT_RC:
-            continue
-        return _fail(EXIT_GIT,
-                     f"git {command} timed out after {GIT_TIMEOUT}s, so decide.py cannot "
-                     "tell whether the tree is one it may write",
-                     f"re-run decide once git answers again (git -C {repo} {command})")
-    return None
 
 
 def _refuse_target_state(path: Path, rel: str, target_id: str,

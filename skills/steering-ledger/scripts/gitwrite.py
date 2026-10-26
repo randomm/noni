@@ -8,6 +8,7 @@ call it stands in for is made; an unset seam variable is inert.
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 import subprocess
@@ -105,5 +106,53 @@ def write_atomic(path: Path, text: str) -> None:
         except OSError:
             pass
         raise
+
+
+def record_object(raw: bytes) -> dict | None:
+    """The record object ``raw`` holds, or None when it is not one. Decoding
+    happens here, not in json.loads' reader, so a non-UTF-8 record answers "not a
+    record" instead of a traceback, and its bytes are never echoed.
+    """
+    try:
+        record = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return record if isinstance(record, dict) else None
+
+
+def refuse_git_timeout(label: str,
+                       *hung: tuple[str, subprocess.CompletedProcess[str]]) -> str | None:
+    """A probe that timed out is a refusal (exit 3), never a clean answer: the
+    message names the first hung call, and reading a timeout as 'tracked', 'clean' or
+    'a work tree' would let a slow machine decide what enters the ledger. ``label``
+    names the writer that is refusing, so the mechanic stays the writer's voice."""
+    for command, result in hung:
+        if result.returncode != GIT_TIMEOUT_RC:
+            continue
+        return f"git {command} timed out after {GIT_TIMEOUT}s, so {label} cannot " \
+               "tell whether the tree is one it may write"
+
+
+def rollback(repo: Path, rels: list[str], target_rel: str | None, record_rel: str,
+             target_committed: bytes | None = None) -> str | None:
+    """Undo this run's writes; None if the tree is clean, else the first path it
+    could not put back: the record goes first (an unlink works whatever holds the
+    target's path), the index forgets both paths, the target gets the bytes read at
+    check time. A silent wrong path is a ledger nobody will fix."""
+    leftover: str | None = None
+    try:
+        (repo / record_rel).unlink()
+    except OSError:
+        leftover = record_rel
+    if run_git(repo, "reset", "-q", "--", *rels).returncode == GIT_TIMEOUT_RC:
+        leftover = leftover or record_rel
+    if target_rel is not None:
+        if target_committed is None:
+            return target_rel
+        try:
+            write_atomic(repo / target_rel, target_committed.decode("utf-8"))
+        except OSError:
+            return target_rel
+    return leftover
 
 

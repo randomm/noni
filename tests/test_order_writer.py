@@ -1209,9 +1209,14 @@ def test_the_schema_reads_a_utc_stamp_and_refuses_a_bare_one():
 # --- a pathological nesting, and the two reads that must survive it ------------
 
 # ``json.loads`` walks nesting on the interpreter's own stack, so a document past
-# ``sys.getrecursionlimit()`` raises RecursionError -- not a ValueError, and so
-# not caught by the arms the writer's two JSON reads already had. One such file
-# at either path turned a writer run into a traceback.
+# the recursion budget raises RecursionError -- not a ValueError, and so not
+# caught by the arms the writer's two JSON reads already had. Where the budget
+# runs out depends on the interpreter: 3.11 gives up near
+# ``sys.getrecursionlimit()`` (default 1000: measured to break at about 990
+# levels under pytest), later builds go on to a few thousand before the C stack
+# itself gives out, so the RecursionError arms are reachable on 3.11 and not
+# merely theoretical. Before the bound, one such file at either path turned a
+# writer run into a traceback.
 DEEP = 100000
 
 
@@ -1288,14 +1293,31 @@ def test_the_writer_walks_a_deep_value_without_recursing():
 def test_the_writer_refuses_a_deep_document_before_the_decoder_overflows():
     """The writer's read refuses the pathological document itself.
 
-    ``json.loads`` overflows its C stack only at a depth set by the interpreter's
-    build, far above any ceiling a reader could want, so the document that proves
-    the mechanism is one the standard reader can still build: the bound is what
+    ``json.loads`` walks nesting on the interpreter's own stack and gives up at a
+    depth the build sets: on 3.11 that is near ``sys.getrecursionlimit()``,
+    measured to break just under the default 1000, so the ``RecursionError`` arms
+    of the two reads are reachable there and not merely theoretical. Catching
+    more exception types is still not the fix: the run is honest only if it never
+    reaches the overflow, so the document that proves the mechanism is one the
+    standard reader can still build on every supported interpreter -- past this
+    product's bound, well inside the interpreter's budget. The bound is what
     answers, raising the ``ValueError`` the two reads already catch instead of
     leaving a ``RecursionError`` that would slip past them and kill the run.
     """
     schema = _schema_module()
-    inside = 5000
+    # Above the product's bound, below the depth at which this interpreter's own
+    # decoder gives up. That ceiling is a property of the build -- measured just
+    # under the default limit of 1000 on 3.11, and several thousand on 3.12 and
+    # 3.13 -- so twice the bound sits in that window on every supported version.
+    # The assertion is the premise: a host that lowers the recursion limit below
+    # the decoder's reach says so here, not on the line that reads the document.
+    inside = schema.MAX_DEPTH * 2
+    budget = sys.getrecursionlimit()
+    assert inside > schema.MAX_DEPTH, (
+        f"{inside} levels is not past the bound of {schema.MAX_DEPTH}, so the "
+        "bound is not what answered")
+    assert inside < budget, (
+        f"{inside} levels is not inside the recursion budget of {budget}")
     body = "[" * inside + "1" + "]" * inside
     assert json.loads(body), "the standard reader must still be able to build this"
     try:

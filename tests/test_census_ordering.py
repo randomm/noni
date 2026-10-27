@@ -1072,11 +1072,17 @@ def test_the_ordering_group_does_not_read_the_sessions_or_the_ledger_classes(tmp
 # --- a pathological nesting ---------------------------------------------------
 
 # ``json.loads`` walks nesting with the interpreter's own stack, so a document
-# that nests far past ``sys.getrecursionlimit()`` raises RecursionError -- which
-# is NOT a ValueError, so it is not caught by the arms every reader here already
-# has for a malformed file. Before the bound, one such file ended the whole run
-# with a traceback: an arbiter that crashes answers nothing, and a report that
-# never prints is the same lie as one that prints "clean".
+# that nests past the recursion budget raises RecursionError -- which is NOT a
+# ValueError, so it is not caught by the arms every reader here already has for
+# a malformed file. Where the budget runs out depends on the interpreter: 3.11
+# gives up near ``sys.getrecursionlimit()`` (default 1000: measured to break at
+# about 990 levels under pytest), later builds go on to a few thousand before the
+# C stack itself gives out. The ``RecursionError`` arms below are therefore
+# reachable, not theoretical: on 3.11 the ordinary decoder refuses a document
+# this deep before this product's bound is consulted.
+# Before the bound, one such file ended the whole run with a traceback: an
+# arbiter that crashes answers nothing, and a report that never prints is the
+# same lie as one that prints "clean".
 DEEP = 100000
 
 
@@ -1132,17 +1138,31 @@ def test_a_deeply_nested_state_file_is_malformed_and_not_a_traceback(tmp_path):
 def test_a_deep_document_is_refused_before_the_decoder_overflows():
     """Which rule refuses a pathological nesting, and why it has to be that one.
 
-    ``json.loads`` walks nesting on the C stack and overflows at a depth set by
-    the interpreter's build -- about 10k on a release CPython 3.13, tens of
-    thousands elsewhere -- so catching more exception types is not the fix: a run
-    is honest only if it never reaches the overflow. A document still inside the
-    decoder's own reach settles it. The standard reader builds it, so what
-    refuses it is this product's bound, and it raises the ``ValueError`` the
-    callers already catch rather than leaving a ``RecursionError`` for them to
-    miss.
+    ``json.loads`` walks nesting on the interpreter's own stack and gives up at
+    a depth the build sets: on 3.11 that is near ``sys.getrecursionlimit()``,
+    measured to break just under the default 1000, so the ``RecursionError`` arms
+    of the readers are reachable there and not merely theoretical. Catching more
+    exception types is still not the fix: a run is honest only if it never
+    reaches the overflow. So the document here is one the standard reader can
+    build on every supported interpreter -- past this product's bound, well
+    inside the interpreter's budget -- and what refuses it is the bound alone. It
+    raises the ``ValueError`` the callers already catch rather than leaving a
+    ``RecursionError`` for them to miss.
     """
     module = importlib.import_module("census_json")
-    inside = 5000
+    # Above the product's bound, below the depth at which this interpreter's own
+    # decoder gives up. That ceiling is a property of the build -- measured just
+    # under the default limit of 1000 on 3.11, and several thousand on 3.12 and
+    # 3.13 -- so twice the bound sits in that window on every supported version.
+    # The assertion is the premise: a host that lowers the recursion limit below
+    # the decoder's reach says so here, not on the line that reads the document.
+    inside = module.MAX_DEPTH * 2
+    budget = sys.getrecursionlimit()
+    assert inside > module.MAX_DEPTH, (
+        f"{inside} levels is not past the bound of {module.MAX_DEPTH}, so the "
+        "bound is not what answered")
+    assert inside < budget, (
+        f"{inside} levels is not inside the recursion budget of {budget}")
     body = "[" * inside + "1" + "]" * inside
     assert json.loads(body), "the standard reader must still be able to build this"
     try:

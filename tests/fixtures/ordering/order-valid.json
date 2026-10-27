@@ -1,0 +1,15 @@
+{
+  "schema": "noni.order/1",
+  "entries": [
+    {
+      "issue": 7,
+      "decision": "2026-10-01-baseline",
+      "confirmed": "2026-10-26T00:00:00Z"
+    },
+    {
+      "issue": 12,
+      "decision": null,
+      "confirmed": "2026-10-26T00:00:00Z"
+    }
+  ]
+}

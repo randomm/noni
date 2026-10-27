@@ -362,8 +362,8 @@ def test_task_and_branch_guards_are_anchored_against_a_trailing_newline(tmp_path
     clean = _make_session(tmp_path / "t-clean")
     assert run_claim(clean, SESSION_ID, "#42", **{"no-commit": None}).returncode == 0
     expected = _session_path(clean).read_text()
-    for task in ("#42\n", "\n#42", "#42\r", "#42", "  #42  "):
-        repo = _make_session(tmp_path / f"t-{abs(hash(task))}")
+    for index, task in enumerate(("#42\n", "\n#42", "#42\r", "#42", "  #42  ")):
+        repo = _make_session(tmp_path / f"t-{index}")
         proc = run_claim(repo, SESSION_ID, task, **{"no-commit": None})
         assert proc.returncode in (0, 4), f"{task!r}: {proc.returncode} {proc.stderr}"
         body = _session_path(repo).read_text()

@@ -3,8 +3,9 @@ the session register.
 
 The census is the arbiter of the noni protocol invariants. It reads the git
 history plus the committed files under ``noni/`` (decision records under
-``noni/decisions/``, session registers under ``noni/sessions/``), flags
-protocol violations, and returns an honest exit code. It never writes
+``noni/decisions/``, session registers under ``noni/sessions/``, and the
+ordering artifact at ``noni/direction/order.json``), flags protocol
+violations, and returns an honest exit code. It never writes
 anything: running it leaves ``git status --porcelain`` empty, and no digest
 file or report directory is produced — results are recomputed on demand.
 
@@ -20,7 +21,13 @@ Probe failures never report clean: a probe that cannot read a file or cannot
 run git records a probe failure (a warning, or its own code under --strict),
 never a silent pass. The same rule covers the checks whose question this run
 cannot answer at all — they append a ``cannot-tell`` row naming why, rather
-than falling silent and reading as a clean run.
+than falling silent and reading as a clean run. The same rule outranks the
+``--only`` row filter: a group reports the rows that say *this run could not
+read the file it was asked to check* (the artifact, its ``--issue-state``
+input, or its ledger) whatever the filter names, because a run that observed
+that fault and reported none would be reporting a clean it did not establish.
+Rows about one entry inside a file are still dropped when their class is not
+named — that is what ``--only`` is for. See ``_row`` and ``WHOLE_ARTIFACT_KEY``.
 
 Time comes from ``--now <ISO-8601>`` when given (reproducible output for
 tests), otherwise the current UTC time. Every metric in --json mode derives
@@ -35,8 +42,6 @@ stderr names every class that fired.
 from __future__ import annotations
 
 import argparse
-import collections.abc
-import contextlib
 import hashlib
 import importlib.util
 import json
@@ -48,7 +53,6 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Protocol
 
 SCHEMA_VERSION = "noni.census/1"
 
@@ -65,6 +69,26 @@ SESSION_CHECKS = frozenset({
     "session-double", "session-claim", "session-malformed", "session-stalled",
     "session-same-identity", "session-deleted", "probe",
 })
+WHOLE_ARTIFACT_KEY = "_whole_artifact"
+
+# The ordering group: the three checks share one read of the order artifact, so
+# the group runs when any of them was asked for and the row filter keeps what
+# the caller named. The fourth row of the group, the `cannot-tell` a run adds
+# when --issue-state did not answer an entry's state, is a row of
+# `ordering-closed` rather than a class of its own — it answers the closed
+# question, so it carries that class's code (46) and, like every cannot-tell row,
+# a warn by default that --strict promotes (see _append_cannot_tell).
+# A missing order file is not a finding: the ordering layer is optional, so this
+# group adds no row at all when the artifact is absent. The code itself lives in
+# census_ordering.py beside this file (see the loader under 'Ordering checks').
+ORDERING_CHECKS = frozenset({"ordering-malformed", "ordering-stale", "ordering-closed"})
+
+# One threshold flag, two thresholds: --stale-after pins both classes to the
+# number the caller named, and without it each class gets the default that
+# belongs to it (see the threshold block in main for why the flag's presence
+# decides, and _threshold for how a default is parsed).
+SESSION_STALE_AFTER_DEFAULT = "7d"
+ORDERING_STALE_AFTER_DEFAULT = "30d"
 
 # --- Exit-code table ----------------------------------------------------------
 # The class codes live in CHECKS below; 0 | 2 | 3 are reserved for non-class
@@ -132,6 +156,23 @@ CHECKS: dict[str, tuple[int, str, str]] = {
         "remove the personal path, secret shape or deny-list name from the tracked file (rewrite "
         "history if it was ever committed), and keep the local deny-list present so the deny-list "
         "class stays active",
+    ),
+    "ordering-malformed": (
+        15, "fail",
+        "repair noni/direction/order.json to the noni.order/1 shape (schema, a unique positive "
+        "issue and a UTC confirmed stamp per entry, decision a live record id or null), or write "
+        "it with skills/direction/scripts/order.py, which refuses the shapes this class reports",
+    ),
+    "ordering-stale": (
+        45, "warn",
+        "confirm the entry again (order.py confirm ISSUE, or confirm with no issue for the whole "
+        "order); an entry nobody has confirmed since --stale-after is the operator's last word "
+        "on the order only as far back as that",
+    ),
+    "ordering-closed": (
+        46, "warn",
+        "remove the closed issue from the order (order.py remove ISSUE), or reopen it; the order "
+        "is what to work on next, so an issue the tracker has closed does not belong in it",
     ),
 }
 
@@ -215,6 +256,7 @@ LEDGER_EMPTY_MESSAGES: dict[str, str | None] = {
     "symlink": "noni/ or the ledger path is a symlink; the census does not read through links",
     "ok": None,
 }
+
 
 class Git:
     """A read-only view over the git history of a repository.
@@ -396,8 +438,8 @@ def _rel_to_root(root: Path, path: Path) -> str:
 
 
 def _row(check: str, strict: bool, subject: str, artifact: str, message: str,
-         root: Path, relative_artifact: bool = True,
-         severity: str | None = None) -> dict:
+         root: Path, relative_artifact: bool = True, severity: str | None = None,
+         whole_artifact: bool = False) -> dict:
     """Build one finding row: the only place a row's shape is written.
 
     ``code``/``fix`` come from CHECKS and ``severity`` from `_severity`, so a
@@ -412,6 +454,12 @@ def _row(check: str, strict: bool, subject: str, artifact: str, message: str,
     its class. The override goes through `_promote`, so ``--strict`` still
     escalates it and that rule keeps its one owner. A reporter that passes
     ``severity`` must pass the run's ``strict``, not a literal.
+
+    ``whole_artifact`` marks a row as about the file a group was asked to read
+    rather than one entry inside it: the marker is ``WHOLE_ARTIFACT_KEY``,
+    underscore-keyed so it is stripped at render, and the row filter of ``main``
+    never drops such a row. See the module docstring and ``keep`` for the rule
+    and why a filtered run must still report it.
     """
     severity = _promote(severity, strict) if severity else _severity(check, strict)
     return {
@@ -421,6 +469,7 @@ def _row(check: str, strict: bool, subject: str, artifact: str, message: str,
         "subject": subject,
         "artifact": _rel_to_root(root, Path(artifact)) if relative_artifact else artifact,
         "message": message,
+        WHOLE_ARTIFACT_KEY: whole_artifact,
     }
 
 
@@ -967,329 +1016,54 @@ def _repo_sha1(path: Path) -> str | None:
         return None
 
 
-# --- Session checks -------------------------------------------------------------
+# --- Hygiene -------------------------------------------------------------------
+# The public-repo hygiene class and the checker it loads live in
+# census_hygiene.py beside this file, loaded by path for the same reason as the
+# ordering module below: a sys.path entry would put a directory ahead of the
+# standard library, where a lookalike could be trusted as the census's hygiene
+# class. The name is ours, so no caller shadows it; the three row mechanics the
+# class uses are handed in at the call, so the row shape keeps its one owner.
+_HYGIENE_NAME = "noni_census_hygiene"
 
-# scripts/public_safety.py lives at <repo-root>/scripts relative to this file
-# (this file is skills/census/scripts/census.py — four levels below the repo
-# root). The census loads it by path rather than importing it by name: scripts/
-# is not a package, tests add their own sys.path entries, and a path load is
-# what lets the census verify the file it is about to execute.
-SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
 
+def _load_sibling(name: str, file: str):
+    """The module ``file`` beside this file, loaded by path under ``name``.
 
-class PublicSafetyModule(Protocol):
-    """The slice of scripts/public_safety.py the census depends on.
-
-    The scanner is loaded dynamically, so this is the only checked description
-    of the contract between the arbiter and the checker it runs: a signature
-    drift on public_safety's side is a type error against this Protocol rather
-    than an AttributeError at census time. ``_denylist_active`` is a private
-    helper of that module; the census calls it because public_safety is a gate
-    file whose surface this release may not widen, and `_trusted_public_safety`
-    requires it at runtime precisely so the coupling is detected as a not-run
-    row rather than an AttributeError.
+    Every split-out group and helper goes through here. A sys.path entry would
+    put a directory ahead of the standard library, where a lookalike could be
+    trusted as the census's own code; loading by path with a name of our own is
+    what closes that. The module is registered under ``name`` before exec (the
+    canonical importlib recipe), so a module body that imports itself finds the
+    census's own entry and not a lookalike earlier on the path. A sibling that
+    needs another sibling is handed what it needs as an argument at the call
+    rather than importing it by name, so no reader's trust is decided by
+    ``sys.path``. Load order is therefore meaningful: a module must be
+    registered before any module that names it is exec'd.
     """
-
-    def scrub_tracked_files(self, repo: Path) -> tuple[list[str], str | None, Any]: ...
-
-    def _denylist_active(self, denylist: Any) -> bool: ...
-
-
-# A census-owned registry key, never the shared "public_safety" name: the
-# census is a read-only arbiter and must not replace a host application's
-# module (or a second census instance's) while it runs its scan.
-CENSUS_PS_MODULE_KEY = "noni_census_public_safety"
-
-
-def _load_public_safety() -> PublicSafetyModule | None:
-    """Import scripts/public_safety.py for the in-process hygiene scan.
-
-    Returns None when the module cannot be imported (a stripped checkout that
-    carries the skill without scripts/) or is not the file the census expects
-    to find at SCRIPTS_DIR: the caller then reports that the scan did not run
-    instead of reporting clean.
-
-    The module is taken from the census's own ``sys.modules`` slot when that
-    entry already points at this tree's ``SCRIPTS_DIR`` — the seams tests
-    monkeypatch (``_default_denylist_file``, ``DENYLIST_ENV_VAR``) live on that
-    one object, and a fresh load would silently run the scan past a patched
-    deny-list. An entry from a different tree is not this census's checker, so
-    the file is then loaded by path from ``SCRIPTS_DIR`` and re-verified before
-    it is executed.
-    """
-    existing = sys.modules.get(CENSUS_PS_MODULE_KEY)
-    if _trusted_public_safety(existing):
-        return existing
-    path = (SCRIPTS_DIR / "public_safety.py").resolve()
-    if not path.is_file():
-        return None
-    spec = importlib.util.spec_from_file_location(CENSUS_PS_MODULE_KEY, path)
-    if spec is None or spec.loader is None:
-        return None
+    spec = importlib.util.spec_from_file_location(
+        name, Path(__file__).resolve().parent / file)
+    if spec is None or spec.loader is None:  # pragma: no cover - path is fixed
+        raise RuntimeError(f"cannot load {file} beside census.py")
     module = importlib.util.module_from_spec(spec)
-    # Register under the census's own key before exec (the canonical importlib
-    # recipe): a module body that imports itself would otherwise find no entry
-    # in sys.modules. The shared "public_safety" name is never written.
-    sys.modules[CENSUS_PS_MODULE_KEY] = module
-    try:
-        spec.loader.exec_module(module)
-    except Exception:
-        # The scan could not be loaded: the caller reports the scan as not run
-        # (never a clean), and the half-built module must not stay registered.
-        sys.modules.pop(CENSUS_PS_MODULE_KEY, None)
-        return None
-    # Executing a module is executing the tree's code: only keep it when it is
-    # still the file we asked for and exposes the contract above.
-    if not _trusted_public_safety(module):
-        sys.modules.pop(CENSUS_PS_MODULE_KEY, None)
-        return None
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
     return module
 
 
-def _trusted_public_safety(module: object) -> bool:
-    """True when ``module`` is the checker at SCRIPTS_DIR/public_safety.py and
-    carries the members `_check_hygiene` calls. The resolved path is re-checked
-    on every call, so a module registered under the census's key from elsewhere
-    (or a sibling sys.path shadow) is not executed or trusted.
-
-    The name "trusted" is scoped honestly: public_safety is a committed, editable
-    file of the very tree being audited, so this is a *consistency* check (the
-    census ran the checker it intends to report about, not a stale or foreign
-    module), not a defence against a repository that rewrites its own gate. The
-    gate that cannot be satisfied by editing the audited tree is
-    `scripts/public_safety.py` run from a clean operator checkout before
-    publishing — see skills/census/SKILL.md, "census exit 50 is not the
-    public_safety gate".
-    """
-    if module is None:
-        return False
-    if Path(getattr(module, "__file__", "")).resolve() != (SCRIPTS_DIR / "public_safety.py").resolve():
-        return False
-    return all(callable(getattr(module, name, None))
-               for name in ("scrub_tracked_files", "_denylist_active", "load_denylist"))
-
-
-def _hygiene_labels(public_safety) -> set[str]:
-    """The label set public_safety can emit, from its own pattern tables.
-
-    Read from the live module rather than duplicated here: the census must not
-    hard-code vocabulary that public_safety owns. All of its pattern tables are
-    scanned (built-in, fixture home-path, and any other ``*_PATTERNS`` it
-    exposes) plus the deny-list label, because the deny-list label is not in
-    BUILTIN_PATTERNS — scrub_tracked_files appends it per entry. Tables are
-    iterables of ``(pattern, label)`` tuples (the contract public_safety
-    declares next to their annotations); anything else contributes no label.
-    The census never crashes on a table it cannot walk: the whole walk is
-    defensive, so a table whose iteration protocol raises contributes nothing
-    and the caller falls back to verbatim rows instead of a traceback that
-    would discard every finding this run already collected.
-
-    Compute this once per scan and pass the set to `_split_violation`: it is
-    invariant for the whole run, and walking ``vars()`` per violation row buys
-    nothing.
-    """
-    labels: set[str] = {"deny-list entry"}
-    try:
-        # One guard for the whole walk: the tables are public_safety's data and
-        # no shape of them may take the census down.
-        items = list(vars(public_safety).items())
-    except Exception:
-        return labels
-    for attr, value in items:
-        if not attr.endswith("_PATTERNS"):
-            continue
-        try:
-            if not isinstance(value, collections.abc.Iterable):
-                continue
-            entries = list(value)
-        except Exception:
-            # A truthy non-iterable, or a table whose __iter__ / __len__ /
-            # __bool__ raises: it contributes no labels.
-            continue
-        for entry in entries:
-            try:
-                _pattern, label = entry
-            except (TypeError, ValueError):
-                continue
-            if isinstance(label, str):
-                labels.add(label)
-    return labels
-
-
-def _split_violation(violation: str, labels: set[str]) -> tuple[str, int, str] | None:
-    """Split a public_safety violation "<path>:<line>: <label>" into parts.
-
-    Returns (path, line, label) or None when the string is not of that shape.
-
-    Splitting cannot be done by counting colons: a tracked path may contain
-    one ("x:y/p.txt" is a legal POSIX filename), so splitting at the first
-    colon truncates the path and garbles the message — which also breaks the
-    documented (artifact, check, subject) sort grouping, because artifact
-    becomes the path prefix before the colon. The label is a fixed string from
-    public_safety's own tables and contains no colon, so the tail is matched
-    against the known label set exactly and everything before ":<line>: " is
-    the path.
-    """
-    if not labels:
-        return None
-    for label in labels:
-        suffix = f": {label}"
-        if not violation.endswith(suffix):
-            continue
-        head = violation[: -len(suffix)]
-        path, sep, line_no = head.rpartition(":")
-        if sep and path and line_no.isdigit():
-            return path, int(line_no), label
-        # The suffix matched but the head is not "<path>:<digits>". This label
-        # is not the split; a later one in the set may match the same tail with
-        # a head that does parse, so keep looking instead of giving up.
-        continue
-    return None
-
-
-def _check_hygiene(top: Path | None, strict: bool, findings: list[dict]) -> None:
-    """The public-repo hygiene class (warn 50): the tracked-file scan, run
-    in-process (an import, never a subprocess) over the census's own git tree.
-
-    Scope follows the git tree the census already reads (``top``), never the
-    ``--ledger``/``--sessions`` overrides: the hygiene rule is about tracked
-    files of a repository, which is what the other git-backed checks use too.
-
-    The class always reports, a clean tree included: when the deny-list class
-    is not active (absent, corrupt, or present with no entries) exactly one
-    warn row says so, so a run that never checked operator names or external
-    project names is never mistaken for a hygiene-clean one. Built-in
-    violations (machine-local home paths, secret shapes, active deny-list
-    entries) get one row each.
-
-    A scan that cannot run (no git tree, or public_safety raising on a failing
-    or hung ``git ls-files``) is probe honesty: one warn row naming the scan
-    as not run, never a clean.
-
-    The two families of row are told apart by ``subject``, not by prose:
-    ``hygiene scan`` = the scan itself, ``deny-list`` = the deny-list half of
-    the scan, anything else = ``path:line`` of a violating tracked file (whose
-    artifact is that file, root-relative, while the first two name the checker
-    from the skill directory — see SKILL.md, "The hygiene artifact
-    namespace"). The deny-list read follows public_safety's own precedence, so
-    this class reports the same verdict the operator's own
-    ``scripts/public_safety.py`` gate gives.
-    """
-    def add(subject: str, artifact: str, message: str) -> None:
-        # The artifact is already the string the row must carry: either the
-        # violating file's path as public_safety reported it (already
-        # tree-relative) or the checker's id in the skill-relative hygiene
-        # namespace. It is never a path to be re-rooted into --repo.
-        findings.append(_row("hygiene", strict, subject, artifact, message, Path(),
-                             relative_artifact=False))
-
-    scan_artifact = _rel_to_census(SCRIPTS_DIR / "public_safety.py")
-
-    if top is None:
-        add(
-            "hygiene scan",
-            scan_artifact,
-            "hygiene scan did not run: --repo is not a git repository, so no tracked-file "
-            "scan was possible — this run is not a hygiene-clean guarantee",
-        )
-        return
-
-    public_safety = _load_public_safety()
-    if public_safety is None:
-        # The skill is installed on its own, without the repo's scripts/ dir:
-        # name the path that was probed relative to this file, because a path
-        # outside the audited tree has no root-relative form (and the census
-        # never prints a machine-local absolute path).
-        add(
-            "hygiene scan",
-            scan_artifact,
-            "hygiene scan did not run: public_safety is not importable from the repo's "
-            f"scripts directory ({_rel_to_census(SCRIPTS_DIR)}) — this run is not a "
-            "hygiene-clean guarantee",
-        )
-        return
-
-    # The deny-list is operator config, not tree content: the env-named file is
-    # the authoritative route, and a deny-list sitting inside the audited tree
-    # is not trusted to supply the vocabulary the publishing gate checks.
-    # Without it the class reports itself inactive below rather than pretending
-    # the operator-name half ran.
-    with _pinned_hygiene_env():
-        try:
-            violations, _source, denylist = public_safety.scrub_tracked_files(top)
-        except Exception as e:
-            # "Report, never crash": any exception from the scan (a failing or
-            # hung git ls-files, an unreadable deny-list store, a malformed
-            # pattern table) becomes the not-run row, never a traceback that
-            # discards every finding already collected in this run. A public
-            # safety scan must not be able to take the whole census down.
-            add(
-                "hygiene scan",
-                scan_artifact,
-                _bounded(f"hygiene scan did not run: {e} — this run is not a "
-                         "hygiene-clean guarantee"),
-            )
-            return
-
-    labels = _hygiene_labels(public_safety)
-    for violation in sorted(violations):
-        parsed = _split_violation(violation, labels)
-        if parsed is None:
-            # Not the documented shape: report the violation verbatim rather
-            # than mis-split it (probe honesty — a row that names the whole
-            # finding beats a row that garbles it).
-            add(violation, violation, f"public hygiene: {violation}")
-            continue
-        rel, line_no, label = parsed
-        add(f"{rel}:{line_no}", rel,
-            f"public hygiene: {rel}:{line_no}: {label}")
-
-    if not public_safety._denylist_active(denylist):
-        add(
-            "deny-list",
-            scan_artifact,
-            f"deny-list class inactive ({_denylist_state(denylist)}): no deny-list "
-            "entry was checked, so operator names, external project/tool names and hostnames "
-            "are NOT covered — this run is not a hygiene-clean guarantee",
-        )
-
-
-def _denylist_state(denylist: Any) -> str:
-    """Render the deny-list's inactive state word from its result.
-
-    public_safety owns the statuses; this only maps them to a word. The mapping
-    is three lines of the census's own reporting — `status` for a file that is
-    absent or unreadable, and the comments-only case that loaded "ok" with no
-    entries. A status public_safety adds later surfaces under its own name here
-    rather than being silently mislabelled. The caller has already established
-    the class is inactive, so "ok" with entries cannot reach this function.
-    """
-    status = getattr(denylist, "status", "absent")
-    if status != "ok":
-        return str(status)
-    return "present but empty" if not getattr(denylist, "entries", []) else "ok"
-
-
-# The git environment every census git call runs under. The census reads a
-# repository someone else may have prepared, with its own privileges, so the
-# host's git config must not be able to redirect those read-only calls:
-# core.hooksPath and protocol.ext.allow are the two that turn a read into
-# arbitrary execution, and an alternate object directory or a rewritten
-# objects dir points the reads somewhere else entirely. GIT_CONFIG_GLOBAL /
-# GIT_CONFIG_SYSTEM are pinned to the null device rather than merely removed,
-# so a system config baked into the image cannot leak back in either.
-#
-# GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE and friends are deliberately NOT
-# touched: clearing them would break the census's honest answer for a git
-# worktree, where the tree's .git file is a pointer and the ambient (or
-# per-invocation) git environment is what makes `git -C <worktree>` resolve at
-# all — and worktree-based callers are exactly who runs the census. A hostile
-# GIT_DIR can only make the census read a *different* repository, which every
-# class then reports about that tree; it cannot execute anything.
-GIT_ENV_NEUTRAL = {
-    "GIT_CONFIG_GLOBAL": os.devnull,
-    "GIT_CONFIG_SYSTEM": os.devnull,
-}
+_helpers = _load_sibling(_HYGIENE_NAME, "census_hygiene.py")
+# The class's own parts stay reachable as members of the census: they are
+# re-exports of one object, not copies, so the census keeps its single owner of
+# the checker and its loader while a caller (and the census's own tests) still
+# names them through the module it already imports.
+SCRIPTS_DIR = _helpers.SCRIPTS_DIR
+PublicSafetyModule = _helpers.PublicSafetyModule
+CENSUS_PS_MODULE_KEY = _helpers.CENSUS_PS_MODULE_KEY
+_load_public_safety = _helpers._load_public_safety
+_hygiene_labels = _helpers._hygiene_labels
+_split_violation = _helpers._split_violation
+# The census's own git calls and public_safety's in-process scan share one
+# pinned environment, so the table of variables to pin has one owner: here.
+GIT_ENV_NEUTRAL = _helpers.GIT_ENV_NEUTRAL
 
 
 def _git_config_args() -> list[str]:
@@ -1312,44 +1086,43 @@ def _git_env() -> dict[str, str]:
     return env
 
 
-@contextlib.contextmanager
-def _pinned_hygiene_env():
-    """Run the in-process scan with the git environment pinned.
-
-    The census runs public_safety's read-only git calls with its own privileges
-    and environment, so the operator's global/system config must not be able to
-    redirect them (core.hooksPath, protocol.ext.allow, an alternate object
-    store) and no ambient GIT_DIR / GIT_WORK_TREE may move them off the tree
-    being audited.
-
-    The deny-list is deliberately NOT pinned here: public_safety's own
-    precedence governs (see scripts/public_safety.py, "Deny-list sources"), so
-    the census reports the same deny-list verdict the operator's own
-    ``scripts/public_safety.py`` gate would — an untracked deny-list left next
-    to the checker, or named by NONI_SCRUB_DENYLIST, is the vocabulary the
-    publish-before-push rule expects there. One owner for that rule.
-    """
-    saved = {k: os.environ.get(k) for k in GIT_ENV_NEUTRAL}
-    os.environ.update(GIT_ENV_NEUTRAL)
-    try:
-        yield
-    finally:
-        for key, value in saved.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-
+# --- Session checks -------------------------------------------------------------
 
 def _bounded(message: str, limit: int = 300) -> str:
     """Bound an exception-derived message and strip machine-local absolute
     paths from it: a row built from someone else's error text must not smuggle
-    a host path into a report that promises not to print one."""
+    a host path into a report that promises not to print one.
+
+    The scrubbing is what makes this the right wrapper for a foreign message, and
+    the wrong one for a sentence this census composed itself: a row that names the
+    ledger as ``noni/decisions`` is naming a root-relative path on purpose, and a
+    wrapper that shortened it to ``<path>`` would destroy the very thing the row
+    is telling the operator to look at. So the two halves are separate here and
+    the group hands each one what it needs: this for text that came from outside,
+    :func:`_clipped` for the finished sentence around it.
+    """
+    return _clipped(_stripped(message), limit)
+
+
+def _stripped(message: str) -> str:
+    """``message`` with runs of whitespace collapsed and host paths replaced.
+
+    The path-stripping half of :func:`_bounded`, alone: a caller that composed a
+    sentence out of root-relative paths it derived itself needs the collapsing and
+    nothing else.
+    """
     collapsed = " ".join(message.split())
-    collapsed = re.sub(r"(?:/[A-Za-z0-9._-]+)+", "<path>", collapsed)
-    if len(collapsed) > limit:
-        collapsed = collapsed[: limit - 3] + "..."
-    return collapsed
+    return re.sub(r"(?:/[A-Za-z0-9._-]+)+", "<path>", collapsed)
+
+
+def _clipped(message: str, limit: int = 300) -> str:
+    """``message`` cut to ``limit`` characters, with an ellipsis when it was cut.
+
+    The length half of :func:`_bounded`, alone: the bound a row keeps is a property
+    of the row, so it is applied to the finished sentence a reporter composed,
+    whose own path fragments must survive (see :func:`_bounded`).
+    """
+    return message if len(message) <= limit else message[: limit - 3] + "..."
 
 
 def _parse_session(body: str) -> tuple[dict[str, str], list[str], list[str]]:
@@ -1571,7 +1344,62 @@ def _is_non_terminal(fields: dict[str, str]) -> bool:
     return fields.get("status", "").strip().lower() not in INACTIVE_STATUSES
 
 
+# --- Ordering checks -----------------------------------------------------------
+# The three ordering classes live in census_ordering.py beside this file, their
+# reads in census_ordering_readers.py (which obeys the strict JSON rule of
+# census_json.py), all loaded through the same sibling loader as the hygiene
+# class (see above), so the census keeps one owner of the row shape and of the
+# primitives the readers use, and each group's code stays its own size.
+_ORDERING_NAME = "noni_census_ordering"
+_ordering = _load_sibling(_ORDERING_NAME, "census_ordering.py")
+_ORDERING_READERS_NAME = "noni_census_ordering_readers"
+# Loaded before the readers and registered under the name the census keeps for
+# it: the strict reader itself is handed to the readers as an argument, and the
+# registration means a module that names it in this interpreter still gets the
+# file beside this census and not a lookalike from elsewhere on the path. Load
+# order is part of the contract, not an accident of import time.
+_load_sibling("noni_census_json", "census_json.py")
+_ordering_readers = _load_sibling(_ORDERING_READERS_NAME, "census_ordering_readers.py")
+# The strict reader the readers module applies to every file the group parses.
+# It arrives as an argument (like file_kind, bounded and parse_iso) rather than
+# as a bare-name import inside that module, so nothing the readers trust as the
+# census's strict reader is chosen by sys.path.
+_census_json = sys.modules["noni_census_json"]
+
+
+def _check_ordering(
+    order: Path, ledger: Path, root: Path, now: datetime, ordering_stale_after: timedelta,
+    issue_state: _ordering_readers.IssueState, strict: bool, findings: list[dict],
+) -> None:
+    """The ordering group, run by the module beside this file.
+
+    The row factory, the two helpers a row is built from and the readers module
+    are passed in rather than imported, so the row shape, its visibility marker
+    and the machine-local-path rule stay written in exactly one place: this file.
+    """
+    _ordering.check_ordering(order, ledger, root, now, ordering_stale_after, issue_state,
+                            strict, findings, row=_row, rel_to_root=_rel_to_root,
+                            file_kind=_file_kind, bounded=_bounded, parse_iso=_parse_iso,
+                            clipped=_clipped,
+                            readers=_ordering_readers,
+                            load_json_strict=_census_json.load_json_strict,
+                            names_zone=_ordering_readers.names_zone)
+
+
 # --- CLI -----------------------------------------------------------------------
+
+def _threshold(raw: str) -> timedelta:
+    """The timedelta a `--stale-after`-shaped value names.
+
+    The module's own defaults go through the same parse the flag's value does,
+    so a default that stopped parsing would fail here rather than at the one
+    caller that uses it. Both defaults are written in this file, so a bad value
+    here is a bug, never hostile input; the ValueError is the assertion.
+    """
+    if not STALE_AFTER_RE.fullmatch(raw):
+        raise AssertionError(f"census default {raw!r} is not a stale-after threshold")
+    return timedelta(days=int(raw.rstrip("dD")))
+
 
 def _warn_class_names() -> str:
     """The comma-separated ids of every warn class, derived from CHECKS — the
@@ -1584,13 +1412,25 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="census.py",
         description="The unified noni census: read-only checks over the steering "
-        "ledger and the session register, with an honest exit code.",
+        "ledger, the session register and the ordering artifact, with an honest "
+        "exit code.",
     )
     parser.add_argument("--repo", default=".", help="the repository (or directory) to audit (default: current directory)")
     parser.add_argument("--ledger", default=None, help="ledger directory (default: <repo>/noni/decisions)")
     parser.add_argument("--sessions", default=None, help="sessions directory (default: <repo>/noni/sessions)")
+    parser.add_argument("--ordering", default=None,
+                        help="ordering artifact (default: "
+                             "<repo>/noni/direction/order.json)")
+    parser.add_argument("--issue-state", default=None, metavar="FILE",
+                        help='JSON map {"<issue>": "open"|"closed"} produced by an adapter '
+                             "or the operator; without it the ordering-closed check is not "
+                             "evaluated (the census never contacts a tracker)")
     parser.add_argument("--now", default=None, metavar="ISO-8601", help="fixed timestamp for time-based checks (reproducible output)")
-    parser.add_argument("--stale-after", default="7d", metavar="DAYS", help="staleness threshold for active sessions (default: 7 days)")
+    parser.add_argument("--stale-after", default=SESSION_STALE_AFTER_DEFAULT, metavar="DAYS",
+                        help=f"staleness threshold in positive whole days as `<N>` or `<N>d` "
+                             f"(e.g. `7` or `7d`); default {SESSION_STALE_AFTER_DEFAULT} for active "
+                             f"sessions and {ORDERING_STALE_AFTER_DEFAULT} for order entries, or this "
+                             "value for both when given")
     parser.add_argument("--strict", action="store_true",
                         help=f"treat warn classes ({_warn_class_names()}) as failures")
     parser.add_argument("--json", action="store_true", dest="json_out", help="emit NDJSON records on stdout (noni.census/1)")
@@ -1646,6 +1486,21 @@ def main(argv: list[str] | None = None) -> int:
         )
         return EXIT_USAGE
     stale_after = timedelta(days=days)
+    # The two thresholds this run applies. --stale-after was given: both classes
+    # use the number the caller named, which is what keeps a census run
+    # reproducible from its command line alone. It was not: each class gets the
+    # default that belongs to it, and the run records which one it used in the
+    # row's own wording (the stale row names the threshold it compared against).
+    # The flag's *presence* decides, not its value: an argparse default cannot
+    # tell a caller who typed the number from one who did not, and treating the
+    # literal `7d` as absent would quietly run the ordering check at 30 days on
+    # a command line that promises 7. The sessions group keeps the one default
+    # the flag has always carried, and the ordering group gets its own when the
+    # flag was not used.
+    supplied = [a for a in (sys.argv[1:] if argv is None else argv)
+                if a == "--stale-after" or a.startswith("--stale-after=")]
+    ordering_stale_after = (stale_after if supplied
+                            else _threshold(ORDERING_STALE_AFTER_DEFAULT))
 
     if shutil.which("git") is None:
         print("census: git not found on the reading machine", file=sys.stderr)
@@ -1657,32 +1512,72 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_USAGE
     ledger = Path(args.ledger) if args.ledger else root / "noni" / "decisions"
     sessions = Path(args.sessions) if args.sessions else root / "noni" / "sessions"
+    ordering = (Path(args.ordering) if args.ordering
+                else root / "noni" / "direction" / "order.json")
+    issue_state_path = Path(args.issue_state) if args.issue_state else None
     ledger = Path(os.path.expanduser(str(ledger)))
     sessions = Path(os.path.expanduser(str(sessions)))
+    ordering = Path(os.path.expanduser(str(ordering)))
+    if issue_state_path is not None:
+        issue_state_path = Path(os.path.expanduser(str(issue_state_path)))
 
     top = _git_top(root)
     git = Git(top) if top is not None else None
 
     findings: list[dict] = []
-    # One --only/--skip rule for all three groups: a group runs when any class
+    # One --only/--skip rule for all four groups: a group runs when any class
     # of its reporting set was asked for, and keeps only the rows of the
     # classes actually named. The ledger group is reported as a unit (the
     # empty-ledger probe owns states the record pass must not duplicate), so
     # the filter is applied to its rows rather than skipped; no group runs work
     # whose rows it will discard.
     requested = set(checks)
+
+    def keep(group_findings: list[dict]) -> list[dict]:
+        """The rows of one group the run reports: those of a class the caller
+        named, plus every row marked ``WHOLE_ARTIFACT_KEY`` — a row about the
+        file a group was asked to read, not one entry inside it.
+
+        The first half is the --only contract. The second is the probe-honesty
+        rule: a group that could not read its input must say so even under a
+        filter that named none of its classes, or a run that observed a fault
+        would report the same clean verdict as a run that found none.
+        """
+        return [f for f in group_findings
+                if f["check"] in requested or f.get(WHOLE_ARTIFACT_KEY)]
+
     if (LEDGER_CHECKS | {"ledger-empty"}) & requested:
         _check_ledger(ledger, git, root, findings, args.strict)
-        findings[:] = [f for f in findings if f["check"] in requested]
+        findings[:] = keep(findings)
 
     if SESSION_CHECKS & requested:
         _check_sessions(sessions, git, root, now, stale_after, args.strict, findings)
-        findings[:] = [f for f in findings if f["check"] in requested]
+        findings[:] = keep(findings)
+
+    if ORDERING_CHECKS & requested:
+        _check_ordering(ordering, ledger, root, now, ordering_stale_after,
+                        _ordering_readers.load_issue_state(
+                            issue_state_path, _ordering.ISSUE_STATE_STATES,
+                            _file_kind, _bounded, _census_json.load_json_strict),
+                        args.strict, findings)
+        findings[:] = keep(findings)
+        # The closed check's question comes only from --issue-state, which an
+        # adapter or the operator produces. Without it the class is not run, and
+        # the run says so once rather than letting "no ordering-closed rows"
+        # read as "every ordered issue is open". Text mode only, on stdout
+        # beside the report: the --json stream is findings, and a notice about a
+        # class that did not run is not one, so the NDJSON stays byte-exact.
+        if (issue_state_path is None and "ordering-closed" in requested
+                and not args.json_out):
+            print("note: ordering-closed was not evaluated: no --issue-state FILE was "
+                  "given, so whether an ordered issue is closed is not asked "
+                  "(the census never contacts a tracker)")
 
     # hygiene is its own check group: it scans the tracked files of the census's
     # own git tree (never the --ledger/--sessions overrides).
     if "hygiene" in requested:
-        _check_hygiene(top, args.strict, findings)
+        _helpers.check_hygiene(top, args.strict, findings, row=_row, bounded=_bounded,
+                               rel_to_census=_rel_to_census)
 
     # --- Aggregate -----------------------------------------------------------
     # Warnings never set the exit code on their own: clean means exit 0 even

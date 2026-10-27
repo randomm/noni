@@ -22,7 +22,7 @@ REPO = Path(__file__).resolve().parent.parent
 
 # The Python product modules the coverage gate measures, relative to the repo
 # root. Naming them here keeps the list in one place: pyproject's
-# [tool.coverage.report] include carries the same seven paths and
+# [tool.coverage.report] include carries the same paths and
 # tests/test_gate_wiring.py compares the two, so a module cannot quietly
 # disappear from the gate. Tests are excluded by construction — only these
 # files are measured, so the reported total is the coverage of shipped code.
@@ -31,6 +31,14 @@ PRODUCT_MODULES = (
     "integrations/adapter_protocol.py",
     "integrations/github-issues/github_issues_adapter.py",
     "skills/census/scripts/census.py",
+    "skills/census/scripts/census_hygiene.py",
+    "skills/census/scripts/census_json.py",
+    "skills/census/scripts/census_ordering.py",
+    "skills/census/scripts/census_ordering_readers.py",
+    "skills/direction/scripts/order.py",
+    "skills/direction/scripts/orderschema.py",
+    "skills/direction/scripts/orderstate.py",
+    "skills/direction/scripts/gitwrite.py",
     "skills/sessions-claims/scripts/register.py",
     "skills/sessions-claims/scripts/claim.py",
     "skills/sessions-claims/scripts/census-sessions.py",
@@ -423,10 +431,48 @@ def push_with_retry(repo: Path, branch: str, attempts: int = 3) -> None:
 
 SESSIONS_SKILL = REPO / "skills" / "sessions-claims" / "scripts"
 STEERING_SKILL = REPO / "skills" / "steering-ledger" / "scripts"
+DIRECTION_SKILL = REPO / "skills" / "direction" / "scripts"
 CENSUS_SESSIONS = SESSIONS_SKILL / "census-sessions.sh"
 REGISTER = SESSIONS_SKILL / "register.py"
 CLAIM = SESSIONS_SKILL / "claim.py"
 DECIDE = STEERING_SKILL / "decide.py"
+ORDER = DIRECTION_SKILL / "order.py"
+
+
+def _order_module() -> object:
+    """order.py loaded as a module, for the tests that drive its internals.
+
+    Same loading shape as :func:`_claim_module`: exec'd fresh on every call and
+    registered under a name of our own, so the writer's own constants (its exit
+    codes, its canonical form) are read from the product rather than copied and
+    its ``__main__`` guard is never mistaken for a test entry point.
+    """
+    spec = importlib.util.spec_from_file_location("noni_order_under_test", ORDER)
+    if spec is None or spec.loader is None:  # pragma: no cover - path is fixed
+        raise RuntimeError(f"cannot load order module from {ORDER}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def run_order(repo: Path, *args: str, env: Mapping[str, str] | None = None,
+              ) -> subprocess.CompletedProcess[str]:
+    """Run order.py with ``--repo repo`` plus the arguments given as plain strings.
+
+    The caller owns the exact command line (``"add", "7", "--at", "2"``), which is
+    what the exit-code tests assert. Runs with the deterministic identity env
+    (``GIT_CONFIG_GLOBAL=/dev/null`` plus GIT_AUTHOR_*/GIT_COMMITTER_*) because
+    order.py commits under the tree's configured identity and --no-commit runs
+    must not be influenced by a host gitconfig either.
+    """
+    cmd = [sys.executable, str(ORDER), "--repo", str(repo), *args]
+    full_env = subprocess_env()
+    if env is None:
+        full_env.update(_git_env_with_identity())
+    else:
+        full_env.update(env)
+    return subprocess.run(cmd, capture_output=True, text=True, env=full_env, timeout=120)
 
 
 def run_register(repo: Path, identity: str, **kwargs) -> subprocess.CompletedProcess[str]:

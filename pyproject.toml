@@ -37,7 +37,7 @@ ignore = ["E501"]
 testpaths = ["tests"]
 
 # The quality gate behind the AGENTS.md rule of at least 80 percent coverage
-# for new code. `include` names the seven product modules exactly, so the
+# for new code. `include` names the product modules exactly, so the
 # total is the coverage of the shipped code and never of the tests that
 # measure it. (`source` cannot be used for this: coverage treats a source
 # entry that is not a directory as an importable package name, and these
@@ -64,6 +64,14 @@ include = [
     "integrations/adapter_protocol.py",
     "integrations/github-issues/github_issues_adapter.py",
     "skills/census/scripts/census.py",
+    "skills/census/scripts/census_hygiene.py",
+    "skills/census/scripts/census_json.py",
+    "skills/census/scripts/census_ordering.py",
+    "skills/census/scripts/census_ordering_readers.py",
+    "skills/direction/scripts/order.py",
+    "skills/direction/scripts/orderschema.py",
+    "skills/direction/scripts/orderstate.py",
+    "skills/direction/scripts/gitwrite.py",
     "skills/sessions-claims/scripts/register.py",
     "skills/sessions-claims/scripts/claim.py",
     "skills/sessions-claims/scripts/census-sessions.py",

@@ -1339,7 +1339,8 @@ class TestCheckFilters:
                      "session-double", "session-claim", "session-malformed",
                      "session-stalled", "probe",
                      "ledger-empty", "session-same-identity", "session-deleted",
-                     "hygiene"}
+                     "hygiene",
+                     "ordering-malformed", "ordering-stale", "ordering-closed"}
         assert set(lines) == expected, f"got {lines}"
 
     def test_only_session_double(self, tmp_path):

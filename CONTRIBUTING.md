@@ -19,11 +19,12 @@ python -m venv .venv
 .venv/bin/coverage report                                       # report; fails below 80%
 ```
 
-The coverage command measures the Python product modules and enforces
-the at-least-80% rule from `AGENTS.md`. `coverage combine` is required, not
-optional: `register.py`, `claim.py` and `census-sessions.py` run as
-subprocesses, so their data lands in separate files that only combine merges.
-See `docs/PUBLISHING.md` for the pre-publish public-repo scrub.
+The coverage command measures the Python product modules listed in
+`[tool.coverage.report] include` in `pyproject.toml`, and enforces the
+at-least-80% rule from `AGENTS.md`. `coverage combine` is required, not
+optional: some product modules are reached only as subprocesses (see the
+`[tool.coverage.run]` comment in `pyproject.toml`), so their data lands in
+separate files that only combine merges.
 
 ## What belongs in a contribution
 
@@ -32,9 +33,13 @@ See `docs/PUBLISHING.md` for the pre-publish public-repo scrub.
   way: put depth there, not here.
 - Every invariant a document claims needs a script with an honest exit code or a
   census check behind it. Prose alone is convention, not enforcement.
-- The README's try-it block runs in a test (`tests/test_readme.py`). A command
-  that does not name a script in this repository, or that stops producing the
-  documented outcome, fails that test.
+- The README's try-it block runs in a test (`tests/test_readme.py`) from a
+  scratch tree holding the copied `skills/`, so a command that does not name a
+  script in this repository, or that stops producing the documented outcome on
+  the copy path a reader actually takes, fails that test.
+- The try-it block in the README replays one scenario repo in one run. Keep it
+  that way: extra scenarios under coverage measurement multiply the cost of the
+  two launches rather than the work they test.
 - `docs/PRODUCT.md` sections 3, 6 and 7 are binding for all epics.
 
 ## Purity
@@ -45,4 +50,8 @@ tickets, no backlog entries, no references to any attached project's content.
 Core skills carry neither project content nor vocabulary from any specific
 driver, tracker or project; adapters live under `integrations/`, one clearly
 marked directory per project, and the core must stay viable with none installed.
-`tests/test_purity.py` enforces both tiers.
+`tests/test_purity.py` enforces both tiers. The committed check covers
+machine-local paths and secret shapes; operator names, external project or tool
+names and hostnames are covered only by the untracked deny-list, so a green run
+without it is not a scrub-clean guarantee. See
+[docs/PUBLISHING.md](docs/PUBLISHING.md) for the pre-publish public-repo scrub.

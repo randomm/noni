@@ -31,12 +31,16 @@ work on; the census is what flags two active claims on one task.
 
 ## Try it in five minutes
 
-Copy the `skills/` directory into your project and commit it, then run these two
-commands from the root of your repository. The repository needs one commit and a
-git identity, and the noni scripts need to be able to find each other:
+Copy the `skills/` directory into your project and commit it, then run the
+commands below from the root of your repository. Copy them from a release of
+this repository you trust (a tag, or a checkout you verified): the commands
+execute those scripts, and the census's hygiene scan does not cover them. The
+repository needs one commit and a git identity, and the `skills/` tree has to
+stay whole, since the scripts resolve each other by relative path:
 
 ```bash
 git config user.name "Casey"
+git config user.email "casey@example.invalid"
 
 python3 skills/steering-ledger/scripts/decide.py --repo . \
   --slug release-scope --scope release --asked-by team-lead \
@@ -47,18 +51,22 @@ python3 skills/steering-ledger/scripts/decide.py --repo . \
 python3 skills/census/scripts/census.py --repo .
 ```
 
-`decide.py` allocates `noni/decisions/` if it is missing, writes one record
-there and commits it. The census is read-only: it never writes, so
-`git status --porcelain` is empty after either run.
+The census is read-only: it never writes, so `git status --porcelain` is empty
+after either run.
 
-Read the result. A run with nothing to complain about ends with:
+Read the result. A run with nothing to complain about ends with a summary line
+of this shape:
 
 ```
-summary: clean; verdict ok
+summary: clean; N finding(s); verdict ok
 ```
 
-Read `skills/<skill>/SKILL.md` for what each writer accepts and refuses. Each
-skill's `references/` directory holds the detail on record shapes and modes.
+The count names the rows above it; warnings (a missing deny-list, a ledger with
+nothing to arbitrate) are counted there and do not change the verdict.
+
+Read `skills/<skill>/SKILL.md` for what each writer accepts and refuses. The
+steering-ledger and sessions-claims skills keep record-shape detail in their
+`references/` directories.
 
 ## How it works
 
@@ -72,7 +80,11 @@ Everything noni keeps in your repository lives in one directory:
 ```
 
 Nothing else is state. The writers above are the only things that create those
-files, and each commits what it writes in one atomic step. The census recomputes
+files, and each commits what it writes in one atomic step. The try-it run above
+creates the ledger record only: `order.json` appears when you first run
+`order.py`, and a session file when you first run `register.py`. The census also
+reads input it does not own: the `--issue-state` map an adapter or the operator
+supplies, whose absence it reports as an unevaluated check. The census recomputes
 everything it reports from git history plus those files on every run: metrics
 are derived, never self-reported.
 
@@ -97,14 +109,16 @@ the ledger it ships.
 
 ## Purity
 
-noni holds no project-specific content and keeps no purity rule of its own
-beyond this: no tickets, no backlog entries, no references to any attached
-project. The generic how ships here, and the what belongs to the project it
-attaches to. Adapters for one tracker or driver live under `integrations/`, and
-the core stays usable with none of them installed.
+noni holds no project-specific content: no tickets, no backlog entries, no
+references to any attached project. The generic how ships here; the what belongs
+to the attached project. Adapters for one tracker or driver live under
+`integrations/`, and the core stays usable with none of them installed.
 
 ## Contributing
 
 Set up the venv and run the gates in [CONTRIBUTING.md](CONTRIBUTING.md). Before
 publishing a public tree, follow the scrub checklist in
-[docs/PUBLISHING.md](docs/PUBLISHING.md).
+[docs/PUBLISHING.md](docs/PUBLISHING.md). The committed check covers
+machine-local paths and secret shapes; operator names, external project or tool
+names and hostnames are covered only by the untracked deny-list that checklist
+requires.

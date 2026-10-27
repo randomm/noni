@@ -57,6 +57,7 @@ from _harness import (
     run_order,
     subprocess_env,
 )
+from ordering_shapes import MALFORMED_SHAPES, commit_artifact, writer_text
 
 CENSUS = REPO / "skills" / "census" / "scripts" / "census.py"
 SKILL_DIR = REPO / "skills" / "direction"
@@ -655,45 +656,16 @@ def test_a_wrong_schema_is_refused(tmp_path):
 def test_malformed_entries_are_refused_without_being_overwritten(tmp_path):
     """Every shape the census reports as ordering-malformed is refused here
     before the write, so a writer run never turns a half-broken artifact into a
-    fully written one. The table is the whole set, not a sample."""
-    shapes = {
-        "not an object": "[]",
-        "missing entries": '{"schema": "noni.order/1"}',
-        "unknown top-level field": '{"schema": "noni.order/1", "entries": [], "extra": 1}',
-        "entries not an array": '{"schema": "noni.order/1", "entries": {}}',
-        "entry not an object": '{"schema": "noni.order/1", "entries": [7]}',
-        "entry missing a field": '{"schema": "noni.order/1", "entries": [{"issue": 1}]}',
-        "entry with an unknown field": '{"schema": "noni.order/1", "entries": '
-                                       '[{"issue": 1, "decision": null, "confirmed": '
-                                       '"2026-10-01T00:00:00Z", "why": 1}]}',
-        "issue not an integer": '{"schema": "noni.order/1", "entries": '
-                                '[{"issue": "1", "decision": null, '
-                                '"confirmed": "2026-10-01T00:00:00Z"}]}',
-        "issue is a bool": '{"schema": "noni.order/1", "entries": '
-                           '[{"issue": true, "decision": null, '
-                           '"confirmed": "2026-10-01T00:00:00Z"}]}',
-        "issue not positive": '{"schema": "noni.order/1", "entries": '
-                              '[{"issue": 0, "decision": null, '
-                              '"confirmed": "2026-10-01T00:00:00Z"}]}',
-        "issue listed twice": '{"schema": "noni.order/1", "entries": '
-                              '[{"issue": 3, "decision": null, '
-                              '"confirmed": "2026-10-01T00:00:00Z"}, '
-                              '{"issue": 3, "decision": null, '
-                              '"confirmed": "2026-10-01T00:00:00Z"}]}',
-        "decision is a number": '{"schema": "noni.order/1", "entries": '
-                                '[{"issue": 1, "decision": 3, '
-                                '"confirmed": "2026-10-01T00:00:00Z"}]}',
-        "confirmed is null": '{"schema": "noni.order/1", "entries": '
-                             '[{"issue": 1, "decision": null, "confirmed": null}]}',
-        "confirmed has no offset": '{"schema": "noni.order/1", "entries": '
-                                   '[{"issue": 1, "decision": null, '
-                                   '"confirmed": "2026-10-01T00:00:00"}]}',
-        "a NaN hides in an entry": '{"schema": "noni.order/1", "entries": '
-                                   '[{"issue": 1, "decision": null, '
-                                   '"confirmed": "2026-10-01T00:00:00Z", "n": 1e400}]}',
-    }
-    for label, body in shapes.items():
-        repo = _repo(tmp_path, f"repo-{abs(hash(label))}")
+    fully written one. The table is the shared one in ``tests/ordering_shapes.py``
+    -- the whole set, not a sample -- so this side and the census side of the
+    contract are the same list read twice.
+
+    The artifact is left exactly as it was for every shape: a refusal that
+    reformats or truncates a file the operator committed would destroy an order
+    the run was only asked to extend.
+    """
+    for index, (label, (body, _needle)) in enumerate(sorted(MALFORMED_SHAPES.items())):
+        repo = _repo(tmp_path, f"repo-{index}")
         _order_path(repo).parent.mkdir(parents=True, exist_ok=True)
         _order_path(repo).write_text(body, encoding="utf-8")
         proc = _order(repo, "add", "7", "--decision", BASELINE_ID, "--now", NOW)
@@ -978,7 +950,11 @@ def test_a_planned_order_that_cannot_be_rendered_is_refused(tmp_path, monkeypatc
     def lie(body):
         raise ValueError("cannot render")
 
-    monkeypatch.setattr(module.orderschema, "order_bytes", lie)
+    # The seam is the state module's renderer, because that is the one call
+    # order.py's _render now makes: patching the schema's order_bytes on the
+    # writer's own handle would miss it (orderstate holds its own), and a lying
+    # renderer must be caught wherever the writer reaches it.
+    monkeypatch.setattr(module.orderstate.orderschema, "order_bytes", lie)
     repo = _repo(tmp_path)
     _seed(repo, _entry(1, BASELINE_ID))
     before = (repo / ORDER_REL).read_bytes()
@@ -1252,36 +1228,60 @@ def test_the_ordering_census_reports_what_the_writer_refused(tmp_path):
     """One shape each, on both sides of the contract: the census reports as
     ``ordering-malformed`` exactly what the writer refuses to extend, and the
     row names the same reason in its own words. A file the writer refuses and
-    the census calls clean is a file nobody would notice had rotted."""
-    shapes = {
-        "not valid JSON": "{not json",
-        "wrong schema": '{"schema": "nope", "entries": []}',
-        "duplicate issue": '{"schema": "noni.order/1", "entries": '
-                           '[{"issue": 3, "decision": null, "confirmed": '
-                           '"2026-10-26T00:00:00Z"}, {"issue": 3, "decision": null, '
-                           '"confirmed": "2026-10-26T00:00:00Z"}]}',
-        "non-positive issue": '{"schema": "noni.order/1", "entries": '
-                              '[{"issue": 0, "decision": null, '
-                              '"confirmed": "2026-10-26T00:00:00Z"}]}',
-        "confirmed is not a timestamp": '{"schema": "noni.order/1", "entries": '
-                                        '[{"issue": 3, "decision": null, '
-                                        '"confirmed": null}]}',
+    the census calls clean is a file nobody would notice had rotted.
+
+    The list is the shared table, plus the one shape the table cannot carry:
+    a citation whose record is absent from the ledger is well-formed JSON and
+    refused for a reason only the ledger can answer (the census's own
+    ``ordering-malformed`` row for it lives in tests/test_census_ordering.py).
+    """
+    extra = {
         "a decision that matches no record": '{"schema": "noni.order/1", "entries": '
                                              '[{"issue": 3, "decision": '
                                              '"2026-01-01-ghost", "confirmed": '
                                              '"2026-10-26T00:00:00Z"}]}',
     }
-    for label, body in shapes.items():
-        repo = _repo(tmp_path, f"arb-{abs(hash(label))}")
-        _order_path(repo).parent.mkdir(parents=True, exist_ok=True)
-        _order_path(repo).write_text(body, encoding="utf-8")
-        _git(repo, "add", ORDER_REL)
-        git_pin_date(repo, NOW, "commit", "-q", "-m", "direction: broken")
+    shapes = {label: (body, _needle) for label, (body, _needle) in MALFORMED_SHAPES.items()}
+    shapes.update({label: (body, None) for label, body in extra.items()})
+    for index, (label, (body, _needle)) in enumerate(sorted(shapes.items())):
+        repo = _repo(tmp_path, f"arb-{index}")
+        commit_artifact(repo, body)
         writer = _order(repo, "confirm", "--now", NOW)
         assert writer.returncode == 4, f"{label}: writer exit {writer.returncode}"
         code, rows, output = _census_ordering(repo)
         assert code == 15, f"{label}: census exit {code}: {output}"
         assert [r["check"] for r in rows] == ["ordering-malformed"], f"{label}: {rows}"
+
+
+def test_every_malformed_shape_is_refused_by_the_writer_and_reported_by_the_census(
+        tmp_path):
+    """One table, both sides, no drift: the writer refuses (exit 4) and the
+    census reports (exit 15) the same shapes, with the same reason named on both
+    sides.
+
+    The two rule sets live in two files on purpose -- a writer's reader and an
+    arbiter's reader -- and that is how they part company: the census's
+    ``_parse_iso`` read a bare stamp as UTC while the writer's
+    ``orderschema.parse_confirmed`` refused it, so a committed artifact nobody
+    could repair sat clean under the census and un-writable under the writer.
+    A needle is a fragment the refusal and the row must both carry, so a rule
+    implemented on one side only fails here rather than in an operator's tree.
+    """
+    # A needle of None is a shape the two sides reach by different routes; its
+    # verdict (exit code, class, untouched file) is pinned in the two tests above.
+    drift = {label: (body, needle) for label, (body, needle) in MALFORMED_SHAPES.items()
+             if needle is not None}
+    for index, (label, (body, needle)) in enumerate(sorted(drift.items())):
+        repo = _repo(tmp_path, f"drift-{index}")
+        commit_artifact(repo, body)
+        writer = _order(repo, "confirm", "--now", NOW)
+        assert writer.returncode == 4, f"{label}: writer exit {writer.returncode}"
+        assert needle in writer_text(writer), \
+            f"{label}: the writer refused for another reason: {writer_text(writer)}"
+        code, rows, output = _census_ordering(repo)
+        assert code == 15, f"{label}: census exit {code}: {output}"
+        assert [r["check"] for r in rows] == ["ordering-malformed"], f"{label}: {rows}"
+        assert needle in rows[0]["message"], f"{label}: {rows[0]}"
 
 
 def test_a_stale_entry_is_reported_by_the_census_and_cleared_by_confirm(tmp_path):

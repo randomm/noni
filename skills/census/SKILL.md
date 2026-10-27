@@ -46,7 +46,7 @@ python3 skills/census/scripts/census.py [options]
 | `session-same-identity` | 43 | two or more non-terminal session files carry the same `identity` — one row per identity, naming every file (warn by default; fail under `--strict`) |
 | `session-deleted` | 44 | a `<YYYY-MM-DD>-<6 hex>.md` register file that git history shows was added is gone from the working tree (warn by default; fail under `--strict`) |
 | `probe` | 41 | a probe could not read its input (unreadable file, symlink, git failure) — never reported as clean |
-| `ordering-malformed` | 15 | the ordering artifact is there and is not the artifact: unparseable bytes, wrong `schema`, a duplicate or non-positive `issue`, a `confirmed` that is not a UTC timestamp, a `decision` matching no file in the ledger, or an `--issue-state` file that does not parse |
+| `ordering-malformed` | 15 | the ordering artifact is there and is not the artifact: unparseable bytes, a non-finite number, a key stated twice, wrong `schema`, a duplicate or non-positive `issue`, a `confirmed` that is not a UTC timestamp (one with no offset included), a `decision` matching no file in the ledger, an `--issue-state` file that does not parse or whose keys are not plain positive issue numbers, or a decision ledger whose listing faulted |
 | `ordering-stale` | 45 | an order entry whose `confirmed` is older than the `--stale-after` threshold relative to `--now` (warn by default; fail under `--strict`) |
 | `ordering-closed` | 46 | an ordered issue the `--issue-state` file says is closed; also the `cannot-tell` row for an entry the file does not mention (warn by default; fail under `--strict`) |
 | `hygiene` | 50 | a tracked file fails the public-repo hygiene scan (machine-local home path, secret shape, active deny-list entry), or the scan/deny-list did not run (warn by default; fail under `--strict`) |
@@ -196,6 +196,16 @@ The same rule extends to the classes that report their own absence:
   A missing `noni/direction/order.json` is not a finding at all — the ordering
   layer is optional — so an attached project that has never ordered anything
   adds no ordering rows to its census.
+- **A read the group could not make is reported, never skipped.** An
+  `--issue-state` file that does not parse, and a decision ledger whose listing
+  faults while an entry cites a decision, each add one row marked whole-artifact:
+  the row is about the file the group was asked to read, not one entry inside it,
+  so the group's `--only` filter cannot drop it and a run that checked nothing
+  cannot report itself clean. A ledger that is simply absent or not a directory
+  is different — no listing was attempted, and `ledger-empty` owns that report.
+- **A map key must be the issue number itself.** `"07"` or `"-7"` can never match
+  an entry's issue, so such a key is reported as malformed rather than becoming a
+  silent `cannot-tell` row for an issue the file does name.
 
 ### census exit 50 is not the public_safety gate
 

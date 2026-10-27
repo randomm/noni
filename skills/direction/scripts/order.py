@@ -107,18 +107,13 @@ def _digests(data: bytes) -> str:
 def _render(body: dict):
     """The canonical bytes for ``body``, or the refusal naming why none exist.
 
-    One call to the schema's renderer, here rather than in the state module, so
-    the seam a test replaces (a renderer that lies about a plan) is this one:
-    ``main`` reads the schema module through this file's globals, and the state
-    module keeps its own reader for the canonical comparison of a file it read.
+    One call to the state module's renderer, which is the same call
+    ``orderstate.read_order`` makes to compare a file it read against the form
+    this writer writes: two copies of the render-and-refuse step is two places
+    for the canonical contract to be broken, and the two halves must agree byte
+    for byte or every canonical fixture becomes a refusal.
     """
-    try:
-        return orderschema.order_bytes(body)
-    except ValueError:
-        return orderstate.RenderRefused("the planned order cannot be written as JSON",
-                                        "re-run order.py; if it repeats, rebuild the "
-                                        "order from order.py add after removing the "
-                                        "artifact")
+    return orderstate.render(body)
 
 
 def main(argv: list[str] | None = None) -> int:

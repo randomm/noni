@@ -105,7 +105,7 @@ never a truncated order.
 
 | census row | what to do with this skill |
 |---|---|
-| `ordering-malformed` (15) | the file is not the artifact: unparseable, a number that is not finite, wrong `schema`, a duplicate or non-positive `issue`, a `confirmed` that is not a UTC timestamp, a blank or absent `decision` where an id or null is required, a `decision` matching no record, or an `--issue-state` file that does not parse. The writer refuses to overwrite such a file (exit 4): repair it to the documented shape and commit it in the canonical form, or remove it and rebuild the queue with `order.py add` |
+| `ordering-malformed` (15) | the file is not the artifact: unparseable, a number that is not finite, a key stated twice, wrong `schema`, a duplicate or non-positive `issue`, a `confirmed` that is not a UTC timestamp (including one with no offset), a blank or absent `decision` where an id or null is required, a `decision` matching no record, an `--issue-state` file that does not parse or whose keys are not plain issue numbers, or a decision ledger whose listing faulted. The writer refuses to overwrite such a file (exit 4): repair it to the documented shape and commit it in the canonical form, or remove it and rebuild the queue with `order.py add` |
 | `ordering-stale` (45) | an entry nobody confirmed within the threshold. `confirm` it if the position still stands, `remove` it if it does not |
 | `ordering-closed` (46) | the issue is closed in the `--issue-state` map, so it is not work to do next: `remove` it. A `cannot-tell` row of the same class says the map does not mention the issue -- the fix belongs to whoever produced the map, not to this file |
 
@@ -129,8 +129,17 @@ never a truncated order.
   refuses the three bare tokens, and a number that overflows to infinity (json
   reads `1e400` into `inf` with no token to stop it) is refused too: a value no
   writer can name is not a value an order can carry. The census applies the same
-  two refusals to what it reads, so a file the writer will not write is never a
+  refusals to what it reads, so a file the writer will not write is never a
   file the census calls clean.
+- **A key stated twice is not a document.** json keeps the last of a repeated key
+  and drops the rest, which invents a file: an entry that writes `"decision":
+  "a", "decision": null` does not cite nothing. Both readers refuse the document
+  outright -- the writer as a refusal, the census as one whole-artifact
+  `ordering-malformed` row -- rather than answering it twice over.
+- **A `confirmed` with no UTC offset is not a timestamp.** `2026-10-26T00:00:00`
+  names no instant, so the writer refuses it and the census reports it malformed
+  too, instead of reading it as UTC and judging staleness against a minute nobody
+  chose.
 - **The census accepts nothing the writer would refuse.** Its rules are the
   writer's, applied to the bytes on disk: a blank `decision` is malformed there
   too, not just here, even though a blank string is a string. Repair the file to

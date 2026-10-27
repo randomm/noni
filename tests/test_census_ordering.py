@@ -19,14 +19,21 @@ question is never silently skipped; and no row ever carries a machine-local path
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+# In-process driving needs the census as a module (tests/conftest.py puts its
+# directory on sys.path); the subprocess runners above use the path constant.
+import census
 import pytest
 from _harness import ORDER, REPO, _git, _init_repo, git_pin_date, subprocess_env
+from ordering_shapes import MALFORMED_SHAPES as SHAPES
+from ordering_shapes import issue_state_shapes
 
 CENSUS = REPO / "skills" / "census" / "scripts" / "census.py"
 FIXTURE = REPO / "tests" / "fixtures" / "ordering" / "order-valid.json"
@@ -90,23 +97,6 @@ def _seed(repo: Path, *entries: dict) -> None:
 ORDERING_CLASSES = ("ordering-malformed", "ordering-stale", "ordering-closed")
 
 
-def _only(extra: tuple[str, ...]) -> list[str]:
-    """The --only set the run asks for: the caller's own --only values when it
-    named any (so a filtering test filters), else the whole ordering group.
-
-    Named explicitly because --only is a filter, not a mode: with no --only at
-    all the run would also report the sessions and ledger classes that a test
-    here did not ask about.
-
-    A test that names a class explicitly must name EVERY class whose row it
-    wants: the census applies one row filter per group, so a class outside the
-    --only set is dropped even though the group ran and produced it. That is the
-    census's documented contract, and these helpers must not paper over it.
-    """
-    named = [extra[i + 1] for i, a in enumerate(extra) if a == "--only"]
-    return named or list(ORDERING_CLASSES)
-
-
 def _only_args(extra: tuple[str, ...]) -> list[str]:
     """The argv fragment the run is launched with: every --only/--skip the caller
     named (so a filtering test filters), plus the whole ordering group when the
@@ -164,6 +154,53 @@ def _human(repo: Path, *extra: str) -> tuple[int, str, str]:
     return proc.returncode, proc.stdout, proc.stderr
 
 
+@contextlib.contextmanager
+def _listing_faults(ledger: Path):
+    """Make ``ledger.glob`` fault for the duration of the block, for an in-process run.
+
+    The census lists the ledger with ``Path.glob``; a directory that exists and
+    cannot be listed is an I/O fault of this tree, and no chmod produces it (root
+    reads a 000-mode file, and the fixture must not depend on the user id).
+    Patching the class method with the path guard keeps every other glob of the
+    run honest: only the ledger directory faults.
+
+    Used with ``_run_in_process``, not with ``_run``: the census runs as a
+    subprocess there, and a patch of this interpreter cannot reach it.
+    """
+    real_glob = Path.glob
+    target = Path(ledger)
+
+    def boom(self, pattern):
+        if self == target:
+            raise OSError("input/output error")
+        return real_glob(self, pattern)
+
+    Path.glob = boom
+    try:
+        yield
+    finally:
+        Path.glob = real_glob
+
+
+def _run_in_process(repo: Path, *extra: str) -> tuple[int, list[dict], str, str]:
+    """The census over the ordering group, driven in this interpreter.
+
+    The file's other runners launch a subprocess, which is what the coverage gate
+    measures and what every behavioural test here uses. This one calls
+    ``census.main`` directly so a test can reach a fault inside the interpreter --
+    a listing that raises -- that no file permission can plant. The argument set
+    is built exactly as ``_run`` builds it, so the two differ in one thing only:
+    whether the census runs here or there.
+    """
+    argv = ["--repo", str(repo), "--json", "--now", NOW]
+    argv += _only_args(extra)
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(sys.stderr):
+        code = census.main(argv)
+    rows = [json.loads(line) for line in buffer.getvalue().splitlines() if line.strip()]
+    return code, [r for r in rows if r.get("kind") == "finding"], buffer.getvalue(), ""
+
+
 # --- the absent artifact ------------------------------------------------------
 
 
@@ -212,58 +249,16 @@ def test_a_wrong_schema_is_a_finding(tmp_path):
 def test_the_malformed_shapes_are_all_reported(tmp_path):
     """The whole set the class owns, one repo each: a shape the census does not
     report is a shape that would rot unnoticed in a committed artifact. The
-    writer's mirror of this table is in tests/test_order_writer.py."""
-    shapes = {
-        "not an object": ("[]", "not a JSON object"),
-        "missing schema": ('{"entries": []}', "missing field"),
-        "missing entries": ('{"schema": "noni.order/1"}', "missing field"),
-        "unknown top-level field": ('{"schema": "noni.order/1", "entries": [], "x": 1}',
-                                    "unknown field"),
-        "entries not a list": ('{"schema": "noni.order/1", "entries": 3}',
-                               "entries is not an array"),
-        "entry not an object": ('{"schema": "noni.order/1", "entries": [1]}',
-                                "entry 1 is not an object"),
-        "entry missing fields": ('{"schema": "noni.order/1", "entries": [{"issue": 1}]}',
-                                 "missing field"),
-        "entry with an extra field": ('{"schema": "noni.order/1", "entries": [{"issue": 1, '
-                                      '"decision": null, "confirmed": '
-                                      '"2026-10-26T00:00:00Z", "note": 1}]}',
-                                      "unknown field"),
-        "issue a string": ('{"schema": "noni.order/1", "entries": [{"issue": "1", '
-                           '"decision": null, "confirmed": "2026-10-26T00:00:00Z"}]}',
-                           "not a positive integer"),
-        "issue a bool": ('{"schema": "noni.order/1", "entries": [{"issue": true, '
-                         '"decision": null, "confirmed": "2026-10-26T00:00:00Z"}]}',
-                         "not a positive integer"),
-        "issue zero": ('{"schema": "noni.order/1", "entries": [{"issue": 0, '
-                       '"decision": null, "confirmed": "2026-10-26T00:00:00Z"}]}',
-                       "not a positive integer"),
-        "issue listed twice": ('{"schema": "noni.order/1", "entries": [{"issue": 4, '
-                               '"decision": null, "confirmed": "2026-10-26T00:00:00Z"}, '
-                               '{"issue": 4, "decision": null, '
-                               '"confirmed": "2026-10-26T00:00:00Z"}]}',
-                               "appears more than once"),
-        "decision a number": ('{"schema": "noni.order/1", "entries": [{"issue": 1, '
-                              '"decision": 7, "confirmed": "2026-10-26T00:00:00Z"}]}',
-                              "neither a record id nor null"),
-        "decision blank": ('{"schema": "noni.order/1", "entries": [{"issue": 1, '
-                           '"decision": "  ", "confirmed": "2026-10-26T00:00:00Z"}]}',
-                           "neither a record id nor null"),
-        "confirmed not a timestamp": ('{"schema": "noni.order/1", "entries": '
-                                      '[{"issue": 1, "decision": null, '
-                                      '"confirmed": "yesterday"}]}',
-                                      "not a UTC timestamp"),
-        "confirmed null": ('{"schema": "noni.order/1", "entries": [{"issue": 1, '
-                           '"decision": null, "confirmed": null}]}',
-                           "not a UTC timestamp"),
-    }
-    for index, (label, (body, needle)) in enumerate(sorted(shapes.items())):
+    table is the shared one (``tests/ordering_shapes.py``), so the writer's
+    mirror of it cannot drift from this side without a failure here."""
+    for index, (label, (body, needle)) in enumerate(sorted(SHAPES.items())):
         repo = _repo(tmp_path, f"malformed-{index}")
         _order(repo, body)
         code, rows, out, err = _run(repo)
         assert code == 15, f"{label}: exit {code} rows={rows} err={err}"
         assert rows and rows[0]["check"] == "ordering-malformed", f"{label}: {rows}"
-        assert needle in rows[0]["message"], f"{label}: {rows[0]}"
+        if needle:
+            assert needle in rows[0]["message"], f"{label}: {rows[0]}"
 
 
 def test_a_non_finite_literal_is_unparseable_for_every_class_of_the_group(tmp_path):
@@ -638,6 +633,55 @@ def test_a_decision_of_null_is_never_a_finding(tmp_path):
     assert rows == [], rows
 
 
+def test_a_confirmed_stamp_without_an_offset_is_malformed(tmp_path):
+    """A stamp with no UTC offset names no instant, so the arbiter must not
+    compare it against ``--now``: the writer's ``orderschema.parse_confirmed``
+    already refuses one, and a census that read it as UTC would call clean an
+    artifact its own writer refuses to touch."""
+    repo = _repo(tmp_path)
+    _order(repo, _canonical([_entry(3, None, "2026-10-26T00:00:00")]))
+    code, rows, out, err = _run(repo)
+    assert code == 15, (code, out, err)
+    assert [r["check"] for r in rows] == ["ordering-malformed"], rows
+    assert "not a UTC timestamp" in rows[0]["message"], rows[0]
+
+
+def test_a_repeated_decision_key_is_malformed_and_not_last_wins(tmp_path):
+    """``decision`` given twice in an otherwise well-formed entry.
+
+    Under ``json.loads``' default last-wins the entry cites nothing while an
+    earlier line of the same file says it cites a record, so the census reported
+    this artifact clean (verified against the pre-fix reader: exit 0) at the same
+    time its writer refused it -- an artifact nobody could repair, because the one
+    command that touches it says no. The strict reader refuses the document, and
+    the row is the group's whole-artifact row, not a per-entry one: no entry of a
+    file whose keys cannot be read is answerable.
+    """
+    for index, body in enumerate((
+        '{"schema": "noni.order/1", "entries": [{"issue": 3, "decision": '
+        '"2026-10-01-baseline", "decision": null, '
+        '"confirmed": "2026-10-26T00:00:00Z"}]}',
+        '{"schema": "noni.order/1", "entries": [{"issue": 3, "issue": 4, '
+        '"decision": null, "confirmed": "2026-10-26T00:00:00Z"}]}',
+    )):
+        repo = _repo(tmp_path, f"last-wins-{index}")
+        _order(repo, body)
+        code, rows, out, err = _run(repo)
+        assert code == 15, f"{body}: exit {code} rows={rows} err={err}"
+        assert [r["check"] for r in rows] == ["ordering-malformed"], rows
+        assert rows[0]["subject"] == ORDER_REL, rows[0]
+
+
+def test_a_repeated_key_in_the_document_is_malformed(tmp_path):
+    """The same rule one level up: ``entries`` given twice is not a document
+    with two lists, it is a document nobody can say what it holds."""
+    repo = _repo(tmp_path)
+    _order(repo, '{"schema": "noni.order/1", "entries": [], "entries": []}')
+    code, rows, out, err = _run(repo)
+    assert code == 15, (code, out, err)
+    assert [r["check"] for r in rows] == ["ordering-malformed"], rows
+
+
 def test_an_unreadable_ledger_does_not_blame_every_entry(tmp_path):
     """A ledger the census cannot list answers nothing, so no entry's decision
     may be reported as matching no file: the ordering group stays silent and
@@ -649,6 +693,63 @@ def test_an_unreadable_ledger_does_not_blame_every_entry(tmp_path):
     code, rows, out, err = _run(repo)
     assert code == 0, (code, out, err)
     assert rows == [], rows
+
+
+def test_an_unlistable_ledger_is_reported_and_never_reads_as_clean(tmp_path):
+    """A ledger whose listing itself faults answers nothing, and silence about
+    that is a clean verdict on a run that checked no citation at all.
+
+    The census lists the ledger with ``Path.glob``. When that call faults while an
+    entry cites a decision, the group adds one whole-artifact row naming the
+    fault, so the run is never clean: the row is a fail-class one, it exits 15 on
+    its own and under ``--strict`` alike, and whole-artifact is what keeps it
+    through every ``--only``/``--skip`` set (see ``keep`` in census.py).
+
+    Distinguished from ``test_an_unreadable_ledger_does_not_blame_every_entry``:
+    there the ledger path is not a directory, so the listing never runs and the
+    ledger's own classes own the report. Here the path is a real directory whose
+    listing faults -- an I/O fault of this tree, which no other class of the run
+    can see, and the artifact is the one both sides gate on.
+
+    The census runs in-process for this one (``_run_in_process``): the fault is
+    inside the interpreter, and a subprocess would not see it."""
+    repo = _repo(tmp_path)
+    _seed(repo, _entry(3, BASELINE_ID))
+    with _listing_faults(repo / "noni" / "decisions"):
+        code, rows, out, err = _run_in_process(repo)
+        # ordering-malformed is a fail class, so the run is not clean with or
+        # without --strict: the row is the whole point of the test.
+        assert code == 15, (code, out, err)
+        assert [r["check"] for r in rows] == ["ordering-malformed"], rows
+        assert rows[0]["severity"] == "fail", rows[0]
+        assert rows[0]["subject"] == ORDER_REL, rows[0]
+        assert "noni/decisions" in rows[0]["message"], rows[0]
+        # The OSError's own text reaches the row, through the census's
+        # machine-local-path scrubbing (which is why the two words are split).
+        assert "OSError" in rows[0]["message"], rows[0]
+        assert "input" in rows[0]["message"], rows[0]
+        # A whole-artifact row survives a filter that named none of its classes.
+        for extra in (("--only", "ordering-stale", "--strict"),
+                      ("--only", "ordering-closed", "--strict"),
+                      ("--skip", "ordering-malformed", "--strict")):
+            strict, strict_rows, s_out, s_err = _run_in_process(repo, *extra)
+            assert strict == 15, f"{extra}: exit {strict} rows={strict_rows} {s_err}"
+            assert [r["check"] for r in strict_rows] == ["ordering-malformed"], strict_rows
+        strict, strict_rows, out, err = _run_in_process(repo, "--strict")
+        assert strict == 15, (strict, out, err)
+
+
+def test_an_unlistable_ledger_without_a_citation_adds_no_row(tmp_path):
+    """Nothing was looked up, so nothing was left unchecked: an entry with no
+    ``decision`` cannot have had its citation silently skipped, and the run
+    stays clean. The row reports a check the run could not perform, not a fault
+    of the ledger in general -- that is the ledger group's own report."""
+    repo = _repo(tmp_path)
+    _seed(repo, _entry(3, None))
+    with _listing_faults(repo / "noni" / "decisions"):
+        code, rows, out, err = _run_in_process(repo, "--strict")
+        assert code == 0, (code, out, err)
+        assert rows == [], rows
 
 
 def test_a_committed_canonical_artifact_is_clean(tmp_path):
@@ -800,6 +901,44 @@ def test_a_map_that_is_not_an_object_is_malformed(tmp_path):
     code, rows, _out, _err = _run(repo, "--issue-state", str(path))
     assert code == 15
     assert "not a JSON object" in rows[0]["message"], rows[0]
+
+
+def test_the_state_map_keys_must_be_canonical_and_unique(tmp_path):
+    """Every shape an ``--issue-state`` file can hold that answers nothing for
+    an issue, one file each: a repeated key (last-wins would say one thing for
+    an issue and the file's text the opposite), and a key that is not the
+    canonical decimal form of a positive issue number.
+
+    ``str(int(key)) == key`` is the whole rule, and it is what makes a lookup
+    answerable at all: the entry's issue is rendered as ``str(int(...))``, so a
+    padded or signed key can never match an entry and would silently become a
+    cannot-tell row for an issue the file does name. The shared table lives in
+    ``tests/ordering_shapes.py`` so the writer's mirror cannot drift.
+    """
+    for index, (label, (body, needle)) in enumerate(sorted(issue_state_shapes().items())):
+        repo = _repo(tmp_path, f"state-{index}")
+        _seed(repo, _entry(7, None))
+        path = repo / "issue-state.json"
+        path.write_text(body, encoding="utf-8")
+        code, rows, out, err = _run(repo, "--issue-state", str(path))
+        assert code == 15, f"{label}: exit {code} rows={rows} err={err}"
+        assert rows and rows[0]["check"] == "ordering-malformed", f"{label}: {rows}"
+        assert rows[0]["subject"] == "issue-state", f"{label}: {rows[0]}"
+        if needle:
+            assert needle in rows[0]["message"], f"{label}: {rows[0]}"
+
+
+def test_a_state_map_that_is_an_object_of_the_right_shape_is_clean(tmp_path):
+    """The counter-case to the table above: canonical keys and the two states
+    the file may name must not be refused, or the strictness would be a bug
+    rather than a rule."""
+    repo = _repo(tmp_path)
+    _seed(repo, _entry(7, None), _entry(12, None))
+    path = repo / "issue-state.json"
+    path.write_text('{"7": "open", "12": "closed"}', encoding="utf-8")
+    code, rows, out, err = _run(repo, "--issue-state", str(path))
+    assert code == 0, (code, out, err)
+    assert [(r["check"], r["subject"]) for r in rows] == [("ordering-closed", "#12")], rows
 
 
 def test_a_missing_state_file_is_malformed_not_silence(tmp_path):

@@ -1029,12 +1029,15 @@ _HYGIENE_NAME = "noni_census_hygiene"
 def _load_sibling(name: str, file: str):
     """The module ``file`` beside this file, loaded by path under ``name``.
 
-    Both split-out groups go through here. A sys.path entry would put a
-    directory ahead of the standard library, where a lookalike could be trusted
-    as the census's own code; loading by path with a name of our own is what
-    closes that. The module is registered under ``name`` before exec (the
-    canonical importlib recipe), so a module body that imports itself finds its
-    own entry.
+    Every split-out group and helper goes through here. A sys.path entry would
+    put a directory ahead of the standard library, where a lookalike could be
+    trusted as the census's own code; loading by path with a name of our own is
+    what closes that. The module is registered under ``name`` before exec (the
+    canonical importlib recipe), so a module body that imports itself — or, like
+    ``census_ordering_readers``, imports the strict reader beside it under that
+    sibling's registered name — finds the census's own entry and not a lookalike
+    earlier on the path. Load order is therefore meaningful: a module must be
+    registered before any module that names it is exec'd.
     """
     spec = importlib.util.spec_from_file_location(
         name, Path(__file__).resolve().parent / file)
@@ -1315,27 +1318,37 @@ def _is_non_terminal(fields: dict[str, str]) -> bool:
 
 
 # --- Ordering checks -----------------------------------------------------------
-# The three ordering classes and their readers live in census_ordering.py beside
-# this file, loaded through the same sibling loader as the hygiene class (see
-# above), so the census keeps one owner of the row shape and of the primitives
-# the readers use, and each group's code stays its own size.
+# The three ordering classes live in census_ordering.py beside this file, their
+# reads in census_ordering_readers.py (which obeys the strict JSON rule of
+# census_json.py), all loaded through the same sibling loader as the hygiene
+# class (see above), so the census keeps one owner of the row shape and of the
+# primitives the readers use, and each group's code stays its own size.
 _ORDERING_NAME = "noni_census_ordering"
 _ordering = _load_sibling(_ORDERING_NAME, "census_ordering.py")
+_ORDERING_READERS_NAME = "noni_census_ordering_readers"
+# Loaded before the readers and registered under the name they import: a module
+# body's `from census_json import ...` resolves through sys.modules, so the
+# readers get the file beside this census and not a lookalike from elsewhere on
+# the path. Load order is part of the contract, not an accident of import time.
+_load_sibling("noni_census_json", "census_json.py")
+_ordering_readers = _load_sibling(_ORDERING_READERS_NAME, "census_ordering_readers.py")
 
 
 def _check_ordering(
     order: Path, ledger: Path, root: Path, now: datetime, ordering_stale_after: timedelta,
-    issue_state: _ordering._IssueState, strict: bool, findings: list[dict],
+    issue_state: _ordering_readers.IssueState, strict: bool, findings: list[dict],
 ) -> None:
     """The ordering group, run by the module beside this file.
 
-    The row factory and the two helpers a row is built from are passed in rather
-    than imported, so the row shape, its visibility marker and the
-    machine-local-path rule stay written in exactly one place: this file.
+    The row factory, the two helpers a row is built from and the readers module
+    are passed in rather than imported, so the row shape, its visibility marker
+    and the machine-local-path rule stay written in exactly one place: this file.
     """
     _ordering.check_ordering(order, ledger, root, now, ordering_stale_after, issue_state,
                             strict, findings, row=_row, rel_to_root=_rel_to_root,
-                            file_kind=_file_kind, bounded=_bounded, parse_iso=_parse_iso)
+                            file_kind=_file_kind, bounded=_bounded, parse_iso=_parse_iso,
+                            readers=_ordering_readers,
+                            names_zone=_ordering_readers.names_zone)
 
 
 # --- CLI -----------------------------------------------------------------------
@@ -1508,7 +1521,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if ORDERING_CHECKS & requested:
         _check_ordering(ordering, ledger, root, now, ordering_stale_after,
-                        _ordering._load_issue_state(issue_state_path, _file_kind, _bounded),
+                        _ordering_readers.load_issue_state(
+                            issue_state_path, _ordering.ISSUE_STATE_STATES,
+                            _file_kind, _bounded),
                         args.strict, findings)
         findings[:] = keep(findings)
         # The closed check's question comes only from --issue-state, which an

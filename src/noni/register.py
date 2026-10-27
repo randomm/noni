@@ -70,7 +70,6 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog=labels.REGISTER,
         description="Register a session file",
-        add_help=False,
     )
     parser.add_argument("--repo", required=True, help="repository root")
     parser.add_argument("--identity", required=True, help="stable identity (role name)")

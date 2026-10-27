@@ -174,9 +174,19 @@ def test_register_wrapper_matches_noni_register(tmp_path):
 
 
 def test_register_wrapper_matches_noni_register_help():
-    """register.py runs with add_help=False, so --help is its argparse refusal."""
+    """--help pairs: help prints on both routes and exits 0, like the other tools.
+
+    A team trying noni runs ``noni register --help`` first, so it must be help,
+    not the missing-arguments refusal.
+    """
     left, right = run_wrapper(REGISTER, "--help"), run_noni("register", "--help")
     _assert_same(left, right, "register --help")
+    assert left.returncode == 0, f"expected exit 0, got {left.returncode}: {left.stderr}"
+    assert right.returncode == 0, f"expected exit 0, got {right.returncode}: {right.stderr}"
+    assert left.stdout.startswith("usage: register.py "), left.stdout[:80]
+    assert left.stderr == "", left.stderr
+    for flag in ("--repo", "--identity", "--status", "--host", "--worktree", "--file"):
+        assert f"{flag}" in left.stdout, f"register --help omits {flag}: {left.stdout}"
 
 
 def test_claim_wrapper_matches_noni_claim(tmp_path):

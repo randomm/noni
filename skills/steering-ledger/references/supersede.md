@@ -8,19 +8,39 @@ correction, in order, with the why.
 
 ## Writing a supersede
 
-To correct record `A`, write a new record `B` with:
+Records are written with `scripts/decide.py`. It is the only writer: it derives
+the fields it can derive, refuses the shapes the census would reject, and lands
+both files in one commit. Read `SKILL.md` for the flags and the exit codes.
+
+To correct record `A`, run the writer with `--supersedes "A"`:
+
+```
+scripts/decide.py --repo REPO --slug SLUG --scope SCOPE --asked-by ROLE \
+  --question ID=TEXT [--option ID=OPTION]... --answer ID=ANSWER... \
+  --date <A's date> --supersedes A
+```
+
+The writer produces `B`, a new record with:
 
 - `supersedes: "A"` — the id of the record being replaced.
-- Its own `id`, `date`, `asked_by`, `by` (from `B`'s commit author), `scope`.
-- The corrected `questions` and `answer`.
-- `status: decided` on `B`.
+- Its own `id` (`<date>-<slug>`), `date`, `asked_by`, `by` (from `git config
+  user.name` of the tree) and `scope`.
+- The corrected `questions` and `answer`, from the `--question`, `--option` and
+  `--answer` flags.
+- `status: decided`, which the writer derives from the answers it was given.
+
+Every question of `B` must be answered, or the run is refused: an open supersede
+would leave the chain with no live answer.
 
 The record being superseded, `A`, is updated only in its `status` field:
-`decided` becomes `superseded`. That single-field change is the only mutation of
-an existing file, and it is the *marker*, not the correction — the correction
+`decided` becomes `superseded`. The writer makes that single-field change in the
+same commit as `B`, and it is the *marker*, not the correction — the correction
 lives in `B`. All other fields of `A` stay byte-for-byte as committed, so a
 later clone sees the original decision's original fields and knows only that it
-has been superseded, by `B`.
+has been superseded, by `B`. To keep that promise the writer demands a target it
+can describe completely: a committed regular file, byte-identical to its last
+commit, in the form the writer itself writes. Anything else is refused rather
+than rewritten.
 
 ```
 A: { id: "2026-10-01-x", status: "decided", supersedes: null, ... }
@@ -56,7 +76,9 @@ tie-break for records with no supersede relationship.
 `superseded` is terminal: a superseded record is never un-superseded. To
 reverse a supersede, write yet another record that supersedes the superseder.
 The chain is append-only in the same sense the ledger is: you do not delete or
-restore, you add.
+restore, you add. `decide.py` holds that line: there is no flag that edits a
+committed record, and the only field of an existing file it will touch is
+`status`.
 
 ## What the census reports
 

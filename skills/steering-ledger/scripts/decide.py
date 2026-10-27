@@ -31,13 +31,14 @@ Exit codes:
     3  a git or identity problem: --repo is not a git work tree, git config
        user.name is not set (git config user.name <name>), or a git probe timed
        out or failed for a reason that answered nothing
-    4  a collision or a bad supersede target: the record file already exists,
-       or the target is missing, already superseded, untracked, locally
-       modified, not in the writer's canonical form, dated another day than
-       --date, or carries a date that is not a string, questions that are not
-       a non-empty list of objects each with a string id and a string-or-null
-       answer, or a number JSON cannot hold (NaN or Infinity). A show that
-       reports the path is not in HEAD is this code, not 3: git answered
+    4  a collision or a bad supersede target: the record path already exists as
+       anything (file, directory or symlink), or the target is missing, already
+       superseded, untracked, locally modified, not a regular file at its path
+       (symlink, directory or device), not in the writer's canonical form, dated
+       another day than --date, or carries a date that is not a string, questions
+       that are not a non-empty list of objects each with a string id and a
+       string-or-null answer, or a number JSON cannot hold (NaN or Infinity). A
+       show reporting the path is not in HEAD is this code, not 3: git answered
     5  the commit failed: both paths are rolled back (index reset, target
        restored, new record removed) and anything the undo could not do is named
        (a failed reset and the paths that may still be staged, or a path it could
@@ -56,6 +57,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -144,28 +146,29 @@ gitwrite.EXIT_PROBE_TIMEOUT = EXIT_GIT
 def _render(record: dict) -> str:
     """The record's bytes: FIELD_ORDER, two-space indent, one trailing newline.
 
-    ``allow_nan=False`` is the whole refusal of a non-finite number: json's default
-    writes ``NaN`` and ``Infinity``, which are not JSON, and rendering such a record
-    again turns the token into ``null`` -- so a target carrying one could be
-    "superseded with only its status changed" while an answer's byte moved. json
-    refuses to produce them here, so the render answers nothing and no caller can
-    write what it cannot name.
+    ``allow_nan=False`` is the whole refusal of a non-finite number, and json's
+    ``ValueError`` is let go rather than worded into a refusal here: nothing a run
+    can reach this function with holds one. A supersede target's numbers come
+    through ``gitwrite.record_object``, which rejects ``NaN`` and ``Infinity``,
+    and every value of a new record is a flag string or a tracker int. Returning
+    an empty string instead would have handed the caller a body to write.
     """
     ordered = {key: record[key] for key in FIELD_ORDER if key in record}
-    try:
-        return json.dumps(ordered, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
-    except ValueError as exc:
-        _fail(EXIT_COLLISION,
-              f"a record carries a number JSON cannot hold ({exc}), so this writer "
-              "cannot tell which answer it means",
-              "the record's answer must be a string or null: repair it and commit it "
-              "in that form, then re-run decide")
-        return ""
+    return json.dumps(ordered, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
 
 
 def _written(exc: OSError, what: str) -> str:
     """One 'could not be written' headline naming the OSError and its reason."""
     return f"{what} ({exc.__class__.__name__}: {exc.strerror or exc})"
+
+
+def _path_is_taken(path: Path) -> bool:
+    """Whether anything already sits at ``path``, whatever kind of path it is.
+
+    ``lexists`` does not follow a link, so a symlink counts as taken where
+    ``is_file()`` reports the name free; a directory or device counts too.
+    """
+    return os.path.lexists(path)
 
 
 def _parse_pairs(values: list[str], flag: str) -> tuple[list[tuple[str, str]], str | None]:
@@ -204,11 +207,11 @@ def _build_questions(questions: list[tuple[str, str]], options: list[tuple[str, 
 
 
 def _refuse_target_shape(path: Path, target_id: str) -> tuple[str, str] | None:
-    """Asked only of a path that is not a file: a directory is the rollback's
-    leftover, not a bad record.
+    """Asked only of a path already proved a regular file that cannot be opened.
+
+    A link or a directory is refused earlier by the helper's ``path_kind``, so
+    this is the one case left: a record file the writer cannot read at all.
     """
-    if path.is_dir():
-        return None
     return (f"supersede target {target_id} has no record file at {path}",
             "name the id of a committed record (see the census report's id column)")
 
@@ -387,9 +390,10 @@ def main(argv: list[str] | None = None) -> int:
     record_id = f"{date_part}-{args.slug}"
     record_path = ledger / f"{record_id}.json"
     record_rel = record_path.relative_to(repo).as_posix()
-    if record_path.is_file():
-        # Tracked or not, this name is taken: overwriting it takes somebody else's
-        # record, or their draft, out of the ledger.
+    if _path_is_taken(record_path):
+        # Tracked or not, and whatever kind of path it is, this name is taken:
+        # is_file() follows a link, so a symlink would have read as free and
+        # os.replace would have put a record where somebody's link stood.
         return _fail(
             EXIT_COLLISION,
             f"{record_path} already exists; record ids are unique across the ledger",

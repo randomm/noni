@@ -115,12 +115,47 @@ def record_object(raw: bytes) -> dict | None:
     """The record object ``raw`` holds, or None when it is not one. Decoding
     happens here, not in json.loads' reader, so a non-UTF-8 record answers "not a
     record" instead of a traceback, and its bytes are never echoed.
+
+    ``parse_constant`` rejects the three bare tokens json's reader accepts by
+    default: ``NaN``, ``Infinity`` and ``-Infinity`` are not JSON, and a record
+    holding one is not a record whatever field carries it. Reading one into a
+    float would put a value no writer can emit back on disk.
     """
     try:
-        record = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
+        record = json.loads(raw.decode("utf-8"), parse_constant=_refuse_constant)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
         return None
     return record if isinstance(record, dict) else None
+
+
+def _refuse_constant(token: str) -> float:
+    """The reader's answer to ``NaN``/``Infinity``/``-Infinity``: refuse the token.
+
+    ``parse_constant`` is asked to return the value; raising is how it refuses, and
+    the ``ValueError`` travels the same except arm as a malformed document, so no
+    token is named back to the operator.
+    """
+    raise ValueError(f"not a JSON number: {token}")
+
+
+def path_kind(path: Path) -> str | None:
+    """Why ``path`` is not a plain file this writer may read or replace, or None.
+
+    Nothing here asks ``is_file()``, which follows a link: a symlink is refused by
+    ``lstat``, and so are a directory, socket or device, since a run that wrote
+    through a link or onto one of those leaves the tree holding what no census can
+    read. A path that is absent (``lstat`` raising) is None: that is the state a
+    record is written into.
+    """
+    try:
+        mode = os.lstat(path).st_mode
+    except OSError:
+        return None
+    if stat.S_ISLNK(mode):
+        return "is a symlink"
+    if not stat.S_ISREG(mode):
+        return "is not a regular file"
+    return None
 
 
 def refuse_git_timeout(label: str,
@@ -179,7 +214,7 @@ def probe_unanswered(command: str, returncode: int, stderr: str = "") -> bool:
     if allowed is None or returncode in allowed:
         return False
     return not (command == "show"
-                and any(phrase in stderr for phrase in SHOW_NOT_IN_HEAD))
+                and any(phrase in (stderr or "") for phrase in SHOW_NOT_IN_HEAD))
 
 
 def refuse_git_probe(label: str, command: str, returncode: int) -> str:
@@ -343,8 +378,10 @@ def load_committed_target(
     (untracked, locally modified, no committed bytes, no file at the path), the
     committed bytes read from HEAD, and the target's own bytes read from disk (a
     directory reads from HEAD, so the flip still derives from committed bytes and
-    changes only the status). ``canonical`` is the writer's renderer, so the
-    canonical-form rule compares against what the writer would itself have written.
+    changes only the status). ``path_kind`` is asked before either read, so a link,
+    a directory or any other non-regular path is refused and never opened.
+    ``canonical`` is the writer's renderer, so the canonical-form rule compares
+    against what the writer would itself have written.
     The whole target schema is asked here and not of the caller --
     ``refuse_target_fields`` for the census's field types and ``refuse_live_record``
     for the chain position -- so no caller can reach a write by checking only part
@@ -354,12 +391,19 @@ def load_committed_target(
     state = target_probes(label, repo, path)
     if state["timed_out"] is not None:
         return state["timed_out"]
+    rel = state["rel"]
+    # lstat, never is_file: a non-regular path is refused and never opened.
+    malformed_path = path_kind(path)
+    if malformed_path is not None:
+        return (f"supersede target {target_id} {malformed_path} at {rel}",
+                "the supersede target must be a regular committed record: remove that "
+                "path (a directory under the name holds no record) and re-run decide")
     if not state["tracked"]:
         return (f"supersede target {target_id} is not tracked by git",
                 "commit the record first: decide.py supersedes only committed records")
     if state["dirty"]:
         return (f"supersede target {target_id} is not byte-identical to its last commit",
-                f"commit or discard the change to {state['rel']} and re-run decide")
+                f"commit or discard the change to {rel} and re-run decide")
     refusal = shape_refusal(path, target_id) if not path.is_file() else None
     if refusal is not None:
         return refusal
@@ -367,7 +411,9 @@ def load_committed_target(
     if committed is None:  # the probes answered no committed bytes: read nothing
         return (f"supersede target {target_id} has no committed bytes to rewrite",
                 "commit the record first: decide.py supersedes only committed records")
-    record = record_object(path.read_bytes() if path.is_file() else committed)
+    # path_kind above has already proved this path a regular file, so the read is
+    # the one remaining thing to do with it: the target's own bytes, not HEAD's.
+    record = record_object(path.read_bytes())
     if record is None:
         return (f"supersede target {target_id} is not a readable JSON object",
                 "repair the record or name a different target")

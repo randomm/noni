@@ -1432,20 +1432,69 @@ def test_hardening_rollback_names_the_path_it_could_not_restore(tmp_path):
     Silently leaving the ledger holding a directory where a record belongs would
     be worse than the failure the rollback recovers from: the censuses read it
     and the operator is never told which path to clear by hand.
+
+    The directory is planted by an observer of the collision check itself, which
+    is the only route to a write that fails for this reason now that the check
+    uses ``lexists``: a directory planted up front is a collision (exit 4) and
+    never reaches the write. The race this test used to fake with that planted
+    directory is still the state under test -- a name free at the check and taken
+    at the replace -- and it is no longer simulated by a check that could not see
+    it. ``test_hardening_a_directory_at_the_new_record_path_refuses_with_four``
+    covers the directory the check can see.
+
+    The observer is installed by an in-process run of the writer, and the planted
+    directory is seen by ``os.replace`` itself: with an injected ``_write_atomic``
+    the real call never happens and the branch is never reached, so the setup
+    cannot be staged in front of the run the way the other write-failure tests do.
     """
     repo = _baseline_repo(tmp_path)
-    # The new record's own path, which the collision check passed while nothing
-    # was there, is taken by a directory before the run writes it.
+    # The new record's name is <date>-<slug> and a supersede carries the target's
+    # date, so the record this run writes sits beside the baseline, not on NEW_DATE.
     record_rel = f"noni/decisions/{BASELINE_ID[:10]}-scheduler.json"
-    (repo / record_rel).parent.mkdir(parents=True, exist_ok=True)
-    (repo / record_rel).mkdir()
-    env = {**_identity_env()}
+    record_path = repo / record_rel
 
-    proc = _supersede(repo, BASELINE_ID, env=env)
+    # The planted directory is what makes os.replace fail, so the observer
+    # runs in-process around the writer's own ``main``; an injected
+    # ``_write_atomic`` would swallow the real replace and the branch under test
+    # would never be reached (a run that exits 0 is that symptom).
+    writer = _decide_module()
+    original_taken = writer._path_is_taken
+    planted: list[str] = []
+
+    def _taken_late(path: Path) -> bool:
+        # A collision check that found the name free is this run's last look at it:
+        # the directory appears after that answer, which is the ordering the
+        # rollback branch exists for.
+        taken = original_taken(path)
+        if not taken and str(path) == str(record_path):
+            path.mkdir(parents=True, exist_ok=True)
+            planted.append(str(path))
+        return taken
+
+    writer._path_is_taken = _taken_late
+    _pin_identity(repo, "Replay")
+    argv = ["--repo", str(repo), "--slug", "scheduler", "--date", BASELINE_ID[:10],
+            *BASE, *QUESTION, *OPTIONS, *ANSWERED, "--supersedes", BASELINE_ID]
+    seam = writer.FAIL_COMMIT_ENV_VAR
+    saved = os.environ.get(seam)
+    os.environ.pop(seam, None)
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = writer.main(argv)
+    finally:
+        writer._path_is_taken = original_taken
+        if saved is not None:
+            os.environ[seam] = saved
+    # The setup has to have happened, or the run proves nothing about this branch:
+    # a check that never found the name free never reached the write at all.
+    assert planted == [str(record_path)], planted
+    proc = subprocess.CompletedProcess(argv, returncode=code,
+                                      stdout=out.getvalue(), stderr=err.getvalue())
     assert proc.returncode == 5, proc.stderr
     assert "rollback did not finish" in proc.stderr, proc.stderr
     assert record_rel in proc.stderr, proc.stderr
-    assert (repo / record_rel).is_dir(), (
+    assert record_path.is_dir(), (
         "the leftover is the planted directory: the rollback's unlink cannot "
         "remove what it is not a file, which is why the message must name it"
     )
@@ -1792,6 +1841,66 @@ def test_hardening_a_canonical_target_still_supersedes_by_the_status_line_only(t
     assert differing == [('  "status": "decided",', '  "status": "superseded",')], differing
 
 
+def _refused_path_repo(tmp_path: Path, name: str, plant: Callable[[Path], str]) -> tuple[Path, str]:
+    """A repo whose committed target is whatever ``plant`` leaves at the target path.
+
+    ``plant`` receives the target path and returns the single line describing the
+    shape it made (``symlink -> elsewhere``, ``<dir>``), which the caller asserts
+    back after the commit: git stores a link as a link and a directory as its
+    files, so a fixture that planted one and lost it would assert a refusal that
+    git had quietly un-planted. The commit is the writer's own route (add, then
+    commit at the pinned date), so HEAD really holds the path under the target's
+    name and only the file kinds are unusual.
+    """
+    target_id = f"{BASELINE_ID[:10]}-{name}"
+    repo = _baseline_repo(tmp_path, f"target-{name}")
+    rel = f"noni/decisions/{target_id}.json"
+    target = repo / rel
+    described = plant(target)
+    _git(repo, "add", rel)
+    git_pin_date(repo, BASELINE_DATE, "commit", "-q", "-m", f"fixture: odd target {name}")
+    assert described == _describe_path(target), (
+        f"{name}: the planted shape is not what is on disk ({described!r} vs "
+        f"{_describe_path(target)!r})"
+    )
+    return repo, target_id
+
+
+def _describe_path(path: Path) -> str:
+    """One line naming what ``path`` actually is, read without following a link."""
+    if not os.path.lexists(path):
+        return "<absent>"
+    if path.is_symlink():
+        return f"symlink -> {os.readlink(path)}"
+    if path.is_dir():
+        return "<dir>"
+    if path.is_file():
+        return "<file>"
+    return "<other>"
+
+
+def _assert_wrote_nothing(repo: Path, *expected_untracked: str) -> None:
+    """A refused run touches neither the ledger nor the index.
+
+    ``expected_untracked`` names the repo-relative paths the fixture itself left
+    untracked (a planted symlink's body, say): the assertion is that this run
+    staged and wrote nothing, not that the fixture repo was pristine, and
+    spelling out what may be untracked is what keeps a record this run did write
+    from being mistaken for fixture noise.
+    """
+    new_record = f"noni/decisions/{NEW_ID}.json"
+    listed = [line.strip() for line in _porcelain(repo).splitlines() if line.strip()]
+    assert not any(new_record in line for line in listed), (
+        f"a refused run wrote {new_record}: {listed}"
+    )
+    assert not any(line.startswith("A ") or line.startswith("M ") or line.startswith("D ")
+                   for line in listed), f"a refused run staged something: {listed}"
+    allowed = set(expected_untracked)
+    for line in listed:
+        path = line[3:]
+        assert path in allowed, f"unexpected path after a refused run: {line!r} (allowed: {sorted(allowed)})"
+
+
 def _refused_target_repo(tmp_path: Path, name: str, raw: str) -> tuple[Path, str]:
     """A repo whose committed supersede target is ``raw``, the bytes verbatim.
 
@@ -1899,12 +2008,14 @@ def test_hardening_a_target_with_a_non_finite_answer_refuses_with_four(tmp_path,
     rewritten: the writer's render would replace it with ``null`` and call that
     a status-only change, which rewrites a byte of the record's answer.
 
-    ``NaN`` is not JSON, but Python's ``json.loads`` accepts the bare token by
+    ``NaN`` is not JSON, but Python's ``json.loads`` accepted the bare token by
     default and ``json.dumps`` writes it back, so a ledger file holding one
-    round-trips through the writer as ``null``. The fixture plants the token
+    round-tripped through the writer as ``null``. The fixture plants the token
     verbatim and pins the character on disk first: if json ever stopped reading
-    it, this test would be asserting nothing about the render. The run is
-    in-process because the refusal is observed by a probe of this process.
+    it, this test would be asserting nothing about the render. The refusal is
+    made by the reader (``record_object``'s ``parse_constant``), so the record is
+    never turned into an object at all and the renderer is never asked for it --
+    which is what the render observer below pins.
     """
     for label, token in (("nan", "NaN"), ("inf", "Infinity")):
         target_id = f"{BASELINE_ID[:10]}-{label}"
@@ -1919,37 +2030,39 @@ def test_hardening_a_target_with_a_non_finite_answer_refuses_with_four(tmp_path,
         proc = _supersede_in_process(repo, write_fails_on=None, monkeypatch=monkeypatch,
                                      target_id=target_id, render_observer=renders.append)
         assert proc.returncode == 4, f"{label}: {proc.returncode}: {proc.stderr}"
-        # The refusal is the field check naming a float answer (a non-finite number
-        # is a float once json has read it), and with allow_nan=False the renderer
-        # would have refused it too: either way the target is not rewritten.
-        assert "answer" in proc.stderr.lower() and "float" in proc.stderr.lower(), (
-            f"{label}: {proc.stderr}"
-        )
-        assert "canonical" in proc.stderr.lower() or "not a string or null" in (
-            proc.stderr.lower()), f"{label}: {proc.stderr}"
+        # The refusal names the target as unreadable rather than rewriting it: the
+        # reader refuses the token, so no field check or canonical comparison is
+        # reached and no bytes of this target are ever handed to the renderer.
+        assert "not a readable JSON object" in proc.stderr, f"{label}: {proc.stderr}"
         assert _porcelain(repo) == "", f"{label}: a refused run writes nothing"
         assert not _record_path(repo, f"{BASELINE_ID[:10]}-scheduler").exists(), label
         assert (repo / rel).read_text(encoding="utf-8") == committed, label
-        # The render was never asked of the planted record, or was answered with
-        # nothing: with allow_nan=False json refuses the token, so the writer has no
-        # bytes to compare and no bytes to write. A render that had emitted the
-        # token (or quietly turned it into null) would have been written.
+        # No render of the planted record happened at all: a render that had
+        # emitted the token (or quietly turned it into null) would have been written.
         assert all(token not in text and '"answer": null' not in text
                    for text in renders), (
             f"{label}: a render would have rewritten {token}: {renders}"
         )
+        assert not any(target_id in text for text in renders), (
+            f"{label}: the planted target reached the render: {renders}"
+        )
 
 
 def test_hardening_the_render_refuses_a_non_finite_number(tmp_path, monkeypatch):
-    """``_render`` never writes a non-finite float: a caller that handed one over
-    gets the exit-4 refusal, not the ``NaN``/``Infinity`` token ``json.dumps``
-    produces by default.
+    """``_render`` refuses a non-finite float by raising, and hands back no bytes.
 
-    The launched refusal above proves the ledger's bytes are left alone; this one
-    pins the renderer itself, which is the thing that would have rewritten them.
-    The call is observed, because a ``_render`` that raised ValueError instead of
-    calling ``_fail`` would leave a run with no message and an exit code nothing
-    published.
+    This test replaces the one that pinned the old sentinel: the renderer used to
+    print an exit-4 refusal through ``_fail`` and return ``""``, which stopped
+    nothing (the caller still received a string to write) and published an exit
+    code from inside a renderer. The assertions changed in place, none removed:
+    ``== ""`` became "raised ValueError and returned nothing", and "one ``_fail``
+    call at exit 4" became "no ``_fail`` call at all", which is the stronger
+    claim -- a refusal worded elsewhere cannot be mistaken for a rendered record.
+    The finite positive control is unchanged.
+
+    With ``record_object`` rejecting the three bare tokens no target can reach the
+    renderer with one, and every value of a new record a CLI string, this is the
+    renderer's own last word rather than a refusal the writer depends on.
     """
     module = _decide_module()
     calls: list[tuple[int, str]] = []
@@ -1965,15 +2078,192 @@ def test_hardening_the_render_refuses_a_non_finite_number(tmp_path, monkeypatch)
         record = json.loads(_canonical_body(f"{BASELINE_ID[:10]}-render-{bad}"))
         record["questions"][0]["answer"] = bad
         calls.clear()
-        assert module._render(record) == "", f"{bad}: a non-finite record rendered"
-        assert len(calls) == 1, f"{bad}: the refusal did not go through _fail: {calls}"
-        assert calls[0][0] == 4, f"{bad}: {calls}"
-        assert "answer" in calls[0][1], f"{bad}: {calls}"
+        rendered = "<not raised>"
+        try:
+            rendered = module._render(record)
+        except ValueError:
+            rendered = None
+        assert rendered is None, f"{bad}: a non-finite record rendered to {rendered!r}"
+        assert calls == [], f"{bad}: the renderer worded a refusal of its own: {calls}"
     # The positive control: a finite record still renders, unchanged in form.
     finite = json.loads(_canonical_body(f"{BASELINE_ID[:10]}-finite"))
     assert module._render(finite) == json.dumps(
         {key: finite[key] for key in module.FIELD_ORDER if key in finite},
         indent=2, ensure_ascii=False) + "\n"
+
+
+def test_hardening_a_non_finite_number_in_any_field_refuses_with_four(tmp_path):
+    """A target holding ``NaN``/``Infinity``/``-Infinity`` anywhere is refused (exit 4).
+
+    The refusal is about the bytes, not the field: a target whose ``options``
+    carried the token was read as a record, passed every field rule (a list of
+    strings is a valid ``options`` value to the census) and reached the render,
+    where a float json had read from a bare token would be refused or, under the
+    default ``allow_nan``, written back as a token that is not JSON. The reader is
+    what refuses now, so such a target "is not a readable JSON object" whatever
+    field holds it, and no path is opened.
+    """
+    for label, token in (("nan", "NaN"), ("inf", "Infinity"), ("ninf", "-Infinity")):
+        target_id = f"{BASELINE_ID[:10]}-options-{label}"
+        # The token sits in an option, never an answer: the answer's float was
+        # already refused by a field rule, and this is the field nothing checked.
+        patched = _canonical_body(target_id).replace('"later"', f"{token}")
+        assert token in patched, f"{label}: the fixture planted no {token}"
+        stderr, repo, rel = _refuse_raw_target(tmp_path, f"options-{label}", patched)
+        assert "not a readable JSON object" in stderr, f"{label}: {stderr}"
+        assert _porcelain(repo) == "", f"{label}: a refused run must leave the tree alone"
+        assert not _record_path(repo, f"{BASELINE_ID[:10]}-scheduler").exists(), label
+        assert (repo / rel).read_text(encoding="utf-8") == patched, label
+
+
+def test_hardening_the_render_raises_on_a_non_finite_number(tmp_path, monkeypatch):
+    """``_render`` raises ``ValueError`` for a non-finite float and writes nothing.
+
+    The old renderer printed an exit-4 refusal and returned ``""``, which handed
+    its caller an empty body to write: the refusal was printed but the write was
+    not stopped, and the exit code came back through ``_fail`` rather than the
+    exception. With the reader rejecting non-finite numbers (``record_object``)
+    no target can reach here with one, and a new record's every value is a CLI
+    string, so the render has no refusal to word: json's own ``allow_nan=False``
+    error is the honest answer and it propagates.
+
+    This replaces the test that pinned the print-and-return-``""`` sentinel. The
+    positive control is kept: a finite record still renders in the canonical form.
+    """
+    module = _decide_module()
+    calls: list[tuple[int, str]] = []
+
+    def _spy_fail(code, message, hint=None):
+        # Named, and rebound per case by the loop below: a lambda would close over
+        # the name and report the wrong case's calls.
+        calls.append((code, message))
+        return 4
+
+    monkeypatch.setattr(module, "_fail", _spy_fail)
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        record = json.loads(_canonical_body(f"{BASELINE_ID[:10]}-render-{bad}"))
+        record["questions"][0]["answer"] = bad
+        calls.clear()
+        try:
+            rendered = module._render(record)
+        except ValueError:
+            rendered = None
+        assert rendered is None, f"{bad}: a non-finite record rendered to {rendered!r}"
+        # Nothing is printed and no exit code is published: the render is not the
+        # place a refusal is worded, and it does not swallow the fault into "".
+        assert calls == [], f"{bad}: the render worded a refusal of its own: {calls}"
+    finite = json.loads(_canonical_body(f"{BASELINE_ID[:10]}-finite"))
+    assert module._render(finite) == json.dumps(
+        {key: finite[key] for key in module.FIELD_ORDER if key in finite},
+        indent=2, ensure_ascii=False) + "\n"
+
+
+def test_hardening_a_symlink_target_refuses_with_four(tmp_path):
+    """A committed target that is a symlink is refused (exit 4) before any read.
+
+    The old guards asked ``path.is_file()``, which follows the link, so a symlink
+    whose target was a regular file read as a file, and the writer's atomic
+    replace then wrote through the link to whatever else lived at the end of it,
+    or replaced the link itself. A link is not a record whatever it points at.
+    """
+    def _plant(target: Path) -> str:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # The link is committed with no body at all: a regular path must be
+        # refused on its kind alone, so nothing beside the path kind can be the
+        # reason this run says no (no record to parse, no id to mismatch).
+        target.symlink_to("elsewhere.json")
+        return f"symlink -> {os.readlink(target)}"
+
+    repo, target_id = _refused_path_repo(tmp_path, "symlink", _plant)
+    proc = _supersede(repo, target_id)
+    assert proc.returncode == 4, f"expected exit 4, got {proc.returncode}: {proc.stderr}"
+    assert "symlink" in proc.stderr, proc.stderr
+    assert _porcelain(repo) == "", f"{_porcelain(repo)}\n{proc.stderr}"
+    assert not _record_path(repo, f"{BASELINE_ID[:10]}-scheduler").exists()
+    rel = f"noni/decisions/{target_id}.json"
+    assert (repo / rel).is_symlink(), "the refused link must still be a link"
+    assert os.readlink(repo / rel) == "elsewhere.json"
+
+
+def test_hardening_a_tracked_directory_at_the_target_refuses_with_four(tmp_path):
+    """A tracked directory at the target's path is refused (exit 4) with nothing written.
+
+    ``git add`` on a directory commits the files beneath it under that path
+    prefix, so the target name is tracked, ``ls-files`` answers tracked and the
+    shape refusal used to answer ``None`` for a directory: the run fell through
+    to HEAD's bytes for a path no blob exists at and was told its target was
+    missing, while the rollback had no committed bytes to restore. ``--no-commit``
+    keeps the HEAD of the fixture repo at the planted shape so the assertion that
+    nothing was written is about this run.
+    """
+    def _plant(target: Path) -> str:
+        target.mkdir(parents=True)
+        (target / "inner.json").write_text(_canonical_body(BASELINE_ID), encoding="utf-8")
+        return "<dir>"
+
+    repo, target_id = _refused_path_repo(tmp_path, "directory", _plant)
+    proc = _run(repo, "--slug", "scheduler", "--date", BASELINE_ID[:10],
+                *BASE, *QUESTION, *OPTIONS, *ANSWERED,
+                "--supersedes", target_id, "--no-commit")
+    assert proc.returncode == 4, f"expected exit 4, got {proc.returncode}: {proc.stderr}"
+    assert "directory" in proc.stderr, proc.stderr
+    rel = f"noni/decisions/{target_id}.json"
+    assert (repo / rel).is_dir(), "the refused directory must still be a directory"
+    assert (repo / rel / "inner.json").read_text(encoding="utf-8") == _canonical_body(BASELINE_ID)
+    _assert_wrote_nothing(repo)
+    # The directory is still tracked at HEAD with its own committed bytes: a run
+    # that had staged a record under the name would show here as a dirty tree.
+    assert _git_e2(repo, "show", f"HEAD:{rel}/inner.json").stdout == _canonical_body(BASELINE_ID)
+
+
+def test_hardening_a_symlink_at_the_new_record_path_refuses_with_four(tmp_path):
+    """A symlink already sitting at the new record's path is a collision (exit 4).
+
+    The collision guard asked ``record_path.is_file()``, which follows the link,
+    so a link that led nowhere (or to a file) answered "free", and the atomic
+    replace wrote a real file over the link: the ledger then holds a record where
+    an operator's hand-made link was. A link is not a name this writer may take
+    over, and its bytes are not a record the census can read.
+
+    The planted link has no target at all, which is the shape that also covers the
+    link to a record: ``lstat`` sees the link either way, where ``is_file()``
+    answers False for a dangling one and True for a linked one, so a check built
+    on it could never refuse both.
+    """
+    repo = _baseline_repo(tmp_path)
+    new_path = _record_path(repo, NEW_ID)
+    new_path.parent.mkdir(parents=True, exist_ok=True)
+    os.symlink("no-such-record-anywhere.json", new_path)
+
+    proc = _decide(repo, *ANSWERED)
+    assert proc.returncode == 4, f"expected exit 4, got {proc.returncode}: {proc.stderr}"
+    assert "already exists" in proc.stderr, proc.stderr
+    assert new_path.is_symlink(), "the refused link must still be a link"
+    assert os.readlink(new_path) == "no-such-record-anywhere.json"
+    # The ledger still holds only the baseline: nothing was written into or beside
+    # the link, and a refused run stages nothing.
+    assert _porcelain(repo) == f"?? {new_path.relative_to(repo).as_posix()}", _porcelain(repo)
+    assert not _record_path(repo, NEW_ID).is_file()
+
+
+def test_hardening_a_directory_at_the_new_record_path_refuses_with_four(tmp_path):
+    """A directory at the new record's path is a collision (exit 4), not a write.
+
+    ``is_file()`` answered "free" for a directory too, and ``os.replace`` of a
+    temp file onto an existing directory fails with ``IsADirectoryError``: the run
+    reached the write stage and came back as the exit-5 write failure rather than
+    the collision it is.
+    """
+    repo = _baseline_repo(tmp_path)
+    new_path = _record_path(repo, NEW_ID)
+    (new_path / "inner").mkdir(parents=True)
+
+    proc = _decide(repo, *ANSWERED)
+    assert proc.returncode == 4, f"expected exit 4, got {proc.returncode}: {proc.stderr}"
+    assert "already exists" in proc.stderr, proc.stderr
+    assert new_path.is_dir(), "the refused directory must still be a directory"
+    assert (new_path / "inner").is_dir()
+    _assert_wrote_nothing(repo)
 
 
 def test_hardening_a_failing_show_probe_refuses_with_three(tmp_path, monkeypatch):

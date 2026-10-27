@@ -42,12 +42,9 @@ stderr names every class that fired.
 from __future__ import annotations
 
 import argparse
-import collections.abc
-import contextlib
 import hashlib
 import importlib.util
 import json
-import math
 import os
 import re
 import shutil
@@ -56,7 +53,6 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, NamedTuple, Protocol
 
 SCHEMA_VERSION = "noni.census/1"
 
@@ -73,6 +69,8 @@ SESSION_CHECKS = frozenset({
     "session-double", "session-claim", "session-malformed", "session-stalled",
     "session-same-identity", "session-deleted", "probe",
 })
+WHOLE_ARTIFACT_KEY = "_whole_artifact"
+
 # The ordering group: the three checks share one read of the order artifact, so
 # the group runs when any of them was asked for and the row filter keeps what
 # the caller named. The fourth row of the group, the `cannot-tell` a run adds
@@ -81,16 +79,14 @@ SESSION_CHECKS = frozenset({
 # question, so it carries that class's code (46) and, like every cannot-tell row,
 # a warn by default that --strict promotes (see _append_cannot_tell).
 # A missing order file is not a finding: the ordering layer is optional, so this
-# group adds no row at all when the artifact is absent.
+# group adds no row at all when the artifact is absent. The code itself lives in
+# census_ordering.py beside this file (see the loader under 'Ordering checks').
 ORDERING_CHECKS = frozenset({"ordering-malformed", "ordering-stale", "ordering-closed"})
 
-# The staleness thresholds have two owners and one flag. --stale-after stays the
-# single explicit threshold (its default belongs to session-stalled); an entry
-# of the order artifact is stale at this wider threshold when --stale-after was
-# not given, because an ordering that was confirmed a month ago is still a
-# statement about what to work on next, while a session silent for a month is
-# not. Passing --stale-after pins both classes to the one threshold the caller
-# named, so a census run is reproducible from its command line alone.
+# One threshold flag, two thresholds: --stale-after pins both classes to the
+# number the caller named, and without it each class gets the default that
+# belongs to it (see the threshold block in main for why the flag's presence
+# decides, and _threshold for how a default is parsed).
 SESSION_STALE_AFTER_DEFAULT = "7d"
 ORDERING_STALE_AFTER_DEFAULT = "30d"
 
@@ -260,6 +256,7 @@ LEDGER_EMPTY_MESSAGES: dict[str, str | None] = {
     "symlink": "noni/ or the ledger path is a symlink; the census does not read through links",
     "ok": None,
 }
+
 
 class Git:
     """A read-only view over the git history of a repository.
@@ -458,19 +455,11 @@ def _row(check: str, strict: bool, subject: str, artifact: str, message: str,
     escalates it and that rule keeps its one owner. A reporter that passes
     ``severity`` must pass the run's ``strict``, not a literal.
 
-    ``whole_artifact`` marks a row that reports a fault of the read the whole
-    group shares — the artifact file the group was asked to read, its
-    ``--issue-state`` input, or its ledger — rather than a defect of one entry,
-    and such a row is never dropped by a group's --only filter. The reason is
-    the probe-honesty rule: the row is how a group says "I could not read what
-    I was asked to check", and a run that observed that fault and reported none
-    would be reporting a clean it did not establish. `ledger-empty` is already
-    visible whatever the filter names, and for the same reason. A per-entry row
-    of a class the caller did not ask for is still dropped — that is what --only
-    is for, and dropping it is not a loss: it is a question this run was not
-    asked. The marker is ``WHOLE_ARTIFACT_KEY``, a key that starts with an
-    underscore so it is stripped at render and never enters the noni.census/1
-    row shape or the reproducible byte-stream.
+    ``whole_artifact`` marks a row as about the file a group was asked to read
+    rather than one entry inside it: the marker is ``WHOLE_ARTIFACT_KEY``,
+    underscore-keyed so it is stripped at render, and the row filter of ``main``
+    never drops such a row. See the module docstring and ``keep`` for the rule
+    and why a filtered run must still report it.
     """
     severity = _promote(severity, strict) if severity else _severity(check, strict)
     return {
@@ -1027,329 +1016,50 @@ def _repo_sha1(path: Path) -> str | None:
         return None
 
 
-# --- Session checks -------------------------------------------------------------
+# --- Hygiene -------------------------------------------------------------------
+# The public-repo hygiene class and the checker it loads live in
+# census_hygiene.py beside this file, loaded by path for the same reason as the
+# ordering module below: a sys.path entry would put a directory ahead of the
+# standard library, where a lookalike could be trusted as the census's hygiene
+# class. The name is ours, so no caller shadows it; the three row mechanics the
+# class uses are handed in at the call, so the row shape keeps its one owner.
+_HYGIENE_NAME = "noni_census_hygiene"
 
-# scripts/public_safety.py lives at <repo-root>/scripts relative to this file
-# (this file is skills/census/scripts/census.py — four levels below the repo
-# root). The census loads it by path rather than importing it by name: scripts/
-# is not a package, tests add their own sys.path entries, and a path load is
-# what lets the census verify the file it is about to execute.
-SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
 
+def _load_sibling(name: str, file: str):
+    """The module ``file`` beside this file, loaded by path under ``name``.
 
-class PublicSafetyModule(Protocol):
-    """The slice of scripts/public_safety.py the census depends on.
-
-    The scanner is loaded dynamically, so this is the only checked description
-    of the contract between the arbiter and the checker it runs: a signature
-    drift on public_safety's side is a type error against this Protocol rather
-    than an AttributeError at census time. ``_denylist_active`` is a private
-    helper of that module; the census calls it because public_safety is a gate
-    file whose surface this release may not widen, and `_trusted_public_safety`
-    requires it at runtime precisely so the coupling is detected as a not-run
-    row rather than an AttributeError.
+    Both split-out groups go through here. A sys.path entry would put a
+    directory ahead of the standard library, where a lookalike could be trusted
+    as the census's own code; loading by path with a name of our own is what
+    closes that. The module is registered under ``name`` before exec (the
+    canonical importlib recipe), so a module body that imports itself finds its
+    own entry.
     """
-
-    def scrub_tracked_files(self, repo: Path) -> tuple[list[str], str | None, Any]: ...
-
-    def _denylist_active(self, denylist: Any) -> bool: ...
-
-
-# A census-owned registry key, never the shared "public_safety" name: the
-# census is a read-only arbiter and must not replace a host application's
-# module (or a second census instance's) while it runs its scan.
-CENSUS_PS_MODULE_KEY = "noni_census_public_safety"
-
-
-def _load_public_safety() -> PublicSafetyModule | None:
-    """Import scripts/public_safety.py for the in-process hygiene scan.
-
-    Returns None when the module cannot be imported (a stripped checkout that
-    carries the skill without scripts/) or is not the file the census expects
-    to find at SCRIPTS_DIR: the caller then reports that the scan did not run
-    instead of reporting clean.
-
-    The module is taken from the census's own ``sys.modules`` slot when that
-    entry already points at this tree's ``SCRIPTS_DIR`` — the seams tests
-    monkeypatch (``_default_denylist_file``, ``DENYLIST_ENV_VAR``) live on that
-    one object, and a fresh load would silently run the scan past a patched
-    deny-list. An entry from a different tree is not this census's checker, so
-    the file is then loaded by path from ``SCRIPTS_DIR`` and re-verified before
-    it is executed.
-    """
-    existing = sys.modules.get(CENSUS_PS_MODULE_KEY)
-    if _trusted_public_safety(existing):
-        return existing
-    path = (SCRIPTS_DIR / "public_safety.py").resolve()
-    if not path.is_file():
-        return None
-    spec = importlib.util.spec_from_file_location(CENSUS_PS_MODULE_KEY, path)
-    if spec is None or spec.loader is None:
-        return None
+    spec = importlib.util.spec_from_file_location(
+        name, Path(__file__).resolve().parent / file)
+    if spec is None or spec.loader is None:  # pragma: no cover - path is fixed
+        raise RuntimeError(f"cannot load {file} beside census.py")
     module = importlib.util.module_from_spec(spec)
-    # Register under the census's own key before exec (the canonical importlib
-    # recipe): a module body that imports itself would otherwise find no entry
-    # in sys.modules. The shared "public_safety" name is never written.
-    sys.modules[CENSUS_PS_MODULE_KEY] = module
-    try:
-        spec.loader.exec_module(module)
-    except Exception:
-        # The scan could not be loaded: the caller reports the scan as not run
-        # (never a clean), and the half-built module must not stay registered.
-        sys.modules.pop(CENSUS_PS_MODULE_KEY, None)
-        return None
-    # Executing a module is executing the tree's code: only keep it when it is
-    # still the file we asked for and exposes the contract above.
-    if not _trusted_public_safety(module):
-        sys.modules.pop(CENSUS_PS_MODULE_KEY, None)
-        return None
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
     return module
 
 
-def _trusted_public_safety(module: object) -> bool:
-    """True when ``module`` is the checker at SCRIPTS_DIR/public_safety.py and
-    carries the members `_check_hygiene` calls. The resolved path is re-checked
-    on every call, so a module registered under the census's key from elsewhere
-    (or a sibling sys.path shadow) is not executed or trusted.
-
-    The name "trusted" is scoped honestly: public_safety is a committed, editable
-    file of the very tree being audited, so this is a *consistency* check (the
-    census ran the checker it intends to report about, not a stale or foreign
-    module), not a defence against a repository that rewrites its own gate. The
-    gate that cannot be satisfied by editing the audited tree is
-    `scripts/public_safety.py` run from a clean operator checkout before
-    publishing — see skills/census/SKILL.md, "census exit 50 is not the
-    public_safety gate".
-    """
-    if module is None:
-        return False
-    if Path(getattr(module, "__file__", "")).resolve() != (SCRIPTS_DIR / "public_safety.py").resolve():
-        return False
-    return all(callable(getattr(module, name, None))
-               for name in ("scrub_tracked_files", "_denylist_active", "load_denylist"))
-
-
-def _hygiene_labels(public_safety) -> set[str]:
-    """The label set public_safety can emit, from its own pattern tables.
-
-    Read from the live module rather than duplicated here: the census must not
-    hard-code vocabulary that public_safety owns. All of its pattern tables are
-    scanned (built-in, fixture home-path, and any other ``*_PATTERNS`` it
-    exposes) plus the deny-list label, because the deny-list label is not in
-    BUILTIN_PATTERNS — scrub_tracked_files appends it per entry. Tables are
-    iterables of ``(pattern, label)`` tuples (the contract public_safety
-    declares next to their annotations); anything else contributes no label.
-    The census never crashes on a table it cannot walk: the whole walk is
-    defensive, so a table whose iteration protocol raises contributes nothing
-    and the caller falls back to verbatim rows instead of a traceback that
-    would discard every finding this run already collected.
-
-    Compute this once per scan and pass the set to `_split_violation`: it is
-    invariant for the whole run, and walking ``vars()`` per violation row buys
-    nothing.
-    """
-    labels: set[str] = {"deny-list entry"}
-    try:
-        # One guard for the whole walk: the tables are public_safety's data and
-        # no shape of them may take the census down.
-        items = list(vars(public_safety).items())
-    except Exception:
-        return labels
-    for attr, value in items:
-        if not attr.endswith("_PATTERNS"):
-            continue
-        try:
-            if not isinstance(value, collections.abc.Iterable):
-                continue
-            entries = list(value)
-        except Exception:
-            # A truthy non-iterable, or a table whose __iter__ / __len__ /
-            # __bool__ raises: it contributes no labels.
-            continue
-        for entry in entries:
-            try:
-                _pattern, label = entry
-            except (TypeError, ValueError):
-                continue
-            if isinstance(label, str):
-                labels.add(label)
-    return labels
-
-
-def _split_violation(violation: str, labels: set[str]) -> tuple[str, int, str] | None:
-    """Split a public_safety violation "<path>:<line>: <label>" into parts.
-
-    Returns (path, line, label) or None when the string is not of that shape.
-
-    Splitting cannot be done by counting colons: a tracked path may contain
-    one ("x:y/p.txt" is a legal POSIX filename), so splitting at the first
-    colon truncates the path and garbles the message — which also breaks the
-    documented (artifact, check, subject) sort grouping, because artifact
-    becomes the path prefix before the colon. The label is a fixed string from
-    public_safety's own tables and contains no colon, so the tail is matched
-    against the known label set exactly and everything before ":<line>: " is
-    the path.
-    """
-    if not labels:
-        return None
-    for label in labels:
-        suffix = f": {label}"
-        if not violation.endswith(suffix):
-            continue
-        head = violation[: -len(suffix)]
-        path, sep, line_no = head.rpartition(":")
-        if sep and path and line_no.isdigit():
-            return path, int(line_no), label
-        # The suffix matched but the head is not "<path>:<digits>". This label
-        # is not the split; a later one in the set may match the same tail with
-        # a head that does parse, so keep looking instead of giving up.
-        continue
-    return None
-
-
-def _check_hygiene(top: Path | None, strict: bool, findings: list[dict]) -> None:
-    """The public-repo hygiene class (warn 50): the tracked-file scan, run
-    in-process (an import, never a subprocess) over the census's own git tree.
-
-    Scope follows the git tree the census already reads (``top``), never the
-    ``--ledger``/``--sessions`` overrides: the hygiene rule is about tracked
-    files of a repository, which is what the other git-backed checks use too.
-
-    The class always reports, a clean tree included: when the deny-list class
-    is not active (absent, corrupt, or present with no entries) exactly one
-    warn row says so, so a run that never checked operator names or external
-    project names is never mistaken for a hygiene-clean one. Built-in
-    violations (machine-local home paths, secret shapes, active deny-list
-    entries) get one row each.
-
-    A scan that cannot run (no git tree, or public_safety raising on a failing
-    or hung ``git ls-files``) is probe honesty: one warn row naming the scan
-    as not run, never a clean.
-
-    The two families of row are told apart by ``subject``, not by prose:
-    ``hygiene scan`` = the scan itself, ``deny-list`` = the deny-list half of
-    the scan, anything else = ``path:line`` of a violating tracked file (whose
-    artifact is that file, root-relative, while the first two name the checker
-    from the skill directory — see SKILL.md, "The hygiene artifact
-    namespace"). The deny-list read follows public_safety's own precedence, so
-    this class reports the same verdict the operator's own
-    ``scripts/public_safety.py`` gate gives.
-    """
-    def add(subject: str, artifact: str, message: str) -> None:
-        # The artifact is already the string the row must carry: either the
-        # violating file's path as public_safety reported it (already
-        # tree-relative) or the checker's id in the skill-relative hygiene
-        # namespace. It is never a path to be re-rooted into --repo.
-        findings.append(_row("hygiene", strict, subject, artifact, message, Path(),
-                             relative_artifact=False))
-
-    scan_artifact = _rel_to_census(SCRIPTS_DIR / "public_safety.py")
-
-    if top is None:
-        add(
-            "hygiene scan",
-            scan_artifact,
-            "hygiene scan did not run: --repo is not a git repository, so no tracked-file "
-            "scan was possible — this run is not a hygiene-clean guarantee",
-        )
-        return
-
-    public_safety = _load_public_safety()
-    if public_safety is None:
-        # The skill is installed on its own, without the repo's scripts/ dir:
-        # name the path that was probed relative to this file, because a path
-        # outside the audited tree has no root-relative form (and the census
-        # never prints a machine-local absolute path).
-        add(
-            "hygiene scan",
-            scan_artifact,
-            "hygiene scan did not run: public_safety is not importable from the repo's "
-            f"scripts directory ({_rel_to_census(SCRIPTS_DIR)}) — this run is not a "
-            "hygiene-clean guarantee",
-        )
-        return
-
-    # The deny-list is operator config, not tree content: the env-named file is
-    # the authoritative route, and a deny-list sitting inside the audited tree
-    # is not trusted to supply the vocabulary the publishing gate checks.
-    # Without it the class reports itself inactive below rather than pretending
-    # the operator-name half ran.
-    with _pinned_hygiene_env():
-        try:
-            violations, _source, denylist = public_safety.scrub_tracked_files(top)
-        except Exception as e:
-            # "Report, never crash": any exception from the scan (a failing or
-            # hung git ls-files, an unreadable deny-list store, a malformed
-            # pattern table) becomes the not-run row, never a traceback that
-            # discards every finding already collected in this run. A public
-            # safety scan must not be able to take the whole census down.
-            add(
-                "hygiene scan",
-                scan_artifact,
-                _bounded(f"hygiene scan did not run: {e} — this run is not a "
-                         "hygiene-clean guarantee"),
-            )
-            return
-
-    labels = _hygiene_labels(public_safety)
-    for violation in sorted(violations):
-        parsed = _split_violation(violation, labels)
-        if parsed is None:
-            # Not the documented shape: report the violation verbatim rather
-            # than mis-split it (probe honesty — a row that names the whole
-            # finding beats a row that garbles it).
-            add(violation, violation, f"public hygiene: {violation}")
-            continue
-        rel, line_no, label = parsed
-        add(f"{rel}:{line_no}", rel,
-            f"public hygiene: {rel}:{line_no}: {label}")
-
-    if not public_safety._denylist_active(denylist):
-        add(
-            "deny-list",
-            scan_artifact,
-            f"deny-list class inactive ({_denylist_state(denylist)}): no deny-list "
-            "entry was checked, so operator names, external project/tool names and hostnames "
-            "are NOT covered — this run is not a hygiene-clean guarantee",
-        )
-
-
-def _denylist_state(denylist: Any) -> str:
-    """Render the deny-list's inactive state word from its result.
-
-    public_safety owns the statuses; this only maps them to a word. The mapping
-    is three lines of the census's own reporting — `status` for a file that is
-    absent or unreadable, and the comments-only case that loaded "ok" with no
-    entries. A status public_safety adds later surfaces under its own name here
-    rather than being silently mislabelled. The caller has already established
-    the class is inactive, so "ok" with entries cannot reach this function.
-    """
-    status = getattr(denylist, "status", "absent")
-    if status != "ok":
-        return str(status)
-    return "present but empty" if not getattr(denylist, "entries", []) else "ok"
-
-
-# The git environment every census git call runs under. The census reads a
-# repository someone else may have prepared, with its own privileges, so the
-# host's git config must not be able to redirect those read-only calls:
-# core.hooksPath and protocol.ext.allow are the two that turn a read into
-# arbitrary execution, and an alternate object directory or a rewritten
-# objects dir points the reads somewhere else entirely. GIT_CONFIG_GLOBAL /
-# GIT_CONFIG_SYSTEM are pinned to the null device rather than merely removed,
-# so a system config baked into the image cannot leak back in either.
-#
-# GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE and friends are deliberately NOT
-# touched: clearing them would break the census's honest answer for a git
-# worktree, where the tree's .git file is a pointer and the ambient (or
-# per-invocation) git environment is what makes `git -C <worktree>` resolve at
-# all — and worktree-based callers are exactly who runs the census. A hostile
-# GIT_DIR can only make the census read a *different* repository, which every
-# class then reports about that tree; it cannot execute anything.
-GIT_ENV_NEUTRAL = {
-    "GIT_CONFIG_GLOBAL": os.devnull,
-    "GIT_CONFIG_SYSTEM": os.devnull,
-}
+_helpers = _load_sibling(_HYGIENE_NAME, "census_hygiene.py")
+# The class's own parts stay reachable as members of the census: they are
+# re-exports of one object, not copies, so the census keeps its single owner of
+# the checker and its loader while a caller (and the census's own tests) still
+# names them through the module it already imports.
+SCRIPTS_DIR = _helpers.SCRIPTS_DIR
+PublicSafetyModule = _helpers.PublicSafetyModule
+CENSUS_PS_MODULE_KEY = _helpers.CENSUS_PS_MODULE_KEY
+_load_public_safety = _helpers._load_public_safety
+_hygiene_labels = _helpers._hygiene_labels
+_split_violation = _helpers._split_violation
+# The census's own git calls and public_safety's in-process scan share one
+# pinned environment, so the table of variables to pin has one owner: here.
+GIT_ENV_NEUTRAL = _helpers.GIT_ENV_NEUTRAL
 
 
 def _git_config_args() -> list[str]:
@@ -1372,34 +1082,7 @@ def _git_env() -> dict[str, str]:
     return env
 
 
-@contextlib.contextmanager
-def _pinned_hygiene_env():
-    """Run the in-process scan with the git environment pinned.
-
-    The census runs public_safety's read-only git calls with its own privileges
-    and environment, so the operator's global/system config must not be able to
-    redirect them (core.hooksPath, protocol.ext.allow, an alternate object
-    store) and no ambient GIT_DIR / GIT_WORK_TREE may move them off the tree
-    being audited.
-
-    The deny-list is deliberately NOT pinned here: public_safety's own
-    precedence governs (see scripts/public_safety.py, "Deny-list sources"), so
-    the census reports the same deny-list verdict the operator's own
-    ``scripts/public_safety.py`` gate would — an untracked deny-list left next
-    to the checker, or named by NONI_SCRUB_DENYLIST, is the vocabulary the
-    publish-before-push rule expects there. One owner for that rule.
-    """
-    saved = {k: os.environ.get(k) for k in GIT_ENV_NEUTRAL}
-    os.environ.update(GIT_ENV_NEUTRAL)
-    try:
-        yield
-    finally:
-        for key, value in saved.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-
+# --- Session checks -------------------------------------------------------------
 
 def _bounded(message: str, limit: int = 300) -> str:
     """Bound an exception-derived message and strip machine-local absolute
@@ -1632,473 +1315,27 @@ def _is_non_terminal(fields: dict[str, str]) -> bool:
 
 
 # --- Ordering checks -----------------------------------------------------------
-
-# The artifact's shape, the census's side of the contract order.py writes to.
-ORDER_SCHEMA = "noni.order/1"
-ORDER_REQUIRED_FIELDS = ("schema", "entries")
-ORDER_ENTRY_FIELDS = ("issue", "decision", "confirmed")
-
-# The two states an --issue-state map answers for one issue, plus the third
-# state a map cannot answer at all: an issue the file does not mention. The
-# words are the census's own, never a value read from the file's contents.
-ISSUE_STATE_OPEN = "open"
-ISSUE_STATE_CLOSED = "closed"
-
-# The three status words a decision record may hold. A chain analysis reads
-# them everywhere a verdict about 'does this record still stand' is made; the
-# same words in the same set are what ordering's decision lookup answers for,
-# so a hand-edited status outside this set decides nothing about an order.
-RECORD_STATUSES = ("decided", "open", "superseded")
-STATUS_SUPERSEDED = "superseded"
-
-# A decision record id is what decide.py writes: <YYYY-MM-DD>-<slug> of
-# lowercase letters, digits and dashes. The same shape the writer refuses a
-# name outside of, so a name that could escape the ledger directory is refused
-# here too, before a path is built from it.
-RECORD_ID_RE = re.compile(r"\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]*")
-
-# The two subjects the ordering class uses for the rows that are not about one
-# entry: a whole-file malformation, and the --issue-state file that did not
-# parse. Like hygiene's `deny-list` / `hygiene scan` subjects, they are the
-# machine-readable discriminator between whole-artifact and per-entry rows.
-ORDER_DEFAULT_SUBJECT = "noni/direction/order.json"
-ISSUE_STATE_SUBJECT = "issue-state"
-
-# The internal row marker that carries the visibility policy of :func:`_row`.
-# It is a private key on purpose: `_render` rebuilds every row from the fields
-# it names, so a marker whose name begins with an underscore can never reach
-# the noni.census/1 stream — the leading underscore is the mechanism, not an
-# accident, and the name of the mechanism belongs here because the policy the
-# marker encodes is the one the module docstring states.
-WHOLE_ARTIFACT_KEY = "_whole_artifact"
-
-
-def _order_problems(value: object) -> list[str]:
-    """Why ``value`` is not an order the census can read; [] when it is.
-
-    The rules of ``noni.order/1`` as one list, so the row the class reports and
-    the refusal order.py applies before writing cannot drift apart: the writer
-    refuses what this census would report, which is what keeps a writer run from
-    producing an artifact this arbiter calls malformed. The census reads with the
-    writer's own reader (see :func:`_load_order`), so the two answer the same
-    document alike, and a non-finite number is refused here as the backstop for
-    a parsed value that came from anywhere but that reader.
-
-    A blank ``decision`` is a defect, not a string: it matches no record file, so
-    the census's own mirror of the writer's rule asks for more than ``isinstance(
-    decision, str)`` — otherwise a hand-repaired artifact could stay clean here
-    while the writer refuses to touch it.
-
-    An empty ``entries`` list with the right schema is clean, not a finding: an
-    operator who wants nothing ordered next has said so, and the census reports
-    no ordering rows for it.
-    """
-    if not isinstance(value, dict):
-        return ["the order file is not a JSON object"]
-    problems: list[str] = []
-    if _holds_non_finite(value):
-        # The one legal number whose value no writer can name: json reads 1e400
-        # into inf with no token to stop it, and an inf would reach a row's
-        # wording as a float. Refused as unparseable, exactly as the writer
-        # refuses it, so neither side ever treats it as a value.
-        return ["the order file holds a number that is not finite"]
-    missing = [f for f in ORDER_REQUIRED_FIELDS if f not in value]
-    if missing:
-        problems.append("missing field(s): " + ", ".join(missing))
-    extra = sorted(k for k in value if k not in ORDER_REQUIRED_FIELDS)
-    if extra:
-        problems.append("unknown field(s): " + ", ".join(extra))
-    if "schema" in value and value["schema"] != ORDER_SCHEMA:
-        problems.append(f"schema is {value['schema']!r}, not {ORDER_SCHEMA!r}")
-    entries = value.get("entries")
-    if entries is None:
-        return problems
-    if not isinstance(entries, list):
-        problems.append("entries is not an array")
-        return problems
-    seen: set[int] = set()
-    for index, entry in enumerate(entries, 1):
-        if not isinstance(entry, dict):
-            problems.append(f"entry {index} is not an object")
-            continue
-        gap = [f for f in ORDER_ENTRY_FIELDS if f not in entry]
-        if gap:
-            problems.append(f"entry {index} is missing field(s): " + ", ".join(gap))
-        junk = sorted(k for k in entry if k not in ORDER_ENTRY_FIELDS)
-        if junk:
-            problems.append(f"entry {index} has unknown field(s): " + ", ".join(junk))
-        issue = entry.get("issue")
-        if "issue" in entry:
-            if not isinstance(issue, int) or isinstance(issue, bool) or issue < 1:
-                problems.append(f"entry {index} issue {issue!r} is not a positive integer")
-            elif issue in seen:
-                problems.append(f"issue {issue} appears more than once")
-            else:
-                seen.add(issue)
-        decision = entry.get("decision")
-        if "decision" in entry and decision is not None \
-                and not (isinstance(decision, str) and decision.strip()):
-            problems.append(f"entry {index} decision is neither a record id nor null")
-        confirmed = entry.get("confirmed")
-        if "confirmed" in entry and (not isinstance(confirmed, str)
-                                     or _parse_iso(confirmed) is None):
-            problems.append(f"entry {index} confirmed {confirmed!r} is not a UTC timestamp")
-    return problems
-
-
-def _load_json_strict(raw: bytes) -> object:
-    """The value ``raw`` holds, refusing everything a noni writer would not emit.
-
-    The census's own copy of the reading half of the ordering contract (the
-    writer's copy is ``orderschema.refuse_constant`` plus
-    ``orderschema.holds_non_finite``): ``parse_constant`` refuses the three bare
-    tokens json accepts by default — ``NaN``, ``Infinity``, ``-Infinity``, which
-    are not JSON at all — and :func:`_holds_non_finite` walks the parsed value
-    for the legal literal that overflows to the same value with no token to stop
-    it (``1e400``). Without both, a JSON literal that no writer can name is read
-    in as a float, the entry that carries it is reported by one class alone, and
-    every other class calls the file clean.
-
-    Raises ValueError on any of them; the caller turns that into the row its own
-    class owns. Decoding happens here too, so a non-UTF-8 file raises
-    UnicodeDecodeError rather than reaching json.
-    """
-    value = json.loads(raw.decode("utf-8"), parse_constant=_refuse_constant)
-    if _holds_non_finite(value):
-        raise ValueError("non-finite number")
-    return value
-
-
-def _refuse_constant(token: str) -> float:
-    """The reader's answer to ``NaN``/``Infinity``/``-Infinity``: refuse the token.
-
-    Raising is how ``parse_constant`` refuses; the ValueError travels the same
-    except arm as a malformed document, so no token from an untrusted file is
-    named back in a row.
-    """
-    raise ValueError(f"not a JSON number: {token}")
-
-
-def _holds_non_finite(value: object) -> bool:
-    """Whether ``value`` holds a float json read in that is not finite.
-
-    The census's copy of ``orderschema.holds_non_finite``: the census reads the
-    artifact, the session register and the ledger without importing the writer's
-    helpers, so the walk lives with the reader that needs it. A bool is a bool,
-    never a number, so an artifact every writer emits still parses.
-    """
-    if isinstance(value, float):
-        return not math.isfinite(value)
-    if isinstance(value, dict):
-        return any(_holds_non_finite(item) for item in value.values())
-    if isinstance(value, (list, tuple)):
-        return any(_holds_non_finite(item) for item in value)
-    return False
-
-
-def _load_order(order: Path) -> tuple[list[dict] | None, str | None]:
-    """The order's entries, or (None, the reason it is not an order).
-
-    Absent is not a problem: the ordering layer is optional, so no file means no
-    ordering rows at all (contrast the ledger, whose absence is its own warn
-    class). Anything else at the path that the census cannot read — a symlink it
-    will not follow, a directory, unparseable bytes, a non-finite number, a wrong
-    schema — is the ``ordering-malformed`` finding, because the artifact is there
-    and is not the artifact.
-
-    The bytes go through :func:`_load_json_strict`, so what this arbiter can read
-    is exactly what ``order.py`` can write: an artifact the writer refuses is
-    never one the census calls clean under the classes the operator gates on.
-    """
-    kind, problem = _file_kind(order)
-    if kind == "absent":
-        return [], None
-    if kind != "regular":
-        return None, f"the order file is not a readable regular file: {problem}"
-    try:
-        raw = order.read_bytes()
-    except OSError as e:
-        return None, f"the order file is unreadable: {_bounded(str(e))}"
-    try:
-        value = _load_json_strict(raw)
-    except UnicodeDecodeError:
-        # The exception text carries the offending bytes, which are untrusted
-        # file content; the fixed wording names the class without echoing them.
-        return None, "the order file is not valid UTF-8"
-    except (json.JSONDecodeError, ValueError):
-        # ValueError is the non-finite refusal; its text names a token read from
-        # the file, so the fixed wording below names the class instead.
-        return None, "the order file is not valid JSON"
-    problems = _order_problems(value)
-    if problems:
-        return None, "; ".join(problems)
-    return list(value["entries"]), None
-
-
-class _IssueState(NamedTuple):
-    """What --issue-state handed over.
-
-    Three states, because the census treats them differently: ``given`` False
-    (the flag was not passed) means the closed question is not asked at all; a
-    ``problem`` means the file that was named does not answer, which is an
-    ``ordering-malformed`` finding; a ``map`` answers for the issues it names and
-    stays silent on the rest (which becomes a cannot-tell row).
-    """
-    map: dict[str, str] | None
-    problem: str | None
-    given: bool
-
-
-def _load_issue_state(path: Path | None) -> _IssueState:
-    """The ``--issue-state`` map (issue -> open|closed), with its state.
-
-    A file the operator or an adapter produced that does not parse, or whose
-    values are not the two states it may name, is reported as
-    ``ordering-malformed`` by the caller: a typo in the state file must stop the
-    closed check from reading "no row" as "nothing is closed".
-    """
-    if path is None:
-        return _IssueState(None, None, False)
-    kind, problem = _file_kind(path)
-    if kind != "regular":
-        return _IssueState(None, (f"the --issue-state file ({_bounded(str(path))}) is not a "
-                                  f"readable regular file: {problem}"), True)
-    try:
-        raw = path.read_bytes()
-    except OSError as e:
-        return _IssueState(None, (f"the --issue-state file ({_bounded(str(path))}) is "
-                                  f"unreadable: {_bounded(str(e))}"), True)
-    try:
-        value = json.loads(raw.decode("utf-8"))
-    except UnicodeDecodeError:
-        return _IssueState(None, (f"the --issue-state file ({_bounded(str(path))}) is not "
-                                  f"valid UTF-8"), True)
-    except json.JSONDecodeError:
-        return _IssueState(None, (f"the --issue-state file ({_bounded(str(path))}) is not "
-                                  f"valid JSON"), True)
-    if not isinstance(value, dict):
-        return _IssueState(None, (f"the --issue-state file ({_bounded(str(path))}) is not a "
-                                  "JSON object mapping issue numbers to open or closed"), True)
-    state: dict[str, str] = {}
-    bad: list[str] = []
-    for key, item in value.items():
-        if not isinstance(key, str) or not key.isdigit():
-            bad.append(f"key {key!r} is not an issue number")
-            continue
-        if item not in (ISSUE_STATE_OPEN, ISSUE_STATE_CLOSED):
-            bad.append(f"issue {key} state {item!r} is not {ISSUE_STATE_OPEN!r} or "
-                       f"{ISSUE_STATE_CLOSED!r}")
-            continue
-        state[key] = item
-    if bad:
-        return _IssueState(None, (f"the --issue-state file ({_bounded(str(path))}) is "
-                                  "malformed: " + "; ".join(sorted(bad)[:4])), True)
-    return _IssueState(state, None, True)
-
-
-def _ledger_records(
-    ledger: Path,
-) -> tuple[dict[str, dict], bool, set[str]]:
-    """The records the ledger holds, keyed by filename stem, plus whether it read
-    and which names it could not read.
-
-    An entry's ``decision`` cites a record by the stem of
-    ``noni/decisions/<id>.json`` — the path decide.py names its records by, and
-    the census's own chain analysis keys the chain on the ``id`` field that
-    writer puts in that file. The two agree by construction in every record the
-    writer produced, so the stem is what 'matches a file in the ledger' means
-    here; a record whose body disagrees with its name is the ledger's own
-    ``ledger-record`` / ``ledger-chain`` finding, not an ordering one.
-
-    The body is kept because the closed question needs its ``status`` and its
-    ``supersedes``: an ordering that cites a record the chain has moved past is
-    an ordering nobody voted for any more, which is the reasoning order.py
-    applies before it writes, and the two halves must answer alike.
-
-    Two kinds of unreadable answer, because the caller treats them differently:
-    a record that does not *parse* is left out of the map — it is not a record,
-    and the ledger's own ``ledger-record`` class owns reporting it — while a
-    record that exists but cannot be *read* (permissions, a symlink, a device, an
-    I/O fault) is recorded in the third element. The distinction is the census's
-    half of what ``order.py`` already distinguishes: "no such record" is a defect
-    of the order, "I could not read it" is a fault of this tree, and a row that
-    calls the second the first is not honest about what this run observed.
-
-    The second element says whether the listing itself failed — a ledger that
-    could not be listed answers nothing, so the caller must not report every
-    entry's decision as matching no file.
-    """
-    kind, _problem = _file_kind(ledger, kind="dir")
-    if kind != "regular":
-        # An absent ledger is a readable answer ('no records'), not a fault:
-        # ordering does not re-report what ledger-empty already owns.
-        return {}, kind == "absent", set()
-    try:
-        paths = sorted(ledger.glob("*.json"))
-    except OSError:
-        return {}, False, set()
-    records: dict[str, dict] = {}
-    unreadable: set[str] = set()
-    for candidate in paths:
-        stem = candidate.name[: -len(".json")]
-        fkind, _fproblem = _file_kind(candidate)
-        if fkind != "regular":
-            # Exists but is not something this run may read: never read through
-            # a link, never treated as absent.
-            unreadable.add(stem)
-            continue
-        try:
-            raw = candidate.read_bytes()
-        except OSError:
-            unreadable.add(stem)
-            continue
-        try:
-            value = _load_json_strict(raw)
-        except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
-            continue
-        if isinstance(value, dict):
-            records[stem] = value
-    return records, True, unreadable
-
-
-def _decision_problem(stem: str, records: dict[str, dict],
-                      unreadable: set[str] | frozenset[str] = frozenset()) -> str | None:
-    """Why an entry may not cite the record ``stem``, or None when it may.
-
-    Four answers, in the order the writer gives them: the record is there but
-    this run could not read it, no file with that name, a status the ledger's own
-    vocabulary does not hold, and a record the chain has moved past. The last
-    names the successor, because the reader's next action is to cite that one
-    instead — the same hint order.py prints when it refuses the same citation
-    before writing.
-
-    ``unreadable`` is the stems the listing found but could not read: answered
-    first and separately, because "could not be read" is an environment fault
-    with an environment's fix, not a defect in the order. ``order.py`` says the
-    same thing with exit 3; a census row that called it a malformed order would
-    send the operator to repair a file that is fine.
-    """
-    if stem in unreadable:
-        return (f"decision {stem!r} is a record file this run could not read: the ledger "
-                "holds it, but it is not a readable regular file, so whether the citation "
-                "stands cannot be answered")
-    if stem not in records:
-        return f"decision {stem!r} matches no record file in the ledger"
-    record = records[stem]
-    status = record.get("status")
-    if status not in RECORD_STATUSES:
-        return (f"decision {stem!r} carries status {status!r}, not one of "
-                + ", ".join(RECORD_STATUSES))
-    if status != STATUS_SUPERSEDED:
-        return None
-    successors = sorted(rid for rid, other in records.items()
-                        if other.get("supersedes") == stem
-                        and other.get("status") != STATUS_SUPERSEDED
-                        and isinstance(rid, str) and RECORD_ID_RE.fullmatch(rid))
-    if successors:
-        return (f"decision {stem!r} is {STATUS_SUPERSEDED} by {successors[-1]}, so its "
-                "order no longer stands")
-    return f"decision {stem!r} is {STATUS_SUPERSEDED}, so its order no longer stands"
+# The three ordering classes and their readers live in census_ordering.py beside
+# this file, loaded through the same sibling loader as the hygiene class (see
+# above), so the census keeps one owner of the row shape and of the primitives
+# the readers use, and each group's code stays its own size.
+_ORDERING_NAME = "noni_census_ordering"
+_ordering = _load_sibling(_ORDERING_NAME, "census_ordering.py")
 
 
 def _check_ordering(
     order: Path, ledger: Path, root: Path, now: datetime, ordering_stale_after: timedelta,
-    issue_state: _IssueState, strict: bool, findings: list[dict],
+    issue_state: _ordering._IssueState, strict: bool, findings: list[dict],
 ) -> None:
-    """Check the ordering artifact; append its findings to ``findings``.
+    """The ordering group, run by the module beside this file.
 
-    Three classes, one read. ``ordering-malformed`` (fail 15) is the artifact
-    that is there and is not the artifact; ``ordering-stale`` (warn 45) is an
-    entry nobody confirmed within the threshold, measured against --now alone
-    so two runs with one --now emit one byte-stream; ``ordering-closed`` (warn
-    46) is an entry whose issue the --issue-state map says is closed, plus the
-    cannot-tell rows for the issues that map does not mention.
-
-    An absent order file adds no row: the ordering layer is optional. Closed
-    state reaches the census only through --issue-state, which an adapter or the
-    operator produces — the census never contacts a tracker — so without the
-    flag the closed question is not asked and the run says so once rather than
-    reading as a clean closed check.
+    The row factory and the two helpers a row is built from are passed in rather
+    than imported, so the row shape, its visibility marker and the
+    machine-local-path rule stay written in exactly one place: this file.
     """
-    def add(check: str, subject: str, artifact: str, message: str,
-            severity: str | None = None, whole_artifact: bool = False) -> None:
-        """Append one row of this group.
-
-        ``whole_artifact`` marks a row that reports a fault of the read the
-        whole group shares — the artifact, its ``--issue-state`` file, or its
-        ledger — rather than a defect of one entry, which is what keeps it
-        through the group's --only filter (see :func:`_row`). The ordering
-        classes share one read, so a fault of that read belongs to the group and
-        not to a class the caller may or may not have named.
-        """
-        findings.append(_row(check, strict, subject, artifact, message, root,
-                             severity=severity, whole_artifact=whole_artifact))
-
-    entries, problem = _load_order(order)
-    state_map = issue_state.map
-    if issue_state.given and issue_state.problem is not None:
-        # The flag was given and its file does not answer: reported as a
-        # malformed ordering input, never swallowed into "no closed issues".
-        # The row is added even when the artifact itself is malformed, so a
-        # caller who filtered to one class still sees the half they asked about,
-        # and it is marked whole_artifact so the group's row filter cannot drop
-        # it for naming a class the caller did not.
-        add("ordering-malformed", ISSUE_STATE_SUBJECT, ISSUE_STATE_SUBJECT,
-            issue_state.problem, whole_artifact=True)
-    if problem is not None:
-        # Same for the artifact's own fault: it is the group's answer to "could
-        # you read the order", which no --only set may silence into a clean run.
-        add("ordering-malformed", ORDER_DEFAULT_SUBJECT, _rel_to_root(root, order), problem,
-            whole_artifact=True)
-        return
-
-    records, ledger_readable, unreadable_records = _ledger_records(ledger)
-    for index, entry in enumerate(entries or [], 1):
-        issue = entry.get("issue")
-        # The subject is the issue the entry names, so a caller can join a row
-        # to the entry it is about; an entry too broken to name one is reported
-        # by the malformed pass as a whole-file finding, not entry by entry.
-        subject = f"#{issue}" if isinstance(issue, int) else f"entry {index}"
-
-        decision = entry.get("decision")
-        if isinstance(decision, str) and ledger_readable:
-            why = _decision_problem(decision, records, unreadable_records)
-            if why is not None:
-                # The subject here is the entry, but the fault is the group's:
-                # the citation depends on a ledger read every entry of this run
-                # shares, so it is a whole-artifact row (see the second
-                # paragraph of _row's docstring). Whatever the --only set names,
-                # a run that could not check the citation must not report
-                # nothing.
-                add("ordering-malformed", subject, _rel_to_root(root, order),
-                    f"{why} ({_rel_to_root(root, ledger)})", whole_artifact=True)
-
-        confirmed = _parse_iso(entry.get("confirmed")) if isinstance(
-            entry.get("confirmed"), str) else None
-        if confirmed is not None:
-            age = now - confirmed
-            if age > ordering_stale_after:
-                add("ordering-stale", subject, _rel_to_root(root, order),
-                    f"stale: confirmed {entry['confirmed']} is {age.days} day(s) before "
-                    f"--now, past the {ordering_stale_after} threshold")
-
-        if state_map is None:
-            continue
-        key = str(issue) if isinstance(issue, int) else None
-        state = state_map.get(key) if key is not None else None
-        if state == ISSUE_STATE_CLOSED:
-            add("ordering-closed", subject, _rel_to_root(root, order),
-                f"closed: issue {issue} is {ISSUE_STATE_CLOSED} in --issue-state, so it is "
-                "not work to do next")
-        elif state is None:
-            # The map was given and does not mention this issue: the closed
-            # question is genuinely unanswered for this entry, so it gets a row
-            # rather than silence (probe honesty). The row belongs to
-            # ordering-closed because that is the question it could not answer.
-            add("ordering-closed", subject, _rel_to_root(root, order),
-                f"cannot-tell: --issue-state does not say whether issue {issue} is open or "
-                "closed, so the closed check cannot answer for this entry",
-                severity="warn")
+    _ordering.check_ordering(order, ledger, root, now, ordering_stale_after, issue_state,
+                            strict, findings, row=_row, rel_to_root=_rel_to_root,
+                            file_kind=_file_kind, bounded=_bounded, parse_iso=_parse_iso)
 
 
 # --- CLI -----------------------------------------------------------------------
@@ -2250,8 +1487,8 @@ def main(argv: list[str] | None = None) -> int:
 
     def keep(group_findings: list[dict]) -> list[dict]:
         """The rows of one group the run reports: those of a class the caller
-        named, plus every row the reporter marked as being about the file it was
-        asked to read rather than one entry inside it.
+        named, plus every row marked ``WHOLE_ARTIFACT_KEY`` — a row about the
+        file a group was asked to read, not one entry inside it.
 
         The first half is the --only contract. The second is the probe-honesty
         rule: a group that could not read its input must say so even under a
@@ -2271,7 +1508,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if ORDERING_CHECKS & requested:
         _check_ordering(ordering, ledger, root, now, ordering_stale_after,
-                        _load_issue_state(issue_state_path), args.strict, findings)
+                        _ordering._load_issue_state(issue_state_path, _file_kind, _bounded),
+                        args.strict, findings)
         findings[:] = keep(findings)
         # The closed check's question comes only from --issue-state, which an
         # adapter or the operator produces. Without it the class is not run, and
@@ -2288,7 +1526,8 @@ def main(argv: list[str] | None = None) -> int:
     # hygiene is its own check group: it scans the tracked files of the census's
     # own git tree (never the --ledger/--sessions overrides).
     if "hygiene" in requested:
-        _check_hygiene(top, args.strict, findings)
+        _helpers.check_hygiene(top, args.strict, findings, row=_row, bounded=_bounded,
+                               rel_to_census=_rel_to_census)
 
     # --- Aggregate -----------------------------------------------------------
     # Warnings never set the exit code on their own: clean means exit 0 even

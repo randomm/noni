@@ -1,6 +1,6 @@
 ---
 name: census
-description: Run the unified noni census — a single read-only script that checks the steering ledger (schema, edit-after-commit, supersede chain) and the session register (double-claim, claim-without-register, malformed, stalled) and returns an honest exit code. Use when the operator or any agent needs to verify the protocol invariants before merging, when triaging a failing census, or when the question is "is the ledger and session register in a valid state?" Do NOT use for writing, fixing, or mutating anything — the census is strictly read-only.
+description: Run the unified noni census — a single read-only script that checks the steering ledger (schema, edit-after-commit, supersede chain), the session register (double-claim, claim-without-register, malformed, stalled) and the ordering artifact (malformed order, stale entries, ordered-but-closed issues) and returns an honest exit code. Use when the operator or any agent needs to verify the protocol invariants before merging, when triaging a failing census, or when the question is "is the ledger, the session register and the order in a valid state?" Do NOT use for writing, fixing, or mutating anything — the census is strictly read-only.
 ---
 
 # census
@@ -21,11 +21,13 @@ python3 skills/census/scripts/census.py [options]
 | `--repo PATH` | `.` | the repository or directory to audit |
 | `--ledger PATH` | `<repo>/noni/decisions` | override the ledger directory |
 | `--sessions PATH` | `<repo>/noni/sessions` | override the sessions directory |
+| `--ordering PATH` | `<repo>/noni/direction/order.json` | override the ordering artifact |
+| `--issue-state FILE` | — | JSON map `{"<issue>": "open"\|"closed"}` produced by an adapter or the operator; the only route by which closed state reaches the census, which never contacts a tracker |
 | `--now ISO-8601` | current UTC | fixed timestamp for time-based checks (reproducible output) |
-| `--stale-after` | `7d` | staleness threshold for active sessions; positive whole days as `<N>` or `<N>d` (e.g. `7` or `7d`) |
-| `--strict` | off | treat every warn class as a failure: `session-stalled`, `probe`, `ledger-empty`, `session-same-identity`, `session-deleted`, `hygiene` |
+| `--stale-after` | `7d` for `session-stalled`, `30d` for `ordering-stale` | staleness threshold; positive whole days as `<N>` or `<N>d` (e.g. `7` or `7d`). Given explicitly, it is the one threshold both classes use; omitted, each class keeps its own default |
+| `--strict` | off | treat every warn class as a failure: `session-stalled`, `probe`, `ledger-empty`, `session-same-identity`, `session-deleted`, `ordering-stale`, `ordering-closed`, `hygiene` |
 | `--json` | off | emit NDJSON records on stdout (`noni.census/1`) |
-| `--only CHECK` | all | run only the named check (repeatable) |
+| `--only CHECK` | all | run only the named check (repeatable). Rows of a class it does not name are dropped; a row about the file a group was asked to read is reported whatever the filter names, because a group that could not read its input must say so |
 | `--skip CHECK` | none | skip the named check (repeatable) |
 | `--list` | — | print the check ids and exit 0 |
 
@@ -44,6 +46,9 @@ python3 skills/census/scripts/census.py [options]
 | `session-same-identity` | 43 | two or more non-terminal session files carry the same `identity` — one row per identity, naming every file (warn by default; fail under `--strict`) |
 | `session-deleted` | 44 | a `<YYYY-MM-DD>-<6 hex>.md` register file that git history shows was added is gone from the working tree (warn by default; fail under `--strict`) |
 | `probe` | 41 | a probe could not read its input (unreadable file, symlink, git failure) — never reported as clean |
+| `ordering-malformed` | 15 | the ordering artifact is there and is not the artifact: unparseable bytes, wrong `schema`, a duplicate or non-positive `issue`, a `confirmed` that is not a UTC timestamp, a `decision` matching no file in the ledger, or an `--issue-state` file that does not parse |
+| `ordering-stale` | 45 | an order entry whose `confirmed` is older than the `--stale-after` threshold relative to `--now` (warn by default; fail under `--strict`) |
+| `ordering-closed` | 46 | an ordered issue the `--issue-state` file says is closed; also the `cannot-tell` row for an entry the file does not mention (warn by default; fail under `--strict`) |
 | `hygiene` | 50 | a tracked file fails the public-repo hygiene scan (machine-local home path, secret shape, active deny-list entry), or the scan/deny-list did not run (warn by default; fail under `--strict`) |
 
 The `warn` classes are reported either way and never move the exit code on
@@ -69,6 +74,7 @@ class that fired.
 3   required tool missing (git not found)
 10  ledger-record
 12  ledger-edited
+15  ordering-malformed
 20  ledger-chain
 30  session-double
 31  session-claim
@@ -78,6 +84,8 @@ class that fired.
 42  ledger-empty (warn by default; failure under --strict)
 43  session-same-identity (warn by default; failure under --strict)
 44  session-deleted (warn by default; failure under --strict)
+45  ordering-stale (warn by default; failure under --strict)
+46  ordering-closed (warn by default; failure under --strict)
 50  hygiene (warn by default; failure under --strict)
 ```
 
@@ -174,6 +182,20 @@ The same rule extends to the classes that report their own absence:
   warn at exit 0 and becomes a failure only under `--strict`, unlike the
   genuine `record was edited after commit` row of the same class, which fails
   either way.
+- **`ordering-closed` (46) reports the state it was not given.** Closed issue
+  state reaches the census only through `--issue-state FILE`, a JSON map
+  `{"<issue>": "open"|"closed"}` an adapter or the operator produces: the census
+  never contacts a tracker, and there is no third adapter seam for it. Two
+  states follow from that. An entry whose issue the map does not mention gets a
+  `cannot-tell` row of the same class rather than silence, so a partial map
+  cannot read as "every ordered issue is open"; it is a warn by default and
+  `--strict` promotes it to 46. And when `--issue-state` was not given at all,
+  the class is not evaluated: the run prints one `note:` line saying so in
+  human-readable mode, and says nothing in `--json` mode, where the NDJSON
+  stream is findings and a notice about a class that did not run is not one.
+  A missing `noni/direction/order.json` is not a finding at all — the ordering
+  layer is optional — so an attached project that has never ordered anything
+  adds no ordering rows to its census.
 
 ### census exit 50 is not the public_safety gate
 

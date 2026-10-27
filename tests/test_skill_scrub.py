@@ -30,7 +30,8 @@ if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 from public_safety import FIXTURE_HOME_PATH_PATTERNS, HOME_PATH_PATTERNS, SECRET_PATTERNS  # noqa: E402
 
-SKILL_DIRS = [REPO / "skills" / "steering-ledger", REPO / "skills" / "sessions-claims", REPO / "skills" / "census"]
+SKILL_DIRS = [REPO / "skills" / "steering-ledger", REPO / "skills" / "sessions-claims",
+              REPO / "skills" / "census", REPO / "skills" / "direction"]
 FIXTURES = REPO / "tests" / "fixtures"
 
 
@@ -99,6 +100,19 @@ def test_skill_files_present():
     assert "scripts/gitwrite.py" in rels, f"scripts/gitwrite.py missing; have: {rels}"
     for ref in ("references/decisions.md", "references/modes.md", "references/supersede.md", "references/census.md"):
         assert ref in rels, f"{ref} missing; have: {rels}"
+    # The direction skill's writer is part of the scrubbed layout too: a skill
+    # directory whose script quietly left the list would stop being scrubbed.
+    direction = REPO / "skills" / "direction"
+    direction_rels = {p.relative_to(direction).as_posix()
+                      for p in SKILL_FILES if p.is_relative_to(direction)}
+    assert "SKILL.md" in direction_rels, f"direction SKILL.md missing; have: {direction_rels}"
+    assert "scripts/order.py" in direction_rels, (
+        f"scripts/order.py missing; have: {direction_rels}")
+    # The writer's two helper modules are product files of the same skill: a
+    # helper that left the directory would stop being scrubbed and stop being
+    # counted by the coverage gate.
+    for helper in ("scripts/orderschema.py", "scripts/gitwrite.py"):
+        assert helper in direction_rels, f"{helper} missing; have: {direction_rels}"
 
 
 @pytest.mark.parametrize("path", SKILL_FILES, ids=lambda p: p.name)

@@ -33,7 +33,7 @@ python -m venv .venv
 .venv/bin/coverage report                                       # report; fails below 80%
 ```
 
-The coverage command measures the seven Python product modules and enforces
+The coverage command measures the Python product modules and enforces
 the at-least-80% rule from `AGENTS.md`. `coverage combine` is required, not
 optional: `register.py`, `claim.py` and `census-sessions.py` run as
 subprocesses, so their data lands in separate files that only combine merges.

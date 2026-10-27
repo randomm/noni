@@ -44,7 +44,8 @@ from public_safety import (  # noqa: E402
     load_denylist,
 )
 
-SKILL_DIRS = [REPO / "skills" / "steering-ledger", REPO / "skills" / "sessions-claims", REPO / "skills" / "census"]
+SKILL_DIRS = [REPO / "skills" / "steering-ledger", REPO / "skills" / "sessions-claims",
+              REPO / "skills" / "census", REPO / "skills" / "direction"]
 FIXTURES = REPO / "tests" / "fixtures"
 README = REPO / "README.md"
 PRODUCT = REPO / "docs" / "PRODUCT.md"

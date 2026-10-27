@@ -18,7 +18,7 @@ What is asserted, and why each one matters:
   claim.py and census-sessions.py are reached only as subprocesses, so
   without subprocess measurement the gate would report a green total while
   never having executed the three scripts it most needs to cover.
-- the seven product modules named in [tool.coverage.report] include, matching
+- the product modules named in [tool.coverage.report] include, matching
   the harness list exactly, and each of them present on disk: the gate measures
   the shipped code, so a module that drops out of the list stops being
   measured without anything failing.
@@ -91,7 +91,7 @@ def test_subprocess_measurement_is_enabled():
     assert run.get("parallel") is True, "coverage must run in parallel mode to combine subprocess data"
 
 
-def test_gate_names_the_seven_product_modules():
+def test_gate_names_the_product_modules():
     """Every product module is measured, and nothing else is in the list.
 
     The list lives in [tool.coverage.report] include: [tool.coverage.run]

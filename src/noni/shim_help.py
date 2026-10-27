@@ -1,13 +1,13 @@
 """The --help text of the two bash census shims, as package-owned constants.
 
 The shims used to print their own header comment, so the same bytes could not
-come from both the shim and the package. The text lives here once, verbatim as
-the shims printed it, and both routes emit these constants:
-``tests/fixtures/census-sh/usage.txt`` and ``sessions-usage.txt`` are the single
-source of truth the tests compare both routes against.
+come from both the shim and the package. The text lives here once and both
+routes emit these constants: ``tests/fixtures/census-sh/usage.txt`` and
+``sessions-usage.txt`` are the single source of truth the tests compare both
+routes against.
 
-A shim prints the constant with its ``# `` comment prefix already removed, so
-what a reader sees is unchanged from the header it came from.
+A shim prints the constant verbatim, so what a reader sees is the bytes written
+here.
 """
 
 from __future__ import annotations
@@ -75,11 +75,9 @@ Requires a Python 3 interpreter on the machine that does the reading. The
 interpreter is $NONI_PYTHON when that variable is set, and python3
 otherwise; the exit-3 check below tests the one actually about to run.
 
-This header is also the --help output: the script prints itself from the
-second line to the first non-comment line of the body below, so the help
-text always matches the header and there is no hard-coded line range that
-drifts when this header changes length.
-The Python core lives in the same directory as this script. The sessions
-census is also reachable as `census.sh --sessions` from the steering-ledger
-skill (skills/steering-ledger/scripts/census.sh dispatches here); this file
-is the direct entry point."""
+This header is also the --help output: the script prints this constant, so the
+help text has exactly one owner and no hard-coded line range can drift when it
+grows. The Python core is the ``noni`` package (``noni.census_sessions``); the
+sessions census is also reachable as `census.sh --sessions` from the
+steering-ledger skill (skills/steering-ledger/scripts/census.sh dispatches
+here); this script is the direct entry point."""

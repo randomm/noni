@@ -121,13 +121,14 @@ consumers should branch on it rather than matching message prose:
 | `subject` | meaning | `artifact` |
 |---|---|---|
 | `path:line` of a tracked file | a built-in or active deny-list violation | that file, root-relative |
-| `hygiene scan` | the scan itself did not run (no git tree, `git ls-files` failed or hung, `public_safety` not importable) | the checker, named from the skill directory (`../../../scripts/public_safety.py`) |
+| `hygiene scan` | the scan itself did not run (no git tree, `git ls-files` failed or hung, `public_safety` not importable) | the checker, in the hygiene artifact namespace (`noni/public_safety.py`) |
 | `deny-list` | the deny-list half of the scan did not run; the state word (`absent`, `corrupt`, `present but empty`) is in the message | the checker, as above |
 
 A violating file's artifact is rooted in the tree being audited; the two
-probe-failure rows name the census's own checker, which lives outside that
-tree, so they are rooted in the installed skill instead — the census never
-prints a machine-local absolute path either way. A tracked path may contain a
+probe-failure rows name the census's own checker, which ships inside the
+package rather than beside the tree, so they are rooted in the hygiene artifact
+namespace instead — the census never prints a machine-local absolute path either
+way. A tracked path may contain a
 colon, so the census splits public_safety's `path:line: label` on its known
 label set rather than on the first colon, and a violation of an unexpected
 shape is reported verbatim instead of split.
@@ -164,7 +165,7 @@ The same rule extends to the classes that report their own absence:
   deny-list class is not active (its file is `absent`, `corrupt`, or present
   with no entries) the run emits one `hygiene` row naming that state; a scan
   that cannot run at all (`--repo` is not a git repo, `git ls-files` fails or
-  hangs, `scripts/public_safety.py` is not importable, or the scanner raises
+  hangs, `public_safety` is not importable, or the scanner raises
   for any reason) emits one row saying the scan did not run. Neither is ever
   reported as hygiene-clean, and no scanner failure can take the census down:
   every finding the run already collected is still reported. The scan runs
@@ -213,10 +214,10 @@ The same rule extends to the classes that report their own absence:
 report clean when the deny-list class is inactive and exits 2. The census
 reports the same condition as a `hygiene` warn that leaves the process at exit
 0. Both read the deny-list through `public_safety.load_denylist` and its one
-precedence (the default file next to the checker, which is gitignored, then
-`NONI_SCRUB_DENYLIST`), so the two entry points never disagree about whether
-the deny-list half ran — but a clean census exit 50 is not a substitute for
-running `scripts/public_safety.py` before publishing.
+precedence (the untracked default file inside the tree being audited, which is
+gitignored, then `NONI_SCRUB_DENYLIST`), so the two entry points never disagree
+about whether the deny-list half ran — but a clean census exit 50 is not a
+substitute for running `scripts/public_safety.py` before publishing.
 
 ## Rules
 

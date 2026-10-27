@@ -53,7 +53,7 @@ PRODUCT = REPO / "docs" / "PRODUCT.md"
 # deny-list is absent or inactive, the vocabulary check is skipped via
 # pytest.skip with a visible reason (same contract as the scrub's deny-list
 # class) while the structural checks below still run.
-_DENYLIST = load_denylist()
+_DENYLIST = load_denylist(REPO)
 FORBIDDEN_VOCAB = [
     (re.compile(re.escape(entry), re.IGNORECASE), "external tool/project vocabulary")
     for entry in _DENYLIST.entries

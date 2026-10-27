@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "noni"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Attachable product-direction layer: steering ledger, backlog ordering, session claims, census"
 requires-python = ">=3.11"
 dependencies = []
@@ -26,6 +26,12 @@ dev = [
 # wheel, pinned by tests/test_wheel_contents.py.
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# One owner for the version: the wheel's metadata is read from
+# ``noni.__version__``, so a release bumps one line and the distribution cannot
+# disagree with the package.
+[tool.setuptools.dynamic]
+version = { attr = "noni.__version__" }
 
 # One console command, one subcommand per tool (census, register, claim, decide,
 # order). The dispatch module holds no behaviour of its own.

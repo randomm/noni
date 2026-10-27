@@ -379,7 +379,6 @@ def is_index_text(raw: str) -> bool:
     issue number are spelled with, and this is the one rule both tokens obey.
     """
     return raw.isascii() and raw.isdecimal()
-    return raw.isascii() and raw.isdecimal()
 
 
 def parse_index(raw: str, flag: str, count: int) -> tuple[int, tuple[str, str] | None]:

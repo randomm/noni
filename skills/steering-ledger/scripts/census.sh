@@ -83,16 +83,24 @@ if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
   # The help text is the package constant, not this file's header: `noni census
   # --help` and this shim must print the same bytes. See noni.shim_help and
   # tests/fixtures/census-sh/usage.txt, which is the fixture both routes are
-  # compared against. NONI_PYTHON names the interpreter (python3 by default).
+  # compared against. NONI_PYTHON names the interpreter (python3 by default);
+  # when the package is not importable the run says so on one plain line and
+  # exits 3 rather than letting the interpreter's traceback stand as the
+  # diagnostic.
   NONI_PYTHON="${NONI_PYTHON:-python3}"
   if ! command -v "$NONI_PYTHON" >/dev/null 2>&1; then
     echo "census.sh: $NONI_PYTHON not found on $(hostname 2>/dev/null || echo unknown)" >&2
     exit 3
   fi
-  "$NONI_PYTHON" -c 'import sys; from noni import shim_help; sys.stdout.write(shim_help.CENSUS_SH_HELP + "\n")' || {
-    echo "census.sh: the noni package is not importable from $NONI_PYTHON; install it or put its src/ on PYTHONPATH" >&2
+  # A package that cannot be imported is named on one plain line and exits 3.
+  # The import is probed with stderr captured, so the interpreter's traceback
+  # never reaches the reader: a traceback is not a diagnostic one can act on,
+  # and the shim's exit-code table says 3 for exactly this state.
+  if ! help_text="$("$NONI_PYTHON" -c 'import sys; from noni import shim_help; sys.stdout.write(shim_help.CENSUS_SH_HELP + "\n")' 2>/dev/null)"; then
+    echo "census.sh: noni package not importable" >&2
     exit 3
-  }
+  fi
+  printf '%s\n' "$help_text"
   exit 0
 fi
 

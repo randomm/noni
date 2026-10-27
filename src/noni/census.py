@@ -474,20 +474,6 @@ def _row(check: str, strict: bool, subject: str, artifact: str, message: str,
     }
 
 
-def _rel_to_census(path: Path) -> str:
-    """The package-relative id of a module the hygiene class names when it could
-    not run.
-
-    The census never prints a machine-local absolute path, so the scan's own
-    module is named from the package rather than from the filesystem: the same
-    literal comes out of the in-place wrapper and of ``noni census`` from the
-    wheel. These rows therefore live in a different artifact namespace from the
-    root-relative ones — see skills/census/SKILL.md, "The hygiene artifact
-    namespace".
-    """
-    return _clipped(str(path))
-
-
 def _file_kind(path: Path, kind: str = "file") -> tuple[str, str | None]:
     """Classify a file for the census: ("absent"|"regular"|"symlink"|"nonregular", problem).
 
@@ -1034,6 +1020,7 @@ PublicSafetyModule = _helpers.PublicSafetyModule
 CENSUS_PS_MODULE_KEY = _helpers.CENSUS_PS_MODULE_KEY
 HYGIENE_SCAN_ARTIFACT = _helpers.HYGIENE_SCAN_ARTIFACT
 _load_public_safety = _helpers._load_public_safety
+_trusted_public_safety = _helpers._trusted_public_safety
 _hygiene_labels = _helpers._hygiene_labels
 _split_violation = _helpers._split_violation
 # The census's own git calls and public_safety's in-process scan share one
@@ -1331,9 +1318,6 @@ def _is_non_terminal(fields: dict[str, str]) -> bool:
 from . import census_json as _census_json  # noqa: E402
 from . import census_ordering as _ordering  # noqa: E402
 from . import census_ordering_readers as _ordering_readers  # noqa: E402
-
-_ORDERING_NAME = _ordering.__name__
-_ORDERING_READERS_NAME = _ordering_readers.__name__
 
 
 def _check_ordering(

@@ -262,6 +262,35 @@ def test_decide_wrapper_matches_noni_decide_help():
     assert left.stdout.startswith("usage: decide.py "), left.stdout[:80]
 
 
+def test_decide_help_pair_is_width_independent(tmp_path, monkeypatch):
+    """The --help pair matches byte for byte even when the caller's environment
+    asks for a different terminal width.
+
+    argparse wraps its usage and option help to ``COLUMNS``, so on an unwrapped
+    harness the two routes would emit different bytes as soon as the suite ran
+    under a width neither launcher pinned (a piped CI run, an 80-column tmux
+    pane): the equivalence test would then pass or fail on the machine reading
+    it. The harness pins the width for every launch, so this caller-set 80
+    cannot reach either tool and the pair still matches.
+    """
+    monkeypatch.setenv("COLUMNS", "80")
+    left = run_wrapper(DECIDE, "--help", env={**subprocess_env(), "COLUMNS": "80"})
+    right = run_noni("decide", "--help", env={**subprocess_env(), "COLUMNS": "80"})
+    _assert_same(left, right, "decide --help at COLUMNS=80")
+    assert "COLUMNS" not in left.stdout, "the width must not leak into the help text"
+
+    # The pin is real, not an accident of the caller's env: the same bytes come
+    # out with no COLUMNS in the caller at all.
+    monkeypatch.delenv("COLUMNS", raising=False)
+    plain_left = run_wrapper(DECIDE, "--help")
+    plain_right = run_noni("decide", "--help")
+    _assert_same(plain_left, plain_right, "decide --help with no caller COLUMNS")
+    assert plain_left.stdout == left.stdout, (
+        "the launched tools' help bytes moved with the caller's COLUMNS: the pin "
+        "is not being applied"
+    )
+
+
 def test_order_wrapper_matches_noni_order(tmp_path):
     """The order writer's success line and the refusal line both pair."""
     repo = _repo(tmp_path)

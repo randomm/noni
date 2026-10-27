@@ -68,15 +68,31 @@ PRODUCT_MODULES = (
 COVERAGE_PROCESS_START = str(REPO / "pyproject.toml")
 
 
+# Width every launched tool sees, pinned so the --help byte-for-byte
+# comparisons cannot depend on the terminal the suite happened to run under.
+# The launchers force this value (not setdefault): a caller's own COLUMNS --
+# including one a test deliberately sets to 80 to prove width-independence --
+# must not change the bytes argparse emits.
+HELP_COLUMNS = "100"
+
+
 def subprocess_env(base: dict | None = None) -> dict:
     """An env for a launched product script, with coverage's hook enabled.
 
     ``base`` starts from a specific environment instead of the current one.
     Every test launcher of a product Python script goes through this, which
     is what makes the subprocess half of the coverage gate fire.
+
+    ``COLUMNS`` is forced (see :data:`HELP_COLUMNS`) so the ``--help``
+    byte-for-byte comparisons are width-independent: argparse wraps its usage
+    and option help to the terminal width, so without the pin the wrapper and
+    the console route would differ whenever the harness runs under a different
+    width than the caller's shell (or no width at all, which is what a piped
+    test run gives).
     """
     env = dict(os.environ if base is None else base)
     env["COVERAGE_PROCESS_START"] = COVERAGE_PROCESS_START
+    env["COLUMNS"] = HELP_COLUMNS
     return env
 
 
@@ -570,10 +586,15 @@ def run_noni(*args: str, env: Mapping[str, str] | None = None,
     job needs no console-script entry on PATH while still going through the
     console module's own dispatch; ``tests/test_console_equivalence.py`` runs
     the ``noni`` script itself against the installed wheel.
+
+    Like :func:`run_wrapper`, this forces the pinned ``COLUMNS`` on a
+    caller-supplied env, so both routes of a ``--help`` pair wrap at the same
+    width whatever the caller's environment says.
     """
     cmd = [sys.executable, "-m", "noni.cli", *args]
-    return subprocess.run(cmd, capture_output=True, text=True,
-                          env=subprocess_env() if env is None else dict(env),
+    full = subprocess_env() if env is None else dict(env)
+    full["COLUMNS"] = HELP_COLUMNS
+    return subprocess.run(cmd, capture_output=True, text=True, env=full,
                           timeout=timeout)
 
 
@@ -584,9 +605,14 @@ def run_wrapper(script: Path, *args: str, env: Mapping[str, str] | None = None,
     The wrapper is launched by path (the form the skills document and the README
     sells), so the comparison against ``noni <tool>`` covers the wrapper's own
     import of the package and not just the package's output.
+
+    A caller-supplied ``env`` still gets the pinned ``COLUMNS`` (see
+    :data:`HELP_COLUMNS`): the width the help text wraps at is not a knob a
+    caller may turn, which is what makes the equivalence width-independent.
     """
     cmd = [sys.executable, str(script), *args]
     full = subprocess_env() if env is None else dict(env)
+    full["COLUMNS"] = HELP_COLUMNS
     return subprocess.run(cmd, capture_output=True, text=True, env=full,
                           cwd=None if cwd is None else str(cwd), timeout=timeout)
 

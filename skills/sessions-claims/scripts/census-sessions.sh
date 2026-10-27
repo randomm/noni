@@ -54,10 +54,15 @@ if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
     echo "census-sessions.sh: $NONI_PYTHON not found on $(hostname 2>/dev/null || echo unknown)" >&2
     exit 3
   fi
-  "$NONI_PYTHON" -c 'import sys; from noni import shim_help; sys.stdout.write(shim_help.CENSUS_SESSIONS_SH_HELP + "\n")' || {
-    echo "census-sessions.sh: the noni package is not importable from $NONI_PYTHON; install it or put its src/ on PYTHONPATH" >&2
+  # A package that cannot be imported is named on one plain line and exits 3.
+  # The import is probed with stderr captured, so the interpreter's traceback
+  # never reaches the reader: a traceback is not a diagnostic one can act on,
+  # and the shim's exit-code table says 3 for exactly this state.
+  if ! help_text="$("$NONI_PYTHON" -c 'import sys; from noni import shim_help; sys.stdout.write(shim_help.CENSUS_SESSIONS_SH_HELP + "\n")' 2>/dev/null)"; then
+    echo "census-sessions.sh: noni package not importable" >&2
     exit 3
-  }
+  fi
+  printf '%s\n' "$help_text"
   exit 0
 fi
 

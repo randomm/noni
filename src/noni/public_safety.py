@@ -18,7 +18,9 @@ Violation classes:
    or an environment variable; when neither exists the deny-list class is
    skipped with a **prominent** stderr notice while the built-in patterns
    still run. A green run without the deny-list is **not** a scrub-clean
-   guarantee — see docs/PUBLISHING.md step 1.
+   guarantee — see docs/PUBLISHING.md step 1. The default file is always the
+   one inside the tree being audited, never the one in the process's current
+   directory.
 
 The deny-list file is a plain text file: one entry per line; blank lines and
 lines starting with ``#`` are ignored; entries are matched with
@@ -57,24 +59,28 @@ from typing import Literal
 
 # Default location of the untracked local deny-list, relative to the tree being
 # audited. The path is in .gitignore so the file can never be committed; the
-# deny-list env var names an alternative file and takes precedence when the
-# default file is absent. It is derived from the audited tree, never from this
-# file's own location: the wheel copy of this module has no tree beside it.
+# deny-list env var names an alternative file, used when the tree carries no
+# default file of its own. The default is derived from the audited tree, never
+# from this file's own location: the wheel copy of this module has no tree
+# beside it.
 DENYLIST_FILENAME = ".noni-scrub-denylist"
 
 
 def default_denylist_file(repo: Path) -> Path:
     """The untracked deny-list path of the tree being audited."""
-    return Path(repo) / DENYLIST_FILENAME
+    return Path(repo).resolve() / DENYLIST_FILENAME
 
 
-def _default_denylist_file() -> Path:
-    """The default deny-list path for a run with no tree named.
+def _default_denylist_file(repo: Path) -> Path:
+    """The default deny-list path of the tree being audited.
 
-    A run that names no tree audits the current working directory, so that is
-    the tree whose deny-list is sought. The seam tests patch.
+    The tree is a parameter, never ``Path.cwd()``: the wheel copy of this module
+    is installed anywhere on the machine and the publishing gate may be invoked
+    from any directory, so a cwd-derived default finds the operator's deny-list
+    only by accident and silently drops the operator-name half of the check.
+    The seam tests patch.
     """
-    return default_denylist_file(Path.cwd())
+    return default_denylist_file(repo)
 
 
 DENYLIST_ENV_VAR = "NONI_SCRUB_DENYLIST"
@@ -207,16 +213,15 @@ class DenylistResult:
     status: Literal["ok", "corrupt", "absent"]
 
 
-def load_denylist() -> DenylistResult:
-    """Load the deny-list and classify the outcome.
+def load_denylist(repo: Path) -> DenylistResult:
+    """Load the deny-list for the tree ``repo`` and classify the outcome.
 
-    Load order: the default file (when it exists) takes precedence over the
+    Load order: the audited tree's own untracked default file first, then the
     env-var-named file; when neither exists the deny-list part is skipped
-    (status "absent") and the caller prints a prominent stderr notice.
-
-    The default file is sought in the current working directory's tree (see
-    :func:`_default_denylist_file`), which is the tree a CLI run from the
-    repository root audits.
+    (status "absent") and the caller prints a prominent stderr notice. The env
+    var is honoured in full for a tree that carries no deny-list of its own (or
+    whose default file is unreadable), which is the route the publishing
+    checklist uses.
 
     An unreadable or non-UTF-8 deny-list file is classified as corrupt (with
     a visible stderr notice) — but loading does NOT stop at the corrupt file:
@@ -227,7 +232,7 @@ def load_denylist() -> DenylistResult:
     deny-list class.
     """
     last_corrupt: Path | None = None
-    for candidate in (_default_denylist_file(), os.environ.get(DENYLIST_ENV_VAR)):
+    for candidate in (_default_denylist_file(repo), os.environ.get(DENYLIST_ENV_VAR)):
         if not candidate:
             continue
         path = Path(candidate)
@@ -258,12 +263,24 @@ def load_denylist() -> DenylistResult:
 
 
 def _scan_tracked_files(repo: Path, patterns: list[tuple[re.Pattern, str]]) -> list[str]:
+    # The tree being scanned is someone else's, so its config may not turn a
+    # read-only listing into execution: core.fsmonitor names a helper git execs,
+    # core.hooksPath redirects hooks, protocol.ext.allow enables external
+    # transport helpers, and a repo-embedded config carrying any of them would
+    # otherwise run under the scanner's privileges. The two config files a host
+    # may carry are pinned to the null device for the same reason.
     try:
+        env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
         result = subprocess.run(
-            ["git", "-C", str(repo), "ls-files", "-z"],
+            ["git", "-C", str(repo),
+             "-c", "core.fsmonitor=false",
+             "-c", f"core.hooksPath={os.devnull}",
+             "-c", "protocol.ext.allow=never",
+             "ls-files", "-z"],
             capture_output=True,
             text=True,
             timeout=30,
+            env=env,
         )
     except subprocess.TimeoutExpired as e:
         raise RuntimeError("git ls-files timed out (30s); a stuck index lock or fs hang is likely") from e
@@ -306,7 +323,7 @@ def scrub_tracked_files(repo: Path) -> tuple[list[str], str | None, DenylistResu
     for callers that need to tell a comments-only file apart from a missing
     one.
     """
-    denylist = load_denylist()
+    denylist = load_denylist(repo)
     patterns = list(BUILTIN_PATTERNS)
     for entry in denylist.entries:
         patterns.append((re.compile(re.escape(entry)), "deny-list entry"))
@@ -329,22 +346,3 @@ def scrub_tracked_files(repo: Path) -> tuple[list[str], str | None, DenylistResu
 def _denylist_active(denylist: DenylistResult) -> bool:
     """True when the deny-list class actually ran with at least one entry."""
     return denylist.status == "ok" and len(denylist.entries) > 0
-
-
-if __name__ == "__main__":
-    # Reached only through scripts/public_safety.py, which passes the repository
-    # it was run from; a direct run of the module audits the current directory.
-    _repo = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd()
-    found, _source, denylist = scrub_tracked_files(_repo)
-    if found:
-        for v in found:
-            print(v, file=sys.stderr)
-        sys.exit(1)
-    if not _denylist_active(denylist):
-        # Refuse to report clean when the deny-list class was not active:
-        # skipped (absent), corrupt, or present but empty.
-        state = denylist.status if denylist.status != "ok" else "present but empty"
-        print(f"public-safety: NOT clean — deny-list class inactive ({state})", file=sys.stderr)
-        sys.exit(2)
-    print("public-safety: clean", file=sys.stderr)
-    sys.exit(0)

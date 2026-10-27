@@ -75,7 +75,6 @@ nothing to arbitrate) are counted there and do not change the verdict.
 Read `noni/skills/<skill>/SKILL.md` for what each writer accepts and refuses.
 The steering-ledger and sessions-claims skills keep record-shape detail in
 their `references/` directories. `noni --help` names the five subcommands and
-`noni <tool> --help` the flags of one. `noni --help` names the five subcommands and
 `noni <tool> --help` the flags of one.
 
 ## How it works

@@ -103,7 +103,7 @@ def _render(body: dict):
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="order.py",
+        prog=labels.ORDER,
         description="Write the ordered list of issues the operator wants worked next "
                     "(noni/direction/order.json) and commit it.",
     )
@@ -130,8 +130,8 @@ def main(argv: list[str] | None = None) -> int:
     if subcommand not in ("add", "move", "remove", "confirm"):
         return _fail(EXIT_USAGE, f"subcommand {subcommand!r} is not one of "
                      "add, move, remove or confirm",
-                     "order.py --repo REPO add ISSUE --decision ID | move ISSUE --to N | "
-                     "remove ISSUE | confirm [ISSUE]")
+                     f"{labels.ORDER} --repo REPO add ISSUE --decision ID | "
+                     "move ISSUE --to N | remove ISSUE | confirm [ISSUE]")
 
     # --at belongs to add and --to to move and nothing else: a flag that means
     # nothing for the verb it was passed with is a usage error, not a hint the
@@ -157,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
         token = args.issue
         if token is None:
             return _fail(EXIT_USAGE, f"{subcommand} needs an issue number",
-                         f"order.py --repo REPO {subcommand} 42")
+                         f"{labels.ORDER} --repo REPO {subcommand} 42")
         if not orderstate.is_index_text(token) or int(token) < 1:
             return _fail(EXIT_USAGE, f"issue {token!r} is not a positive integer",
                          "name the issue by its number, e.g. 42")

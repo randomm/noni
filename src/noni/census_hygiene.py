@@ -10,9 +10,9 @@ file to load and no directory a lookalike could be found on.
 The scan is an import, never a subprocess, and the module it imports is
 verified before it runs: ``public_safety`` is a committed, editable file of the
 tree being audited when that tree carries its own copy, so the check here is
-that the census ran the checker it intends to report about — the package
-module, identified by its own type and its ``sys.modules`` entry — not some
-other object (see ``skills/census/SKILL.md``, "census exit 50 is not the
+that the census ran the checker it intends to report about — the package module
+captured at import time and identified by its own ``__name__`` and type — not
+some other object (see ``skills/census/SKILL.md``, "census exit 50 is not the
 public_safety gate").
 """
 
@@ -22,8 +22,11 @@ import collections.abc
 import contextlib
 import os
 import sys
+import types
 from pathlib import Path
 from typing import Any, Callable, Protocol
+
+from . import public_safety as _PACKAGE_PUBLIC_SAFETY
 
 # The artifact a not-run hygiene row names, in the census's own hygiene artifact
 # namespace. It is a fixed package-relative literal rather than a path computed
@@ -86,35 +89,36 @@ def _load_public_safety() -> PublicSafetyModule | None:
     then reports that the scan did not run instead of reporting clean.
 
     The module is taken from the census's own ``sys.modules`` slot when that
-    entry already names the package's checker — the seams tests monkeypatch
+    entry already *is* the package's checker — the seams tests monkeypatch
     (``_default_denylist_file``, ``DENYLIST_ENV_VAR``) live on that one object,
     and a fresh import could hand back a different one. Anything else under
-    that key is not this census's checker, so the package module is imported
-    and verified instead.
+    that key is not this census's checker, so the package module is returned
+    instead (see :func:`_trusted_public_safety` for what makes it the checker).
     """
     existing = sys.modules.get(CENSUS_PS_MODULE_KEY)
     if _trusted_public_safety(existing):
         return existing
-    try:
-        from . import public_safety as module
-    except Exception:
+    if not _trusted_public_safety(_PACKAGE_PUBLIC_SAFETY):
         # The scan could not be loaded: the caller reports the scan as not run
         # (never a clean).
         return None
-    if not _trusted_public_safety(module):
-        return None
-    sys.modules[CENSUS_PS_MODULE_KEY] = module
-    return module
+    sys.modules[CENSUS_PS_MODULE_KEY] = _PACKAGE_PUBLIC_SAFETY
+    return _PACKAGE_PUBLIC_SAFETY
 
 
 def _trusted_public_safety(module: object) -> bool:
     """True when ``module`` is the package's own checker and carries the members
-    `_check_hygiene` calls.
+    :func:`check_hygiene` calls.
 
-    Trust is module identity, not a path: the object must be the module
-    ``noni.public_safety`` itself, registered in ``sys.modules`` under that
-    name, so an object that merely carries the same attributes (or an entry a
-    different tree put under the census's key) is neither executed nor trusted.
+    Trust is module **identity against the package import captured once at
+    import time** — the object ``from . import public_safety`` bound, under the
+    name it declares for itself (``noni.public_safety``, and it must be a real
+    ``types.ModuleType``). The bare ``"public_safety"`` ``sys.modules`` alias is
+    deliberately *not* consulted: it is a convenience name the test harness
+    registers for tests written against the old flat ``scripts/`` layout, and an
+    entry under a name that short is a substitution route, not an anchor. An
+    object that merely carries the same attributes (or that an earlier tree put
+    under the census's own key) is neither executed nor trusted.
 
     The name "trusted" is scoped honestly: public_safety is a committed, editable
     file of the very tree being audited when that tree ships its own copy, so
@@ -125,16 +129,9 @@ def _trusted_public_safety(module: object) -> bool:
     operator checkout before publishing — see skills/census/SKILL.md, "census
     exit 50 is not the public_safety gate".
     """
-    if module is None:
+    if module is not _PACKAGE_PUBLIC_SAFETY:
         return False
-    # The package module under either of the two names it can be reached by: the
-    # dotted one, and the bare one _harness registers for the tests that were
-    # written against the flat scripts/ layout. A module object registered under
-    # neither name -- or under the census's own key by a different tree -- is not
-    # the checker this census reports about.
-    names = ("noni.public_safety", "public_safety")
-    canonical = next((sys.modules[name] for name in names if name in sys.modules), None)
-    if module is not canonical or type(module) is not type(canonical):
+    if not isinstance(module, types.ModuleType) or module.__name__ != "noni.public_safety":
         return False
     return all(callable(getattr(module, name, None))
                for name in ("scrub_tracked_files", "_denylist_active", "load_denylist"))
@@ -353,9 +350,13 @@ def _pinned_hygiene_env():
     The deny-list is deliberately NOT pinned here: public_safety's own
     precedence governs (see scripts/public_safety.py, "Deny-list sources"), so
     the census reports the same deny-list verdict the operator's own
-    ``scripts/public_safety.py`` gate would — an untracked deny-list left next
-    to the checker, or named by NONI_SCRUB_DENYLIST, is the vocabulary the
-    publish-before-push rule expects there. One owner for that rule.
+    ``scripts/public_safety.py`` gate would — the untracked deny-list of the
+    tree being audited, or one named by NONI_SCRUB_DENYLIST, is the vocabulary
+    the publish-before-push rule expects there. One owner for that rule.
+
+    The two config files are not pinned here: public_safety passes them to its
+    own ``git ls-files`` directly, so the hardening travels with the call rather
+    than depending on who wrapped it.
     """
     saved = {k: os.environ.get(k) for k in GIT_ENV_NEUTRAL}
     os.environ.update(GIT_ENV_NEUTRAL)

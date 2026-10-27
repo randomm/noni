@@ -661,7 +661,7 @@ class TestHygiene:
                       json.dumps(_valid_record(), indent=2))
         corrupt = tmp_path / "corrupt-denylist.txt"
         corrupt.write_bytes(b"\xff\xfe\x00\x01not utf8")
-        monkeypatch.setattr(public_safety, "_default_denylist_file", lambda: corrupt)
+        monkeypatch.setattr(public_safety, "_default_denylist_file", lambda repo: corrupt)
         rc, out, err = _run_census(repo, json_out=True)
         assert rc == 0, f"expected 0 (warn) without --strict, got {rc}\n{err}"
         rows = [r for r in _ndjson_rows(out) if r.get("check") == "hygiene"]
@@ -679,7 +679,7 @@ class TestHygiene:
                       json.dumps(_valid_record(), indent=2))
         empty = tmp_path / "empty-denylist.txt"
         empty.write_text("# only a comment\n", encoding="utf-8")
-        monkeypatch.setattr(public_safety, "_default_denylist_file", lambda: empty)
+        monkeypatch.setattr(public_safety, "_default_denylist_file", lambda repo: empty)
         rc, out, err = _run_census(repo, json_out=True)
         assert rc == 0, f"expected 0 (warn) without --strict, got {rc}\n{err}"
         rows = [r for r in _ndjson_rows(out) if r.get("check") == "hygiene"]
@@ -1748,6 +1748,81 @@ class TestHygieneRowContract:
         # entirely, i.e. reported a hygiene-clean guarantee on a scan that never
         # ran; the real checker's absent deny-list is what the row must name.
         assert "absent" in rows[0]["message"], f"row: {rows[0]}"
+
+    def test_object_under_the_bare_public_safety_alias_is_not_trusted(self, monkeypatch):
+        """The bare "public_safety" sys.modules entry is not a trust anchor.
+
+        The bare alias is a convenience the test harness registers for tests that
+        were written against the old flat scripts/ layout; a foreign object
+        registered under that same name is a substitution route, so the checker
+        the census trusts is the package module captured once — identified by
+        its own ``__name__`` — and nothing reached through the bare alias.
+        """
+        import types
+
+        import census
+
+        import noni.public_safety as package_public_safety
+
+        impostor = types.ModuleType("public_safety")
+        impostor.scrub_tracked_files = lambda repo: []
+        impostor._denylist_active = lambda denylist: True
+        impostor.load_denylist = lambda: None
+        monkeypatch.setitem(sys.modules, "public_safety", impostor)
+        sys.modules.pop(census.CENSUS_PS_MODULE_KEY, None)
+        module = census._load_public_safety()
+        assert module is not impostor, (
+            "the census trusted an object registered under the bare alias"
+        )
+        assert module is package_public_safety
+
+    def test_non_module_object_with_the_right_attributes_is_not_trusted(self, monkeypatch):
+        """Carrying the three members is not enough: the object must be a module
+        whose ``__name__`` is the package's own."""
+        import census
+
+        import noni.public_safety as package_public_safety
+
+        class _LooksLikeTheChecker:
+            __name__ = "noni.public_safety"
+
+            @staticmethod
+            def scrub_tracked_files(repo):
+                raise AssertionError("the lookalike must never be executed")
+
+            @staticmethod
+            def _denylist_active(denylist):
+                return True
+
+            @staticmethod
+            def load_denylist():
+                return None
+
+        lookalike = _LooksLikeTheChecker()
+        monkeypatch.setitem(sys.modules, census.CENSUS_PS_MODULE_KEY, lookalike)
+        assert census._trusted_public_safety(lookalike) is False
+        assert census._load_public_safety() is package_public_safety
+
+        # A module object that is not the package's checker: right type, wrong
+        # __name__, and registered nowhere the census consults.
+        import types
+
+        wrong_name = types.ModuleType("noni.public_safety")
+        wrong_name.scrub_tracked_files = lambda repo: []
+        wrong_name._denylist_active = lambda denylist: True
+        wrong_name.load_denylist = lambda: None
+        monkeypatch.setitem(sys.modules, census.CENSUS_PS_MODULE_KEY, wrong_name)
+        assert census._trusted_public_safety(wrong_name) is False
+        assert census._load_public_safety() is package_public_safety
+
+    def test_the_package_checker_is_trusted(self):
+        """The positive case of the same predicate, so the two tests above cannot
+        be satisfied by a predicate that simply refuses everything."""
+        import census
+
+        import noni.public_safety as package_public_safety
+
+        assert census._trusted_public_safety(package_public_safety) is True
 
 
 class TestCheckContractIsDerived:

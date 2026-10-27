@@ -13,7 +13,7 @@ imports, so a seam a test puts on one is visible to the other route too.
 
 __all__ = ["__version__"]
 
-# One owner for the version: pyproject.toml reads it from this attribute, so a
-# release bumps one line and the wheel's metadata cannot disagree with the
-# package.
+# The one owner of the version: pyproject.toml declares it dynamic and reads it
+# from this attribute, so a release bumps one line and the wheel's metadata
+# cannot disagree with the package.
 __version__ = "0.1.0"

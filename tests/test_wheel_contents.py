@@ -17,6 +17,7 @@ the same tree produces, so a stale ``dist/`` cannot make this pass.
 
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 import zipfile
@@ -31,12 +32,17 @@ BUILD_TIMEOUT = 300
 def _build_wheel(tmp_path: Path) -> Path:
     """Build the wheel from this tree and hand back its path.
 
-    Built with ``--no-isolation`` against the interpreter's own setuptools: the
-    isolation mode spins up a resolver that needs the network, which a test must
-    not require. The build runs in a copy of the tree so the build's own droppings
-    (``build/``, ``*.egg-info/``) never land in the working tree the suite is
-    measuring.
+    Skipped only when the build module is not importable at all: this suite runs
+    offline and the isolation mode spins up a resolver that needs the network,
+    so the build runs ``--no-isolation`` against the interpreter's own
+    setuptools. A build that *fails* while ``build`` is installed is a real
+    defect in the packaging config, so it is a failure that carries build's own
+    stderr rather than a silent skip that would hide it. The build runs in a
+    copy of the tree so the build's own droppings (``build/``,
+    ``*.egg-info/``) never land in the working tree the suite is measuring.
     """
+    if importlib.util.find_spec("build") is None:
+        pytest.skip("the build module is not installed in this environment")
     build_tree = tmp_path / "build-tree"
     build_tree.mkdir()
     for name in ("src", "pyproject.toml"):
@@ -53,7 +59,10 @@ def _build_wheel(tmp_path: Path) -> Path:
         capture_output=True, text=True, timeout=BUILD_TIMEOUT,
     )
     if proc.returncode != 0:
-        pytest.skip(f"python -m build is unavailable in this environment:\n{proc.stderr[-800:]}")
+        raise AssertionError(
+            f"python -m build failed although the module is installed "
+            f"(exit {proc.returncode}):\n{proc.stderr[-4000:]}"
+        )
     wheels = sorted((tmp_path / "dist").glob("*.whl"))
     assert len(wheels) == 1, f"expected one wheel, got {[w.name for w in wheels]}"
     return wheels[0]

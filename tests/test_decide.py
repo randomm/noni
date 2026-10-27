@@ -2048,21 +2048,24 @@ def test_hardening_a_target_with_a_non_finite_answer_refuses_with_four(tmp_path,
         )
 
 
-def test_hardening_the_render_refuses_a_non_finite_number(tmp_path, monkeypatch):
-    """``_render`` refuses a non-finite float by raising, and hands back no bytes.
+def test_hardening_the_render_raises_on_a_non_finite_number(tmp_path, monkeypatch):
+    """``_render`` raises ``ValueError`` for a non-finite float and hands back no bytes.
 
-    This test replaces the one that pinned the old sentinel: the renderer used to
-    print an exit-4 refusal through ``_fail`` and return ``""``, which stopped
-    nothing (the caller still received a string to write) and published an exit
-    code from inside a renderer. The assertions changed in place, none removed:
-    ``== ""`` became "raised ValueError and returned nothing", and "one ``_fail``
-    call at exit 4" became "no ``_fail`` call at all", which is the stronger
-    claim -- a refusal worded elsewhere cannot be mistaken for a rendered record.
-    The finite positive control is unchanged.
+    The old renderer printed an exit-4 refusal through ``_fail`` and returned ``""``,
+    which stopped nothing: the caller still received a string to write, and the exit
+    code came from inside a renderer rather than from the run. The assertions of both
+    former near-identical render tests are here and none is weakened: ``== ""``
+    became "raised ``ValueError`` and returned nothing", and "one ``_fail`` call at
+    exit 4" became "no ``_fail`` call at all" -- the stronger claim, because a refusal
+    worded elsewhere cannot be mistaken for a rendered record. The finite positive
+    control is kept unchanged.
 
-    With ``record_object`` rejecting the three bare tokens no target can reach the
-    renderer with one, and every value of a new record a CLI string, this is the
-    renderer's own last word rather than a refusal the writer depends on.
+    The render is the writer's last word, not its only guard: ``record_object``
+    refuses a bare token or an overflowing literal when it reads a target, and the
+    two callers of ``_render`` catch what still gets through (the canonical
+    comparison in ``gitwrite.load_committed_target``, the write block in ``main``).
+    What this test pins is that the renderer itself neither swallows the fault into
+    an empty body nor publishes an exit code while doing it.
     """
     module = _decide_module()
     calls: list[tuple[int, str]] = []
@@ -2084,7 +2087,9 @@ def test_hardening_the_render_refuses_a_non_finite_number(tmp_path, monkeypatch)
         except ValueError:
             rendered = None
         assert rendered is None, f"{bad}: a non-finite record rendered to {rendered!r}"
-        assert calls == [], f"{bad}: the renderer worded a refusal of its own: {calls}"
+        # Nothing is printed and no exit code is published: the render is not the
+        # place a refusal is worded, and it does not swallow the fault into "".
+        assert calls == [], f"{bad}: the render worded a refusal of its own: {calls}"
     # The positive control: a finite record still renders, unchanged in form.
     finite = json.loads(_canonical_body(f"{BASELINE_ID[:10]}-finite"))
     assert module._render(finite) == json.dumps(
@@ -2116,46 +2121,209 @@ def test_hardening_a_non_finite_number_in_any_field_refuses_with_four(tmp_path):
         assert (repo / rel).read_text(encoding="utf-8") == patched, label
 
 
-def test_hardening_the_render_raises_on_a_non_finite_number(tmp_path, monkeypatch):
-    """``_render`` raises ``ValueError`` for a non-finite float and writes nothing.
+def test_hardening_a_target_with_an_overflowing_number_refuses_with_four(tmp_path):
+    """A committed target whose JSON number overflows to infinity is refused
+    (exit 4) with nothing written -- and it is refused, not crashed.
 
-    The old renderer printed an exit-4 refusal and returned ``""``, which handed
-    its caller an empty body to write: the refusal was printed but the write was
-    not stopped, and the exit code came back through ``_fail`` rather than the
-    exception. With the reader rejecting non-finite numbers (``record_object``)
-    no target can reach here with one, and a new record's every value is a CLI
-    string, so the render has no refusal to word: json's own ``allow_nan=False``
-    error is the honest answer and it propagates.
-
-    This replaces the test that pinned the print-and-return-``""`` sentinel. The
-    positive control is kept: a finite record still renders in the canonical form.
+    ``1e400`` is legal JSON syntax, so ``parse_constant`` never sees it: the
+    reader hands back an ``inf`` float and the writer crashed in the canonical
+    comparison with a traceback at exit 1 (``ValueError: Out of range float
+    values are not JSON compliant``). A number the writer cannot name is the
+    same fact as the bare ``Infinity`` token that the reader already refused --
+    the ledger holds a value no writer can emit -- and a target holding it must
+    answer "not a readable JSON object". Both signs are planted (``1e400`` in
+    ``by``, ``-1e999`` in ``scope``) because the token's sign decides which
+    infinity json produces and only one arm was ever exercised before.
     """
-    module = _decide_module()
-    calls: list[tuple[int, str]] = []
+    for label, token, field in (("overflow", "1e400", "by"),
+                                ("negative-overflow", "-1e999", "scope")):
+        needle = ('"by": "Replay",' if field == "by"
+                  else '"scope": "release ordering",')
+        patched = _canonical_body(f"{BASELINE_ID[:10]}-{label}").replace(
+            needle, f'"{field}": {token},')
+        assert token in patched, f"{label}: the fixture planted no {token}"
+        stderr, repo, rel = _refuse_raw_target(tmp_path, label, patched)
+        assert "Traceback" not in stderr, f"{label}: {stderr}"
+        assert "not a readable JSON object" in stderr, f"{label}: {stderr}"
+        assert _porcelain(repo) == "", f"{label}: a refused run must leave the tree alone"
+        assert not _record_path(repo, f"{BASELINE_ID[:10]}-scheduler").exists(), label
+        assert (repo / rel).read_text(encoding="utf-8") == patched, label
 
-    def _spy_fail(code, message, hint=None):
-        # Named, and rebound per case by the loop below: a lambda would close over
-        # the name and report the wrong case's calls.
-        calls.append((code, message))
-        return 4
 
-    monkeypatch.setattr(module, "_fail", _spy_fail)
-    for bad in (float("nan"), float("inf"), float("-inf")):
-        record = json.loads(_canonical_body(f"{BASELINE_ID[:10]}-render-{bad}"))
-        record["questions"][0]["answer"] = bad
-        calls.clear()
-        try:
-            rendered = module._render(record)
-        except ValueError:
-            rendered = None
-        assert rendered is None, f"{bad}: a non-finite record rendered to {rendered!r}"
-        # Nothing is printed and no exit code is published: the render is not the
-        # place a refusal is worded, and it does not swallow the fault into "".
-        assert calls == [], f"{bad}: the render worded a refusal of its own: {calls}"
-    finite = json.loads(_canonical_body(f"{BASELINE_ID[:10]}-finite"))
-    assert module._render(finite) == json.dumps(
-        {key: finite[key] for key in module.FIELD_ORDER if key in finite},
-        indent=2, ensure_ascii=False) + "\n"
+def test_hardening_record_object_refuses_a_non_finite_float_at_any_depth():
+    """``record_object`` refuses a non-finite float wherever json put it.
+
+    ``parse_constant`` refuses only the three bare tokens; a number literal that
+    overflows (``1e999``) or underflows to a signed zero keeps no trace of the
+    token it came from, so the walk of the parsed structure is what refuses it.
+    Depth matters: a field check sees the top level, and an ``inf`` nested in a
+    question's option (or any object in a list) reaches the render untouched
+    otherwise. The finite control proves the walk is not a blanket refusal of
+    every number -- a record with an integer and a finite float still parses.
+    """
+    gitwrite = _gitwrite_module()
+    for body in (
+        '{"by": 1e400}',
+        '{"scope": -1e999}',
+        '{"questions": [{"options": ["a", 1e999]}]}',
+        '{"source": {"nested": {"deep": [1e999]}}}',
+        '{"a": {"b": [null, 1e400]}}',
+    ):
+        assert gitwrite.record_object(body.encode("utf-8")) is None, body
+    finite = '{"by": "Replay", "n": 42, "f": 1.5, "big": 1e3}'
+    parsed = gitwrite.record_object(finite.encode("utf-8"))
+    assert isinstance(parsed, dict), parsed
+    assert parsed["big"] == 1000.0
+    assert gitwrite.record_object(b'{"a": [1, 2]}') == {"a": [1, 2]}
+    assert gitwrite.record_object(b'{"a": NaN}') is None
+
+
+def test_hardening_an_unparseable_number_in_a_nested_field_refuses_with_four(tmp_path):
+    """A number json read as infinity is refused (exit 4) in a *nested* field too.
+
+    A top-level field check cannot see it: the value sits inside an option string's
+    neighbour, in a list the census's own rules do not type. Before the reader walked
+    the parsed structure such a target parsed to a dict, passed every field rule, and
+    reached the canonical comparison, where ``allow_nan=False`` raised and the run
+    died with a traceback at exit 1 -- the crash this round was written against, in
+    the position the bare-token refusal never covered.
+
+    The bytes are planted verbatim and pinned on disk first: if json ever stopped
+    reading ``1e999`` as ``inf`` this fixture would plant a string and assert nothing.
+    """
+    for label, token in (("nested", "1e999"), ("negative", "-1e999")):
+        target_id = f"{BASELINE_ID[:10]}-{label}"
+        patched = _canonical_body(target_id).replace('"later"', f"{token}")
+        assert f"{token}\n" in patched, f"{label}: the fixture planted no {token}"
+        stderr, repo, rel = _refuse_raw_target(tmp_path, label, patched)
+        assert "Traceback" not in stderr, f"{label}: {stderr}"
+        assert "not a readable JSON object" in stderr, f"{label}: {stderr}"
+        assert _porcelain(repo) == "", f"{label}: a refused run writes nothing"
+        assert not _record_path(repo, f"{BASELINE_ID[:10]}-scheduler").exists(), label
+        assert (repo / rel).read_text(encoding="utf-8") == patched, label
+
+
+def test_hardening_a_target_field_of_the_wrong_type_refuses_with_four(tmp_path):
+    """Every field the census types is type-checked on the target: ``id``,
+    ``asked_by``, ``by``, ``scope``, ``date`` non-empty strings, ``status`` a
+    string, ``supersedes`` a string or null, and ``questions`` as before.
+
+    The census refuses all of these ("id must be a non-empty string", etc.), so
+    a ledger holding one was never clean, and the writer copies every one of
+    these bytes when it flips a status. ``bool`` is the case an ``isinstance``
+    test alone misses: Python calls ``True`` an ``int``, so without the explicit
+    bool check a target with ``"by": true`` would pass as a number-shaped value
+    -- and the census refuses it (``isinstance(value, str)`` is False for
+    ``true``, and the string fields demand a string). ``"supersedes": 7`` is the
+    census's "supersedes must be null or a non-empty string".
+    """
+    shapes = {
+        "by-true": {"by": True},
+        "by-false": {"by": False},
+        "by-null": {"by": None},
+        "by-int": {"by": 7},
+        "by-empty": {"by": ""},
+        "asked-by-true": {"asked_by": True},
+        "asked-by-int": {"asked_by": 1},
+        "asked-by-null": {"asked_by": None},
+        "asked-by-empty": {"asked_by": ""},
+        "id-true": {"id": True},
+        "id-int": {"id": 1},
+        "id-empty": {"id": ""},
+        "scope-true": {"scope": True},
+        "scope-int": {"scope": 1},
+        "scope-null": {"scope": None},
+        "scope-empty": {"scope": ""},
+        "status-true": {"status": True},
+        "status-null": {"status": None},
+        "supersedes-int": {"supersedes": 7},
+        "supersedes-true": {"supersedes": True},
+        "supersedes-empty": {"supersedes": ""},
+    }
+    for label, patch in shapes.items():
+        target_id = f"{BASELINE_ID[:10]}-{label}"
+        stderr, _repo, _rel = _refuse_raw_target(
+            tmp_path, label, _planted_body(target_id, **patch))
+        field = label.split("-")[0].replace("asked", "asked_by")
+        assert field in stderr, f"{label}: {stderr}"
+
+
+def test_hardening_a_target_read_that_fails_refuses_with_four(tmp_path, monkeypatch):
+    """A target whose bytes cannot be read is refused (exit 4), not traced back.
+
+    ``path_kind`` has already proved the path a regular file, so the read is the
+    one remaining thing to do with it -- and a regular file can still refuse its
+    owner: a revoked mode (000) is untestable for root and a read-only mount
+    answers differently per filesystem, so the fault is injected as the
+    ``PermissionError`` the kernel actually raises on an EACCES open, the same
+    class of failure the write-failure tests inject. ``record_object`` never
+    sees the bytes and the run refuses "not a readable JSON object" with nothing
+    written.
+    """
+    repo = _baseline_repo(tmp_path)
+    target_rel = f"noni/decisions/{BASELINE_ID}.json"
+    committed = _git_e2(repo, "show", f"HEAD:{target_rel}").stdout
+    real_read_bytes = Path.read_bytes
+    calls: list[str] = []
+
+    def _refusing_read(path):
+        # Only the target's own read is failed; every fixture read of another
+        # path (including the assertions below) goes to the real method.
+        if str(path) == str(repo / target_rel):
+            calls.append(str(path))
+            raise PermissionError(13, "Permission denied")
+        return real_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", _refusing_read)
+    proc = _supersede_in_process(repo, write_fails_on=None, monkeypatch=monkeypatch)
+    assert calls == [str(repo / target_rel)], (
+        f"the injected read failure was never reached: {calls}"
+    )
+    assert proc.returncode == 4, f"expected exit 4, got {proc.returncode}: {proc.stderr}"
+    assert "Traceback" not in proc.stderr, proc.stderr
+    assert "not a readable JSON object" in proc.stderr, proc.stderr
+    assert _porcelain(repo) == "", f"a refused run writes nothing: {_porcelain(repo)}"
+    assert not _record_path(repo, f"{BASELINE_ID[:10]}-scheduler").exists()
+    assert (repo / target_rel).read_text(encoding="utf-8") == committed
+
+
+def test_hardening_an_absent_target_refuses_and_the_shape_hook_is_gone(tmp_path):
+    """An absent target path is refused (exit 4) and the dead shape hook is gone.
+
+    ``load_committed_target`` asked a caller-supplied ``shape_refusal`` callback
+    why a path it had already proved non-regular was unusable -- a question the
+    helper answered itself two statements earlier, through ``path_kind``, which
+    refuses every non-regular path (link, directory, device) before the callback
+    was reached. So the callback was unreachable code with a caller beside it, and
+    the one case it existed for (a path that is absent) is refused by the helper's
+    own committed-bytes answer. The helper's signature no longer carries the
+    parameter and ``decide.py`` defines no ``_refuse_target_shape``.
+    """
+    import inspect
+
+    gitwrite = _gitwrite_module()
+    params = list(inspect.signature(gitwrite.load_committed_target).parameters)
+    assert "shape_refusal" not in params, params
+    assert params == ["label", "repo", "path", "target_id", "canonical", "superseded"], params
+    assert not hasattr(_decide_module(), "_refuse_target_shape"), (
+        "decide.py still defines the dead shape callback")
+
+    # The refusal the callback used to be credited with is the helper's own: a
+    # committed target whose file has since gone is refused with nothing written.
+    # The deletion is the fixture's own state (named below), so what is asserted is
+    # that this run wrote nothing, not that the tree it was handed was pristine.
+    repo = _baseline_repo(tmp_path, subdir="target-absent")
+    rel = f"noni/decisions/{BASELINE_ID}.json"
+    (repo / rel).unlink()
+    proc = _run(repo, "--slug", "scheduler", "--date", BASELINE_ID[:10],
+                *BASE, *QUESTION, *OPTIONS, *ANSWERED,
+                "--supersedes", BASELINE_ID, "--no-commit")
+    assert proc.returncode == 4, f"expected exit 4, got {proc.returncode}: {proc.stderr}"
+    assert "Traceback" not in proc.stderr, proc.stderr
+    # The one path git reports is the fixture's own deletion; no record this run
+    # staged, and no record this run wrote beside it.
+    assert _porcelain(repo) == f"D {rel}", _porcelain(repo)
+    assert not _record_path(repo, f"{BASELINE_ID[:10]}-scheduler").exists()
 
 
 def test_hardening_a_symlink_target_refuses_with_four(tmp_path):

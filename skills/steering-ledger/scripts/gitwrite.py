@@ -10,13 +10,31 @@ for is made; an unset seam variable is inert.
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import math
 import os
 import stat
 import subprocess
+import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
+
+# The target's field types live beside this file in the skill's own directory and
+# are loaded by path, the way decide.py loads this one: a sys.path entry would put
+# a directory ahead of the standard library, where any targetschema.py earlier on
+# that path could be trusted as this helper's schema. The name is ours.
+_TARGETSCHEMA_NAME = "noni_targetschema"
+_spec = importlib.util.spec_from_file_location(
+    _TARGETSCHEMA_NAME, Path(__file__).resolve().parent / "targetschema.py")
+if _spec is None or _spec.loader is None:  # pragma: no cover - path is fixed
+    raise RuntimeError("cannot load the target schema beside gitwrite.py")
+sys.modules[_TARGETSCHEMA_NAME] = targetschema = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(targetschema)
+del _spec
+
+refuse_target_fields = targetschema.refuse_target_fields
 
 GIT_TIMEOUT = 60
 # What run_git hands back for a call that never answered. No caller may read a
@@ -116,16 +134,36 @@ def record_object(raw: bytes) -> dict | None:
     happens here, not in json.loads' reader, so a non-UTF-8 record answers "not a
     record" instead of a traceback, and its bytes are never echoed.
 
-    ``parse_constant`` rejects the three bare tokens json's reader accepts by
-    default: ``NaN``, ``Infinity`` and ``-Infinity`` are not JSON, and a record
-    holding one is not a record whatever field carries it. Reading one into a
-    float would put a value no writer can emit back on disk.
+    Two refusals, one fact: a record holding a number this writer cannot name is
+    not a record whatever field carries it. ``parse_constant`` refuses the three
+    bare tokens json reads by default (``NaN``, ``Infinity``, ``-Infinity``), which
+    are not JSON at all; ``_holds_non_finite`` then walks the parsed structure for
+    the legal literal that overflows to the same value with no token to stop.
+    Reading either into a float would put a value no writer can emit back on disk.
     """
     try:
         record = json.loads(raw.decode("utf-8"), parse_constant=_refuse_constant)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
         return None
-    return record if isinstance(record, dict) else None
+    if not isinstance(record, dict) or _holds_non_finite(record):
+        return None
+    return record
+
+
+def _holds_non_finite(value: object) -> bool:
+    """Whether ``value`` holds a float json read in that is not finite.
+
+    ``math.isfinite`` is what catches the overflowed literal (json hands back
+    ``inf`` for ``1e400``). A bool is a bool, never a number, so a record every
+    writer emits still parses.
+    """
+    if isinstance(value, float):
+        return not math.isfinite(value)
+    if isinstance(value, dict):
+        return any(_holds_non_finite(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_holds_non_finite(item) for item in value)
+    return False
 
 
 def _refuse_constant(token: str) -> float:
@@ -292,55 +330,6 @@ def probe_timeout_refusal(repo: Path, command: str, returncode: int) -> int | No
     return None
 
 
-def refuse_target_fields(record: dict, target_id: str) -> tuple[str, str] | None:
-    """Why ``record``'s own field types cannot be carried through a status flip, or
-    None.
-
-    A supersede copies the target and changes one value, so the helper that rewrites
-    it must be able to describe every byte it moves. Two fields decide that:
-
-    ``date`` is sliced to its first ten characters to compare against the run's
-    --date, so a value that is not a string would either raise TypeError mid-run or
-    slice a null to ``''`` and be reported as "dated another day" -- which tells the
-    operator to pass a date the record does not carry in the form the census
-    requires. ``questions`` is what the record answers, and a flip that copied
-    anything other than a non-empty list of objects each with a string ``id`` and an
-    ``answer`` that is a string or null would be repairing the ledger by accident.
-
-    Both rules are census.py's own ("date is not a string", "questions must be an
-    array of 1-4 entries", "question entry is not an object", "question answer must
-    be a string or null"), so a ledger holding either was never clean.
-    """
-    if "date" in record and not isinstance(record["date"], str):
-        return (f"supersede target {target_id} carries a {type(record['date']).__name__} "
-                "in its date field where the census requires a string",
-                "repair the record's date to the ISO form YYYY-MM-DDTHH:MM:SSZ and "
-                "commit it, then re-run decide")
-    questions = record.get("questions")
-    if not isinstance(questions, list) or not questions:
-        return (f"supersede target {target_id} carries no questions: "
-                f"{type(questions).__name__} where a non-empty list is required",
-                "name a record the census accepts (census.py: questions must be an "
-                "array of 1-4 entries)")
-    for entry in questions:
-        if not isinstance(entry, dict):
-            return (f"supersede target {target_id} has a {type(entry).__name__} among "
-                    "its questions where an object is required",
-                    "repair the record so every question is an object with id, text, "
-                    "options and an answer, then re-run decide")
-        if not isinstance(entry.get("id"), str):
-            return (f"supersede target {target_id} has a question whose id is "
-                    f"{type(entry.get('id')).__name__}, not a string",
-                    "repair the record so every question names itself with a string id, "
-                    "then re-run decide")
-        if "answer" in entry and not isinstance(entry["answer"], (str, type(None))):
-            return (f"supersede target {target_id} has a question whose answer is "
-                    f"{type(entry['answer']).__name__}, not a string or null",
-                    "repair the record so every answer is a string or null, then "
-                    "re-run decide")
-    return None
-
-
 def refuse_live_record(record: dict, target_id: str, superseded: str) -> tuple[str, str] | None:
     """Why a committed record may not be flipped to ``superseded``, or None.
 
@@ -366,7 +355,6 @@ def refuse_live_record(record: dict, target_id: str, superseded: str) -> tuple[s
 
 def load_committed_target(
     label: str, repo: Path, path: Path, target_id: str,
-    shape_refusal: Callable[[Path, str], tuple[str, str] | None],
     canonical: Callable[[dict], str],
     superseded: str,
 ) -> tuple[bytes, dict] | tuple[str, str] | int:
@@ -375,13 +363,15 @@ def load_committed_target(
     of the timeout refusal ``target_probes`` already had printed.
 
     The git mechanics live here: the three probes and the verdicts read from them
-    (untracked, locally modified, no committed bytes, no file at the path), the
-    committed bytes read from HEAD, and the target's own bytes read from disk (a
-    directory reads from HEAD, so the flip still derives from committed bytes and
-    changes only the status). ``path_kind`` is asked before either read, so a link,
-    a directory or any other non-regular path is refused and never opened.
-    ``canonical`` is the writer's renderer, so the canonical-form rule compares
-    against what the writer would itself have written.
+    (untracked, locally modified, no committed bytes, an absent path), the
+    committed bytes read from HEAD, and the target's own bytes read from disk --
+    a read that is refused, not raised, when the filesystem says no. ``path_kind``
+    is asked before either read, so a link, a directory or any other non-regular
+    path is refused and never opened, and no caller is asked to word a shape this
+    helper has not already rejected. ``canonical`` is the writer's renderer, so the
+    canonical-form rule compares against what the writer would itself have written;
+    a renderer that cannot name what json read in is refused as "not in canonical
+    form", not raised.
     The whole target schema is asked here and not of the caller --
     ``refuse_target_fields`` for the census's field types and ``refuse_live_record``
     for the chain position -- so no caller can reach a write by checking only part
@@ -404,16 +394,16 @@ def load_committed_target(
     if state["dirty"]:
         return (f"supersede target {target_id} is not byte-identical to its last commit",
                 f"commit or discard the change to {rel} and re-run decide")
-    refusal = shape_refusal(path, target_id) if not path.is_file() else None
-    if refusal is not None:
-        return refusal
     committed = state["committed"]
     if committed is None:  # the probes answered no committed bytes: read nothing
         return (f"supersede target {target_id} has no committed bytes to rewrite",
                 "commit the record first: decide.py supersedes only committed records")
-    # path_kind above has already proved this path a regular file, so the read is
-    # the one remaining thing to do with it: the target's own bytes, not HEAD's.
-    record = record_object(path.read_bytes())
+    # A regular file can still refuse its owner (the mode, a mount, a fault under
+    # it), which is the same answer as unparseable bytes and worded the same.
+    try:
+        record = record_object(path.read_bytes())
+    except OSError:
+        record = None
     if record is None:
         return (f"supersede target {target_id} is not a readable JSON object",
                 "repair the record or name a different target")
@@ -428,7 +418,13 @@ def load_committed_target(
         return stale
     # A target whose committed bytes git would not hand over is refused too: with
     # nothing to compare against, the writer cannot know it would move only status.
-    if not state["from_head"] or canonical(record).encode("utf-8") != committed:
+    # A render that raises is the same refusal: json read a number in that the
+    # writer cannot name, so these are not bytes this writer produced.
+    try:
+        rendered = canonical(record)
+    except ValueError:
+        rendered = ""
+    if not state["from_head"] or rendered.encode("utf-8") != committed:
         return (f"supersede target {target_id} is not in the canonical form this writer "
                 "writes (its fields, their order or its indent), so rewriting it would "
                 "move bytes beyond its status",

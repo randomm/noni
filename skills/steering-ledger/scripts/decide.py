@@ -34,11 +34,12 @@ Exit codes:
     4  a collision or a bad supersede target: the record path already exists as
        anything (file, directory or symlink), or the target is missing, already
        superseded, untracked, locally modified, not a regular file at its path
-       (symlink, directory or device), not in the writer's canonical form, dated
-       another day than --date, or carries a date that is not a string, questions
-       that are not a non-empty list of objects each with a string id and a
-       string-or-null answer, or a number JSON cannot hold (NaN or Infinity). A
-       show reporting the path is not in HEAD is this code, not 3: git answered
+       (symlink, directory or device), not readable at all, not in the writer's
+       canonical form, dated another day than --date, or carries a field the census
+       does not type as a string, questions that are not a non-empty list of objects
+       each with a string id and a string-or-null answer, or a number JSON cannot
+       hold (NaN, Infinity or an overflow). A show reporting no path in HEAD is this
+       code, not 3: git answered
     5  the commit failed: both paths are rolled back (index reset, target
        restored, new record removed) and anything the undo could not do is named
        (a failed reset and the paths that may still be staged, or a path it could
@@ -147,11 +148,8 @@ def _render(record: dict) -> str:
     """The record's bytes: FIELD_ORDER, two-space indent, one trailing newline.
 
     ``allow_nan=False`` is the whole refusal of a non-finite number, and json's
-    ``ValueError`` is let go rather than worded into a refusal here: nothing a run
-    can reach this function with holds one. A supersede target's numbers come
-    through ``gitwrite.record_object``, which rejects ``NaN`` and ``Infinity``,
-    and every value of a new record is a flag string or a tracker int. Returning
-    an empty string instead would have handed the caller a body to write.
+    ``ValueError`` is let go rather than worded here: the callers catch it, and
+    neither may be handed an empty string for a body.
     """
     ordered = {key: record[key] for key in FIELD_ORDER if key in record}
     return json.dumps(ordered, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
@@ -206,28 +204,17 @@ def _build_questions(questions: list[tuple[str, str]], options: list[tuple[str, 
     return built
 
 
-def _refuse_target_shape(path: Path, target_id: str) -> tuple[str, str] | None:
-    """Asked only of a path already proved a regular file that cannot be opened.
-
-    A link or a directory is refused earlier by the helper's ``path_kind``, so
-    this is the one case left: a record file the writer cannot read at all.
-    """
-    return (f"supersede target {target_id} has no record file at {path}",
-            "name the id of a committed record (see the census report's id column)")
-
-
 def _load_target(repo: Path, ledger: Path,
                  target_id: str) -> tuple[Path, dict, bytes] | tuple[str, str] | int:
     """A target as ``(path, record, committed_bytes)``, a ``(headline, hint)`` refusal
     pair, or the exit code a probe refusal printed; nothing is written on refusal.
     gitwrite probes the tree and holds the target's whole schema (the live-record
-    rules, the field types, and the comparison of the committed bytes against
-    ``_render``), so a value the renderer cannot name comes back as a refusal before
-    either path is opened for a write.
+    rules, every field type the census names, and the committed bytes compared
+    against ``_render``), so a value the renderer cannot name is a refusal.
     """
     path = ledger / f"{target_id}.json"
     found = _load_committed_target(Path(__file__).name, repo, path, target_id,
-                                   _refuse_target_shape, _render, STATUS_SUPERSEDED)
+                                   _render, STATUS_SUPERSEDED)
     return found if isinstance(found, int) or not isinstance(found[0], bytes) else (
         path, found[1], found[0])
 
@@ -449,11 +436,24 @@ def main(argv: list[str] | None = None) -> int:
     rels = [record_rel] if target is None else [record_rel, target_rel]
     committed_bytes = None if target is None else target[2]
     try:
+        # The render is inside the try: a ValueError here refuses exit 4, not crash
+        # at 1 after a write has already landed.
         _write_atomic(record_path, _render(record))
         if target is not None:
             flipped = dict(target[1])
             flipped["status"] = STATUS_SUPERSEDED
             _write_atomic(target[0], _render(flipped))
+    except ValueError:
+        # Not bytes this writer can produce: roll both paths back as a write failure
+        # does. The render cannot name what json read, so the tree is left untouched.
+        unredone = _rollback(repo, rels, target_rel, record_rel, committed_bytes)
+        detail = (f"the record {record_id} carries a number this writer cannot name: "
+                  "it is not in the canonical form decide.py writes")
+        if unredone is not None:
+            return _fail(EXIT_COMMIT_FAILED,
+                         *_undone(detail, str(unredone), "", rels))
+        return _fail(EXIT_COLLISION, detail,
+                     "name a record decide.py wrote, or repair it and re-run decide")
     except OSError as exc:
         # os.replace never half-writes, so a path failed to land: roll both paths as
         # a failed commit does, and name the one that stayed.

@@ -33,10 +33,11 @@ separate files that only combine merges.
   way: put depth there, not here.
 - Every invariant a document claims needs a script with an honest exit code or a
   census check behind it. Prose alone is convention, not enforcement.
-- The README's try-it block runs in a test (`tests/test_readme.py`) from a
-  scratch tree holding the copied `skills/`, so a command that does not name a
-  script in this repository, or that stops producing the documented outcome on
-  the copy path a reader actually takes, fails that test.
+- The README's try-it block runs in a test (`tests/test_readme.py`) against a
+  materialised clone of this repository and a separate scratch repository, so a
+  command that does not name a script the clone carries, or that stops producing
+  the documented outcome on the clone path a reader actually takes, fails that
+  test.
 - The try-it block in the README replays one scenario repo in one run. Keep it
   that way: extra scenarios under coverage measurement multiply the cost of the
   two launches rather than the work they test.

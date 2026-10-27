@@ -31,25 +31,28 @@ work on; the census is what flags two active claims on one task.
 
 ## Try it in five minutes
 
-Copy the `skills/` directory into your project and commit it, then run the
-commands below from the root of your repository. Copy them from a release of
-this repository you trust (a tag, or a checkout you verified): the commands
-execute those scripts, and the census's hygiene scan does not cover them. The
-repository needs one commit and a git identity, and the `skills/` tree has to
-stay whole, since the scripts resolve each other by relative path:
+Clone noni next to your project, go to the root of your own repository, and
+run its scripts with `--repo .` naming that repository. Nothing is copied into
+your project, and the census's hygiene checker stays present beside the scripts
+it runs:
 
 ```bash
+git clone https://github.com/OWNER/noni noni
+cd your-project
+
 git config user.name "Casey"
 git config user.email "casey@example.invalid"
 
-python3 skills/steering-ledger/scripts/decide.py --repo . \
+python3 ../noni/skills/steering-ledger/scripts/decide.py --repo . \
   --slug release-scope --scope release --asked-by team-lead \
   --question "q1=Ship the beta this week?" \
   --option "q1=Ship it" --option "q1=Wait a week" \
   --answer "q1=Wait a week"
 
-python3 skills/census/scripts/census.py --repo .
+python3 ../noni/skills/census/scripts/census.py --repo .
 ```
+
+Run these from a release of noni you trust: they execute its scripts.
 
 The census is read-only: it never writes, so `git status --porcelain` is empty
 after either run.
@@ -64,9 +67,9 @@ summary: clean; N finding(s); verdict ok
 The count names the rows above it; warnings (a missing deny-list, a ledger with
 nothing to arbitrate) are counted there and do not change the verdict.
 
-Read `skills/<skill>/SKILL.md` for what each writer accepts and refuses. The
-steering-ledger and sessions-claims skills keep record-shape detail in their
-`references/` directories.
+Read `noni/skills/<skill>/SKILL.md` for what each writer accepts and refuses.
+The steering-ledger and sessions-claims skills keep record-shape detail in
+their `references/` directories.
 
 ## How it works
 
@@ -98,11 +101,11 @@ Shipped, and covered by the test suite: the steering ledger with its supersede
 chain, the session register and claim protocol, the ordering artifact, and the
 unified census with its honest exit codes.
 
-Not yet: packaging, so today you copy the `skills/` directory into your project
-rather than installing one `noni` command, and the direction features above the
-ordering artifact (release trains, standing direction). The epic map (E1-E5)
-lives in `docs/PRODUCT.md` §8, which is the product document and the deep
-reference for record shapes, the claim protocol and the census exit codes.
+Not yet: packaging, so until it lands you run the scripts from a clone of
+noni rather than installing one `noni` command, and the direction features
+above the ordering artifact (release trains, standing direction). The epic map
+(E1-E5) lives in `docs/PRODUCT.md` §8, which is the product document and the
+deep reference for record shapes, the claim protocol and the census exit codes.
 
 noni's own `noni/decisions/` is still empty: this repository does not yet run
 the ledger it ships.

@@ -1,51 +1,110 @@
-# noni — attachable product direction for any Git project
+# noni
 
-**noni** is the product we are designing: a light layer you attach to any Git-based
-software project that gives the agent(s) working in that project the skills to manage
-**the project's backlog, product direction and release planning** — with the operator or
-user in the loop, steering when they choose to.
+noni is an attachable direction layer for a Git project that several agents or
+people work on at once. It keeps the decisions, the agreed order of work, the
+session register and the claims as plain files committed to the repository, and
+one read-only script reports where the work has drifted from that direction.
+There is no service to run and no database to keep in step.
 
-The idea came from running a plan driver on a ticket-heavy project: a flood of
-incoming tickets made it clear the project needed a clean, separate place where
-product direction and release planning were decided — apart from the tracker that
-carries the work. noni makes that place a product that attaches to any project.
+## The problem
 
-## The purity rule
+- Decisions get made in a session and die with it. The next session reopens the
+  same question, or quietly contradicts the answer.
+- Two workers take the same task. Neither knows, because nothing in the
+  repository says who means to do what.
+- Nobody can say whether the work still matches the direction. The order was set
+  weeks ago, several issues in it are closed, and nothing reports that.
 
-This repository holds only generic product direction: positioning, research, design,
-specs, and the skills we ship. It holds **no project-specific content** — no tickets,
-no backlog entries, no references to any attached project's content. When noni is taken
-into use, it becomes an integral part of the project it attaches to: the *how* ships
-from here, the *what* lives inside the attached project.
+## What you get
 
-## Development
+Four artifacts, all committed files under `noni/`, all read by the census:
 
-Install the pinned dev tools, then run the two gates. The versions are pinned
-exactly in `pyproject.toml` and in CI, so local and CI run the same tools.
+| artifact | what it holds | who writes it |
+|---|---|---|
+| steering ledger | one JSON file per dated, attributed decision under `noni/decisions/` | `decide.py` |
+| ordering | the issues you want worked next, in order, in `noni/direction/order.json` | `order.py` |
+| session register | one file per session under `noni/sessions/`, with its claims | `register.py` and `claim.py` |
+| census | nothing: it reads the three above and reports | read-only |
+
+Claims are signals, not locks. A claim tells everyone else what you intend to
+work on; the census is what flags two active claims on one task.
+
+## Try it in five minutes
+
+Copy the `skills/` directory into your project and commit it, then run these two
+commands from the root of your repository. The repository needs one commit and a
+git identity, and the noni scripts need to be able to find each other:
 
 ```bash
-python -m venv .venv
-.venv/bin/pip install -e ".[dev]"
+git config user.name "Casey"
 
-.venv/bin/ruff check .                                          # lint
-.venv/bin/coverage run -m pytest                                # test under coverage
-.venv/bin/coverage combine                                      # merge subprocess data
-.venv/bin/coverage report                                       # report; fails below 80%
+python3 skills/steering-ledger/scripts/decide.py --repo . \
+  --slug release-scope --scope release --asked-by team-lead \
+  --question "q1=Ship the beta this week?" \
+  --option "q1=Ship it" --option "q1=Wait a week" \
+  --answer "q1=Wait a week"
+
+python3 skills/census/scripts/census.py --repo .
 ```
 
-The coverage command measures the Python product modules and enforces
-the at-least-80% rule from `AGENTS.md`. `coverage combine` is required, not
-optional: `register.py`, `claim.py` and `census-sessions.py` run as
-subprocesses, so their data lands in separate files that only combine merges.
-See `docs/PUBLISHING.md` for the pre-publish public-repo scrub.
+`decide.py` allocates `noni/decisions/` if it is missing, writes one record
+there and commits it. The census is read-only: it never writes, so
+`git status --porcelain` is empty after either run.
+
+Read the result. A run with nothing to complain about ends with:
+
+```
+summary: clean; verdict ok
+```
+
+Read `skills/<skill>/SKILL.md` for what each writer accepts and refuses. Each
+skill's `references/` directory holds the detail on record shapes and modes.
+
+## How it works
+
+Everything noni keeps in your repository lives in one directory:
+
+```
+<project>/noni/
+  decisions/   one JSON record per dated decision
+  direction/   order.json: the ordered list of issues to work next
+  sessions/    one Markdown file per session, one writer each
+```
+
+Nothing else is state. The writers above are the only things that create those
+files, and each commits what it writes in one atomic step. The census recomputes
+everything it reports from git history plus those files on every run: metrics
+are derived, never self-reported.
+
+The skills are the unit of product. An agent working in your repository loads
+`skills/<skill>/SKILL.md`, which names the script to run, the flags it takes and
+the exit codes it returns.
 
 ## Status
 
-- Positioning & design complete: three verified research runs (competitor
-  landscape, skill-first packaging, coordination substrate) plus a two-clone
-  claim prototype settled the architecture. Read `docs/PRODUCT.md` — it is the
-  product document; the epic issue set (E1–E5) is on GitHub, filed via the
-  plan driver.
-- Origin: the private backlog + reliability skill that grew this idea now live
-  in a separate repository (full history preserved there); the driver's public
-  work lives in its own repository.
+Shipped, and covered by the test suite: the steering ledger with its supersede
+chain, the session register and claim protocol, the ordering artifact, and the
+unified census with its honest exit codes.
+
+Not yet: packaging, so today you copy the `skills/` directory into your project
+rather than installing one `noni` command, and the direction features above the
+ordering artifact (release trains, standing direction). The epic map (E1-E5)
+lives in `docs/PRODUCT.md` §8, which is the product document and the deep
+reference for record shapes, the claim protocol and the census exit codes.
+
+noni's own `noni/decisions/` is still empty: this repository does not yet run
+the ledger it ships.
+
+## Purity
+
+noni holds no project-specific content and keeps no purity rule of its own
+beyond this: no tickets, no backlog entries, no references to any attached
+project. The generic how ships here, and the what belongs to the project it
+attaches to. Adapters for one tracker or driver live under `integrations/`, and
+the core stays usable with none of them installed.
+
+## Contributing
+
+Set up the venv and run the gates in [CONTRIBUTING.md](CONTRIBUTING.md). Before
+publishing a public tree, follow the scrub checklist in
+[docs/PUBLISHING.md](docs/PUBLISHING.md).

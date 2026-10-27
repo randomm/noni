@@ -83,6 +83,7 @@ _git = gitwrite.run_git
 _write_atomic = gitwrite.write_atomic
 _load_committed_target = gitwrite.load_committed_target
 _rollback = gitwrite.rollback
+_undone = gitwrite.undo_wording
 
 # Every return path names one of these; the 'Exit codes:' block above carries
 # exactly this set (tests/test_decide.py reads both and pins them together).
@@ -120,16 +121,6 @@ def _fail(code: int, message: str, hint: str | None = None) -> int:
     if hint:
         print(label, "fix:", hint, file=sys.stderr)
     return code
-
-
-def _undone(what: str, unredone: str, detail: str, rels: list[str]) -> tuple[str, str]:
-    """The (headline, hint) pair for a run whose undo did not finish: the headline
-    names the reset failure and the paths that may still be staged, so no wording
-    claims a tree this run did not roll back.
-    """
-    return (f"{what} and the rollback did not finish ({unredone}): {detail}",
-            f"run 'git status --porcelain -- {', '.join(rels)}' and restore those "
-            "paths by hand (git show HEAD:<path> writes the committed bytes back)")
 
 
 def _timeout(repo: Path, *probes: tuple[str, subprocess.CompletedProcess[str]]) -> int | None:

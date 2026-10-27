@@ -391,6 +391,18 @@ def load_committed_target(
     return committed, record
 
 
+def undo_wording(what: str, unredone: str, detail: str, rels: list[str]) -> tuple[str, str]:
+    """The (headline, hint) pair for a run whose undo did not finish, worded from
+    what :func:`rollback` reported: the headline names the failure and the paths
+    that may still be staged, so no wording claims a tree this run did not roll
+    back. ``what`` is the step that failed and ``unredone`` what the undo could not
+    do, both as ``rollback`` words them.
+    """
+    return (f"{what} and the rollback did not finish ({unredone}): {detail}",
+            f"run 'git status --porcelain -- {', '.join(rels)}' and restore those "
+            "paths by hand (git show HEAD:<path> writes the committed bytes back)")
+
+
 def rollback(repo: Path, rels: list[str], target_rel: str | None, record_rel: str,
              target_committed: bytes | None = None) -> str | None:
     """Undo this run's writes; None if the tree is clean, else what the undo could

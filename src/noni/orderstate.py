@@ -11,11 +11,16 @@ Nothing here prints, writes, or decides an exit code on its own: every answer
 travels back to the writer as a value or as a refusal the caller turns into one
 of the codes ``order.py`` names. The exit codes are received as parameters for
 that reason — one table, one owner, no second copy here that could drift.
+
+The artifact's shape lives in orderschema.py in the package and is an ordinary
+package import: inside an installed wheel there is no sibling file to load by
+path, and no directory of the package ever goes on ``sys.path``, so a
+``orderschema.py`` earlier on some path still cannot be trusted as this
+writer's schema.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import re
@@ -24,6 +29,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
+
+from . import labels, orderschema
 
 # A decision record id is what decide.py writes: <YYYY-MM-DD>-<slug> of
 # lowercase letters, digits and dashes. The same shape both directions, so a
@@ -39,35 +46,15 @@ STATUS_SUPERSEDED = "superseded"
 STATUSES = ("decided", "open", "superseded")
 
 
-def load_sibling(script_dir: Path, name: str, file: str):
-    """The module ``file`` beside ``script_dir``, loaded by path under ``name``.
-
-    A sys.path entry would put a directory ahead of the standard library, where
-    any module of the same name earlier on that path could be trusted as this
-    writer's own; loading by path with a name of our own is what closes that.
-    The module is registered under ``name`` before exec (the canonical importlib
-    recipe), so a module body that imports itself finds its own entry.
-    """
-    spec = importlib.util.spec_from_file_location(
-        name, Path(script_dir).resolve() / file)
-    if spec is None or spec.loader is None:  # pragma: no cover - path is fixed
-        raise RuntimeError(f"cannot load {file} beside order.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-# Resolved at import from this module's own directory, so the reader is always
-# the schema file that sits beside the writer that loaded this one.
-orderschema = load_sibling(Path(__file__).resolve().parent, "noni_orderschema",
-                           "orderschema.py")
-
-
 def _fail(code: int, message: str, hint: str | None = None) -> int:
     """Print a refusal as a headline plus a 'fix:' line naming what resolves it,
-    and hand back the exit code. One shape for every refusal in this writer."""
-    label = f"{Path(__file__).name}:"
+    and hand back the exit code. One shape for every refusal in this writer.
+
+    The label is the writer's own program name from ``noni.labels``, not this
+    file's name: a refusal raised by the reader still has to read as coming from
+    ``order.py``, whichever route reached it.
+    """
+    label = f"{labels.ORDER}:"
     print(label, message, file=sys.stderr)
     if hint:
         print(label, "fix:", hint, file=sys.stderr)
@@ -419,8 +406,9 @@ def parse_index(raw: str, flag: str, count: int) -> tuple[int, tuple[str, str] |
 def print_order(entries: list[dict], label: str) -> None:
     """The resulting order: one line per entry, position, issue, decision, confirmed.
 
-    ``label`` is the writer's own filename, which the line opens: this module
-    has no opinion on which command printed the order it just read.
+    ``label`` is the writer's program name (``noni.labels.ORDER``, passed in by
+    ``order.py``), which the line opens: this module has no opinion on which
+    command printed the order it just read.
     """
     print(f"{label}: {orderschema.ORDER_REL} ({len(entries)} entr"
           f"{'y' if len(entries) == 1 else 'ies'})")

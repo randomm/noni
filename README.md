@@ -54,6 +54,11 @@ python3 ../noni/skills/census/scripts/census.py --repo .
 
 Run these from a release of noni you trust: they execute its scripts.
 
+Installing is the other route, and the same code either way: `pip install
+noni` gives one `noni` command in place of a path per tool (`noni decide`,
+`noni census`, `noni register`, `noni claim`, `noni order`), and both routes
+print the same bytes. `noni --help` names the five subcommands.
+
 The census is read-only: it never writes, so `git status --porcelain` is empty
 after either run.
 
@@ -69,7 +74,9 @@ nothing to arbitrate) are counted there and do not change the verdict.
 
 Read `noni/skills/<skill>/SKILL.md` for what each writer accepts and refuses.
 The steering-ledger and sessions-claims skills keep record-shape detail in
-their `references/` directories.
+their `references/` directories. `noni --help` names the five subcommands and
+`noni <tool> --help` the flags of one. `noni --help` names the five subcommands and
+`noni <tool> --help` the flags of one.
 
 ## How it works
 
@@ -98,14 +105,14 @@ the exit codes it returns.
 ## Status
 
 Shipped, and covered by the test suite: the steering ledger with its supersede
-chain, the session register and claim protocol, the ordering artifact, and the
-unified census with its honest exit codes.
+chain, the session register and claim protocol, the ordering artifact, the
+unified census with its honest exit codes, and the `noni` package that carries
+them (`pip install noni`, then `noni <tool>`).
 
-Not yet: packaging, so until it lands you run the scripts from a clone of
-noni rather than installing one `noni` command, and the direction features
-above the ordering artifact (release trains, standing direction). The epic map
-(E1-E5) lives in `docs/PRODUCT.md` §8, which is the product document and the
-deep reference for record shapes, the claim protocol and the census exit codes.
+Not yet: the direction features above the ordering artifact (release trains,
+standing direction). The epic map (E1-E5) lives in `docs/PRODUCT.md` §8, which
+is the product document and the deep reference for record shapes, the claim
+protocol and the census exit codes.
 
 noni's own `noni/decisions/` is still empty: this repository does not yet run
 the ledger it ships.

@@ -33,12 +33,21 @@ from pathlib import Path
 # directory on sys.path); the subprocess runners above use the path constant.
 import census
 import pytest
-from _harness import ORDER, REPO, _git, _init_repo, git_pin_date, subprocess_env
+from _harness import (
+    ORDER,
+    REPO,
+    SRC,
+    _git,
+    _harness_source,
+    _init_repo,
+    git_pin_date,
+    subprocess_env,
+)
 from ordering_shapes import MALFORMED_SHAPES as SHAPES
 from ordering_shapes import issue_state_shapes
 
 CENSUS = REPO / "skills" / "census" / "scripts" / "census.py"
-SCRIPTS = CENSUS.parent
+SCRIPTS = SRC / "noni"
 FIXTURE = REPO / "tests" / "fixtures" / "ordering" / "order-valid.json"
 
 ORDER_REL = "noni/direction/order.json"
@@ -975,10 +984,8 @@ def _strict_reader_copy(name: str, filename: str):
     them by path here lets one assertion cover both without either test file
     importing the other side's package name.
     """
-    directory = SCRIPTS if name == "census_json" else \
-        REPO / "skills" / "direction" / "scripts"
     spec = importlib.util.spec_from_file_location(f"noni_strict_copy_{name}",
-                                                  directory / filename)
+                                                  SCRIPTS / filename)
     if spec is None or spec.loader is None:  # pragma: no cover - the path is fixed
         raise AssertionError(f"cannot load {filename}")
     module = importlib.util.module_from_spec(spec)
@@ -1407,7 +1414,7 @@ def test_the_readers_take_the_strict_reader_as_an_argument(tmp_path):
     source = (SCRIPTS / "census_ordering_readers.py").read_text(encoding="utf-8")
     assert "from census_json import" not in source
     assert "import census_json" not in source
-    readers = importlib.import_module("noni_census_ordering_readers")
+    readers = importlib.import_module("noni.census_ordering_readers")
 
     def refusing(raw: bytes) -> object:
         raise ValueError("a reader from elsewhere on sys.path was used")
@@ -1435,7 +1442,7 @@ def test_the_census_hands_its_own_strict_reader_to_the_group():
     The clipper is pinned in the same breath: the rows this group composes are
     clipped by the census's own rule, not by a bound the group invents for itself.
     """
-    source = (SCRIPTS / "census.py").read_text(encoding="utf-8")
+    source = _harness_source(CENSUS)
     assert "load_json_strict=_census_json.load_json_strict" in source, \
         "the ordering group is not handed the census's own strict reader"
     assert "clipped=_clipped" in source, \

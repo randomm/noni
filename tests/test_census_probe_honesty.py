@@ -13,14 +13,9 @@ In each case the census reports a probe failure (warn by default, fail under
 from __future__ import annotations
 
 import subprocess
-import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-_CENSUS_DIR = str(REPO / "skills" / "census" / "scripts")
-if _CENSUS_DIR not in sys.path:
-    sys.path.insert(0, _CENSUS_DIR)
-
 import census  # noqa: E402
 from _harness import _git, _init_repo  # noqa: E402
 

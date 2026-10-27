@@ -39,7 +39,6 @@ from __future__ import annotations
 
 import ast
 import contextlib
-import importlib.util
 import io
 import json
 import os
@@ -1163,25 +1162,13 @@ def _gitwrite_module():
     """The git helper module the writer itself uses, so a spy on its
     subprocess.run is the one ``run_git`` resolves through.
 
-    The writer's own load is reused once one has happened (it is registered under
-    the name decide.py binds it to); otherwise the helper is exec'd once under a
-    name of our own. Either way this session has exactly one module object per
-    name, and a spy installed in front of it never touches the product file or the
-    harness's git calls.
+    The package module is the one the writer imports, so a spy installed in
+    front of it is the one ``run_git`` resolves through and no product file is
+    touched.
     """
-    module = sys.modules.get("noni_gitwrite") or sys.modules.get(_GITWRITE_TEST_NAME)
-    if module is None:
-        path = DECIDE.parent / "gitwrite.py"
-        spec = importlib.util.spec_from_file_location(_GITWRITE_TEST_NAME, path)
-        if spec is None or spec.loader is None:  # pragma: no cover - path is fixed
-            raise RuntimeError(f"cannot load the git helper from {path}")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[_GITWRITE_TEST_NAME] = module
-        spec.loader.exec_module(module)
-    return module
+    from noni import gitwrite
 
-
-_GITWRITE_TEST_NAME = "noni_gitwrite_under_test"
+    return gitwrite
 
 
 def _target_write_fails_after_staging(decide, repo: Path, rel: str):

@@ -10,14 +10,9 @@ value written inside an agent-authored field.
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-_CENSUS_DIR = str(REPO / "skills" / "census" / "scripts")
-if _CENSUS_DIR not in sys.path:
-    sys.path.insert(0, _CENSUS_DIR)
-
 
 from _harness import _commit_file, _init_repo  # noqa: E402
 

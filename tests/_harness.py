@@ -9,8 +9,10 @@ without pulling in ``conftest.py`` and its module-level ``import pytest``.
 from __future__ import annotations
 
 import ast
+import importlib
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -20,28 +22,42 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
+# The package's modules, measured by the gate and imported by the tests as
+# ``noni.<module>``. The package must be installed (``pip install -e ".[dev]"``
+# or the built wheel) or its ``src/`` put on ``PYTHONPATH``; conftest.py does the
+# latter so the in-place suite needs no install step.
+SRC = REPO / "src"
+
 # The Python product modules the coverage gate measures, relative to the repo
 # root. Naming them here keeps the list in one place: pyproject's
 # [tool.coverage.report] include carries the same paths and
 # tests/test_gate_wiring.py compares the two, so a module cannot quietly
 # disappear from the gate. Tests are excluded by construction — only these
 # files are measured, so the reported total is the coverage of shipped code.
+# The package modules under src/noni/ are the shipped code; the skills/*/
+# scripts/ wrappers are thin shims and are deliberately not measured.
 PRODUCT_MODULES = (
-    "scripts/public_safety.py",
     "integrations/adapter_protocol.py",
     "integrations/github-issues/github_issues_adapter.py",
-    "skills/census/scripts/census.py",
-    "skills/census/scripts/census_hygiene.py",
-    "skills/census/scripts/census_json.py",
-    "skills/census/scripts/census_ordering.py",
-    "skills/census/scripts/census_ordering_readers.py",
-    "skills/direction/scripts/order.py",
-    "skills/direction/scripts/orderschema.py",
-    "skills/direction/scripts/orderstate.py",
-    "skills/direction/scripts/gitwrite.py",
-    "skills/sessions-claims/scripts/register.py",
-    "skills/sessions-claims/scripts/claim.py",
-    "skills/sessions-claims/scripts/census-sessions.py",
+    "src/noni/census.py",
+    "src/noni/census_hygiene.py",
+    "src/noni/census_json.py",
+    "src/noni/census_ordering.py",
+    "src/noni/census_ordering_readers.py",
+    "src/noni/census_sessions.py",
+    "src/noni/claim.py",
+    "src/noni/cli.py",
+    "src/noni/decide.py",
+    "src/noni/gitwrite.py",
+    "src/noni/labels.py",
+    "src/noni/order.py",
+    "src/noni/order_gitwrite.py",
+    "src/noni/orderschema.py",
+    "src/noni/orderstate.py",
+    "src/noni/public_safety.py",
+    "src/noni/register.py",
+    "src/noni/shim_help.py",
+    "src/noni/targetschema.py",
 )
 
 # The env var coverage's subprocess support needs. A launched interpreter
@@ -64,52 +80,98 @@ def subprocess_env(base: dict | None = None) -> dict:
     return env
 
 
-# The tests' established route for repo-local modules (scripts/ is not a
-# package — packages = [] in pyproject.toml): put scripts/ on sys.path here so
-# every harness consumer gets the same public_safety object, and the fixture
-# builders below can derive from its pattern tables.
-_SCRIPTS = REPO / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
+# The package is the single importable home of the product modules (the
+# wrappers under skills/*/scripts/ are shims, and scripts/public_safety.py is
+# reached only as a subprocess for its CLI exit-code contract). Put src/ on
+# sys.path here so every harness consumer gets the same noni.public_safety
+# object whether or not the wheel was installed, and so the fixture builders
+# below can derive from its pattern tables.
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
-from public_safety import HOME_PATH_PATTERNS, SECRET_PATTERNS  # noqa: E402
+from noni.public_safety import HOME_PATH_PATTERNS, SECRET_PATTERNS  # noqa: E402
+
+# Back-compatible module aliases for the tests that were written against the
+# flat scripts/ layout. Those files imported the tool by its script name
+# (``import census``, ``import public_safety``) after putting the script's own
+# directory on sys.path; the package is the only importable home now, and a
+# lookalike earlier on sys.path must not be trusted as the census's own code, so
+# the aliases are registered here from the package rather than by path. They are
+# the *same objects* the console route imports, which is what makes a seam a test
+# installs visible to the other route as well.
+for _alias, _pkg_name in (
+    ("census", "census"),
+    ("census_hygiene", "census_hygiene"),
+    ("census_json", "census_json"),
+    ("census_ordering", "census_ordering"),
+    ("census_ordering_readers", "census_ordering_readers"),
+    ("census_sessions", "census_sessions"),
+    ("claim", "claim"),
+    ("decide", "decide"),
+    ("gitwrite", "gitwrite"),
+    ("order", "order"),
+    ("order_gitwrite", "order_gitwrite"),
+    ("orderschema", "orderschema"),
+    ("orderstate", "orderstate"),
+    ("public_safety", "public_safety"),
+    ("register", "register"),
+    ("targetschema", "targetschema"),
+):
+    _module = importlib.import_module(f"noni.{_pkg_name}")
+    sys.modules.setdefault(_alias, _module)
+del _alias, _pkg_name, _module
+
+
+def load_package_module(name: str) -> object:
+    """A fresh copy of a package module, under a test-private name.
+
+    For the tests that mutate a module's globals (a seam on a constant, a
+    replaced helper) and must not leak the change into the module the next test
+    imports. The package's own copy is left untouched, and the copy is exec'd
+    from the same source rather than shallow-copied: a module whose globals are a
+    borrowed dict would make a seam on one module visible through the other.
+    """
+    module = importlib.import_module(f"noni.{name}")
+    # Importing first is the point: it proves the module exists in the package
+    # before a copy of its file is exec'd, so a name that is not a package
+    # module fails here rather than as a confusing file-not-found below.
+    del module
+    source = _product_source(SRC / "noni" / f"{name}.py")
+    private = f"noni_under_test_{name}"
+    sys.modules.pop(private, None)
+    spec = importlib.util.spec_from_file_location(private, source)
+    if spec is None or spec.loader is None:  # pragma: no cover - path is fixed
+        raise RuntimeError(f"cannot load a fresh copy of the package module {name}")
+    fresh = importlib.util.module_from_spec(spec)
+    sys.modules[private] = fresh
+    spec.loader.exec_module(fresh)
+    return fresh
 
 
 def _claim_module() -> object:
-    """claim.py loaded as a module, for the tests that drive its internals.
+    """The claim module, for the tests that drive its internals.
 
-    Defined here, next to the script path it loads. ``test_claim_validation``
+    Defined here, next to the wrapper path the subprocess tests launch. It is
+    the package module, imported under its real name, so a seam a test puts on
+    it is visible to the console route too. ``test_claim_validation``
     re-exports it so the name resolves inside that file's globals.
     """
-    spec = importlib.util.spec_from_file_location("noni_claim_under_test", CLAIM)
-    if spec is None or spec.loader is None:  # pragma: no cover - path is fixed
-        raise RuntimeError(f"cannot load claim module from {CLAIM}")
-    module = importlib.util.module_from_spec(spec)
-    # Registered under its own name before exec, so a dataclass or a pickle
-    # inside the module can resolve it later; the name is ours, never "claim".
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    from noni import claim
+
+    return claim
 
 
 def _decide_module() -> object:
-    """decide.py loaded as a module, for the tests that name its constants.
+    """The decide module, for the tests that name its constants.
 
     The exit-5 tests need the writer's own failure-seam constant rather than a
     copy of its name: a rename in the product then fails the test that drives
-    it instead of leaving that test exercising a real commit. Same loading
-    shape as :func:`_claim_module`, under a name of our own.
+    it instead of leaving that test exercising a real commit. The package module
+    under its real name, so the constants are the ones the shipped code reads.
     """
-    spec = importlib.util.spec_from_file_location("noni_decide_under_test", DECIDE)
-    if spec is None or spec.loader is None:  # pragma: no cover - path is fixed
-        raise RuntimeError(f"cannot load decide module from {DECIDE}")
-    module = importlib.util.module_from_spec(spec)
-    # Exec'd fresh on every call and never registered under the name: the tests
-    # that read the writer's constants get the module they asked for, and
-    # decide.py's own `if __name__ == "__main__"` guard keeps a name of ours from
-    # being mistaken for the script's entry point.
-    spec.loader.exec_module(module)
-    return module
+    from noni import decide
+
+    return decide
 
 
 def _script_constant(tree: ast.Module, name: str, origin: str) -> object:
@@ -138,8 +200,47 @@ def _script_constant(tree: ast.Module, name: str, origin: str) -> object:
 
 
 def _script_ast(path: Path) -> ast.Module:
-    """Parse ``path`` once and hand the tree to the readers above."""
-    return ast.parse(path.read_text(encoding="utf-8"))
+    """Parse ``path`` once and hand the tree to the readers above.
+
+    For a wrapper under ``skills/*/scripts/`` the tree of the package source it
+    dispatches to is parsed instead: these readers ask what the *product*
+    declares (its exit codes, its parser flags, its docstring), and a wrapper is
+    a shim whose own docstring says nothing about the tool's contract. The
+    wrapper's source is still read whole by the scrub and presence checks, which
+    take a path rather than this helper.
+    """
+    source = _product_source(path)
+    return ast.parse(source.read_text(encoding="utf-8"))
+
+
+def _harness_source(path: Path) -> str:
+    """The text of the product source behind a wrapper path.
+
+    For the checks that read a shipped guard off the source it lives in (a
+    compiled regex is a Call, so ``_script_constant`` cannot reach it): they must
+    read the package module, since the wrapper is a shim that holds none of the
+    tool's logic.
+    """
+    return _product_source(path).read_text(encoding="utf-8")
+
+
+def _product_source(path: Path) -> Path:
+    """The package source behind a wrapper path (identity for a package path).
+
+    A wrapper is recognised by the package module it imports, so the mapping is a
+    property of the file rather than a table of paths that can go stale when a
+    tool is renamed.
+    """
+    text = path.read_text(encoding="utf-8")
+    match = re.search(r"from noni import ([a-z_][a-z_0-9]*)\b", text)
+    if match is None:
+        return path
+    candidate = SRC / "noni" / f"{match.group(1)}.py"
+    if not candidate.is_file():
+        raise AssertionError(
+            f"{path} imports noni.{match.group(1)} but {candidate} does not exist"
+        )
+    return candidate
 
 
 def _git_e2(
@@ -211,8 +312,11 @@ def _commit_file(repo: Path, rel: str, content: str) -> None:
 # They must not appear as literals either: these files are git-tracked, and the
 # census's own hygiene class — and tests/test_public_safety.py's repo-clean
 # check — flag a literal /home/<known identity> path or token shape in a
-# tracked file. Only scripts/public_safety.py and
-# tests/test_public_safety.py are exempted, hence the runtime assembly.
+# Tracked-file literals that would trip the census's own hygiene class (and
+# tests/test_public_safety.py's repo-clean check) are never written as literals:
+# only the three self files are exempted (src/noni/public_safety.py,
+# scripts/public_safety.py and tests/test_public_safety.py), hence the runtime
+# assembly.
 
 _HOME_PATH_KNOWN_IDENTITY = "admin"
 _SECRET_TOKEN_PREFIX = "ghp_"
@@ -432,28 +536,71 @@ def push_with_retry(repo: Path, branch: str, attempts: int = 3) -> None:
 SESSIONS_SKILL = REPO / "skills" / "sessions-claims" / "scripts"
 STEERING_SKILL = REPO / "skills" / "steering-ledger" / "scripts"
 DIRECTION_SKILL = REPO / "skills" / "direction" / "scripts"
+CENSUS_SKILL = REPO / "skills" / "census" / "scripts"
+# The in-place entry points: the thin wrappers the skills document. They are the
+# compatibility route, and the paired test compares each of them against the
+# console route, so the paths are the product's public surface, not a detail.
+CENSUS_SH = STEERING_SKILL / "census.sh"
 CENSUS_SESSIONS = SESSIONS_SKILL / "census-sessions.sh"
+CENSUS_SESSIONS_PY = SESSIONS_SKILL / "census-sessions.py"
 REGISTER = SESSIONS_SKILL / "register.py"
 CLAIM = SESSIONS_SKILL / "claim.py"
 DECIDE = STEERING_SKILL / "decide.py"
 ORDER = DIRECTION_SKILL / "order.py"
+CENSUS = CENSUS_SKILL / "census.py"
+
+# The five tools the ``noni`` command dispatches: subcommand -> the wrapper that
+# must produce the same bytes. The sessions census has no subcommand of its own
+# (it is the shim's --sessions dispatch), so it is compared through its wrapper
+# against the package module directly.
+TOOL_WRAPPERS: tuple[tuple[str, Path], ...] = (
+    ("census", CENSUS),
+    ("register", REGISTER),
+    ("claim", CLAIM),
+    ("decide", DECIDE),
+    ("order", ORDER),
+)
+
+
+def run_noni(*args: str, env: Mapping[str, str] | None = None,
+             timeout: int = 120) -> subprocess.CompletedProcess[str]:
+    """The installed console command over ``noni.cli:main``, as a subprocess.
+
+    Launched as ``python -m noni.cli`` rather than the ``noni`` script so the
+    job needs no console-script entry on PATH while still going through the
+    console module's own dispatch; ``tests/test_console_equivalence.py`` runs
+    the ``noni`` script itself against the installed wheel.
+    """
+    cmd = [sys.executable, "-m", "noni.cli", *args]
+    return subprocess.run(cmd, capture_output=True, text=True,
+                          env=subprocess_env() if env is None else dict(env),
+                          timeout=timeout)
+
+
+def run_wrapper(script: Path, *args: str, env: Mapping[str, str] | None = None,
+                cwd: Path | None = None, timeout: int = 120) -> subprocess.CompletedProcess[str]:
+    """One in-place wrapper under the running interpreter, argv verbatim.
+
+    The wrapper is launched by path (the form the skills document and the README
+    sells), so the comparison against ``noni <tool>`` covers the wrapper's own
+    import of the package and not just the package's output.
+    """
+    cmd = [sys.executable, str(script), *args]
+    full = subprocess_env() if env is None else dict(env)
+    return subprocess.run(cmd, capture_output=True, text=True, env=full,
+                          cwd=None if cwd is None else str(cwd), timeout=timeout)
 
 
 def _order_module() -> object:
-    """order.py loaded as a module, for the tests that drive its internals.
+    """The order module, for the tests that drive its internals.
 
-    Same loading shape as :func:`_claim_module`: exec'd fresh on every call and
-    registered under a name of our own, so the writer's own constants (its exit
-    codes, its canonical form) are read from the product rather than copied and
-    its ``__main__`` guard is never mistaken for a test entry point.
+    The package module under its real name, so the writer's own constants (its
+    exit codes, its canonical form) are read from the product rather than copied
+    and its ``__main__`` guard is never mistaken for a test entry point.
     """
-    spec = importlib.util.spec_from_file_location("noni_order_under_test", ORDER)
-    if spec is None or spec.loader is None:  # pragma: no cover - path is fixed
-        raise RuntimeError(f"cannot load order module from {ORDER}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    from noni import order
+
+    return order
 
 
 def run_order(repo: Path, *args: str, env: Mapping[str, str] | None = None,

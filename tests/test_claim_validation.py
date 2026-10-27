@@ -25,6 +25,7 @@ from _harness import (
     _claim_module,
     _git,
     _git_e2,
+    _harness_source,
     _init_repo,
     _script_ast,
     _script_constant,
@@ -340,7 +341,7 @@ def test_task_and_branch_guards_are_anchored_against_a_trailing_newline(tmp_path
     # The guard: pattern and call site, read from the file claim.py ships
     # (re.compile(...) is a Call, not a literal, so _script_constant cannot
     # reach these constants).
-    source = CLAIM.read_text(encoding="utf-8")
+    source = _harness_source(CLAIM)
     for name in ("TASK_RE", "BRANCH_RE"):
         decl = re.search(rf"^{name} = re\.compile\(r\"(.*)\"\)", source, re.MULTILINE)
         assert decl is not None, f"claim.py does not define {name} as expected"

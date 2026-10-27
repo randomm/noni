@@ -16,18 +16,14 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 
-# Import the shared pattern registry from scripts/public_safety.py so that
-# new secret shapes or path patterns are added in exactly one place.
-_scripts_dir = str(REPO / "scripts")
-if _scripts_dir not in sys.path:
-    sys.path.insert(0, _scripts_dir)
+# The shared pattern registry, from the package's own checker, so that new
+# secret shapes or path patterns are added in exactly one place.
 from public_safety import FIXTURE_HOME_PATH_PATTERNS, HOME_PATH_PATTERNS, SECRET_PATTERNS  # noqa: E402
 
 SKILL_DIRS = [REPO / "skills" / "steering-ledger", REPO / "skills" / "sessions-claims",
@@ -96,8 +92,10 @@ def test_skill_files_present():
     assert "SKILL.md" in rels, f"SKILL.md missing; have: {rels}"
     assert "scripts/census.sh" in rels, f"scripts/census.sh missing; have: {rels}"
     assert "scripts/decide.py" in rels, f"scripts/decide.py missing; have: {rels}"
-    # decide.py's git runner and atomic writer live in one module beside it.
-    assert "scripts/gitwrite.py" in rels, f"scripts/gitwrite.py missing; have: {rels}"
+    # decide.py's git runner and atomic writer no longer live beside it: they are
+    # package modules (noni.gitwrite), whose presence in the package is pinned by
+    # test_package_files_present. The wrapper this directory must still carry is
+    # the entry point the skill documents.
     for ref in ("references/decisions.md", "references/modes.md", "references/supersede.md", "references/census.md"):
         assert ref in rels, f"{ref} missing; have: {rels}"
     # The direction skill's writer is part of the scrubbed layout too: a skill
@@ -108,11 +106,30 @@ def test_skill_files_present():
     assert "SKILL.md" in direction_rels, f"direction SKILL.md missing; have: {direction_rels}"
     assert "scripts/order.py" in direction_rels, (
         f"scripts/order.py missing; have: {direction_rels}")
-    # The writer's two helper modules are product files of the same skill: a
-    # helper that left the directory would stop being scrubbed and stop being
-    # counted by the coverage gate.
-    for helper in ("scripts/orderschema.py", "scripts/gitwrite.py"):
-        assert helper in direction_rels, f"{helper} missing; have: {direction_rels}"
+    # The writer's helper modules are package modules now, not files of this
+    # skill; the wrapper that the skill documents is what must remain here.
+
+
+def test_package_files_present():
+    """Every shipped tool is a package module, and no helper quietly left.
+
+    The skills' directories carry only wrappers now, so the module list that used
+    to be pinned by the skill layout has to be pinned here instead: a helper that
+    left ``src/noni/`` would stop being scrubbed (the parametrised scan below
+    walks the skill directories, not the package). The coverage gate and the
+    wheel have their own lists, and tests/test_gate_wiring.py and
+    tests/test_wheel_contents.py compare those against the directory itself, so
+    all four views of the shipped set are pinned somewhere.
+    """
+    shipped = {p.name for p in (REPO / "src" / "noni").glob("*.py")}
+    for module in (
+        "census.py", "census_hygiene.py", "census_json.py", "census_ordering.py",
+        "census_ordering_readers.py", "census_sessions.py", "claim.py", "cli.py",
+        "decide.py", "gitwrite.py", "labels.py", "order.py", "order_gitwrite.py",
+        "orderschema.py", "orderstate.py", "public_safety.py", "register.py",
+        "shim_help.py", "targetschema.py",
+    ):
+        assert module in shipped, f"src/noni/{module} missing; have: {sorted(shipped)}"
 
 
 @pytest.mark.parametrize("path", SKILL_FILES, ids=lambda p: p.name)

@@ -31,6 +31,12 @@ jobs:
       - name: Install dev dependencies
         run: .venv/bin/pip install --no-cache-dir coverage==7.17.0 pytest==9.1.1 ruff==0.17.2
 
+      # The skills' scripts/ entry points are thin wrappers over the package, so
+      # the in-place suite needs the package importable; the editable install is
+      # the same route CONTRIBUTING.md documents locally.
+      - name: Install noni (editable)
+        run: .venv/bin/pip install --no-cache-dir -e ".[dev]"
+
       - name: Lint
         run: .venv/bin/ruff check .
 
@@ -43,3 +49,62 @@ jobs:
           .venv/bin/coverage run -m pytest
           .venv/bin/coverage combine
           .venv/bin/coverage report
+
+  # The install route the README sells: build the wheel, install it into a fresh
+  # venv, and run the tests that only mean something against an installed
+  # package. It is not part of the coverage gate: these tests exercise the
+  # packaging, not the modules the gate measures.
+  wheel:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # The census and the shim help print tests shell out to jq.
+      - name: Install jq
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+
+      - name: Set up venv
+        run: python -m venv .venv
+
+      # setuptools is the [build-system] backend and --no-isolation means the
+      # build uses this venv's copy rather than resolving one, so it is installed
+      # here explicitly: a job that installs only the tools would fail the build
+      # with "Backend 'setuptools.build_meta' is not available".
+      - name: Install the build tool and the backend
+        run: .venv/bin/pip install --no-cache-dir build==1.4.0 setuptools==75.8.0
+
+      # --no-isolation: the venv already carries the build backend above, so the
+      # build needs no resolver reaching the network.
+      - name: Build the wheel
+        run: .venv/bin/python -m build --wheel --no-isolation
+
+      - name: Install the wheel in a fresh venv
+        run: |
+          python -m venv .venv-wheel
+          .venv-wheel/bin/pip install --no-cache-dir dist/*.whl
+          .venv-wheel/bin/pip install --no-cache-dir pytest==9.1.1
+
+      - name: Equivalence, wheel contents and README try-it against the wheel
+        run: .venv-wheel/bin/python -m pytest tests/test_console_equivalence.py tests/test_wheel_contents.py tests/test_readme.py
+
+      # The acceptance criterion, stated against the artifact rather than the
+      # source tree: the installed console script (not `python -m noni.cli`) is
+      # on PATH and dispatches all five subcommands. The equivalence module runs
+      # the console module's dispatch; this proves the entry point registered by
+      # the wheel's metadata actually resolves.
+      - name: The noni command is on PATH
+        run: |
+          .venv-wheel/bin/noni --help
+          for tool in census register claim decide order; do
+            .venv-wheel/bin/noni "$tool" --help >/dev/null
+            echo "noni $tool --help: ok"
+          done

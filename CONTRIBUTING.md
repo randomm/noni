@@ -4,6 +4,11 @@ noni is a Python 3.11 project with two gates: `ruff` for linting and `pytest`
 under `coverage` for tests. Both run locally and in CI on the same pinned tool
 versions.
 
+The shipped code is the `noni` package under `src/noni/`. The entry points under
+`skills/<skill>/scripts/` and `scripts/public_safety.py` are thin wrappers that
+import it, so the package must be installed (or on `PYTHONPATH`) before the
+suite or a wrapper will run; the editable install below does that.
+
 ## Development
 
 Install the pinned dev tools, then run the two gates. The versions are pinned
@@ -25,6 +30,29 @@ at-least-80% rule from `AGENTS.md`. `coverage combine` is required, not
 optional: some product modules are reached only as subprocesses (see the
 `[tool.coverage.run]` comment in `pyproject.toml`), so their data lands in
 separate files that only combine merges.
+
+## Packaging
+
+One distribution, one command. `[project.scripts]` declares
+`noni = "noni.cli:main"`, and `src/` is the only directory setuptools looks in,
+so the wheel ships `noni/` and its metadata and nothing else. Three tests hold
+that, and CI runs all three against the built wheel in a fresh venv:
+
+- `tests/test_wheel_contents.py` — the wheel's entry list is a whitelist: no
+  `tests/`, `skills/`, `integrations/`, `docs/`, `.github/` or this repository's
+  own `noni/` state, and every package module is present.
+- `tests/test_console_equivalence.py` — each tool prints the same bytes through
+  its wrapper and through the console command, including `--help`, where a
+  program-name label would drift first.
+- `tests/test_gate_wiring.py` — the CI pins match `pyproject.toml`, the coverage
+  `include` list matches `PRODUCT_MODULES` in `tests/_harness.py`, and the wheel
+  job calls the installed `noni` script rather than only `python -m noni.cli`.
+
+The program names the tools print come from `src/noni/labels.py`, not from
+`__file__`, which is what lets the two routes agree. A new tool needs an entry
+there, a subcommand in `src/noni/cli.py`, a wrapper under its skill, and an entry
+in both `PRODUCT_MODULES` and the coverage `include` list; the gate tests fail
+loudly when any of the four is missing.
 
 ## What belongs in a contribution
 

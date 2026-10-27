@@ -80,12 +80,19 @@ fi
 set -u
 
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-  # The help text is this script's own header comment: every line from the
-  # second line up to (not including) the dispatch marker below, so it is
-  # always the current header and no hard-coded line range drifts when the
-  # header changes length. (The marker line is not a comment, so the awk
-  # comment-filter ends the range at it without special-casing.)
-  awk 'NR > 1 { if (!/^#/) exit; sub(/^# ?/, ""); print }' "$0"
+  # The help text is the package constant, not this file's header: `noni census
+  # --help` and this shim must print the same bytes. See noni.shim_help and
+  # tests/fixtures/census-sh/usage.txt, which is the fixture both routes are
+  # compared against. NONI_PYTHON names the interpreter (python3 by default).
+  NONI_PYTHON="${NONI_PYTHON:-python3}"
+  if ! command -v "$NONI_PYTHON" >/dev/null 2>&1; then
+    echo "census.sh: $NONI_PYTHON not found on $(hostname 2>/dev/null || echo unknown)" >&2
+    exit 3
+  fi
+  "$NONI_PYTHON" -c 'import sys; from noni import shim_help; sys.stdout.write(shim_help.CENSUS_SH_HELP + "\n")' || {
+    echo "census.sh: the noni package is not importable from $NONI_PYTHON; install it or put its src/ on PYTHONPATH" >&2
+    exit 3
+  }
   exit 0
 fi
 

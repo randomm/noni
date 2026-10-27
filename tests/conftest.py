@@ -96,11 +96,10 @@ NONI_ENV_VARS = (
     "NONI_SCRUB_DENYLIST",
 )
 
-# Make the unified census module importable from test files (no __init__.py;
-# sys.path insertion is the established pattern for repo-local modules).
-_CENSUS_SCRIPTS = REPO / "skills" / "census" / "scripts"
-if str(_CENSUS_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_CENSUS_SCRIPTS))
+# Make the package importable from test files whether or not it was installed:
+# src/ is on sys.path via _harness, and no skill scripts/ directory ever goes on
+# the path (the wrappers there are shims, and a lookalike earlier on sys.path
+# must not be trusted as the census's own code).
 
 # The interpreter the sessions-census wrapper execs. census-sessions.sh reads
 # NONI_PYTHON (defaulting to python3); exporting sys.executable here makes the

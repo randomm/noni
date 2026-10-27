@@ -62,12 +62,8 @@ def test_every_finding_artifact_is_a_path_not_a_number(tmp_path):
     never a number (which would indicate a self-reported value)."""
     import io
     import json
-    import sys
     from contextlib import redirect_stdout
 
-    _CENSUS_DIR = str(REPO / "skills" / "census" / "scripts")
-    if _CENSUS_DIR not in sys.path:
-        sys.path.insert(0, _CENSUS_DIR)
     import census
 
     repo = tmp_path / "repo"

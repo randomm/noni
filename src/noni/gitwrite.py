@@ -10,29 +10,22 @@ for is made; an unset seam variable is inert.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import math
 import os
 import stat
 import subprocess
-import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-# The target's field types live beside this file in the skill's own directory and
-# are loaded by path, the way decide.py loads this one: a sys.path entry would put
-# a directory ahead of the standard library, where any targetschema.py earlier on
-# that path could be trusted as this helper's schema. The name is ours.
-_TARGETSCHEMA_NAME = "noni_targetschema"
-_spec = importlib.util.spec_from_file_location(
-    _TARGETSCHEMA_NAME, Path(__file__).resolve().parent / "targetschema.py")
-if _spec is None or _spec.loader is None:  # pragma: no cover - path is fixed
-    raise RuntimeError("cannot load the target schema beside gitwrite.py")
-sys.modules[_TARGETSCHEMA_NAME] = targetschema = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(targetschema)
-del _spec
+from . import targetschema
+
+# The target's field types live beside this file in the package and are an
+# ordinary package import: inside an installed wheel there is no sibling file to
+# load by path, and no directory of the package ever goes on ``sys.path``, so any
+# ``targetschema.py`` earlier on that path still cannot be trusted as this
+# helper's schema.
 
 
 def refuse_target_fields(record: dict, target_id: str,

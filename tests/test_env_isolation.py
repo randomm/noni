@@ -16,19 +16,16 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 CENSUS = REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"
 CONFTEST = Path(__file__).resolve().parent / "conftest.py"
 
-# The unified census and scripts/public_safety.py are imported by the hygiene
-# isolation tests below; per-file sys.path insertion is the established pattern
-# for these repo-local modules (see tests/test_public_safety.py).
-for _extra in (REPO / "skills" / "census" / "scripts", REPO / "scripts"):
-    if str(_extra) not in sys.path:
-        sys.path.insert(0, str(_extra))
+# The unified census and the hygiene checker are imported by the isolation tests
+# below under their bare names; _harness registers those names from the package,
+# so no script directory ever goes on sys.path (a lookalike there would be
+# trusted as the census's own code).
 
 from _harness import _git  # noqa: E402
 

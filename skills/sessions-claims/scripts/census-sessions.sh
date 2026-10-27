@@ -40,15 +40,24 @@
 # interpreter is $NONI_PYTHON when that variable is set, and python3
 # otherwise; the exit-3 check below tests the one actually about to run.
 #
-# This header is also the --help output: the script prints itself from the
-# second line to the first non-comment line of the body below, so the help
-# text always matches the header and there is no hard-coded line range that
-# drifts when this header changes length.
+# The --help output is not this header: it is the package constant
+# noni.shim_help.CENSUS_SESSIONS_SH_HELP, so `noni census --sessions --help`
+# and this shim print the same bytes. tests/fixtures/census-sh/
+# sessions-usage.txt is the fixture both routes are compared against, and the
+# header below it is documentation only.
 
 set -u
 
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-  awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print }' "$0"
+  NONI_PYTHON="${NONI_PYTHON:-python3}"
+  if ! command -v "$NONI_PYTHON" >/dev/null 2>&1; then
+    echo "census-sessions.sh: $NONI_PYTHON not found on $(hostname 2>/dev/null || echo unknown)" >&2
+    exit 3
+  fi
+  "$NONI_PYTHON" -c 'import sys; from noni import shim_help; sys.stdout.write(shim_help.CENSUS_SESSIONS_SH_HELP + "\n")' || {
+    echo "census-sessions.sh: the noni package is not importable from $NONI_PYTHON; install it or put its src/ on PYTHONPATH" >&2
+    exit 3
+  }
   exit 0
 fi
 

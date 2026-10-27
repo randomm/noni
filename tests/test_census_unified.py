@@ -15,10 +15,6 @@ REPO = Path(__file__).resolve().parent.parent
 
 from _harness import _commit_file, _git, _home_path_violation, _init_repo, _secret_violation  # noqa: E402
 
-_scripts_dir = str(REPO / "scripts")
-if _scripts_dir not in sys.path:
-    sys.path.insert(0, _scripts_dir)
-
 DENYLIST_ENV_VAR = "NONI_SCRUB_DENYLIST"
 
 # Synthetic violation shapes, built by tests/_harness.py from public_safety's
@@ -835,12 +831,16 @@ class TestHygiene:
         assert "did not run" in rows[0]["message"]
         assert rows[0]["code"] == 50
         # The artifact is pinned, not just "truthy": the not-run row names the
-        # checker from the skill directory (the hygiene artifact namespace),
+        # checker by its package-relative id (the hygiene artifact namespace),
         # and a row that pointed anywhere else would send a caller to the wrong
-        # file when it goes to fix the scan.
-        assert rows[0]["artifact"] == "../../../scripts/public_safety.py", (
-            f"not-run row must name the checker from the skill dir: {rows[0]}"
+        # file when it goes to fix the scan. Read from the product's constant so
+        # the row and the checker's own name cannot drift apart unnoticed.
+        import census_hygiene
+
+        assert rows[0]["artifact"] == census_hygiene.HYGIENE_SCAN_ARTIFACT, (
+            f"not-run row must name the checker: {rows[0]}"
         )
+        assert rows[0]["artifact"] == "noni/public_safety.py", rows[0]
 
     def test_non_git_repo_strict_lifts_the_exit(self, tmp_path):
         """The not-run row is a warn like any other hygiene row: --strict turns
@@ -1702,14 +1702,16 @@ class TestHygieneRowContract:
         """
         import census
 
+        # A fresh load: the census's own slot may already hold the checker from an
+        # earlier test, and this one is about what the *loader* registers.
+        sys.modules.pop(census.CENSUS_PS_MODULE_KEY, None)
         module = census._load_public_safety()
-        assert module is not None, "scripts/public_safety.py must be loadable"
+        assert module is not None, "the package's public_safety must be loadable"
         assert census.CENSUS_PS_MODULE_KEY == "noni_census_public_safety"
         assert sys.modules.get(census.CENSUS_PS_MODULE_KEY) is module
-        # The census's own loader never registers under the shared name; a test
-        # that imported the module normally may have, so assert about the
-        # census's write, not about the registry's contents.
-        assert module.__name__ == census.CENSUS_PS_MODULE_KEY
+        # The census's own loader never registers under the shared name; it hands
+        # back the package module, which carries the package-qualified name.
+        assert module.__name__ == "noni.public_safety"
 
     def test_module_from_another_tree_is_not_trusted(self, tmp_path, monkeypatch):
         """A public_safety whose __file__ is not SCRIPTS_DIR/public_safety.py is

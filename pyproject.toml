@@ -14,15 +14,23 @@ dependencies = []
 # tests/test_gate_wiring.py asserts the two lists stay identical.
 [project.optional-dependencies]
 dev = [
+    "build==1.4.0",
     "coverage==7.17.0",
     "pytest==9.1.1",
     "ruff==0.17.2",
 ]
 
-# Flat layout (dashboard, desktop, skills, scripts, tests): name the backend
-# package explicitly so setuptools does not refuse auto-discovery.
-[tool.setuptools]
-packages = []
+# src layout: the package is src/noni/, so it never collides with an attached
+# project's own noni/ state directory (which is data, never code). Only the
+# package ships: skills/, scripts/, tests/ and integrations/ stay out of the
+# wheel, pinned by tests/test_wheel_contents.py.
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# One console command, one subcommand per tool (census, register, claim, decide,
+# order). The dispatch module holds no behaviour of its own.
+[project.scripts]
+noni = "noni.cli:main"
 
 [tool.ruff]
 line-length = 100
@@ -37,11 +45,14 @@ ignore = ["E501"]
 testpaths = ["tests"]
 
 # The quality gate behind the AGENTS.md rule of at least 80 percent coverage
-# for new code. `include` names the product modules exactly, so the
-# total is the coverage of the shipped code and never of the tests that
-# measure it. (`source` cannot be used for this: coverage treats a source
-# entry that is not a directory as an importable package name, and these
-# scripts are never imported by that name.)
+# for new code. `include` names the product modules exactly (the package
+# modules under src/noni/ plus the two integration modules), so the total is
+# the coverage of the shipped code and never of the tests that measure it.
+# tests/_harness.py PRODUCT_MODULES is the list this one is compared against,
+# and tests/test_gate_wiring.py asserts the two agree and that each named file
+# exists. The skills/*/scripts/ wrappers are deliberately absent: they are thin
+# shims over the package, and measuring them would measure the import line
+# twice.
 #
 # `patch = ["subprocess"]` plus `parallel = true` are what make the gate
 # honest: register.py, claim.py and census-sessions.py are reached only as
@@ -60,19 +71,25 @@ parallel = true
 fail_under = 80
 skip_empty = true
 include = [
-    "scripts/public_safety.py",
     "integrations/adapter_protocol.py",
     "integrations/github-issues/github_issues_adapter.py",
-    "skills/census/scripts/census.py",
-    "skills/census/scripts/census_hygiene.py",
-    "skills/census/scripts/census_json.py",
-    "skills/census/scripts/census_ordering.py",
-    "skills/census/scripts/census_ordering_readers.py",
-    "skills/direction/scripts/order.py",
-    "skills/direction/scripts/orderschema.py",
-    "skills/direction/scripts/orderstate.py",
-    "skills/direction/scripts/gitwrite.py",
-    "skills/sessions-claims/scripts/register.py",
-    "skills/sessions-claims/scripts/claim.py",
-    "skills/sessions-claims/scripts/census-sessions.py",
+    "src/noni/census.py",
+    "src/noni/census_hygiene.py",
+    "src/noni/census_json.py",
+    "src/noni/census_ordering.py",
+    "src/noni/census_ordering_readers.py",
+    "src/noni/census_sessions.py",
+    "src/noni/claim.py",
+    "src/noni/cli.py",
+    "src/noni/decide.py",
+    "src/noni/gitwrite.py",
+    "src/noni/labels.py",
+    "src/noni/order.py",
+    "src/noni/order_gitwrite.py",
+    "src/noni/orderschema.py",
+    "src/noni/orderstate.py",
+    "src/noni/public_safety.py",
+    "src/noni/register.py",
+    "src/noni/shim_help.py",
+    "src/noni/targetschema.py",
 ]

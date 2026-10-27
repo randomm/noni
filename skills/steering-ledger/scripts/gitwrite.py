@@ -34,7 +34,15 @@ sys.modules[_TARGETSCHEMA_NAME] = targetschema = importlib.util.module_from_spec
 _spec.loader.exec_module(targetschema)
 del _spec
 
-refuse_target_fields = targetschema.refuse_target_fields
+
+def refuse_target_fields(record: dict, target_id: str,
+                         statuses: tuple[str, ...]) -> tuple[str, str] | None:
+    """The target's census field types, worded as census.py words them.
+
+    ``statuses`` is the set the writer can produce; this helper holds none of its own.
+    """
+    return targetschema.refuse_target_fields(record, target_id, statuses)
+
 
 GIT_TIMEOUT = 60
 # What run_git hands back for a call that never answered. No caller may read a
@@ -356,7 +364,7 @@ def refuse_live_record(record: dict, target_id: str, superseded: str) -> tuple[s
 def load_committed_target(
     label: str, repo: Path, path: Path, target_id: str,
     canonical: Callable[[dict], str],
-    superseded: str,
+    superseded: str, statuses: tuple[str, ...],
 ) -> tuple[bytes, dict] | tuple[str, str] | int:
     """The ``(committed_bytes, record)`` of a supersede target this run may
     rewrite, the ``(headline, hint)`` pair naming why it may not, or the exit code
@@ -377,6 +385,7 @@ def load_committed_target(
     for the chain position -- so no caller can reach a write by checking only part
     of it: a target whose ``date`` is not a string, whose ``questions`` are malformed
     or whose status or ``id`` do not fit is refused before any path is opened.
+    ``statuses`` arrives from the writer, for the same reason ``superseded`` does.
     """
     state = target_probes(label, repo, path)
     if state["timed_out"] is not None:
@@ -410,7 +419,7 @@ def load_committed_target(
     # The field types are refused before the canonical comparison and before any
     # write: a record whose date is not a string or whose questions are malformed
     # could never have come from a writer, and rewriting one moves bytes at random.
-    malformed = refuse_target_fields(record, target_id)
+    malformed = refuse_target_fields(record, target_id, statuses)
     if malformed is not None:
         return malformed
     stale = refuse_live_record(record, target_id, superseded)

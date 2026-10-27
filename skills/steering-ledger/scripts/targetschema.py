@@ -30,7 +30,8 @@ def _refusal(record: dict, target_id: str, field: str, want: str) -> tuple[str, 
             "repair the record and commit it, then re-run decide")
 
 
-def refuse_target_fields(record: dict, target_id: str) -> tuple[str, str] | None:
+def refuse_target_fields(record: dict, target_id: str,
+                         statuses: tuple[str, ...]) -> tuple[str, str] | None:
     """Why ``record``'s own field types cannot be carried through a status flip, or
     None.
 
@@ -45,13 +46,22 @@ def refuse_target_fields(record: dict, target_id: str) -> tuple[str, str] | None
     requires. ``questions`` is what the record answers, and a flip that copied
     anything other than a non-empty list of objects each with a string ``id`` and an
     ``answer`` that is a string or null would be repairing the ledger by accident.
+
+    ``statuses`` is the closed set the census allows and the writer can produce, for
+    the same reason ``superseded`` arrives at ``refuse_live_record``: a list kept
+    here could drift from the constants the writer flips between and quietly stop
+    refusing what it should. The census's own wording is kept so its row and this
+    headline read as one rule, and a non-string status is refused by the membership
+    test like any other unknown value.
     """
     for field in _NON_EMPTY_STRINGS:
         value = record.get(field)
         if field in record and (not isinstance(value, str) or not value):
             return _refusal(record, target_id, field, "a non-empty string")
-    if "status" in record and not isinstance(record["status"], str):
-        return _refusal(record, target_id, "status", "a string")
+    if "status" in record and record["status"] not in statuses:
+        return (f"supersede target {target_id} has a status the census refuses: "
+                f"status not one of {'|'.join(statuses)}",
+                "repair the record and commit it, then re-run decide")
     supersedes = record.get("supersedes")
     if "supersedes" in record and supersedes is not None \
             and (not isinstance(supersedes, str) or not supersedes):

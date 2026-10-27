@@ -2204,9 +2204,10 @@ def test_hardening_an_unparseable_number_in_a_nested_field_refuses_with_four(tmp
 
 
 def test_hardening_a_target_field_of_the_wrong_type_refuses_with_four(tmp_path):
-    """Every field the census types is type-checked on the target: ``id``,
-    ``asked_by``, ``by``, ``scope``, ``date`` non-empty strings, ``status`` a
-    string, ``supersedes`` a string or null, and ``questions`` as before.
+    """Every field the census types is checked on the target: ``id``,
+    ``asked_by``, ``by``, ``scope``, ``date`` non-empty strings, ``status`` one of
+    the three words the census allows, ``supersedes`` a string or null, and
+    ``questions`` as before.
 
     The census refuses all of these ("id must be a non-empty string", etc.), so
     a ledger holding one was never clean, and the writer copies every one of
@@ -2215,7 +2216,10 @@ def test_hardening_a_target_field_of_the_wrong_type_refuses_with_four(tmp_path):
     bool check a target with ``"by": true`` would pass as a number-shaped value
     -- and the census refuses it (``isinstance(value, str)`` is False for
     ``true``, and the string fields demand a string). ``"supersedes": 7`` is the
-    census's "supersedes must be null or a non-empty string".
+    census's "supersedes must be null or a non-empty string". ``status`` is the
+    one field the census narrows past its type, to the three words it names, so
+    ``""`` and ``"pending"`` join the shapes: both are census violations ("status
+    not one of decided|open|superseded"), and only a membership test refuses them.
     """
     shapes = {
         "by-true": {"by": True},
@@ -2236,6 +2240,8 @@ def test_hardening_a_target_field_of_the_wrong_type_refuses_with_four(tmp_path):
         "scope-empty": {"scope": ""},
         "status-true": {"status": True},
         "status-null": {"status": None},
+        "status-empty": {"status": ""},
+        "status-pending": {"status": "pending"},
         "supersedes-int": {"supersedes": 7},
         "supersedes-true": {"supersedes": True},
         "supersedes-empty": {"supersedes": ""},
@@ -2244,8 +2250,45 @@ def test_hardening_a_target_field_of_the_wrong_type_refuses_with_four(tmp_path):
         target_id = f"{BASELINE_ID[:10]}-{label}"
         stderr, _repo, _rel = _refuse_raw_target(
             tmp_path, label, _planted_body(target_id, **patch))
+        if label.startswith("status-"):
+            # The status rule is membership of a closed set, so "status" alone in
+            # stderr would pass on any wording that merely named the field.
+            assert "status not one of decided|open|superseded" in stderr, (
+                f"{label}: {stderr}")
+            continue
         field = label.split("-")[0].replace("asked", "asked_by")
         assert field in stderr, f"{label}: {stderr}"
+
+
+def test_hardening_a_target_with_an_unknown_status_refuses_with_four(tmp_path):
+    """The status words a target may hold come from the writer's own constants.
+
+    ``targetschema`` typed ``status`` only as a string, so ``"pending"`` -- the word
+    a hand-edited record would carry -- passed the target's own check and reached the
+    flip. The allowed set now arrives from ``decide.py``'s ``STATUS_*`` constants (the
+    way ``superseded`` arrives at ``refuse_live_record``), so a helper cannot keep its
+    own list and quietly accept a status nothing writes: the refusal quotes that same
+    tuple, and every status the writer itself produces is in it. The launches prove
+    the set is the one the run applies, not a constant nobody reads: a target holding
+    the writer's own ``superseded`` reaches the terminal-status refusal (the census
+    accepts it, so it is not "unknown"), and one holding a word no constant names
+    exits 4 quoting the set.
+    """
+    decide = _decide_module()
+    assert decide.STATUSES == (decide.STATUS_DECIDED, decide.STATUS_OPEN,
+                               decide.STATUS_SUPERSEDED), decide.STATUSES
+    assert decide.STATUSES == ("decided", "open", "superseded"), decide.STATUSES
+    for label, value in (("pending", "pending"), ("archived", "archived")):
+        target_id = f"{BASELINE_ID[:10]}-status-{label}"
+        stderr, _repo, _rel = _refuse_raw_target(
+            tmp_path, f"status-{label}", _planted_body(target_id, status=value))
+        assert "status not one of decided|open|superseded" in stderr, f"{label}: {stderr}"
+    accepted = f"{BASELINE_ID[:10]}-status-writer"
+    stderr, _repo, _rel = _refuse_raw_target(
+        tmp_path, "status-writer",
+        _planted_body(accepted, status=decide.STATUS_SUPERSEDED))
+    assert "is already superseded" in stderr, stderr
+    assert "status not one of" not in stderr, stderr
 
 
 def test_hardening_a_target_read_that_fails_refuses_with_four(tmp_path, monkeypatch):
@@ -2304,7 +2347,8 @@ def test_hardening_an_absent_target_refuses_and_the_shape_hook_is_gone(tmp_path)
     gitwrite = _gitwrite_module()
     params = list(inspect.signature(gitwrite.load_committed_target).parameters)
     assert "shape_refusal" not in params, params
-    assert params == ["label", "repo", "path", "target_id", "canonical", "superseded"], params
+    assert params == ["label", "repo", "path", "target_id", "canonical", "superseded",
+                      "statuses"], params
     assert not hasattr(_decide_module(), "_refuse_target_shape"), (
         "decide.py still defines the dead shape callback")
 
@@ -2626,7 +2670,7 @@ def test_hardening_docs_state_the_refusals_the_code_performs(tmp_path):
             block[current] += " " + line.strip()
     four = block[4].lower()
     for condition in ("missing", "already superseded", "untracked", "locally modified",
-                      "canonical", "another day"):
+                      "canonical", "another day", "outside decided, open or superseded"):
         assert condition in four, f"docstring's exit 4 omits {condition!r}: {block[4]}"
     three = block[3].lower()
     assert "is not a git work tree" in three

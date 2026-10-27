@@ -7,14 +7,13 @@ supplied: all questions answered is ``decided``, any unanswered question is
 ``open`` (written as ``"answer": null``), and the target of a supersede becomes
 ``superseded``. There is no --status flag.
 
-``id`` is ``<date>-<slug>``, so a record's filename stays a plain path segment,
-and ``--date`` (default: today, UTC) is the day that names it. A supersede
-carries the date of the record it replaces, so chain and filename stay in step,
-and the slug keeps the two files apart. A supersede target is read from the
-working tree and must be tracked, committed and byte-identical to
-``git show HEAD:<path>``; only its ``status`` changes, and it is written with
-the same atomic replace as the new record. Both paths are staged and committed
-with one ``--only`` commit, so a run never sweeps in a file it did not write.
+``id`` is ``<date>-<slug>``, so a record's filename stays a plain path segment, and
+``--date`` (default: today, UTC) is the day that names it. A supersede carries the
+date of the record it replaces, so chain and filename stay in step, and the slug
+keeps the two files apart. A supersede target is read from the working tree, must be
+tracked and committed, and must be byte-identical to ``git show HEAD:<path>``; only
+its ``status`` changes, and it is written with the same atomic replace as the new
+record. Both paths go in one ``--only`` commit, so a run writes nothing else.
 
 Usage:
     decide.py --repo REPO --slug SLUG --scope SCOPE --asked-by ROLE
@@ -36,10 +35,11 @@ Exit codes:
        superseded, untracked, locally modified, not a regular file at its path
        (symlink, directory or device), not readable at all, not in the writer's
        canonical form, dated another day than --date, or carries a field the census
-       does not type as a string, questions that are not a non-empty list of objects
-       each with a string id and a string-or-null answer, or a number JSON cannot
-       hold (NaN, Infinity or an overflow). A show reporting no path in HEAD is this
-       code, not 3: git answered
+       does not type as a string, a status outside decided, open or superseded,
+       questions that are not a non-empty list of objects each with a string id
+       and a string-or-null answer, or a number JSON cannot hold (NaN, Infinity or
+       an overflow). A show reporting no path in HEAD is this code, not 3: git
+       answered
     5  the commit failed: both paths are rolled back (index reset, target
        restored, new record removed) and anything the undo could not do is named
        (a failed reset and the paths that may still be staged, or a path it could
@@ -89,7 +89,7 @@ _rollback = gitwrite.rollback
 _undone = gitwrite.undo_wording
 
 # Every return path names one of these; the 'Exit codes:' block above carries
-# exactly this set (tests/test_decide.py reads both and pins them together).
+# exactly this set (tests/test_decide.py pins them together).
 EXIT_OK: int = 0
 EXIT_USAGE: int = 2
 EXIT_GIT: int = 3
@@ -98,17 +98,17 @@ EXIT_COMMIT_FAILED: int = 5
 
 # A slug is half the record id and half its filename, so it is held to what the
 # census accepts as a plain path segment (census.sh reports a basename outside
-# ^[A-Za-z0-9._-]+\.json$ as 10:bad-name). Dashes only, so <date>-<slug> stays
-# unambiguous.
+# ^[A-Za-z0-9._-]+\.json$ as 10:bad-name). Dashes only: the split is not ambiguous.
 SLUG_RE = re.compile(r"[a-z0-9-]+")
 DATE_FLAG_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 ID_RE = re.compile(r"\d{4}-\d{2}-\d{2}-[a-z0-9-]+")
 
-# Status is derived from the answers; it is the one field of an existing record
-# this writer may change.
+# Status is derived from the answers; it is the one field of an existing record this
+# writer may change. STATUSES, the census's set, is given to the target check.
 STATUS_DECIDED = "decided"
 STATUS_OPEN = "open"
 STATUS_SUPERSEDED = "superseded"
+STATUSES = (STATUS_DECIDED, STATUS_OPEN, STATUS_SUPERSEDED)
 
 # The field order both censuses document; json.dump keeps it, source last.
 FIELD_ORDER = ("id", "date", "asked_by", "questions", "by",
@@ -214,7 +214,7 @@ def _load_target(repo: Path, ledger: Path,
     """
     path = ledger / f"{target_id}.json"
     found = _load_committed_target(Path(__file__).name, repo, path, target_id,
-                                   _render, STATUS_SUPERSEDED)
+                                   _render, STATUS_SUPERSEDED, STATUSES)
     return found if isinstance(found, int) or not isinstance(found[0], bytes) else (
         path, found[1], found[0])
 

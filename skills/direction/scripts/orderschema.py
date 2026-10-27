@@ -107,9 +107,11 @@ def refuse_constant(token: str) -> float:
     """The reader's answer to ``NaN``/``Infinity``/``-Infinity``: refuse the token.
 
     Raising is how ``parse_constant`` refuses; the ``ValueError`` travels the
-    same except arm as a malformed document, so no token is named back.
+    same except arm as a malformed document. The wording is fixed and names no
+    token: the token is bytes read from a file this writer did not write, and a
+    refusal that quotes it hands that content to whoever prints the refusal.
     """
-    raise ValueError(f"not a JSON number: {token}")
+    raise ValueError("not a JSON number")
 
 
 def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
@@ -131,7 +133,9 @@ def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
     seen: set[str] = set()
     for key, _value in pairs:
         if key in seen:
-            raise ValueError(f"duplicate key: {key}")
+            # Content-free wording: the key is text read from a file this writer
+            # did not write, and this ValueError is what the caller prints.
+            raise ValueError("duplicate key")
         seen.add(key)
     return dict(pairs)
 

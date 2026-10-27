@@ -161,9 +161,10 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(EXIT_USAGE, f"--decision belongs to add, not {subcommand}",
                      "only add takes a position's decision; confirm restamps what is there")
 
-    # The issue token: a positive integer, checked before the file is opened,
-    # so a typo cannot decide which entry of a real order gets touched. confirm
-    # is the one verb that may omit it, which means every entry at once.
+    # The issue token: a positive integer spelled in ASCII decimal digits, checked
+    # before the file is opened, so a typo cannot decide which entry of a real
+    # order gets touched. confirm is the one verb that may omit it, which means
+    # every entry at once.
     issue: int | None = None
     if subcommand == "confirm" and args.issue is None:
         pass
@@ -172,7 +173,7 @@ def main(argv: list[str] | None = None) -> int:
         if token is None:
             return _fail(EXIT_USAGE, f"{subcommand} needs an issue number",
                          f"order.py --repo REPO {subcommand} 42")
-        if not token.isdigit() or int(token) < 1:
+        if not orderstate.is_index_text(token) or int(token) < 1:
             return _fail(EXIT_USAGE, f"issue {token!r} is not a positive integer",
                          "name the issue by its number, e.g. 42")
         issue = int(token)

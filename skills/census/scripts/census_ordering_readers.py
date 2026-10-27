@@ -66,19 +66,26 @@ def names_zone(stamp: str) -> bool:
 
 
 def is_canonical_issue(key: object) -> bool:
-    """Whether ``key`` is the canonical decimal spelling of a positive issue.
+    """Whether ``key`` is the canonical ASCII decimal spelling of a positive issue.
 
     ``isdigit`` alone admits ``"\u0660"``-style digits and would let ``"007"``
-    through; the round trip through ``int`` is the whole rule, and it is what
+    through; the round trip through ``int`` is the rest of the rule, and it is what
     makes a key the same string the closed check builds from the entry's own
     issue. A padded or signed key can never match an entry, so accepting one
     would turn an issue the file does name into a silent cannot-tell row.
+
+    ``isascii`` is not decoration: ``isdigit`` is True for a superscript or an
+    Arabic-Indic digit, and ``int`` refuses both, so a key of ``"\u00b2"`` used to
+    reach ``int`` and raise out of the census. The digits are accepted only where
+    the two predicates agree, and ``int`` is never asked about a character it
+    would refuse.
     """
-    return isinstance(key, str) and key.isdigit() and str(int(key)) == key and int(key) >= 1
+    return (isinstance(key, str) and key.isascii() and key.isdecimal()
+            and str(int(key)) == key and int(key) >= 1)
 
 
 def load_order(order: Path, file_kind, bounded, parse_iso, shape: Callable[[object], list[str]],
-               load_json: Callable[[bytes], object]
+               load_json: Callable[[bytes], object], clipped: Callable[[str], str]
                ) -> tuple[list[dict] | None, str | None]:
     """The order's entries, or (None, the reason it is not an order).
 
@@ -94,6 +101,9 @@ def load_order(order: Path, file_kind, bounded, parse_iso, shape: Callable[[obje
     the classes that report them, and a copy here would be a second contract for
     one field list. ``load_json`` is the census's strict reader, handed in rather
     than imported so this module never trusts a bare name off ``sys.path``.
+    ``clipped`` is the census's own length rule, applied to the problems once they
+    are one sentence: each quotes a value read from the file, and the readers
+    module carries no bound of its own any more than it carries a reader.
     """
     kind, problem = file_kind(order)
     if kind == "absent":
@@ -124,7 +134,12 @@ def load_order(order: Path, file_kind, bounded, parse_iso, shape: Callable[[obje
         return None, "the order file is not valid JSON"
     problems = shape(value)
     if problems:
-        return None, "; ".join(problems)
+        # The joined problems quote values read out of the file (an entry's issue,
+        # decision or unknown key names), so the finished sentence is clipped: the
+        # bound every other row of the report keeps is a property of the row, not
+        # of one fragment inside it. ``clipped`` and not ``bounded`` because the
+        # shape's own wording names root-relative paths the row must keep.
+        return None, clipped("; ".join(problems))
     return list(value["entries"]), None
 
 

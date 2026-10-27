@@ -1091,12 +1091,38 @@ def _git_env() -> dict[str, str]:
 def _bounded(message: str, limit: int = 300) -> str:
     """Bound an exception-derived message and strip machine-local absolute
     paths from it: a row built from someone else's error text must not smuggle
-    a host path into a report that promises not to print one."""
+    a host path into a report that promises not to print one.
+
+    The scrubbing is what makes this the right wrapper for a foreign message, and
+    the wrong one for a sentence this census composed itself: a row that names the
+    ledger as ``noni/decisions`` is naming a root-relative path on purpose, and a
+    wrapper that shortened it to ``<path>`` would destroy the very thing the row
+    is telling the operator to look at. So the two halves are separate here and
+    the group hands each one what it needs: this for text that came from outside,
+    :func:`_clipped` for the finished sentence around it.
+    """
+    return _clipped(_stripped(message), limit)
+
+
+def _stripped(message: str) -> str:
+    """``message`` with runs of whitespace collapsed and host paths replaced.
+
+    The path-stripping half of :func:`_bounded`, alone: a caller that composed a
+    sentence out of root-relative paths it derived itself needs the collapsing and
+    nothing else.
+    """
     collapsed = " ".join(message.split())
-    collapsed = re.sub(r"(?:/[A-Za-z0-9._-]+)+", "<path>", collapsed)
-    if len(collapsed) > limit:
-        collapsed = collapsed[: limit - 3] + "..."
-    return collapsed
+    return re.sub(r"(?:/[A-Za-z0-9._-]+)+", "<path>", collapsed)
+
+
+def _clipped(message: str, limit: int = 300) -> str:
+    """``message`` cut to ``limit`` characters, with an ellipsis when it was cut.
+
+    The length half of :func:`_bounded`, alone: the bound a row keeps is a property
+    of the row, so it is applied to the finished sentence a reporter composed,
+    whose own path fragments must survive (see :func:`_bounded`).
+    """
+    return message if len(message) <= limit else message[: limit - 3] + "..."
 
 
 def _parse_session(body: str) -> tuple[dict[str, str], list[str], list[str]]:
@@ -1354,6 +1380,7 @@ def _check_ordering(
     _ordering.check_ordering(order, ledger, root, now, ordering_stale_after, issue_state,
                             strict, findings, row=_row, rel_to_root=_rel_to_root,
                             file_kind=_file_kind, bounded=_bounded, parse_iso=_parse_iso,
+                            clipped=_clipped,
                             readers=_ordering_readers,
                             load_json_strict=_census_json.load_json_strict,
                             names_zone=_ordering_readers.names_zone)

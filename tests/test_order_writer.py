@@ -778,6 +778,46 @@ def test_a_non_positive_issue_exits_two(tmp_path):
         assert "positive integer" in proc.stderr or "expected one argument" in proc.stderr
 
 
+def test_a_non_ascii_digit_issue_number_exits_two(tmp_path):
+    """``str.isdigit`` is True for characters ``int`` will not accept.
+
+    A superscript two is a "digit" to ``isdigit`` and a ``ValueError`` to ``int``,
+    so the issue token used to reach ``int(token)`` past the digit check and the
+    writer died with a traceback instead of a usage refusal. The token is refused
+    before the artifact is opened, and nothing is written.
+    """
+    repo = _repo(tmp_path)
+    for token in ("\u00b2", "\u0667"):
+        proc = _order(repo, "add", token, "--decision", BASELINE_ID, "--now", NOW)
+        assert proc.returncode == 2, f"{token!r}: {proc.returncode} {proc.stderr}"
+        assert "positive integer" in proc.stderr, f"{token!r}: {proc.stderr}"
+        assert "Traceback" not in proc.stderr, f"{token!r}: {proc.stderr}"
+        assert not _order_path(repo).exists(), f"{token!r} wrote the artifact"
+
+
+def test_a_non_ascii_digit_position_exits_two(tmp_path):
+    """``--at`` and ``--to`` obey the token rule an issue number obeys.
+
+    A position is read with the same ``int`` call, so a superscript digit reached
+    it past any gate that stopped at ``isdigit`` and the writer raised instead of
+    refusing. The two flags are refused with the position's own wording, on the
+    order they were handed, and nothing is written.
+    """
+    repo = _repo(tmp_path)
+    _seed(repo, _entry(1, BASELINE_ID), _entry(2, BASELINE_ID))
+    for token in ("\u00b2", "\u0667"):
+        add = _order(repo, "add", "7", "--at", token, "--decision", BASELINE_ID,
+                     "--now", NOW)
+        assert add.returncode == 2, f"--at {token!r}: {add.returncode} {add.stderr}"
+        assert "--at" in add.stderr and "position" in add.stderr, add.stderr
+        assert "Traceback" not in add.stderr, add.stderr
+        move = _order(repo, "move", "1", "--to", token, "--now", NOW)
+        assert move.returncode == 2, f"--to {token!r}: {move.returncode} {move.stderr}"
+        assert "--to" in move.stderr and "position" in move.stderr, move.stderr
+        assert "Traceback" not in move.stderr, move.stderr
+        assert _issues(repo) == [1, 2], f"{token!r} changed the order"
+
+
 def test_a_missing_issue_number_exits_two(tmp_path):
     repo = _repo(tmp_path)
     for verb in ("add", "move", "remove"):

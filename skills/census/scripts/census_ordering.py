@@ -145,7 +145,7 @@ def check_ordering(
     issue_state, strict: bool, findings: list[dict], *,
     row: Callable[..., dict], rel_to_root: Callable[[Path, Path], str], file_kind,
     bounded: Callable[[str], str], parse_iso, readers, names_zone,
-    load_json_strict: Callable[[bytes], object],
+    load_json_strict: Callable[[bytes], object], clipped: Callable[[str], str],
 ) -> None:
     """Check the ordering artifact; append its findings to ``findings``.
 
@@ -189,7 +189,7 @@ def check_ordering(
     entries, problem = readers.load_order(order, file_kind, bounded, parse_iso,
                                           lambda value: order_problems(value, parse_iso,
                                                                        names_zone),
-                                          load_json_strict)
+                                          load_json_strict, clipped)
     state_map = issue_state.map
     if issue_state.given and issue_state.problem is not None:
         # The flag was given and its file does not answer: reported as a
@@ -219,10 +219,16 @@ def check_ordering(
         # owns the report, an I/O fault of the listing is visible only here: no
         # other class of this run sees it.
         add("ordering-malformed", ORDER_DEFAULT_SUBJECT, rel_to_root(root, order),
-            f"the decision ledger ({rel_to_root(root, ledger)}) could not be listed"
-            f"{'' if listing_fault is None else ': ' + bounded(listing_fault)}, so no "
-            "entry's decision citation could be checked against the records the ledger "
-            "holds", whole_artifact=True)
+            # The whole composed sentence is clipped, not just the OSError text
+            # inside it: the row's length is a property of the row, and a fault
+            # whose strerror runs to thousands of characters is otherwise a row
+            # past the bound every other row of the report keeps. ``clipped`` and
+            # not ``bounded`` because the sentence names the ledger by a path the
+            # row must keep; the fault text itself still goes through ``bounded``.
+            clipped(f"the decision ledger ({rel_to_root(root, ledger)}) could not be listed"
+                    f"{'' if listing_fault is None else ': ' + bounded(listing_fault)}, "
+                    "so no entry's decision citation could be checked against the records "
+                    "the ledger holds"), whole_artifact=True)
     for index, entry in enumerate(entries or [], 1):
         issue = entry.get("issue")
         # The subject is the issue the entry names, so a caller can join a row
@@ -241,8 +247,11 @@ def check_ordering(
                 # paragraph of _row's docstring in census.py). Whatever the
                 # --only set names, a run that could not check the citation must
                 # not report nothing.
+                # Clipped as a whole because ``why`` quotes the entry's own
+                # decision text, read from the artifact: a value of any length is
+                # a row of at most the bound, as every other row of the report is.
                 add("ordering-malformed", subject, rel_to_root(root, order),
-                    f"{why} ({rel_to_root(root, ledger)})", whole_artifact=True)
+                    clipped(f"{why} ({rel_to_root(root, ledger)})"), whole_artifact=True)
 
         confirmed = parse_iso(entry.get("confirmed")) if isinstance(
             entry.get("confirmed"), str) else None

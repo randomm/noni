@@ -382,6 +382,19 @@ def _successor(repo: Path, decision: str, exit_io: int, exit_refusal: int) -> st
     return best
 
 
+def is_index_text(raw: str) -> bool:
+    """Whether ``raw`` is text ``int`` can read as a plain decimal number.
+
+    ``isdigit`` is True for a superscript or an Arabic-Indic digit and ``int``
+    refuses both, so a gate that stops at ``isdigit`` lets a token through to an
+    ``int`` call that raises: the writer dies with a traceback where it owes the
+    operator a usage refusal. ASCII decimal digits are what a position and an
+    issue number are spelled with, and this is the one rule both tokens obey.
+    """
+    return raw.isascii() and raw.isdecimal()
+    return raw.isascii() and raw.isdecimal()
+
+
 def parse_index(raw: str, flag: str, count: int) -> tuple[int, tuple[str, str] | None]:
     """The 1-based position ``raw`` names for a list of ``count`` entries.
 
@@ -391,11 +404,10 @@ def parse_index(raw: str, flag: str, count: int) -> tuple[int, tuple[str, str] |
     one: an out-of-range index answers nothing about an order, so it is refused
     rather than clamped.
     """
-    try:
-        position = int(raw)
-    except ValueError:
+    if not is_index_text(raw):
         return 0, (f"{flag} {raw!r} is not a position",
                    f"{flag} is a 1-based position in the order: pass {flag} 1 for the top")
+    position = int(raw)
     if not 1 <= position <= count:
         return 0, (f"{flag} {position} is outside the order "
                    f"(1 to {count} position(s) here)",

@@ -17,10 +17,14 @@ Three reads, one standard:
 - :func:`ledger_records` — the decision records under ``noni/decisions/``, with
   an honest account of what this run could and could not look at.
 
-Every one of them parses through :mod:`census_json`, the strict reader this group
-shares: what this arbiter can read is exactly what ``order.py`` can write, so an
-artifact the writer refuses is never one the census calls clean under the classes
-the operator gates on.
+Every one of them parses through a strict reader handed in at the call — the
+census passes its own ``census_json.load_json_strict`` — so what this arbiter can
+read is exactly what ``order.py`` can write, and an artifact the writer refuses
+is never one the census calls clean under the classes the operator gates on. The
+reader is an argument rather than an import for the same reason the path
+classifier and the message bounder are: a bare-name import would let any module
+named ``census_json`` earlier on ``sys.path`` be trusted as the census's strict
+reader.
 
 Nothing here prints, exits, or builds a row: each answer travels back as a value
 and the caller turns it into the row its own class owns. The census's path
@@ -34,8 +38,6 @@ import json
 import re
 from pathlib import Path
 from typing import Callable, NamedTuple
-
-from census_json import load_json_strict
 
 # A decision record id is what decide.py writes: <YYYY-MM-DD>-<slug> of
 # lowercase letters, digits and dashes. The same shape the writer refuses a
@@ -75,7 +77,8 @@ def is_canonical_issue(key: object) -> bool:
     return isinstance(key, str) and key.isdigit() and str(int(key)) == key and int(key) >= 1
 
 
-def load_order(order: Path, file_kind, bounded, parse_iso, shape: Callable[[object], list[str]]
+def load_order(order: Path, file_kind, bounded, parse_iso, shape: Callable[[object], list[str]],
+               load_json: Callable[[bytes], object]
                ) -> tuple[list[dict] | None, str | None]:
     """The order's entries, or (None, the reason it is not an order).
 
@@ -83,12 +86,14 @@ def load_order(order: Path, file_kind, bounded, parse_iso, shape: Callable[[obje
     ordering rows at all (contrast the ledger, whose absence is its own warn
     class). Anything else at the path that the census cannot read — a symlink it
     will not follow, a directory, unparseable bytes, a non-finite number, a
-    repeated key, a wrong schema — is the ``ordering-malformed`` finding, because
-    the artifact is there and is not the artifact.
+    repeated key, a nesting too deep to parse, a wrong schema — is the
+    ``ordering-malformed`` finding, because the artifact is there and is not the
+    artifact.
 
     ``shape`` is the artifact's rules, applied to the parsed value: they live with
     the classes that report them, and a copy here would be a second contract for
-    one field list.
+    one field list. ``load_json`` is the census's strict reader, handed in rather
+    than imported so this module never trusts a bare name off ``sys.path``.
     """
     kind, problem = file_kind(order)
     if kind == "absent":
@@ -100,14 +105,18 @@ def load_order(order: Path, file_kind, bounded, parse_iso, shape: Callable[[obje
     except OSError as e:
         return None, f"the order file is unreadable: {bounded(str(e))}"
     try:
-        value = load_json_strict(raw)
+        value = load_json(raw)
     except UnicodeDecodeError:
         # The exception text carries the offending bytes, which are untrusted
         # file content; the fixed wording names the class without echoing them.
         return None, "the order file is not valid UTF-8"
-    except (json.JSONDecodeError, ValueError):
-        # ValueError is the non-finite or duplicate-key refusal; its text names
-        # content read from the file, so the fixed wording names the class.
+    except (json.JSONDecodeError, ValueError, RecursionError):
+        # ValueError is the non-finite, duplicate-key or over-deep refusal, and
+        # its text names content read from the file, so the wording is fixed.
+        # RecursionError is named because it is no kind of ValueError: the strict
+        # reader bounds the depth and so never lets the decoder reach its own
+        # overflow, but a reader that did would have the whole run die on this
+        # line rather than answer with the row the artifact already earns.
         return None, "the order file is not valid JSON"
     problems = shape(value)
     if problems:
@@ -129,8 +138,8 @@ class IssueState(NamedTuple):
     given: bool
 
 
-def load_issue_state(path: Path | None, states: tuple[str, ...], file_kind, bounded
-                     ) -> IssueState:
+def load_issue_state(path: Path | None, states: tuple[str, ...], file_kind, bounded,
+                     load_json: Callable[[bytes], object]) -> IssueState:
     """The ``--issue-state`` map (issue -> open|closed), with its state.
 
     A file the operator or an adapter produced that does not parse, or whose
@@ -138,36 +147,46 @@ def load_issue_state(path: Path | None, states: tuple[str, ...], file_kind, boun
     ``ordering-malformed`` by the caller: a typo in the state file must stop the
     closed check from reading "no row" as "nothing is closed".
 
-    The bytes go through the same strict reader the artifact gets, so a map that
+    The bytes go through the strict reader the artifact gets, so a map that
     names one issue twice is refused rather than answered twice over: the last
     line is not the file's answer when the file also states the opposite one.
+
+    Every problem this function returns is the whole composed message passed
+    through ``bounded``: the row's text is built from keys and state words read
+    out of a file somebody else wrote, so the bound is applied to the finished
+    sentence and not only to the path inside it.
     """
     if path is None:
         return IssueState(None, None, False)
+    name = bounded(str(path))
     kind, problem = file_kind(path)
     if kind != "regular":
-        return IssueState(None, (f"the --issue-state file ({bounded(str(path))}) is not a "
-                                 f"readable regular file: {problem}"), True)
+        return IssueState(None, bounded(f"the --issue-state file ({name}) is not a "
+                                        f"readable regular file: {problem}"), True)
     try:
         raw = path.read_bytes()
     except OSError as e:
-        return IssueState(None, (f"the --issue-state file ({bounded(str(path))}) is "
-                                 f"unreadable: {bounded(str(e))}"), True)
+        return IssueState(None, bounded(f"the --issue-state file ({name}) is "
+                                        f"unreadable: {bounded(str(e))}"), True)
     try:
-        value = load_json_strict(raw)
+        value = load_json(raw)
     except UnicodeDecodeError:
         # As for the artifact: the text carries untrusted bytes, so the row names
         # the class instead of echoing them.
-        return IssueState(None, (f"the --issue-state file ({bounded(str(path))}) is not "
-                                 f"valid UTF-8"), True)
-    except (json.JSONDecodeError, ValueError):
-        # ValueError is a duplicate key or a non-finite literal; its text names
-        # content read from the file, so the fixed wording names the class.
-        return IssueState(None, (f"the --issue-state file ({bounded(str(path))}) is not "
-                                 f"valid JSON"), True)
+        return IssueState(None, bounded(f"the --issue-state file ({name}) is not "
+                                        "valid UTF-8"), True)
+    except (json.JSONDecodeError, ValueError, RecursionError):
+        # A duplicate key, a non-finite literal or an over-deep nesting raises
+        # ValueError; its text names content read from the file, so the wording
+        # is fixed. RecursionError is named for the same reason as in load_order:
+        # it is not a ValueError, and the bounded reader never lets the decoder
+        # reach the depth where the standard one raises it.
+        return IssueState(None, bounded(f"the --issue-state file ({name}) is not "
+                                        "valid JSON"), True)
     if not isinstance(value, dict):
-        return IssueState(None, (f"the --issue-state file ({bounded(str(path))}) is not a "
-                                 "JSON object mapping issue numbers to open or closed"), True)
+        return IssueState(None, bounded(f"the --issue-state file ({name}) is not a "
+                                        "JSON object mapping issue numbers to open or "
+                                        "closed"), True)
     state: dict[str, str] = {}
     bad: list[str] = []
     for key, item in value.items():
@@ -180,12 +199,12 @@ def load_issue_state(path: Path | None, states: tuple[str, ...], file_kind, boun
             continue
         state[key] = item
     if bad:
-        return IssueState(None, (f"the --issue-state file ({bounded(str(path))}) is "
-                                 "malformed: " + "; ".join(sorted(bad)[:4])), True)
+        return IssueState(None, bounded(f"the --issue-state file ({name}) is "
+                                        "malformed: " + "; ".join(sorted(bad)[:4])), True)
     return IssueState(state, None, True)
 
 
-def ledger_records(ledger: Path, file_kind,
+def ledger_records(ledger: Path, file_kind, load_json: Callable[[bytes], object]
                    ) -> tuple[dict[str, dict], bool, set[str], bool, str | None]:
     """The records the ledger holds, keyed by filename stem, plus three answers
     about the read: whether any lookup could be made, which names could not be
@@ -256,8 +275,12 @@ def ledger_records(ledger: Path, file_kind,
             unreadable.add(stem)
             continue
         try:
-            value = load_json_strict(raw)
-        except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
+            value = load_json(raw)
+        except (UnicodeDecodeError, ValueError, RecursionError, json.JSONDecodeError):
+            # A record that does not parse is no record: the ledger group owns
+            # reporting it, so it is left out of the map. RecursionError is named
+            # because it is not a ValueError — a reader that did not bound its
+            # depth would end the whole run here instead of skipping one file.
             continue
         if isinstance(value, dict):
             records[stem] = value

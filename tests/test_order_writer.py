@@ -119,6 +119,25 @@ def _order_module() -> object:
     return module
 
 
+def _orderstate_module() -> object:
+    """orderstate.py loaded as a module, for the tests that drive its reads.
+
+    The two JSON reads are what these tests ask about, and they are reached
+    directly: no verb of the writer reads a record on the way to the answer a
+    subprocess run would print, and a copy of the read in the test file would be
+    a second contract for it.
+    """
+    path = SKILL_DIR / "scripts" / "orderstate.py"
+    spec = importlib.util.spec_from_file_location("noni_orderstate_under_test", path)
+    if spec is None or spec.loader is None:  # pragma: no cover - path is fixed
+        raise RuntimeError(f"cannot load the order state reader from {path}")
+    sys.modules.pop(spec.name, None)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def _order_path(repo: Path) -> Path:
     return repo / ORDER_REL
 
@@ -1185,6 +1204,161 @@ def test_the_schema_reads_a_utc_stamp_and_refuses_a_bare_one():
     assert schema.parse_confirmed("2026-10-27T12:00:00+02:00") is not None
     assert schema.parse_confirmed("2026-10-27T12:00:00") is None
     assert schema.parse_confirmed("yesterday") is None
+
+
+# --- a pathological nesting, and the two reads that must survive it ------------
+
+# ``json.loads`` walks nesting on the interpreter's own stack, so a document past
+# ``sys.getrecursionlimit()`` raises RecursionError -- not a ValueError, and so
+# not caught by the arms the writer's two JSON reads already had. One such file
+# at either path turned a writer run into a traceback.
+DEEP = 100000
+
+
+def _deep(depth: int = DEEP) -> str:
+    """Legal JSON text nested ``depth`` levels: ``json.loads`` overflows on it.
+
+    Built as text: the value it describes is the one the standard reader cannot
+    build, so a fixture that parsed it first could not test the reader meant to
+    survive it.
+    """
+    return "[" * depth + "1" + "]" * depth
+
+
+def _deep_artifact() -> str:
+    """An otherwise well-formed artifact whose entry carries one extra field
+    nested ``DEEP`` levels."""
+    return ('{"schema": "noni.order/1", "entries": [{"issue": 7, "decision": null, '
+            '"confirmed": "' + STAMP + '", "x": ' + _deep() + "}]}")
+
+
+def test_a_deeply_nested_artifact_is_refused_at_four_and_not_a_traceback(tmp_path):
+    """The writer's artifact read answers the pathological file with its existing
+    malformed refusal (exit 4), leaving the operator's bytes exactly as they
+    were: a crash would be worse than a refusal, and an overwrite worse still."""
+    repo = _repo(tmp_path)
+    before = _deep_artifact()
+    _order_path(repo).parent.mkdir(parents=True, exist_ok=True)
+    _order_path(repo).write_text(before, encoding="utf-8")
+    proc = _order(repo, "confirm", "--now", NOW)
+    combined = proc.stdout + proc.stderr
+    assert "RecursionError" not in combined, combined[-2000:]
+    assert proc.returncode == 4, (proc.returncode, combined[-2000:])
+    assert "not valid JSON" in combined, combined[-2000:]
+    assert _order_path(repo).read_text(encoding="utf-8") == before, \
+        "a refused run must leave the artifact byte-identical"
+
+
+def test_a_deeply_nested_decision_record_refuses_the_run_at_three(tmp_path):
+    """The record read is the writer's other JSON read, and it shares the fate of
+    any record it cannot read: exit 3, the environment fault, with its own fixed
+    wording -- never a traceback and never an answer invented from nothing."""
+    state = _orderstate_module()
+    record = tmp_path / "noni" / "decisions" / "2026-10-01-baseline.json"
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text(_deep(), encoding="utf-8")
+    found, refusal = state.read_record(record, 3, 4)
+    assert found is None, found
+    assert refusal is not None
+    code, (headline, _hint) = refusal
+    assert code == 3, refusal
+    assert "not readable JSON" in headline, headline
+
+
+def test_the_writer_walks_a_deep_value_without_recursing():
+    """The writer's copy of the non-finite walk is iterative with its own stack.
+
+    The value is assembled by hand because no decoder can build it: that is the
+    shape a reader must survive, and a recursive walk answers the question by
+    dying inside the read.
+    """
+    schema = _schema_module()
+    deep: list = []
+    cursor = deep
+    for _ in range(DEEP):
+        child: list = []
+        cursor.append(child)
+        cursor = child
+    cursor.append("x")
+    assert schema.holds_non_finite(deep) is False
+    cursor[-1] = float("inf")
+    assert schema.holds_non_finite(deep) is True
+
+
+def test_the_writer_refuses_a_deep_document_before_the_decoder_overflows():
+    """The writer's read refuses the pathological document itself.
+
+    ``json.loads`` overflows its C stack only at a depth set by the interpreter's
+    build, far above any ceiling a reader could want, so the document that proves
+    the mechanism is one the standard reader can still build: the bound is what
+    answers, raising the ``ValueError`` the two reads already catch instead of
+    leaving a ``RecursionError`` that would slip past them and kill the run.
+    """
+    schema = _schema_module()
+    inside = 5000
+    body = "[" * inside + "1" + "]" * inside
+    assert json.loads(body), "the standard reader must still be able to build this"
+    try:
+        schema.load_json_checked(("{\"a\": " + body + "}").encode())
+    except ValueError as e:
+        assert str(schema.MAX_DEPTH) in str(e), \
+            f"refused for another reason, so the bound is not what answered: {e}"
+    else:
+        raise AssertionError("a document nested past the bound was accepted")
+
+
+def test_the_writer_refuses_an_artifact_that_states_a_key_twice(tmp_path):
+    """The artifact read refuses a repeated key before the shape rules or the
+    canonical-bytes comparison are reached.
+
+    Last-wins is an answer no line of the file supports: a document that states
+    ``schema`` twice, once wrongly, is not a document that states it once
+    correctly. The strict reader is what refuses it.
+    """
+    state = _orderstate_module()
+    artifact = tmp_path / ORDER_REL
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text('{"schema": "noni.order/1", "schema": "nope", '
+                        '"entries": []}\n', encoding="utf-8")
+    read = state.read_order(artifact)
+    assert isinstance(read, state.OrderRefused), read
+    assert "not valid JSON" in read.headline, read.headline
+
+
+def test_the_writer_refuses_a_decision_record_that_states_a_key_twice(tmp_path):
+    """A record whose ``status`` is stated twice is not a record whose status is
+    known: whichever line the standard reader kept would decide whether an order
+    still stands. The read refuses it as the unreadable-record fault it is."""
+    state = _orderstate_module()
+    record = tmp_path / "noni" / "decisions" / "2026-10-01-baseline.json"
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text('{"id": "2026-10-01-baseline", "status": "decided", '
+                      '"status": "superseded", "supersedes": null}\n', encoding="utf-8")
+    found, refusal = state.read_record(record, 3, 4)
+    assert found is None, found
+    assert refusal is not None
+    code, (headline, _hint) = refusal
+    assert code == 3, refusal
+    assert "not readable JSON" in headline, headline
+
+
+def test_the_writer_still_reads_the_bytes_it_writes(tmp_path):
+    """The counter-case to the two refusals above: the strictness must not be a
+    bug, so the canonical artifact and a well-formed record both still read."""
+    state = _orderstate_module()
+    artifact = tmp_path / ORDER_REL
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text(_canonical([_entry(7, None)]), encoding="utf-8")
+    read = state.read_order(artifact)
+    assert isinstance(read, state.OrderOk), read
+    assert [entry["issue"] for entry in read.entries] == [7]
+    record = tmp_path / "noni" / "decisions" / "2026-10-01-baseline.json"
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text('{"id": "2026-10-01-baseline", "status": "decided", '
+                      '"supersedes": null}\n', encoding="utf-8")
+    found, refusal = state.read_record(record, 3, 4)
+    assert refusal is None, refusal
+    assert found is not None and found["status"] == "decided"
 
 
 def test_a_writer_run_leaves_the_ordering_census_clean(tmp_path):

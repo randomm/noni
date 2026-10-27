@@ -1033,10 +1033,11 @@ def _load_sibling(name: str, file: str):
     put a directory ahead of the standard library, where a lookalike could be
     trusted as the census's own code; loading by path with a name of our own is
     what closes that. The module is registered under ``name`` before exec (the
-    canonical importlib recipe), so a module body that imports itself — or, like
-    ``census_ordering_readers``, imports the strict reader beside it under that
-    sibling's registered name — finds the census's own entry and not a lookalike
-    earlier on the path. Load order is therefore meaningful: a module must be
+    canonical importlib recipe), so a module body that imports itself finds the
+    census's own entry and not a lookalike earlier on the path. A sibling that
+    needs another sibling is handed what it needs as an argument at the call
+    rather than importing it by name, so no reader's trust is decided by
+    ``sys.path``. Load order is therefore meaningful: a module must be
     registered before any module that names it is exec'd.
     """
     spec = importlib.util.spec_from_file_location(
@@ -1326,12 +1327,18 @@ def _is_non_terminal(fields: dict[str, str]) -> bool:
 _ORDERING_NAME = "noni_census_ordering"
 _ordering = _load_sibling(_ORDERING_NAME, "census_ordering.py")
 _ORDERING_READERS_NAME = "noni_census_ordering_readers"
-# Loaded before the readers and registered under the name they import: a module
-# body's `from census_json import ...` resolves through sys.modules, so the
-# readers get the file beside this census and not a lookalike from elsewhere on
-# the path. Load order is part of the contract, not an accident of import time.
+# Loaded before the readers and registered under the name the census keeps for
+# it: the strict reader itself is handed to the readers as an argument, and the
+# registration means a module that names it in this interpreter still gets the
+# file beside this census and not a lookalike from elsewhere on the path. Load
+# order is part of the contract, not an accident of import time.
 _load_sibling("noni_census_json", "census_json.py")
 _ordering_readers = _load_sibling(_ORDERING_READERS_NAME, "census_ordering_readers.py")
+# The strict reader the readers module applies to every file the group parses.
+# It arrives as an argument (like file_kind, bounded and parse_iso) rather than
+# as a bare-name import inside that module, so nothing the readers trust as the
+# census's strict reader is chosen by sys.path.
+_census_json = sys.modules["noni_census_json"]
 
 
 def _check_ordering(
@@ -1348,6 +1355,7 @@ def _check_ordering(
                             strict, findings, row=_row, rel_to_root=_rel_to_root,
                             file_kind=_file_kind, bounded=_bounded, parse_iso=_parse_iso,
                             readers=_ordering_readers,
+                            load_json_strict=_census_json.load_json_strict,
                             names_zone=_ordering_readers.names_zone)
 
 
@@ -1523,7 +1531,7 @@ def main(argv: list[str] | None = None) -> int:
         _check_ordering(ordering, ledger, root, now, ordering_stale_after,
                         _ordering_readers.load_issue_state(
                             issue_state_path, _ordering.ISSUE_STATE_STATES,
-                            _file_kind, _bounded),
+                            _file_kind, _bounded, _census_json.load_json_strict),
                         args.strict, findings)
         findings[:] = keep(findings)
         # The closed check's question comes only from --issue-state, which an

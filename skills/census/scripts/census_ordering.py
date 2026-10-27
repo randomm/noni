@@ -145,6 +145,7 @@ def check_ordering(
     issue_state, strict: bool, findings: list[dict], *,
     row: Callable[..., dict], rel_to_root: Callable[[Path, Path], str], file_kind,
     bounded: Callable[[str], str], parse_iso, readers, names_zone,
+    load_json_strict: Callable[[bytes], object],
 ) -> None:
     """Check the ordering artifact; append its findings to ``findings``.
 
@@ -161,11 +162,12 @@ def check_ordering(
     flag the closed question is not asked and the run says so once rather than
     reading as a clean closed check.
 
-    The row factory, the four path/text primitives it needs and the ``readers``
-    module (with its ``names_zone`` stamp rule) come in as arguments rather than
-    being imported: ``census.py`` owns the row shape and the bounded wording of a
-    foreign message, this module carries no sys.path entry of its own, and a copy
-    of any of them here would be a second contract for the same row.
+    The row factory, the four path/text primitives it needs, the ``readers``
+    module (with its ``names_zone`` stamp rule) and ``load_json_strict`` — the
+    census's strict JSON reader — come in as arguments rather than being
+    imported: ``census.py`` owns the row shape and the bounded wording of a
+    foreign message, neither module carries a sys.path entry of its own, and a
+    copy of any of them here would be a second contract for the same row.
     """
     # The readers take the census's own path and message primitives as
     # arguments: this module must not carry a second definition of what a
@@ -186,7 +188,8 @@ def check_ordering(
 
     entries, problem = readers.load_order(order, file_kind, bounded, parse_iso,
                                           lambda value: order_problems(value, parse_iso,
-                                                                       names_zone))
+                                                                       names_zone),
+                                          load_json_strict)
     state_map = issue_state.map
     if issue_state.given and issue_state.problem is not None:
         # The flag was given and its file does not answer: reported as a
@@ -205,7 +208,7 @@ def check_ordering(
         return
 
     records, ledger_readable, unreadable_records, listed, listing_fault = \
-        readers.ledger_records(ledger, file_kind)
+        readers.ledger_records(ledger, file_kind, load_json_strict)
     if not ledger_readable and listed and any(isinstance(entry.get("decision"), str)
                                              for entry in entries or []):
         # The listing itself faulted on a directory that is there, so this run

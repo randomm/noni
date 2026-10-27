@@ -5,7 +5,7 @@ is worth. This module owns one question — what bytes may be called a noni JSON
 document — and the three modules that read noni JSON under the census answer it
 the same way by going through here.
 
-Three refusals, because the standard reader accepts three things no noni writer
+Four refusals, because the standard reader accepts four things no noni writer
 can name:
 
 - ``NaN``/``Infinity``/``-Infinity`` are not JSON at all and :func:`refuse_constant`
@@ -16,16 +16,37 @@ can name:
 - a repeated key is legal JSON text whose meaning the standard reader invents
   (last one wins), and :func:`reject_duplicate_keys` refuses it before any entry
   is examined.
+- a document nested past any depth a noni writer renders is refused by the depth
+  bound in :func:`load_json_strict`, which is also what keeps the read out of
+  ``json.loads``' own C-stack overflow: a ``RecursionError`` is not a
+  ``ValueError``, so a reader that let the decoder reach its limit would crash
+  the run instead of reporting the file.
 
-Raises ``ValueError`` for all three; the caller turns that into the whole-artifact
-row its own class owns, with fixed wording, because the exception's own text names
-content read from an untrusted file.
+Raises ``ValueError`` for all four; the caller turns that into the
+whole-artifact row its own class owns, with fixed wording, because the
+exception's own text names content read from an untrusted file.
 """
 
 from __future__ import annotations
 
 import json
 import math
+
+# The deepest nesting any noni writer renders: the artifact is two levels
+# (document, entries, entry) and a decision record a few more, so a document a
+# thousand levels deep is not a file this product wrote.
+#
+# The bound is also what makes the read safe, and the number cannot simply be
+# raised. ``json.loads`` walks nesting on the C stack and overflows at a depth
+# set by the interpreter's build (about 10k on a release CPython 3.13, tens of
+# thousands elsewhere), not by ``sys.setrecursionlimit``. Any ceiling a reader
+# could actually want -- one a real artifact cannot approach -- sits below that
+# threshold, so the walk below stops the document before the decoder ever
+# reaches its own limit. A reader that instead let ``json.loads`` overflow would
+# meet a RecursionError, which is not a ValueError and so escapes the except
+# arms that catch every other malformed file: the whole run would die on one
+# pathological document instead of reporting it.
+MAX_DEPTH = 256
 
 
 def refuse_constant(token: str) -> float:
@@ -69,31 +90,74 @@ def holds_non_finite(value: object) -> bool:
     artifact, the ledger and the state file without importing the writer's
     helpers, so the walk lives with the reader that needs it. A bool is a bool,
     never a number, so an artifact every writer emits still parses.
+
+    The walk is iterative with its own stack, never recursive: a document that
+    nests deeper than the interpreter's limit makes a recursive walk raise
+    ``RecursionError`` inside the reader, and a reader that dies on the shape of
+    a file answers nothing about it.
     """
-    if isinstance(value, float):
-        return not math.isfinite(value)
-    if isinstance(value, dict):
-        return any(holds_non_finite(item) for item in value.values())
-    if isinstance(value, (list, tuple)):
-        return any(holds_non_finite(item) for item in value)
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, float):
+            if not math.isfinite(item):
+                return True
+        elif isinstance(item, dict):
+            stack.extend(item.values())
+        elif isinstance(item, (list, tuple)):
+            stack.extend(item)
     return False
 
 
-def load_json_strict(raw: bytes) -> object:
+def _depth_of(value: object, cutoff: int) -> int:
+    """How deep ``value`` nests, stopping at ``cutoff`` — a caller only asks 'too deep?'.
+
+    Iterative for the same reason :func:`holds_non_finite` is: the question is
+    asked of documents that may be pathological, and a recursive answer to it
+    would be the crash the question exists to prevent.
+    """
+    deepest = 1
+    stack: list[tuple[object, int]] = [(value, 1)]
+    while stack:
+        item, depth = stack.pop()
+        if depth > deepest:
+            deepest = depth
+            if deepest >= cutoff:
+                return deepest
+        if isinstance(item, dict):
+            stack.extend((child, depth + 1) for child in item.values())
+        elif isinstance(item, (list, tuple)):
+            stack.extend((child, depth + 1) for child in item)
+    return deepest
+
+
+def load_json_strict(raw: bytes, depth: int = MAX_DEPTH) -> object:
     """The value ``raw`` holds, refusing everything a noni writer would not emit.
 
     The census's own copy of the reading half of the ordering contract (the
     writer's copy is ``orderschema.refuse_constant`` plus
-    ``orderschema.holds_non_finite``): the three refusals above, applied to one
-    ``json.loads`` call. Without all three, a JSON literal that no writer can
+    ``orderschema.holds_non_finite``): the four refusals above, applied to one
+    ``json.loads`` call. Without them, a JSON literal that no writer can
     name is read in as a float or a last-wins dict, the entry that carries it is
     reported by one class alone, and every other class calls the file clean.
 
     Decoding happens here too, so a non-UTF-8 file raises UnicodeDecodeError
     rather than reaching json with a machine's bytes still in it.
+
+    The depth bound is the fourth refusal, and it refuses the same kind of thing:
+    nothing a noni writer renders nests anywhere near it. It is also what keeps
+    the read out of ``json.loads``' own overflow, because the bound stops the
+    document below the depth at which the decoder exhausts its C stack -- and a
+    ``RecursionError`` is not a ``ValueError``, so a reader that let the decoder
+    reach that limit would crash the run instead of reporting the file. The bound
+    raises ``ValueError`` naming the caller's own limit, so a pathological nesting
+    is the malformed row every other unreadable shape already is, and no text from
+    the file is echoed.
     """
     value = json.loads(raw.decode("utf-8"), parse_constant=refuse_constant,
                        object_pairs_hook=reject_duplicate_keys)
+    if _depth_of(value, depth + 1) > depth:
+        raise ValueError(f"nested deeper than {depth} levels")
     if holds_non_finite(value):
         raise ValueError("non-finite number")
     return value

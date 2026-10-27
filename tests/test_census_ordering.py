@@ -20,6 +20,7 @@ question is never silently skipped; and no row ever carries a machine-local path
 from __future__ import annotations
 
 import contextlib
+import importlib
 import io
 import json
 import shutil
@@ -36,6 +37,7 @@ from ordering_shapes import MALFORMED_SHAPES as SHAPES
 from ordering_shapes import issue_state_shapes
 
 CENSUS = REPO / "skills" / "census" / "scripts" / "census.py"
+SCRIPTS = CENSUS.parent
 FIXTURE = REPO / "tests" / "fixtures" / "ordering" / "order-valid.json"
 
 ORDER_REL = "noni/direction/order.json"
@@ -1065,3 +1067,199 @@ def test_the_ordering_group_does_not_read_the_sessions_or_the_ledger_classes(tmp
     code, rows, _out, _err = _run(repo)
     assert {r["check"] for r in rows} == {"ordering-malformed"}, rows
     assert code == 15, code
+
+
+# --- a pathological nesting ---------------------------------------------------
+
+# ``json.loads`` walks nesting with the interpreter's own stack, so a document
+# that nests far past ``sys.getrecursionlimit()`` raises RecursionError -- which
+# is NOT a ValueError, so it is not caught by the arms every reader here already
+# has for a malformed file. Before the bound, one such file ended the whole run
+# with a traceback: an arbiter that crashes answers nothing, and a report that
+# never prints is the same lie as one that prints "clean".
+DEEP = 100000
+
+
+def _deep(depth: int = DEEP) -> str:
+    """Legal JSON text nested ``depth`` levels: ``json.loads`` overflows on it.
+
+    Built as text and not by rendering a Python value -- the value is the one the
+    standard reader cannot build, so a fixture that had to parse it first could
+    not test the reader that is supposed to survive it.
+    """
+    return "[" * depth + "1" + "]" * depth
+
+
+def _deep_artifact() -> str:
+    """An otherwise well-formed artifact whose entry carries one extra field
+    nested ``DEEP`` levels."""
+    return ('{"schema": "noni.order/1", "entries": [{"issue": 7, "decision": null, '
+            '"confirmed": "' + FRESH + '", "x": ' + _deep() + "}]}")
+
+
+def test_a_deeply_nested_artifact_is_malformed_and_not_a_traceback(tmp_path):
+    """The pathological nesting is the ordinary ``ordering-malformed`` row: the
+    artifact is there and is not the artifact, and the run exits at the class's
+    own code with the class's own fixed wording."""
+    repo = _repo(tmp_path, "deep-artifact")
+    _order(repo, _deep_artifact())
+    code, rows, out, err = _run(repo)
+    combined = out + err
+    assert "RecursionError" not in combined, combined[-2000:]
+    assert code == 15, (code, rows, combined[-2000:])
+    assert [r["check"] for r in rows] == ["ordering-malformed"], rows
+    assert rows[0]["subject"] == ORDER_REL, rows[0]
+    assert rows[0]["message"] == "the order file is not valid JSON", rows[0]
+
+
+def test_a_deeply_nested_state_file_is_malformed_and_not_a_traceback(tmp_path):
+    """The ``--issue-state`` reader is a second call into the same decoder, so it
+    needs the same answer: the row is the state file's own and the run still
+    exits 15 rather than dying."""
+    repo = _repo(tmp_path, "deep-state")
+    _seed(repo, _entry(7, None))
+    path = repo / "issue-state.json"
+    path.write_text(_deep(), encoding="utf-8")
+    code, rows, out, err = _run(repo, "--issue-state", str(path))
+    combined = out + err
+    assert "RecursionError" not in combined, combined[-2000:]
+    assert code == 15, (code, rows, combined[-2000:])
+    assert [(r["check"], r["subject"]) for r in rows] == [
+        ("ordering-malformed", "issue-state")], rows
+    assert "is not valid JSON" in rows[0]["message"], rows[0]
+
+
+def test_a_deep_document_is_refused_before_the_decoder_overflows():
+    """Which rule refuses a pathological nesting, and why it has to be that one.
+
+    ``json.loads`` walks nesting on the C stack and overflows at a depth set by
+    the interpreter's build -- about 10k on a release CPython 3.13, tens of
+    thousands elsewhere -- so catching more exception types is not the fix: a run
+    is honest only if it never reaches the overflow. A document still inside the
+    decoder's own reach settles it. The standard reader builds it, so what
+    refuses it is this product's bound, and it raises the ``ValueError`` the
+    callers already catch rather than leaving a ``RecursionError`` for them to
+    miss.
+    """
+    module = importlib.import_module("census_json")
+    inside = 5000
+    body = "[" * inside + "1" + "]" * inside
+    assert json.loads(body), "the standard reader must still be able to build this"
+    try:
+        module.load_json_strict(("{" + '"a": ' + body + "}").encode())
+    except ValueError as e:
+        assert str(module.MAX_DEPTH) in str(e), \
+            f"refused for another reason, so the bound is not what answered: {e}"
+    else:
+        raise AssertionError("a document nested past the bound was accepted")
+
+
+def test_a_deeply_nested_ledger_record_leaves_the_run_alive(tmp_path):
+    """The ledger read is the group's third reader. A record that does not parse
+    is left out of the map for the ledger group to report, so here the entry's
+    citation simply matches no record: a deep record must not end the run."""
+    repo = _repo(tmp_path, "deep-ledger")
+    _seed(repo, _entry(7, "2026-01-01-ghost"))
+    record = repo / "noni" / "decisions" / "2026-01-01-ghost.json"
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text(_deep(), encoding="utf-8")
+    code, rows, out, err = _run(repo)
+    combined = out + err
+    assert "RecursionError" not in combined, combined[-2000:]
+    assert code == 15, (code, rows, combined[-2000:])
+    assert [r["check"] for r in rows] == ["ordering-malformed"], rows
+    assert "matches no record file" in rows[0]["message"], rows[0]
+
+
+def test_the_strict_reader_walks_a_deep_value_without_recursing():
+    """The non-finite walk and the depth bound are both iterative with their own
+    stack.
+
+    ``json.loads`` cannot build a value this deep, so the value is assembled by
+    hand -- which is exactly the shape a reader would have to survive if the
+    decoder were ever to hand one over. A recursive walk answers the question by
+    dying, and a reader that dies on the shape of a document reports nothing
+    about it.
+    """
+    module = importlib.import_module("census_json")
+    for depth in (DEEP,):
+        deep: list = []
+        cursor = deep
+        for _ in range(depth):
+            child: list = []
+            cursor.append(child)
+            cursor = child
+        cursor.append("x")
+        assert module.holds_non_finite(deep) is False, depth
+        cursor[-1] = float("inf")
+        assert module.holds_non_finite(deep) is True, depth
+
+
+def test_the_readers_take_the_strict_reader_as_an_argument(tmp_path):
+    """The strict reader is bound at the call, not imported by bare name.
+
+    ``census.py`` loads every split-out module by path under a name of its own
+    precisely so that nothing on ``sys.path`` can be trusted as the census's own
+    code -- but a ``from census_json import ...`` inside the readers module put
+    the choice of that reader back in ``sys.path``'s hands. Passing it in like
+    ``file_kind``, ``bounded`` and ``parse_iso`` already are is what closes it.
+    """
+    source = (SCRIPTS / "census_ordering_readers.py").read_text(encoding="utf-8")
+    assert "from census_json import" not in source
+    assert "import census_json" not in source
+    readers = importlib.import_module("noni_census_ordering_readers")
+
+    def refusing(raw: bytes) -> object:
+        raise ValueError("a reader from elsewhere on sys.path was used")
+
+    order = tmp_path / "order.json"
+    order.write_text('{"schema": "noni.order/1", "entries": []}', encoding="utf-8")
+    entries, problem = readers.load_order(
+        order, lambda path, kind="file": ("regular", None), lambda text: text,
+        lambda text: None, lambda value: [], refusing)
+    assert entries is None, entries
+    assert problem == "the order file is not valid JSON", problem
+
+    ledger = tmp_path / "decisions"
+    ledger.mkdir()
+    (ledger / "2026-01-01-a.json").write_text("{}", encoding="utf-8")
+    records, readable, unreadable, listed, fault = readers.ledger_records(
+        ledger, lambda path, kind="file": ("regular", None), refusing)
+    assert (records, readable, unreadable, listed, fault) == ({}, True, set(), True, None)
+
+
+def test_the_census_hands_its_own_strict_reader_to_the_group():
+    """The argument is wired, not merely available: the census passes the reader
+    it loaded beside itself, so a lookalike cannot answer for the artifact."""
+    source = (SCRIPTS / "census.py").read_text(encoding="utf-8")
+    assert "load_json_strict=_census_json.load_json_strict" in source, \
+        "the ordering group is not handed the census's own strict reader"
+
+
+def test_the_state_row_bounds_the_whole_composed_message(tmp_path):
+    """The row's text is built out of keys and state words read from a file
+    somebody else wrote.
+
+    ``bounded`` was applied to the path inside the sentence and to each
+    individual complaint, but never to the finished message, so four complaints
+    of any length each composed a row far past the 300-character bound every
+    other row of the report keeps. The bound now wraps the whole message, so
+    neither a 5000-character key nor a 5000-character state word reaches a
+    report verbatim.
+    """
+    for index, body in enumerate((json.dumps({"x" * 5000: "open"}),
+                                  json.dumps({"7": "y" * 5000}),
+                                  json.dumps({"x" * 5000: "open", "y" * 5000: "nope",
+                                              "z" * 5000: "perhaps",
+                                              "w" * 5000: "maybe"}))):
+        repo = _repo(tmp_path, f"long-state-{index}")
+        _seed(repo, _entry(7, None))
+        path = repo / "issue-state.json"
+        path.write_text(body, encoding="utf-8")
+        code, rows, out, err = _run(repo, "--issue-state", str(path))
+        assert code == 15, (index, code, rows, err[-500:])
+        assert rows[0]["subject"] == "issue-state", rows[0]
+        assert len(rows[0]["message"]) <= 300, \
+            f"{index}: {len(rows[0]['message'])} chars: {rows[0]['message'][:80]}"
+        assert "x" * 5000 not in rows[0]["message"], rows[0]
+        assert "y" * 5000 not in rows[0]["message"], rows[0]

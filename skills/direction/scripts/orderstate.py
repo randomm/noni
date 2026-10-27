@@ -200,8 +200,13 @@ def read_order(path: Path) -> OrderOk | OrderRefused | OrderFaulted:
                             f"check that {orderschema.ORDER_REL} is readable, then "
                             "re-run order.py")
     try:
-        value = json.loads(raw.decode("utf-8"), parse_constant=orderschema.refuse_constant)
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        value = orderschema.load_json_checked(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError):
+        # The shared strict reader: the three literals no noni writer emits and
+        # the depth bound, all of them ValueError. RecursionError is named because
+        # it is no kind of ValueError -- the bound means the decoder never reaches
+        # its own overflow, and a reader without it would die here instead of
+        # refusing the file. No text from the file reaches the operator.
         return OrderRefused(f"{orderschema.ORDER_REL} is not valid JSON this writer can "
                             "extend",
                             f"repair the file (it must hold {orderschema.ORDER_SCHEMA}) "
@@ -260,8 +265,10 @@ def read_record(path: Path, exit_io: int, exit_refusal: int
                        "check that the ledger is readable, or name a different "
                        "--decision"))
     try:
-        value = json.loads(raw.decode("utf-8"), parse_constant=orderschema.refuse_constant)
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        value = orderschema.load_json_checked(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError):
+        # As for the artifact: one strict reader for both files this writer reads
+        # but did not write, and the wording names no content from either.
         return None, (exit_io,
                       ("the decision record is not readable JSON",
                        "repair the record or name a different --decision"))

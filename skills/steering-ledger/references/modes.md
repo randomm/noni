@@ -40,13 +40,20 @@ the operator. The operator **confirms** the candidate; the confirmation is what
 triggers the commit. The commit only happens after confirmation.
 
 - The agent drafts `{id, date, asked_by, questions, scope, supersedes}` with
-  `status` tentatively `open` and no `answer`.
+  `status` tentatively `open` and every `answer` `null`.
 - The operator confirms (or edits, or declines). On confirmation the `answer`
   field is filled with the operator's stated position and `status` becomes
   `decided`; the file is committed with `by` set from the commit author.
-- A **decline or cancel** leaves the question open and commits nothing: no file
-  is written, no `answer` is stored. The agent must not write a record to
-  "remember" a declined steer; the only state for that is the absence of a file.
+- A **decline or cancel** leaves the question open. Do not write a record to
+  "remember" a declined steer that the operator never asked to be kept: the
+  steer is simply not recorded. When a declined steer **is** recorded (the
+  ledger is meant to show that an answer was not given), it is written as an
+  **open chain-root record**: `supersedes: null`, `status: open`, and every
+  `answer` written as `null` — never as a supersede, because a supersede whose
+  chain holds no answered record resolves to zero live records (census exit
+  20). `scripts/decide.py` enforces this: `--supersedes` with an unanswered
+  question is exit 2, and the same flags without `--supersedes` write the open
+  chain-root record.
 
 ## Anti-fabrication
 
@@ -58,8 +65,9 @@ a follow-up. Concretely:
 
 - A record with an `answer` must come from an operator confirmation, by agent
   discipline.
-- A decline/cancel must leave the question open and commit nothing: no file is
-  written, no `answer` is stored.
+- A decline/cancel must leave the question open: `status: open` with every
+  `answer` written as `null`, and never an invented answer. If the decline is
+  recorded at all it is an open chain-root record, never a supersede.
 - The agent may *propose* an answer in the candidate, but the candidate is not a
   record until the operator confirms it.
 

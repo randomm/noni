@@ -8,15 +8,18 @@ The schema is:
   issue_number/comment_id integers, or null, or absent).
 
 A question object is: id (string), text (string), options (array of 2-4
-strings), answer (string or absent).
+strings), answer (string or null — an open question carries `"answer": null`,
+the form scripts/steering-ledger/scripts/decide.py writes and both censuses
+accept).
 
 The tests use the committed golden fixtures:
   decision-valid.json               — one complete minimal record, the baseline
   decision-invalid-missing-field.json — missing the `supersedes` field
   decision-invalid-unknown-status.json — status is "pending" (not in the legal set)
-  decision-unconfirmed.json          — status "open" with no answer (the declined state)
+  decision-unconfirmed.json          — status "open" with `"answer": null` on
+                                       every question (the declined state)
 
-The fixture file name "unconfirmed" is a legacy name: "open with no answer"
+The fixture file name "unconfirmed" is a legacy name: "open with a null answer"
 is the declined state, and nothing in this suite or the census treats
 confirmation as a checkable property (see references/modes.md, Anti-fabrication).
 """
@@ -257,20 +260,27 @@ def test_unknown_status_fails(tmp_path):
 
 
 def test_open_record_without_answer_is_valid_schema(tmp_path):
-    """A record with status=open and no answer is schema-valid (the declined
-    state): the field shape is correct and the census does not flag it for a
-    schema violation."""
+    """A record with status=open and `"answer": null` on every question is
+    schema-valid (the declined state): the field shape is correct, the key is
+    present with a null value, and the census does not flag it for a schema
+    violation. The null form is what scripts/steering-ledger/scripts/decide.py
+    writes, so this fixture is the writer's own output shape."""
     rec = _fixture("decision-unconfirmed.json")
     assert rec["status"] == "open"
-    # All questions have no answer (answer absent or null)
+    # Every question carries the answer key, with null as its value: the open
+    # form is written, not omitted.
     for q in rec["questions"]:
-        assert q.get("answer") is None or q.get("answer") == "", (
-            f"open record should have no answer, got: {q.get('answer')}"
-        )
+        assert "answer" in q, f"open record should carry the answer key: {q}"
+        assert q["answer"] is None, f"open record should carry a null answer, got: {q['answer']}"
     # Schema-valid: all required fields present, correct types
     assert set(rec.keys()) >= REQUIRED_FIELDS
     assert set(rec.keys()) <= ALL_FIELDS
     assert rec["status"] in LEGAL_STATUSES
+    # And the censuses agree: a committed null-answer record is clean in both.
+    code, _out, err = _run_census_on_record(tmp_path, rec)
+    assert code == 0, f"expected exit 0 for a null-answer open record, got {code}\n{err}"
+    code_sh, _out_sh, err_sh = _run_census_sh_on_record(tmp_path, rec)
+    assert code_sh == 0, f"census.sh: expected exit 0, got {code_sh}\n{err_sh}"
 
 
 def test_question_bounds_two_options(tmp_path):

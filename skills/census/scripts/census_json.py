@@ -17,9 +17,9 @@ can name:
   (last one wins), and :func:`reject_duplicate_keys` refuses it before any entry
   is examined.
 - a document nested past any depth a noni writer renders is refused by the depth
-  bound in :func:`load_json_strict`, which is also what keeps the read out of
-  ``json.loads``' own C-stack overflow: a ``RecursionError`` is not a
-  ``ValueError``, so a reader that let the decoder reach its limit would crash
+  bound in :func:`load_json_strict`, which answers with a ``ValueError`` before
+  the decoder is left to reach its own limit: a ``RecursionError`` is not a
+  ``ValueError``, so a reader that relied on the decoder alone would crash
   the run instead of reporting the file.
 
 Raises ``ValueError`` for all four; the caller turns that into the
@@ -37,15 +37,19 @@ import math
 # thousand levels deep is not a file this product wrote.
 #
 # The bound is also what makes the read safe, and the number cannot simply be
-# raised. ``json.loads`` walks nesting on the C stack and overflows at a depth
-# set by the interpreter's build (about 10k on a release CPython 3.13, tens of
-# thousands elsewhere), not by ``sys.setrecursionlimit``. Any ceiling a reader
-# could actually want -- one a real artifact cannot approach -- sits below that
-# threshold, so the walk below stops the document before the decoder ever
-# reaches its own limit. A reader that instead let ``json.loads`` overflow would
-# meet a RecursionError, which is not a ValueError and so escapes the except
-# arms that catch every other malformed file: the whole run would die on one
-# pathological document instead of reporting it.
+# raised. Where ``json.loads`` gives up on a nesting depends on the interpreter.
+# On 3.11 it follows the interpreter's recursion limit and stops just under it
+# (measured at about 990 levels under the default limit of 1000, and a little
+# lower under pytest); later versions decode far deeper before the C stack itself
+# gives out (measured at roughly 10k on 3.12 and 3.13, and 50k on 3.14). Two
+# things follow. Between the bound and the interpreter's own ceiling, which is
+# where a document larger than any writer emits but smaller than a pathological
+# one lands, this bound answers first with the ValueError the callers already
+# catch. Past that ceiling the decoder raises RecursionError before this walk is
+# reached at all, which is why the readers name that exception in their except
+# arms rather than trusting the bound alone: it is reachable on 3.11, not
+# theoretical. RecursionError is not a ValueError, so a reader without that arm
+# would die on one pathological document instead of reporting it.
 MAX_DEPTH = 256
 
 
@@ -145,12 +149,16 @@ def load_json_strict(raw: bytes, depth: int = MAX_DEPTH) -> object:
     rather than reaching json with a machine's bytes still in it.
 
     The depth bound is the fourth refusal, and it refuses the same kind of thing:
-    nothing a noni writer renders nests anywhere near it. It is also what keeps
-    the read out of ``json.loads``' own overflow, because the bound stops the
-    document below the depth at which the decoder exhausts its C stack -- and a
-    ``RecursionError`` is not a ``ValueError``, so a reader that let the decoder
-    reach that limit would crash the run instead of reporting the file. The bound
-    raises ``ValueError`` naming the caller's own limit, so a pathological nesting
+    nothing a noni writer renders nests anywhere near it. Between the bound and
+    the depth at which the interpreter's own decoder gives up (on 3.11 just under
+    the recursion limit, about 990 levels at the default 1000, and far deeper on
+    later versions) this bound answers first, with the ``ValueError`` the callers
+    already catch rather than a ``RecursionError`` that is not a ``ValueError``.
+    Past that ceiling the decoder raises first, which is why the readers still
+    name ``RecursionError`` in their except arms: that arm is what turns the
+    decoder's own giving up into a reported row rather than a crash. The bound's
+    ``ValueError`` names the
+    caller's own limit, so a pathological nesting
     is the malformed row every other unreadable shape already is, and no text from
     the file is echoed.
     """

@@ -39,14 +39,20 @@ POSITION_WIDTH = 3
 # levels deep is not a file this product wrote.
 #
 # The bound is also what makes the two reads safe, and the number cannot simply
-# be raised. ``json.loads`` walks nesting on the C stack and overflows at a depth
-# set by the interpreter's build (about 10k on a release CPython 3.13, tens of
-# thousands elsewhere), not by ``sys.setrecursionlimit``. Any ceiling a reader
-# could actually want sits below that threshold, so the walk below stops the
-# document before the decoder reaches its own limit. A reader that let
-# ``json.loads`` overflow instead would meet a RecursionError, which is not a
-# ValueError and so escapes the except arms that catch every other malformed
-# file: the run would die on one pathological document rather than refuse it.
+# be raised. Where ``json.loads`` gives up on a nesting depends on the interpreter.
+# On 3.11 it follows the interpreter's recursion limit and stops just under it
+# (measured at about 990 levels under the default limit of 1000, and a little
+# lower under pytest); later versions decode far deeper before the C stack itself
+# gives out (measured at roughly 10k on 3.12 and 3.13, and 50k on 3.14). Two
+# things follow. Between the bound and the interpreter's own ceiling, where any
+# document this writer could plausibly be handed lands, this bound answers first
+# with the ValueError the callers already catch. Past that ceiling the decoder
+# raises RecursionError before this walk is reached, which is why the readers name
+# that exception in their except arms rather than trusting the bound alone: on
+# 3.11 the arm is reachable, not theoretical. A reader without it would meet a
+# RecursionError, which is not a ValueError and so escapes the except arms that
+# catches every other malformed file: the run would die on one pathological
+# document rather than refuse it.
 MAX_DEPTH = 256
 
 
@@ -135,12 +141,15 @@ def load_json_checked(raw: bytes, depth: int = MAX_DEPTH) -> object:
 
     One call, four refusals: the three JSON literals no noni writer emits
     (``refuse_constant``, ``holds_non_finite``, ``reject_duplicate_keys``) and a
-    nesting past ``depth``. The bound is also what keeps the read out of
-    ``json.loads``' own C-stack overflow, because it stops the document below the
-    depth at which the decoder exhausts its stack -- and a ``RecursionError`` is
-    not a ``ValueError``, so a reader that let the decoder reach that limit would
-    crash instead of refusing the file. The bound raises ``ValueError`` naming the
-    writer's own limit, so a pathological document is the ordinary refusal and no
+    nesting past ``depth``. Between that bound and the depth at which the
+    interpreter's own decoder gives up (on 3.11 just under the recursion limit,
+    about 990 levels at the default 1000, and far deeper on later versions) the
+    bound answers first, raising the ``ValueError`` the callers already catch
+    where the decoder would have raised a ``RecursionError`` that is not a
+    ``ValueError``. Past that ceiling the decoder raises first, which is why the
+    readers still name ``RecursionError`` in their except arms: that arm is what
+    turns the decoder's own giving up into a refusal instead of a crash. The
+    bound's ``ValueError`` names the writer's own limit, so no
     text from the file is echoed.
 
     Every JSON read this writer makes of a file it did not write goes through

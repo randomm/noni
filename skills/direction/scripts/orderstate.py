@@ -204,9 +204,12 @@ def read_order(path: Path) -> OrderOk | OrderRefused | OrderFaulted:
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError):
         # The shared strict reader: the three literals no noni writer emits and
         # the depth bound, all of them ValueError. RecursionError is named because
-        # it is no kind of ValueError -- the bound means the decoder never reaches
-        # its own overflow, and a reader without it would die here instead of
-        # refusing the file. No text from the file reaches the operator.
+        # it is no kind of ValueError: the bound answers for a document between it
+        # and the interpreter's own ceiling, but past that ceiling the decoder
+        # raises first (on 3.11 that ceiling sits just under the recursion limit,
+        # about 990 levels at the default 1000), so the arm is reachable there and
+        # a reader without it would die here instead of refusing the file. No text
+        # from the file reaches the operator.
         return OrderRefused(f"{orderschema.ORDER_REL} is not valid JSON this writer can "
                             "extend",
                             f"repair the file (it must hold {orderschema.ORDER_SCHEMA}) "

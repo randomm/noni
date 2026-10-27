@@ -113,10 +113,14 @@ def load_order(order: Path, file_kind, bounded, parse_iso, shape: Callable[[obje
     except (json.JSONDecodeError, ValueError, RecursionError):
         # ValueError is the non-finite, duplicate-key or over-deep refusal, and
         # its text names content read from the file, so the wording is fixed.
-        # RecursionError is named because it is no kind of ValueError: the strict
-        # reader bounds the depth and so never lets the decoder reach its own
-        # overflow, but a reader that did would have the whole run die on this
-        # line rather than answer with the row the artifact already earns.
+        # RecursionError is named because it is no kind of ValueError. The strict
+        # reader bounds the depth, so a document between the bound and the
+        # interpreter's own ceiling is refused with a ValueError; past that ceiling
+        # the decoder raises first (on 3.11 that ceiling sits just under the
+        # recursion limit, about 990 levels at the default 1000, where later
+        # builds reach roughly 10k and beyond). The arm is therefore reachable, not
+        # decorative: without it the run would die on this line rather than answer
+        # with the row the artifact already earns.
         return None, "the order file is not valid JSON"
     problems = shape(value)
     if problems:
@@ -179,8 +183,9 @@ def load_issue_state(path: Path | None, states: tuple[str, ...], file_kind, boun
         # A duplicate key, a non-finite literal or an over-deep nesting raises
         # ValueError; its text names content read from the file, so the wording
         # is fixed. RecursionError is named for the same reason as in load_order:
-        # it is not a ValueError, and the bounded reader never lets the decoder
-        # reach the depth where the standard one raises it.
+        # it is not a ValueError, and past the interpreter's own ceiling (on 3.11
+        # about 990 levels at the default recursion limit of 1000) the standard
+        # decoder raises it before this product's bound is consulted.
         return IssueState(None, bounded(f"the --issue-state file ({name}) is not "
                                         "valid JSON"), True)
     if not isinstance(value, dict):
@@ -279,8 +284,11 @@ def ledger_records(ledger: Path, file_kind, load_json: Callable[[bytes], object]
         except (UnicodeDecodeError, ValueError, RecursionError, json.JSONDecodeError):
             # A record that does not parse is no record: the ledger group owns
             # reporting it, so it is left out of the map. RecursionError is named
-            # because it is not a ValueError — a reader that did not bound its
-            # depth would end the whole run here instead of skipping one file.
+            # because it is not a ValueError: this reader bounds its depth, so a
+            # document short of the interpreter's own ceiling is a ValueError, but
+            # past it the decoder raises first (on 3.11 that ceiling is about 990
+            # levels at the default recursion limit). A reader without the arm would
+            # end the whole run here instead of skipping one file.
             continue
         if isinstance(value, dict):
             records[stem] = value

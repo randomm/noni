@@ -146,6 +146,8 @@ def check_ordering(
     row: Callable[..., dict], rel_to_root: Callable[[Path, Path], str], file_kind,
     bounded: Callable[[str], str], parse_iso, readers, names_zone,
     load_json_strict: Callable[[bytes], object], clipped: Callable[[str], str],
+    ledger_name: Callable[[str], str],
+    names: tuple[str, ...] | None = None,
 ) -> None:
     """Check the ordering artifact; append its findings to ``findings``.
 
@@ -168,6 +170,25 @@ def check_ordering(
     imported: ``census.py`` owns the row shape and the bounded wording of a
     foreign message, neither module carries a sys.path entry of its own, and a
     copy of any of them here would be a second contract for the same row.
+
+    ``ledger_name`` is the census's one rule for naming a ledger a run could not
+    read (``census_ledger.ledger_name``), and it is required: every place this
+    group names the ledger in a row -- the listing-fault row and the per-entry
+    citation row -- takes the identifier from it rather than interpolating the
+    root-relative path itself. An out-of-tree ``--ledger`` override cannot be
+    rooted, so that path is a machine-local directory, and a default that handed
+    back the path unchanged would print it for any caller that forgot the
+    argument. Both groups' rows for one ledger then name it identically, and the
+    scrubber is left to its safety-net job on foreign text instead of being asked
+    to redact a path this census wrote and still leave it identifiable.
+
+    ``names`` is the run's one ledger listing — the names the census's probe
+    read — and it goes straight to the readers, which is what keeps the whole
+    run to a single readdir of the ledger. It defaults to None, which asks the
+    readers to list: that is the seam a test faults to plant a fault in this
+    group's read alone (see ``_listing_faults`` in
+    ``tests/test_census_ordering.py``), and a direct caller that has no probe
+    gets a listing of its own rather than nothing.
     """
     # The readers take the census's own path and message primitives as
     # arguments: this module must not carry a second definition of what a
@@ -207,8 +228,9 @@ def check_ordering(
             whole_artifact=True)
         return
 
+    rel_ledger = rel_to_root(root, ledger)
     records, ledger_readable, unreadable_records, listed, listing_fault = \
-        readers.ledger_records(ledger, file_kind, load_json_strict)
+        readers.ledger_records(ledger, file_kind, load_json_strict, names)
     if not ledger_readable and listed and any(isinstance(entry.get("decision"), str)
                                              for entry in entries or []):
         # The listing itself faulted on a directory that is there, so this run
@@ -219,13 +241,19 @@ def check_ordering(
         # owns the report, an I/O fault of the listing is visible only here: no
         # other class of this run sees it.
         add("ordering-malformed", ORDER_DEFAULT_SUBJECT, rel_to_root(root, order),
-            # The whole composed sentence is clipped, not just the OSError text
+            # The whole composed sentence is clipped, not just the fault text
             # inside it: the row's length is a property of the row, and a fault
             # whose strerror runs to thousands of characters is otherwise a row
             # past the bound every other row of the report keeps. ``clipped`` and
             # not ``bounded`` because the sentence names the ledger by a path the
             # row must keep; the fault text itself still goes through ``bounded``.
-            clipped(f"the decision ledger ({rel_to_root(root, ledger)}) could not be listed"
+            # The ledger is named by ``ledger_name``, the identifier the ledger
+            # group's own row for this same fault uses, so the two rows agree on
+            # which directory they could not read -- and the fault text carries no
+            # filename at all (``census_ordering_readers`` builds it with
+            # ``census_text.fault_text``), so the ``bounded`` here is a net over
+            # text that should need none.
+            clipped(f"the decision ledger ({bounded(ledger_name(rel_ledger))}) could not be listed"
                     f"{'' if listing_fault is None else ': ' + bounded(listing_fault)}, "
                     "so no entry's decision citation could be checked against the records "
                     "the ledger holds"), whole_artifact=True)
@@ -251,7 +279,11 @@ def check_ordering(
                 # decision text, read from the artifact: a value of any length is
                 # a row of at most the bound, as every other row of the report is.
                 add("ordering-malformed", subject, rel_to_root(root, order),
-                    clipped(f"{why} ({rel_to_root(root, ledger)})"), whole_artifact=True)
+                    # The ledger is named by ``ledger_name`` for the same reason
+                    # the listing-fault row above is: an out-of-tree ``--ledger``
+                    # makes this path a host directory, and the row only needs to
+                    # say which ledger it means.
+                    clipped(f"{why} ({ledger_name(rel_ledger)})"), whole_artifact=True)
 
         confirmed = parse_iso(entry.get("confirmed")) if isinstance(
             entry.get("confirmed"), str) else None

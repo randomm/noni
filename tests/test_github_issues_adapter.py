@@ -249,6 +249,33 @@ def test_default_allowlist_file_is_none_without_a_repo_root(tmp_path, monkeypatc
     assert loaded.accounts == set()
 
 
+def test_default_allowlist_file_is_none_for_an_unusable_root(tmp_path, monkeypatch):
+    """The two negatives the guard adds: the empty string, and a value that is
+    neither ``str`` nor ``Path``.
+
+    ``Path("")`` is ``Path(".")`` — truthy, relative, and a directory in every
+    shell — so without the guard an empty root would resolve to a candidate in
+    whatever cwd the caller happened to run in: the wider default a fail-closed
+    helper exists to refuse. The typed values raise ``TypeError`` inside
+    ``Path``, which is a crash where the contract promises ``None``."""
+    monkeypatch.delenv(adapter.ALLOWLIST_ENV_VAR, raising=False)
+
+    unusable = ["", b"/tmp", 0, 7, [], {}, 1.5, True]
+    for root in unusable:
+        assert adapter.default_allowlist_file(root) is None, (
+            f"an unusable root ({root!r}) must yield no candidate file, not a "
+            f"cwd-relative path and not a TypeError"
+        )
+
+    # The refusal is a no-candidate, not a refusal to load: the env-var path is
+    # untouched, so an operator who names a file still gets an active list.
+    loaded = adapter_protocol.load_allowlist(
+        adapter.ALLOWLIST_ENV_VAR, adapter.default_allowlist_file("")
+    )
+    assert loaded.status == "absent"
+    assert loaded.accounts == set()
+
+
 def test_default_allowlist_file_none_still_honours_the_env_var(tmp_path, monkeypatch):
     """A missing root is not a refusal: with no default candidate the env-var
     file still loads (the precedence rule lives in the loader, untouched)."""

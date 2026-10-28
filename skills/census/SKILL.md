@@ -37,7 +37,7 @@ python3 skills/census/scripts/census.py [options]
 |---|---|---|
 | `ledger-record` | 10 | a decision record is malformed (schema violation, bad filename, unreadable/unparseable record) |
 | `ledger-empty` | 42 | there is no steering ledger to arbitrate — exactly one row per run, whose message carries the state word `absent` (no `noni/`), `not a directory` (`noni/` is not a directory), `symlink` (refused, never followed), or `empty` (no record to census: `noni/` present with no `decisions/` directory, or a `decisions/` directory that holds no `*.json` record). It only ADDS rows and never weakens a malformed-record `ledger-record` failure (warn by default; fail under `--strict`) |
-| `ledger-edited` | 12 | a record was edited after commit (supersede, never edit); a committed record deleted or renamed from the working tree is also reported here, with the "deleted" reason |
+| `ledger-edited` | 12 | a record was edited after commit (supersede, never edit); a committed record deleted or renamed from the working tree is also reported here, with the "deleted" reason — including the case where the whole `decisions/` directory was deleted and the deletion committed; also the `cannot-tell` row for a `decisions/` directory that exists but could not be listed (warn by default; fail under `--strict`) |
 | `ledger-chain` | 20 | the supersede chain is broken (dangling, duplicate, orphan, cycle, zero-live, multi-live) |
 | `session-double` | 30 | two active claims on the same task from different identities (the arbiter) |
 | `session-claim` | 31 | a claim row committed without a register file |
@@ -154,13 +154,39 @@ The same rule extends to the classes that report their own absence:
   `ledger-record` failure (10). Nor does the class gate the integrity checks: a
   record that history shows was added and is now gone stays a `ledger-edited`
   failure (12), so an emptied ledger reports the deletion that emptied it — the
-  git-backed integrity checks run whatever the empty probe found. When the
+  git-backed integrity checks run whatever the empty probe found, and they ask
+  git even when the `decisions/` directory itself is gone, so a whole-directory
+  deletion committed to history is one `deleted` row per record at exit 12
+  rather than a bare no-ledger warning. "History never held a record" is a
+  different answer from "git could not answer": the first is the lone
+  `ledger-empty` warn at exit 0, the second the cannot-tell row below. When the
   deletion check cannot put its question to git at all (no git tree, or a
   history read that could not answer) and the ledger reads as `empty`, the run
   adds a `ledger-edited` `cannot-tell` row saying the check could not run: the
   deletion check is the only signal that committed records were deleted, so a
   silent one would let a gutted ledger read as a plain no-ledger warning. It is
   a warn by default (exit 0) and a failure at 12 under `--strict`.
+- **An unreadable ledger is never `empty`.** The census lists `decisions/` with
+  an explicit `iterdir`, through one listing helper that the probe, the record
+  pass and the ordering group all use, because `glob` swallows the `OSError` a
+  readdir raises and yields nothing — which would let a directory the run could
+  not read report the same exit 0 warn as a project that has never steered
+  anything. The ledger is classified once per run: the run decides from that one
+  probe whether the group reports at all, and the same probe answers the rows,
+  so two reads of one directory cannot disagree about it. Because the listing is
+  shared, a faulted listing is reported by both groups that read it — the ledger
+  group's row below, and the ordering group's row that names the citation check
+  it could not perform.
+
+  When the listing faults, no state word of the class is rendered (those four
+  name states of the tree, and "unlistable" is a fault of this run's read): the
+  run adds one `ledger-edited` `cannot-tell` row whose `subject` and `artifact`
+  both carry the ledger path and whose message carries the `OSError` text,
+  bounded and stripped of machine-local paths. The path is root-relative
+  (`noni/decisions`) whenever the census could root it; for a `--ledger`
+  override that points outside the audited tree the row keeps the path's last
+  segment, since the machine-local directory that holds it must not reach a
+  report. It is a warn at exit 0 and a failure at 12 under `--strict`.
 - **`hygiene` (50)** always reports, a clean tree included. When the
   deny-list class is not active (its file is `absent`, `corrupt`, or present
   with no entries) the run emits one `hygiene` row naming that state; a scan
@@ -202,8 +228,11 @@ The same rule extends to the classes that report their own absence:
   faults while an entry cites a decision, each add one row marked whole-artifact:
   the row is about the file the group was asked to read, not one entry inside it,
   so the group's `--only` filter cannot drop it and a run that checked nothing
-  cannot report itself clean. A ledger that is simply absent or not a directory
-  is different — no listing was attempted, and `ledger-empty` owns that report.
+  cannot report itself clean. The ledger group's own row for the same unreadable
+  listing is whole-artifact too, which is what keeps it visible under a filter
+  that named no ledger class at all. A ledger that is simply absent or not a
+  directory is different — no listing was attempted, and `ledger-empty` owns
+  that report.
 - **A map key must be the issue number itself.** `"07"` or `"-7"` can never match
   an entry's issue, so such a key is reported as malformed rather than becoming a
   silent `cannot-tell` row for an issue the file does name.

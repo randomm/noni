@@ -120,12 +120,25 @@ def default_allowlist_file(repo_root: str | Path | None) -> str | None:
     not required to wrap it first. ``.gitignore`` names the file, so it can
     never be committed — the same pattern as the scrub's deny-list.
 
-    Returns ``None`` when no usable root is given (``None``, or a path that is
-    not a directory): with no candidate file the loader consults only
-    ``ALLOWLIST_ENV_VAR`` and otherwise reports the allow-list as ``absent``, so
-    an unusable root fails closed rather than authorising from a wider default.
+    Returns ``None`` when no usable root is given (``None``, an empty string,
+    or a value that is neither ``str`` nor ``Path``): with no candidate file
+    the loader consults only ``ALLOWLIST_ENV_VAR`` and otherwise reports the
+    allow-list as ``absent``, so an unusable root fails closed rather than
+    authorising from a wider default. ``None``, the empty string and any value
+    that is neither ``str`` nor ``Path`` are all refused before ``Path`` sees
+    them: ``Path("")`` is ``Path(".")``, a truthy relative path that would
+    otherwise hand back a candidate resolved against whatever directory the
+    caller happened to run in, and ``Path`` raises ``TypeError`` on a
+    ``bytes``/``int``/``list`` — a helper whose contract is "no candidate" must
+    return it, not crash.
     """
     if repo_root is None:
+        return None
+    if not isinstance(repo_root, (str, Path)):
+        return None
+    if not str(repo_root):
+        # Path("") is Path("."): a truthy, relative, existing directory, which
+        # is_dir() would wave through. Refuse it as what it is — no root.
         return None
     root = Path(repo_root)
     if not root.is_dir():

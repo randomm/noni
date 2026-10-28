@@ -42,9 +42,11 @@ PRODUCT_MODULES = (
     "src/noni/census.py",
     "src/noni/census_hygiene.py",
     "src/noni/census_json.py",
+    "src/noni/census_ledger.py",
     "src/noni/census_ordering.py",
     "src/noni/census_ordering_readers.py",
     "src/noni/census_sessions.py",
+    "src/noni/census_text.py",
     "src/noni/claim.py",
     "src/noni/cli.py",
     "src/noni/decide.py",
@@ -119,9 +121,11 @@ for _alias, _pkg_name in (
     ("census", "census"),
     ("census_hygiene", "census_hygiene"),
     ("census_json", "census_json"),
+    ("census_ledger", "census_ledger"),
     ("census_ordering", "census_ordering"),
     ("census_ordering_readers", "census_ordering_readers"),
     ("census_sessions", "census_sessions"),
+    ("census_text", "census_text"),
     ("claim", "claim"),
     ("decide", "decide"),
     ("gitwrite", "gitwrite"),
@@ -313,6 +317,38 @@ def _commit_file(repo: Path, rel: str, content: str) -> None:
     target.write_text(content)
     _git(repo, "add", rel)
     _git(repo, "commit", "-q", "--allow-empty", "-m", f"add {rel}")
+
+
+# --- Injected ledger-listing faults -------------------------------------------
+
+
+def _fault_the_ledger_listing(monkeypatch, ledger: Path) -> None:
+    """Make the census's listing of ``ledger`` fault, for an in-process run.
+
+    One home for the seam, which three test files otherwise restate inline. The
+    fault is injected at the probe's own ``Path.iterdir`` and never at a mode
+    bit: a root-equivalent runner reads a 000-mode directory, so a chmod fixture
+    would read as listable and the test would pass vacuously. The guard on the
+    path keeps every other listing of the run honest, so only the probe's
+    readdir faults. The seam is ``iterdir`` and not ``glob``: ``glob`` swallows
+    the ``OSError`` and yields nothing, which is the dishonesty the probe no
+    longer has (see ``census_ledger.listing_helper``).
+
+    The patch is installed on ``census.Path``, the name the census and its
+    ledger module share. Tests that drive the census in-process (``census.main``
+    in this interpreter) are the only callers: a subprocess would not see it.
+    """
+    import census
+
+    real_iterdir = census.Path.iterdir
+    target = Path(ledger)
+
+    def boom(self):
+        if self == target:
+            raise OSError("readdir denied")
+        return real_iterdir(self)
+
+    monkeypatch.setattr(census.Path, "iterdir", boom)
 
 
 # --- Synthetic hygiene fixtures ------------------------------------------------

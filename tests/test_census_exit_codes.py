@@ -17,6 +17,12 @@ repo and asserts the exact exit code. The exit-code contract is:
   44  session-deleted (only under --strict)
   50  hygiene (only under --strict)
 
+A ledger directory that exists but cannot be listed is a probe fault, not a
+state of the tree: it is reported as a ``ledger-edited`` cannot-tell row, so it
+leaves the run at 0 and lifts it to 12 under --strict (the row's class code),
+never at 42 -- which belongs to the ledger-empty warn the fault must not be
+mistaken for. See test_unreadable_ledger_dir_is_cannot_tell_not_empty.
+
 The four warn classes 42/43/44/50 are reported without --strict but exit 0;
 --strict promotes each to its own code.
 """
@@ -28,7 +34,13 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 import census  # noqa: E402
-from _harness import _commit_file, _home_path_violation, _init_repo, _secret_violation  # noqa: E402
+from _harness import (  # noqa: E402
+    _commit_file,
+    _fault_the_ledger_listing,
+    _home_path_violation,
+    _init_repo,
+    _secret_violation,
+)
 
 # Synthetic violation shapes, built by tests/_harness.py from public_safety's
 # own pattern tables (see there for why they are not literals and why the
@@ -115,6 +127,71 @@ def test_recordless_ledger_dir_is_ledger_empty_warn(tmp_path):
     assert _run(repo, "--skip", "hygiene") == 0
     assert _run(repo, "--skip", "hygiene", "--strict") == 42
     assert _run(repo, "--only", "ledger-empty", "--strict") == 42
+
+
+def test_unreadable_ledger_dir_is_cannot_tell_not_empty(tmp_path, monkeypatch):
+    """A decisions/ directory that exists and cannot be listed is not the
+    recordless tree: it is a probe fault, reported as a ledger-edited
+    cannot-tell row -- a warn that leaves the run at 0 and --strict lifts to
+    the class's 12, the same pair every other cannot-tell row keeps.
+
+    The pair sits beside test_recordless_ledger_dir_is_ledger_empty_warn on
+    purpose: the two trees differ only in whether the census could read them,
+    and their codes differ (0/12 against 0/42) so an operator can tell a
+    project that has never steered anything apart from a ledger that went
+    unreadable."""
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/decisions/2026-10-01-a.json",
+                 json.dumps(_valid_record(), indent=2))
+    _fault_the_ledger_listing(monkeypatch, repo / "noni" / "decisions")
+
+    assert _run(repo, "--skip", "hygiene") == 0
+    assert _run(repo, "--skip", "hygiene", "--strict") == 12
+    assert _run(repo, "--only", "ledger-edited", "--strict") == 12
+    rows = [r for r in _rows(repo, "--skip", "hygiene") if r.get("kind") == "finding"]
+    assert [r["check"] for r in rows] == ["ledger-edited"], (
+        f"an unreadable ledger answers no state word, so ledger-empty adds "
+        f"nothing of its own: {rows}"
+    )
+    assert rows[0]["severity"] == "warn" and rows[0]["code"] == 12, rows[0]
+    assert "readdir" in rows[0]["message"] and "denied" in rows[0]["message"], (
+        f"the OSError text must reach the operator: {rows[0]['message']}"
+    )
+    assert not rows[0]["subject"].startswith("/"), (
+        f"no machine-local path in the row: {rows[0]}"
+    )
+
+
+def test_the_unreadable_ledger_row_survives_a_filter_that_named_no_ledger_class(
+    tmp_path, monkeypatch
+):
+    """The filter must not be able to buy back the clean verdict.
+
+    ``--only`` drops rows of classes it does not name, and the fault row is a
+    ``ledger-edited`` row like any other. What it is also is a whole-artifact
+    row: the group's own filter keeps it, and the group runs even when the
+    filter named none of its classes -- a run that could not read the ledger
+    and said nothing would report the same clean as a run that read it and
+    found nothing."""
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/decisions/2026-10-01-a.json",
+                 json.dumps(_valid_record(), indent=2))
+    _fault_the_ledger_listing(monkeypatch, repo / "noni" / "decisions")
+
+    for extra in (("--only", "session-double"), ("--skip", "ledger-edited"),
+                  ("--only", "session-stalled", "--strict")):
+        # hygiene is skipped explicitly rather than left in: its always-on
+        # "deny-list inactive" row would sit beside the fault row without
+        # changing this assertion's meaning.
+        rows = _rows(repo, "--skip", "hygiene", *extra)
+        found = [r for r in rows if r.get("kind") == "finding"]
+        assert [r["check"] for r in found] == ["ledger-edited"], (
+            f"{extra}: the unreadable ledger must still be reported: {found}"
+        )
+        assert "readdir" in found[0]["message"], found[0]
+        # warn by default, 12 under --strict, whichever filter was used.
+        expected = 12 if "--strict" in extra else 0
+        assert _run(repo, "--skip", "hygiene", *extra) == expected, f"{extra}: expected {expected}"
 
 
 def test_exit_10_not_valid_json(tmp_path):

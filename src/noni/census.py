@@ -49,7 +49,6 @@ import re
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -481,6 +480,12 @@ def _file_kind(path: Path, kind: str = "file") -> tuple[str, str | None]:
     entry of the requested kind is readable. Symlinked or non-regular
     artefacts are reported as probe failures (never read through a link), and
     a missing entry is absent (a real state, not an oversight).
+
+    The problem half is the text a row quotes when the classification itself
+    faulted, so it comes from ``census_text.fault_text``: a stat that raises
+    hands the census an ``OSError`` whose ``str()`` ends in the path it failed
+    on, and no row may carry that path. Every other return of this function is a
+    fixed sentence this file wrote.
     """
     try:
         if path.is_symlink():
@@ -494,7 +499,7 @@ def _file_kind(path: Path, kind: str = "file") -> tuple[str, str | None]:
             if not path.is_file():
                 return "nonregular", "path is not a regular file"
     except OSError as e:
-        return "nonregular", str(e)
+        return "nonregular", _text.fault_text(e)
     return "regular", None
 
 
@@ -576,42 +581,64 @@ def _validate_record(obj: object) -> list[str]:
     return problems
 
 
-@dataclass(frozen=True)
-class LedgerProbe:
-    """The ledger path's classification, answered once by `_ledger_probe`.
+# The ledger probe (the state word for `noni/decisions/` and the one row a
+# listing that faulted earns) lives in census_ledger.py beside this file, in the
+# same shape as the hygiene and ordering splits: an ordinary package import, with
+# the row mechanics it uses — the classifier, the row factory and the bound on
+# foreign text — handed in at the call, so the row shape and the state vocabulary
+# keep their one owner here. The module is loaded with the hygiene split below.
+def _ledger_probe(ledger: Path) -> _ledger.LedgerProbe:
+    """Classify ``ledger`` once through the ledger module's probe; see LedgerProbe.
 
-    ``state`` is a key of LEDGER_EMPTY_MESSAGES; ``problem`` is the OSError
-    text when a filesystem fault forced that state, or None when the state is
-    what the tree actually is. Carrying both keeps the probe honest (an I/O
-    error is never reported as a symlink that is not there) and lets
-    `_check_ledger` hand one answer to every reporter instead of letting each
-    re-classify the same path and drift.
+    The seam the census's own tests patch (a listing that raises, a probe that
+    answers a state the tree does not have), so it stays a name of this module
+    rather than a direct call into `census_ledger`. The module itself is loaded
+    by the loader under 'Ledger and hygiene splits' below.
     """
-
-    state: str
-    problem: str | None = None
+    return _ledger.probe_ledger(ledger, _file_kind)
 
 
 def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict],
-                  strict: bool) -> None:
+                  strict: bool, probe: _ledger.LedgerProbe) -> None:
     """Check the steering ledger; append findings (each a partial finding row).
 
-    Composition only: the ledger-empty probe, then record I/O + schema
+    ``probe`` is the run's one classification of ``ledger``, built by ``main``
+    before it decided whether this group runs at all: a second probe would be a
+    second read of the directory and a second chance to disagree with the first,
+    so the group reports from the answer that got it here.
+
+    The composition only: the ledger-empty probe, then record I/O + schema
     validation, the edited check (git-backed), the deleted check (git-backed)
-    and the supersede-chain check, in that order. ledger-empty only ADDS rows:
+    and the supersede-chain check, in that order. The record pass reads the
+    probe's own names, so the group's read of the directory is the probe's
+    single readdir (see ``LedgerProbe.names``). ledger-empty only ADDS rows:
     the states where the record pass has nothing to say. The git-backed
     integrity checks run whatever the empty probe found — see the
     deleted-sole-record regression tests in tests/test_census_unified.py.
 
-    The one row the composition adds itself: when the deletion check could not
-    put its question to git and the ledger reads as "empty", the run says so
-    (probe honesty, issue #33). "Empty" is the only state that can mean
-    "committed records were deleted", and this check is the only signal for
-    that, so a silent one here would let a gutted ledger read as a plain
-    no-ledger warning — the row is warn by default, fail under --strict."""
-    probe = _ledger_probe(ledger)
+    The two rows the composition adds itself, both probe honesty:
+
+    * a listing that faulted gets one cannot-tell row of its own and stops the
+      group there (`census_ledger.append_listing_fault`): the probe read nothing,
+      so no state word it answered is one this run established and no record
+      pass can be trusted either;
+    * when the deletion check could not put its question to git and the ledger
+      reads as "empty", the run says so (probe honesty, issue #33). "Empty" is
+      the only state that can mean "committed records were deleted", and this
+      check is the only signal for that, so a silent one here would let a
+      gutted ledger read as a plain no-ledger warning — the row is warn by
+      default, fail under --strict."""
+    if probe.listing_fault is not None:
+        # The probe could not list the ledger, so no state word it answered is
+        # one this run established: the empty class stays silent, the record
+        # pass has nothing trustworthy to read, and the one row the group adds
+        # says what the read could not do (`census_ledger.append_listing_fault`).
+        _ledger.append_listing_fault(
+            ledger, root, findings, strict, probe.listing_fault,
+            row=_row, rel_to_root=_rel_to_root, bounded=_bounded, clipped=_clipped)
+        return
     _check_ledger_empty(probe, ledger, root, findings, strict)
-    valid, unparseable = _check_ledger_records(ledger, root, findings, probe.state)
+    valid, unparseable = _check_ledger_records(ledger, root, findings, probe)
     _check_ledger_edited(valid, unparseable, git, root, findings, strict)
     could_not_answer = _check_ledger_deleted(ledger, git, root, findings, strict)
     if could_not_answer and probe.state == "empty":
@@ -623,66 +650,8 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
     _check_ledger_chain(valid, ledger, root, findings)
 
 
-def _ledger_probe(ledger: Path) -> LedgerProbe:
-    """Classify ``ledger`` once; see LedgerProbe for the fields.
-
-    One `_file_kind` classification per path — the ledger itself and its parent
-    (``noni/``) — mapped to a state word, so the vocabulary is derived once and
-    never disagrees with the other readers of the same filesystem facts:
-    "symlink" — either level is a symlink (refused, never followed; a link is
-    never read through even when its target holds records); "not a directory"
-    — ``noni/`` exists but is not a directory, so no ledger can live under it
-    (or the ledger entry itself is not a directory); "absent" — there is no
-    noni/ at all (which is what "no noni/" means for the ledger checks);
-    "empty" — noni/ is present and there is no record to arbitrate: no
-    ``noni/decisions`` directory at all, or one that holds no *.json record;
-    "ok" — a real ledger directory that holds at least one *.json record (the
-    recordless directory is "empty" above, not "ok": operator decision on
-    issue #33, which reverses the exit-10 ruling of issue #23).
-
-    The child is classified before the parent: ``noni`` committed as a plain
-    file must read as "not a directory", not "absent".
-    """
-    kind, problem = _file_kind(ledger, kind="dir")
-    if kind == "symlink":
-        return LedgerProbe("symlink")
-    parent_kind, parent_problem = _file_kind(ledger.parent, kind="dir")
-    if parent_kind == "symlink":
-        return LedgerProbe("symlink")
-    if parent_kind == "nonregular":
-        # noni/ exists but is not a directory (a plain file, a fifo), so no
-        # ledger can live under it. A fault on the parent keeps its text; "no
-        # noni/ at all" is "absent" below, the ledger being absent together
-        # with its parent.
-        return LedgerProbe("not a directory", parent_problem)
-    # A filesystem fault keeps its OSError text (a genuine I/O fault must not
-    # be reported under a state word that did not occur) and is rendered under
-    # the closest documented state word, so the row's word always comes from
-    # LEDGER_EMPTY_MESSAGES.
-    if kind == "nonregular":
-        return LedgerProbe("not a directory", problem)
-    if parent_kind == "absent":
-        return LedgerProbe("absent")
-    if kind == "absent":
-        # noni/ is there and decisions/ is not: no record can be censusable
-        # under it, the same finding as a recordless decisions/ directory.
-        return LedgerProbe("empty")
-    try:
-        names = [p.name for p in ledger.glob("*.json")]
-    except OSError as e:
-        # A directory that exists and stats fine but cannot be listed (a mount
-        # or permission fault on readdir) is not a ledger the census can read.
-        return LedgerProbe("not a directory", str(e))
-    if not names:
-        # A decisions/ directory that exists and holds no *.json record: the
-        # census exits 0 here so a freshly attached project is not permanently
-        # red. The git-backed deletion check still runs and reports how the
-        # ledger got empty (operator decision, issue #33).
-        return LedgerProbe("empty")
-    return LedgerProbe("ok")
-
-
-def _check_ledger_empty(probe: LedgerProbe, ledger: Path, root: Path, findings: list[dict],
+def _check_ledger_empty(probe: _ledger.LedgerProbe, ledger: Path, root: Path,
+                        findings: list[dict],
                         strict: bool) -> None:
     """The ledger-empty class: exactly one warn row when there is no ledger.
 
@@ -711,7 +680,11 @@ def _check_ledger_empty(probe: LedgerProbe, ledger: Path, root: Path, findings: 
     if detail is None:
         return
     if probe.problem:
-        detail = f"{detail} (probe error: {probe.problem})"
+        # Foreign text from this tree, so it gets the bound-and-scrub the
+        # listing-fault row applies to its fault text: a row built from someone
+        # else's error must not smuggle a host path or run past the length every
+        # other row keeps. The sentence around it is this census's own wording.
+        detail = f"{detail} (probe error: {_bounded(probe.problem)})"
     artifact = _rel_to_root(root, ledger)
     findings.append(
         _row("ledger-empty", strict, artifact, artifact,
@@ -720,28 +693,38 @@ def _check_ledger_empty(probe: LedgerProbe, ledger: Path, root: Path, findings: 
 
 
 def _check_ledger_records(ledger: Path, root: Path, findings: list[dict],
-                          state: str) -> tuple[list[tuple[str, Path, dict]], list[tuple[str, Path]]]:
+                          probe: _ledger.LedgerProbe
+                          ) -> tuple[list[tuple[str, Path, dict]], list[tuple[str, Path]]]:
     """I/O + schema validation. Returns (valid, unparseable) where each entry
     of unparseable is (name, path) of a file that exists on disk but failed
     parsing — it still gets the git edited check.
 
-    ``state`` is the ledger path's state word as answered by `_ledger_probe`
-    (via `_check_ledger`): this pass only reads records, so any state other
-    than "ok" is ledger-empty's finding and adds no row here. "ok" means the
-    directory holds at least one ``*.json`` name, so every row this pass adds
-    is a malformed-record failure.
+    ``probe`` is the run's one classification of ``ledger``, and this pass reads
+    both of its answers and asks neither again: ``probe.state`` for whether a
+    record pass is warranted at all, and ``probe.names`` for the records
+    themselves. The names are the probe's because the probe's readdir is the
+    only one this run performs — a second listing was a second read of a tree
+    that can change under the run, and one that faulted after the probe's had
+    succeeded raised out of ``main`` as a traceback rather than a row.
+
+    ``state`` other than "ok" means this pass reads no records at all, so any
+    state other than "ok" is ledger-empty's finding and adds no row here. "ok"
+    means the directory holds at least one ``*.json`` name, so every row this
+    pass adds is a malformed-record failure.
     """
     def add(check: str, subject: str, artifact: str, message: str) -> None:
         findings.append(_row(check, False, subject, artifact, message, root))
 
-    if state != "ok":
+    if probe.state != "ok" or probe.names is None:
         # ledger-empty owns every no-ledger state (absent, not a directory,
         # symlink, and any probe fault folded into one of them) as a warn that
         # names the state; this pass keeps only the malformed-record failures,
-        # so a ledger that is not there adds no ledger-record row here.
+        # so a ledger that is not there adds no ledger-record row here. The
+        # ``names is None`` arm is belt and braces: no state of "ok" is ever
+        # built without the names that produced it.
         return [], []
 
-    names = sorted(p.name for p in ledger.glob("*.json"))
+    names = sorted(probe.names)
     valid: list[tuple[str, Path, dict]] = []
     unparseable: list[tuple[str, Path]] = []
     for name in names:
@@ -765,7 +748,11 @@ def _check_ledger_records(ledger: Path, root: Path, findings: list[dict],
             unparseable.append((name, path))
             continue
         except OSError as e:
-            add("ledger-record", name, str(path), f"record is unreadable: {e}")
+            # The filename is the path of the record itself, which this row
+            # already carries in ``artifact``: the fault contributes its class
+            # and its errno words, nothing else.
+            add("ledger-record", name, str(path),
+                f"record is unreadable: {_text.fault_text(e)}")
             unparseable.append((name, path))
             continue
         try:
@@ -886,7 +873,13 @@ def _check_ledger_deleted(ledger: Path, git: Git | None, root: Path, findings: l
     record pass is what reports a record that exists on disk: this check only
     reports paths history shows and the working tree does not hold. Session
     files are intentionally NOT checked here: ending a session via its status
-    field is the protocol, and deleting a session file is not a violation."""
+    field is the protocol, and deleting a session file is not a violation.
+
+    Unlike `_check_sessions_deleted`, this check asks git even when the ledger
+    directory is gone: records are append-only, so a committed ``decisions/``
+    directory deleted whole is the deletion the operator must be told about,
+    while a session register is expected to hold no file at all for a project
+    that has never opened a session."""
     if git is None:
         # No git tree was named at all (not a repository, or rev-parse could
         # not answer): there is nothing to ask.
@@ -909,10 +902,6 @@ def _check_ledger_deleted(ledger: Path, git: Git | None, root: Path, findings: l
             "ledger-edited",
             f"the ledger path ({_rel_to_root(root, ledger)}) is outside the audited git tree, "
             "so whether a committed record was deleted cannot be answered", strict, findings)
-        return False
-    if ledger.is_dir() is False:
-        # No ledger directory to have lost a record: ledger-empty owns that
-        # state, and the question was answered (there is nothing to delete).
         return False
     for rel in sorted(git.added_paths_under(prefix)):
         if (top / rel).is_file():
@@ -1002,17 +991,27 @@ def _repo_sha1(path: Path) -> str | None:
         return None
 
 
-# --- Hygiene -------------------------------------------------------------------
-# The public-repo hygiene class and the checker it imports live in
-# census_hygiene.py beside this file. Both are ordinary package imports now:
-# inside an installed wheel there is no sibling file to load by path, and the
-# census's trust in its checker is module identity (see
-# census_hygiene._trusted_public_safety), not a resolved filesystem path. The
-# three row mechanics the class uses are handed in at the call, so the row shape
-# keeps its one owner.
+# --- Ledger and hygiene splits -------------------------------------------------
+# The ledger probe and the hygiene class, with the checker hygiene imports, live
+# in census_ledger.py and census_hygiene.py beside this file. All are ordinary
+# package imports: inside an installed wheel there is no sibling file to load by
+# path, and the census's trust in its checker is module identity (see
+# census_hygiene._trusted_public_safety), not a resolved filesystem path. The row
+# mechanics each one uses are handed in at the call, so the row shape keeps its
+# one owner here. The ledger alias is `_ledger` in the house style of the sibling
+# split-outs (`_helpers`, `_ordering`, `_ordering_readers`): the `_` prefix marks
+# the module and the group's own Path argument, `ledger`, stays a name no alias
+# takes.
 from . import census_hygiene as _helpers  # noqa: E402
+from . import census_ledger as _ledger  # noqa: E402
+from . import census_text as _text  # noqa: E402
 
-# The class's own parts stay reachable as members of the census: they are
+# The probe's type stays reachable as a member of this census, re-exported as the
+# one object rather than a copy, so a caller (and the census's own tests) still
+# names it through the module it already imports.
+LedgerProbe = _ledger.LedgerProbe
+
+# The hygiene class's own parts stay reachable as members of the census: they are
 # re-exports of one object, not copies, so the census keeps its single owner of
 # the checker and its loader while a caller (and the census's own tests) still
 # names them through the module it already imports.
@@ -1023,6 +1022,13 @@ _load_public_safety = _helpers._load_public_safety
 _trusted_public_safety = _helpers._trusted_public_safety
 _hygiene_labels = _helpers._hygiene_labels
 _split_violation = _helpers._split_violation
+# The message scrub's own parts stay reachable as members of the census for the
+# same reason: one object, not a copy, so the text rules keep their single owner
+# in ``census_text`` while a caller (and the census's own tests) still names them
+# through the module it already imports.
+_bounded = _text._bounded
+_stripped = _text._stripped
+_clipped = _text._clipped
 # The census's own git calls and public_safety's in-process scan share one
 # pinned environment, so the table of variables to pin has one owner: here.
 GIT_ENV_NEUTRAL = _helpers.GIT_ENV_NEUTRAL
@@ -1049,43 +1055,6 @@ def _git_env() -> dict[str, str]:
 
 
 # --- Session checks -------------------------------------------------------------
-
-def _bounded(message: str, limit: int = 300) -> str:
-    """Bound an exception-derived message and strip machine-local absolute
-    paths from it: a row built from someone else's error text must not smuggle
-    a host path into a report that promises not to print one.
-
-    The scrubbing is what makes this the right wrapper for a foreign message, and
-    the wrong one for a sentence this census composed itself: a row that names the
-    ledger as ``noni/decisions`` is naming a root-relative path on purpose, and a
-    wrapper that shortened it to ``<path>`` would destroy the very thing the row
-    is telling the operator to look at. So the two halves are separate here and
-    the group hands each one what it needs: this for text that came from outside,
-    :func:`_clipped` for the finished sentence around it.
-    """
-    return _clipped(_stripped(message), limit)
-
-
-def _stripped(message: str) -> str:
-    """``message`` with runs of whitespace collapsed and host paths replaced.
-
-    The path-stripping half of :func:`_bounded`, alone: a caller that composed a
-    sentence out of root-relative paths it derived itself needs the collapsing and
-    nothing else.
-    """
-    collapsed = " ".join(message.split())
-    return re.sub(r"(?:/[A-Za-z0-9._-]+)+", "<path>", collapsed)
-
-
-def _clipped(message: str, limit: int = 300) -> str:
-    """``message`` cut to ``limit`` characters, with an ellipsis when it was cut.
-
-    The length half of :func:`_bounded`, alone: the bound a row keeps is a property
-    of the row, so it is applied to the finished sentence a reporter composed,
-    whose own path fragments must survive (see :func:`_bounded`).
-    """
-    return message if len(message) <= limit else message[: limit - 3] + "..."
-
 
 def _parse_session(body: str) -> tuple[dict[str, str], list[str], list[str]]:
     """Parse a session register body into (fields, claims, problems)."""
@@ -1152,8 +1121,14 @@ def _check_sessions(
             continue
         try:
             body = path.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError) as e:
-            add("session-malformed", name, str(path), f"file unreadable: {e}")
+        except UnicodeDecodeError:
+            # The bytes of an undecodable file are hostile content, so the row
+            # names the class and echoes none of them.
+            add("session-malformed", name, str(path), "file unreadable: not valid UTF-8")
+            continue
+        except OSError as e:
+            add("session-malformed", name, str(path),
+                f"file unreadable: {_text.fault_text(e)}")
             continue
         fields, claims, problems = _parse_session(body)
         if problems:
@@ -1323,20 +1298,27 @@ from . import census_ordering_readers as _ordering_readers  # noqa: E402
 def _check_ordering(
     order: Path, ledger: Path, root: Path, now: datetime, ordering_stale_after: timedelta,
     issue_state: _ordering_readers.IssueState, strict: bool, findings: list[dict],
+    names: tuple[str, ...] | None,
 ) -> None:
     """The ordering group, run by the module beside this file.
 
     The row factory, the two helpers a row is built from and the readers module
     are passed in rather than imported, so the row shape, its visibility marker
     and the machine-local-path rule stay written in exactly one place: this file.
+
+    ``names`` is the run's one ledger listing, the probe's, handed down for the
+    group's record lookups: the ordering group reads the ledger the census
+    already read and never walks the directory again (see
+    ``LedgerProbe.names``).
     """
     _ordering.check_ordering(order, ledger, root, now, ordering_stale_after, issue_state,
                             strict, findings, row=_row, rel_to_root=_rel_to_root,
                             file_kind=_file_kind, bounded=_bounded, parse_iso=_parse_iso,
-                            clipped=_clipped,
+                            clipped=_clipped, names=names,
                             readers=_ordering_readers,
                             load_json_strict=_census_json.load_json_strict,
-                            names_zone=_ordering_readers.names_zone)
+                            names_zone=_ordering_readers.names_zone,
+                            ledger_name=_ledger.ledger_name)
 
 
 # --- CLI -----------------------------------------------------------------------
@@ -1499,8 +1481,19 @@ def main(argv: list[str] | None = None) -> int:
         return [f for f in group_findings
                 if f["check"] in requested or f.get(WHOLE_ARTIFACT_KEY)]
 
-    if (LEDGER_CHECKS | {"ledger-empty"}) & requested:
-        _check_ledger(ledger, git, root, findings, args.strict)
+    # The ledger is classified once per run, here, before the group is gated on
+    # the answer: `main` reads `listing_fault` off this one probe to decide
+    # whether the group runs at all, and the same probe goes into
+    # `_check_ledger` for the rows.
+    ledger_probe = _ledger_probe(ledger)
+
+    if (LEDGER_CHECKS | {"ledger-empty"}) & requested or ledger_probe.listing_fault:
+        # The group runs whenever one of its classes was asked for, and also
+        # whenever the probe could not list the ledger: that row is the
+        # probe-honesty one `keep` never drops, so a run whose filter named no
+        # ledger class must still reach the read that faulted rather than
+        # report the clean verdict of a group that never ran.
+        _check_ledger(ledger, git, root, findings, args.strict, ledger_probe)
         findings[:] = keep(findings)
 
     if SESSION_CHECKS & requested:
@@ -1512,7 +1505,7 @@ def main(argv: list[str] | None = None) -> int:
                         _ordering_readers.load_issue_state(
                             issue_state_path, _ordering.ISSUE_STATE_STATES,
                             _file_kind, _bounded, _census_json.load_json_strict),
-                        args.strict, findings)
+                        args.strict, findings, ledger_probe.names)
         findings[:] = keep(findings)
         # The closed check's question comes only from --issue-state, which an
         # adapter or the operator produces. Without it the class is not run, and

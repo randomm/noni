@@ -123,8 +123,9 @@ def test_package_files_present():
     """
     shipped = {p.name for p in (REPO / "src" / "noni").glob("*.py")}
     for module in (
-        "census.py", "census_hygiene.py", "census_json.py", "census_ordering.py",
-        "census_ordering_readers.py", "census_sessions.py", "claim.py", "cli.py",
+        "census.py", "census_hygiene.py", "census_json.py", "census_ledger.py",
+        "census_ordering.py", "census_ordering_readers.py", "census_sessions.py",
+        "claim.py", "cli.py",
         "decide.py", "gitwrite.py", "labels.py", "order.py", "order_gitwrite.py",
         "orderschema.py", "orderstate.py", "public_safety.py", "register.py",
         "shim_help.py", "targetschema.py",

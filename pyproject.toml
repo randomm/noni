@@ -82,6 +82,7 @@ include = [
     "src/noni/census.py",
     "src/noni/census_hygiene.py",
     "src/noni/census_json.py",
+    "src/noni/census_ledger.py",
     "src/noni/census_ordering.py",
     "src/noni/census_ordering_readers.py",
     "src/noni/census_sessions.py",

@@ -49,7 +49,6 @@ import re
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -576,48 +575,21 @@ def _validate_record(obj: object) -> list[str]:
     return problems
 
 
-@dataclass(frozen=True)
-class LedgerProbe:
-    """The ledger path's classification, answered once by `_ledger_probe`.
+# The ledger probe (the state word for `noni/decisions/` and the one row a
+# listing that faulted earns) lives in census_ledger.py beside this file, in the
+# same shape as the hygiene and ordering splits: an ordinary package import, with
+# the row mechanics it uses — the classifier, the row factory and the bound on
+# foreign text — handed in at the call, so the row shape and the state vocabulary
+# keep their one owner here. The module is loaded with the hygiene split below.
+def _ledger_probe(ledger: Path) -> _ledger.LedgerProbe:
+    """Classify ``ledger`` once through the ledger module's probe; see LedgerProbe.
 
-    ``state`` is a key of LEDGER_EMPTY_MESSAGES; ``problem`` is the OSError
-    text when a filesystem fault forced that state, or None when the state is
-    what the tree actually is. Carrying both keeps the probe honest (an I/O
-    error is never reported as a symlink that is not there) and lets
-    `_check_ledger` hand one answer to every reporter instead of letting each
-    re-classify the same path and drift.
-
-    ``listing_fault`` is the one fault no state word may carry: the OSError text
-    of a ``decisions/`` directory that exists, stats as a directory, and cannot
-    be listed. The read answered nothing, so no word of LEDGER_EMPTY_MESSAGES
-    describes it — those four name states of the tree, and "unlistable" is a
-    fault of this run's read. ``state`` keeps "empty" so the git-backed deletion
-    question is still put when git can answer it (the probe's inability to list
-    is not git's inability to answer), while `_check_ledger` renders the fault
-    as a `ledger-edited` cannot-tell row and stays silent on the empty class —
-    which is why the text travels beside ``problem`` instead of inside it.
+    The seam the census's own tests patch (a listing that raises, a probe that
+    answers a state the tree does not have), so it stays a name of this module
+    rather than a direct call into `census_ledger`. The module itself is loaded
+    by the loader under 'Ledger and hygiene splits' below.
     """
-
-    state: str
-    problem: str | None = None
-    listing_fault: str | None = None
-
-
-def _probe_listing_fault(ledger: Path) -> str | None:
-    """The OSError text of a ledger listing this run cannot make, or None.
-
-    The one question `main` must answer before it decides whether to run the
-    ledger group at all: the group's ``--only`` filter is a contract about
-    classes, and a probe that could not read its input is not a class — it is
-    the run losing the ability to answer anything. The row is produced once
-    the group runs; this answers only whether the group has to run even when
-    the filter named none of its classes.
-
-    A probe that raises something other than ``OSError`` is a bug in this file,
-    not a fault of the tree, and is left to propagate: swallowing it here would
-    be the very silence the probe-honesty rule forbids.
-    """
-    return _ledger_probe(ledger).listing_fault
+    return _ledger.probe_ledger(ledger, _file_kind)
 
 
 def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict],
@@ -634,9 +606,9 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
     The two rows the composition adds itself, both probe honesty:
 
     * a listing that faulted gets one cannot-tell row of its own and stops the
-      group there (`_append_listing_fault`): the probe read nothing, so no
-      state word it answered is one this run established and no record pass can
-      be trusted either;
+      group there (`census_ledger.append_listing_fault`): the probe read nothing,
+      so no state word it answered is one this run established and no record
+      pass can be trusted either;
     * when the deletion check could not put its question to git and the ledger
       reads as "empty", the run says so (probe honesty, issue #33). "Empty" is
       the only state that can mean "committed records were deleted", and this
@@ -648,8 +620,10 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
         # The probe could not list the ledger, so no state word it answered is
         # one this run established: the empty class stays silent, the record
         # pass has nothing trustworthy to read, and the one row the group adds
-        # says what the read could not do (`_append_listing_fault`).
-        _append_listing_fault(ledger, root, findings, strict, probe.listing_fault)
+        # says what the read could not do (`census_ledger.append_listing_fault`).
+        _ledger.append_listing_fault(
+            ledger, root, findings, strict, probe.listing_fault,
+            row=_row, rel_to_root=_rel_to_root, bounded=_bounded)
         return
     _check_ledger_empty(probe, ledger, root, findings, strict)
     valid, unparseable = _check_ledger_records(ledger, root, findings, probe.state)
@@ -664,75 +638,20 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
     _check_ledger_chain(valid, ledger, root, findings)
 
 
-def _ledger_probe(ledger: Path) -> LedgerProbe:
-    """Classify ``ledger`` once; see LedgerProbe for the fields.
+def _probe_listing_fault(ledger: Path) -> str | None:
+    """The OSError text of a ledger listing this run cannot make, or None.
 
-    One `_file_kind` classification per path — the ledger itself and its parent
-    (``noni/``) — mapped to a state word, so the vocabulary is derived once and
-    never disagrees with the other readers of the same filesystem facts:
-    "symlink" — either level is a symlink (refused, never followed; a link is
-    never read through even when its target holds records); "not a directory"
-    — ``noni/`` exists but is not a directory, so no ledger can live under it
-    (or the ledger entry itself is not a directory); "absent" — there is no
-    noni/ at all (which is what "no noni/" means for the ledger checks);
-    "empty" — noni/ is present and there is no record to arbitrate: no
-    ``noni/decisions`` directory at all, or one that holds no *.json record;
-    "ok" — a real ledger directory that holds at least one *.json record (the
-    recordless directory is "empty" above, not "ok": operator decision on
-    issue #33, which reverses the exit-10 ruling of issue #23).
-
-    The child is classified before the parent: ``noni`` committed as a plain
-    file must read as "not a directory", not "absent".
-
-    The listing is an explicit ``Path.iterdir``, never ``Path.glob``: glob
-    swallows the OSError that readdir raises and yields nothing, so a
-    directory that exists and cannot be read would read as the recordless
-    "empty" tree — a warn the operator could dismiss as a project that has
-    not steered anything yet. ``iterdir`` raises, and the text goes out on
-    ``listing_fault`` for `_check_ledger` to report as a cannot-tell.
+    The one question `main` must answer before it decides whether to run the
+    ledger group at all, asked of the probe module beside this file: the group's
+    ``--only`` filter is a contract about classes, and a probe that could not read
+    its input is not a class — it is the run losing the ability to answer
+    anything, so the group has to run whatever the filter asked for.
     """
-    kind, problem = _file_kind(ledger, kind="dir")
-    if kind == "symlink":
-        return LedgerProbe("symlink")
-    parent_kind, parent_problem = _file_kind(ledger.parent, kind="dir")
-    if parent_kind == "symlink":
-        return LedgerProbe("symlink")
-    if parent_kind == "nonregular":
-        # noni/ exists but is not a directory (a plain file, a fifo), so no
-        # ledger can live under it. A fault on the parent keeps its text; "no
-        # noni/ at all" is "absent" below, the ledger being absent together
-        # with its parent.
-        return LedgerProbe("not a directory", parent_problem)
-    # A filesystem fault keeps its OSError text (a genuine I/O fault must not
-    # be reported under a state word that did not occur) and is rendered under
-    # the closest documented state word, so the row's word always comes from
-    # LEDGER_EMPTY_MESSAGES.
-    if kind == "nonregular":
-        return LedgerProbe("not a directory", problem)
-    if parent_kind == "absent":
-        return LedgerProbe("absent")
-    if kind == "absent":
-        # noni/ is there and decisions/ is not: no record can be censusable
-        # under it, the same finding as a recordless decisions/ directory.
-        return LedgerProbe("empty")
-    try:
-        names = [p.name for p in ledger.iterdir() if p.suffix == ".json"]
-    except OSError as e:
-        # A directory that exists and stats fine but cannot be listed (a mount
-        # or permission fault on readdir) is not a ledger the census can read,
-        # and it is not one of the states LEDGER_EMPTY_MESSAGES words. The text
-        # travels on its own field so no reporter can mistake it for a state.
-        return LedgerProbe("empty", listing_fault=str(e))
-    if not names:
-        # A decisions/ directory that exists and holds no *.json record: the
-        # census exits 0 here so a freshly attached project is not permanently
-        # red. The git-backed deletion check still runs and reports how the
-        # ledger got empty (operator decision, issue #33).
-        return LedgerProbe("empty")
-    return LedgerProbe("ok")
+    return _ledger.listing_fault(ledger, _file_kind)
 
 
-def _check_ledger_empty(probe: LedgerProbe, ledger: Path, root: Path, findings: list[dict],
+def _check_ledger_empty(probe: _ledger.LedgerProbe, ledger: Path, root: Path,
+                        findings: list[dict],
                         strict: bool) -> None:
     """The ledger-empty class: exactly one warn row when there is no ledger.
 
@@ -912,37 +831,6 @@ def _append_cannot_tell(check: str, reason: str, strict: bool, findings: list[di
     })
 
 
-def _append_listing_fault(ledger: Path, root: Path, findings: list[dict],
-                          strict: bool, fault: str) -> None:
-    """The row for a ledger directory this run could not list.
-
-    A probe that read nothing reports it, under the probe-honesty rule: the
-    alternative is the run calling an unreadable ledger an empty one, which is
-    the verdict a project that has never steered anything also earns. Built
-    with ``_row`` and an explicit ``severity="warn"`` rather than through
-    `_append_cannot_tell`, because the row must name the ledger it could not
-    read in both ``subject`` and ``artifact`` — the helper names its check —
-    and because `_check_sessions_deleted` shares that helper and must not have
-    its shape changed for this case. The OSError text is foreign and passes
-    through `_bounded`; the root-relative path is this census's own wording
-    and does not, so a machine-local path can only enter through the fault.
-
-    ``check`` is ``ledger-edited`` exactly: ``main`` filters the ledger group
-    against that id plus ``ledger-empty``, and a row under any other id would
-    be dropped by an ``--only``/``--skip`` run rather than reported by it. The
-    row is also marked whole-artifact, which is what keeps it in front of the
-    operator under a filter that named none of the ledger classes: a run that
-    could not read its input must say so whatever the filter asks for (see
-    ``keep`` and the module docstring).
-    """
-    path = _rel_to_root(root, ledger)
-    findings.append(
-        _row("ledger-edited", strict, path, path,
-             f"cannot-tell: the ledger directory ({path}) exists but could not be "
-             f"listed ({_bounded(fault)}), so whether a committed record was deleted "
-             "or edited cannot be answered", root, severity="warn", whole_artifact=True))
-
-
 def _check_ledger_deleted(ledger: Path, git: Git | None, root: Path, findings: list[dict],
                           strict: bool) -> bool:
     """The deleted-record check (append-only ledger rule).
@@ -1085,17 +973,26 @@ def _repo_sha1(path: Path) -> str | None:
         return None
 
 
-# --- Hygiene -------------------------------------------------------------------
-# The public-repo hygiene class and the checker it imports live in
-# census_hygiene.py beside this file. Both are ordinary package imports now:
-# inside an installed wheel there is no sibling file to load by path, and the
-# census's trust in its checker is module identity (see
-# census_hygiene._trusted_public_safety), not a resolved filesystem path. The
-# three row mechanics the class uses are handed in at the call, so the row shape
-# keeps its one owner.
+# --- Ledger and hygiene splits -------------------------------------------------
+# The ledger probe and the hygiene class, with the checker hygiene imports, live
+# in census_ledger.py and census_hygiene.py beside this file. All are ordinary
+# package imports: inside an installed wheel there is no sibling file to load by
+# path, and the census's trust in its checker is module identity (see
+# census_hygiene._trusted_public_safety), not a resolved filesystem path. The row
+# mechanics each one uses are handed in at the call, so the row shape keeps its
+# one owner here. The ledger alias is `_ledger` in the house style of the sibling
+# split-outs (`_helpers`, `_ordering`, `_ordering_readers`): the `_` prefix marks
+# the module and the group's own Path argument, `ledger`, stays a name no alias
+# takes.
 from . import census_hygiene as _helpers  # noqa: E402
+from . import census_ledger as _ledger  # noqa: E402
 
-# The class's own parts stay reachable as members of the census: they are
+# The probe's type stays reachable as a member of this census, re-exported as the
+# one object rather than a copy, so a caller (and the census's own tests) still
+# names it through the module it already imports.
+LedgerProbe = _ledger.LedgerProbe
+
+# The hygiene class's own parts stay reachable as members of the census: they are
 # re-exports of one object, not copies, so the census keeps its single owner of
 # the checker and its loader while a caller (and the census's own tests) still
 # names them through the module it already imports.

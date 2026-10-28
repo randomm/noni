@@ -49,6 +49,7 @@ import re
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1085,14 +1086,27 @@ def _parse_session(body: str) -> tuple[dict[str, str], list[str], list[str]]:
 
 def _check_sessions(
     sessions: Path, git: Git | None, root: Path, now: datetime, stale_after: timedelta,
-    strict: bool, findings: list[dict]
+    strict: bool, findings: list[dict], probe: SessionsProbe
 ) -> None:
     """Check the session register; append its findings to ``findings``.
+
+    ``probe`` is the run's one listing of ``sessions``, built by ``main`` before
+    it decided whether this group runs at all: a second listing would be a second
+    read of the directory and a second chance to disagree with the first, so the
+    group reports from the answer that got it here (see :class:`SessionsProbe`).
 
     A missing sessions directory is a clean state (no sessions registered);
     an unreadable or non-directory path is a probe failure, never clean.
     Stalled sessions and probe failures are warnings by default and failures
     under --strict.
+
+    A directory that stats fine and cannot be *listed* is neither of those
+    states, so it is not answered with a state word: it gets the one
+    probe-honesty row of :func:`_append_sessions_listing_fault` and the group
+    stops there, because a register this run could not enumerate has no files
+    to check and no ``session-*`` row of it would mean anything but "we did not
+    look". The git-backed deletion question is not asked either — see that
+    function for why asking it behind a faulted read would be a guess.
     """
     def add(check: str, subject: str, artifact: str, message: str) -> None:
         findings.append(_row(check, strict, subject, artifact, message, root))
@@ -1104,7 +1118,14 @@ def _check_sessions(
         add("probe", str(sessions), str(sessions), f"sessions path is not a readable directory: {problem}")
         return
 
-    files = sorted(sessions.glob("*.md"))
+    if probe.fault is not None:
+        # The register is there and is a directory, and readdir refused it: the
+        # read answered nothing, so nothing but the fault is reportable, and no
+        # session row of a directory this run never saw is honest either.
+        _append_sessions_listing_fault(
+            sessions, root, strict, findings, probe.fault)
+        return
+    files = list(probe.names or ())
     claim_map: dict[str, dict[str, list[str]]] = {}
     # One read + parse per register file; both the claim map and the
     # same-identity map below are built from these results, so a file is never
@@ -1218,6 +1239,119 @@ def _check_sessions(
             )
 
     _check_sessions_deleted(sessions, git, root, strict, findings)
+
+
+@dataclass(frozen=True)
+class SessionsProbe:
+    """The register directory's listing, answered once by :func:`_sessions_listing`.
+
+    ``names`` is the ``*.md`` listing this run took — the empty tuple for a
+    directory it listed and found no register file in, which is a read that
+    answered "nothing", and None for every state in which no such read happened
+    (no directory at all, a symlink, a path that is not a directory). ``fault``
+    is the one thing no state word may carry: the text of the ``OSError`` a
+    directory that exists, stats as a directory, and cannot be listed raised.
+    It travels beside the state rather than inside it so no reporter can render
+    it as one, and so the gate in ``main`` and the rows of
+    :func:`_check_sessions` are the answer of the *same* readdir.
+
+    The shape is the ledger probe's (see ``census_ledger.LedgerProbe``), for the
+    same reason: the census asks a directory two questions, what is in it and
+    whether it could be read at all, and two reads of one directory are free to
+    disagree. Here the directory is asked once.
+
+    ``fault`` is built by ``census_text.fault_text``, which reads the
+    exception's class and its ``strerror`` and never its ``filename``: the path a
+    read failed on is the one part of an ``OSError`` no row may carry.
+    """
+
+    names: tuple[Path, ...] | None = None
+    fault: str | None = None
+
+
+def listing_helper(sessions: Path) -> list[Path]:
+    """The ``*.md`` register paths ``sessions`` holds, listed with ``iterdir``.
+
+    The one listing of the register the whole census performs, and the one its
+    tests fault to prove it. It is an explicit ``Path.iterdir`` and never
+    ``Path.glob``: ``glob`` swallows the ``OSError`` that readdir raises and
+    yields nothing, so a directory that exists and cannot be read reports the
+    same clean verdict as a project that has never opened a session. Here the
+    ``OSError`` propagates and the caller decides what a fault means — see
+    :func:`_sessions_listing`, and on the ledger side the sibling helper of
+    ``census_ledger`` whose shape this copies.
+
+    Reaching the directory through the module's own ``Path`` name is what makes
+    it a seam the census's tests can fault, and why this is a module-level
+    function rather than a call closed over in a reporter: a closure binds the
+    class at import and hides the read from a patched one.
+    """
+    return [p for p in sessions.iterdir() if p.suffix == ".md"]
+
+
+def _sessions_listing(sessions: Path) -> SessionsProbe:
+    """List the register once; see :class:`SessionsProbe` for the fields.
+
+    The caller of :func:`listing_helper` for the whole run, and the only one:
+    :func:`_check_sessions` reports from the names it returns and ``main`` gates
+    the group on the fault it returns, so neither asks the directory twice.
+    """
+    try:
+        return SessionsProbe(names=tuple(sorted(listing_helper(sessions))))
+    except OSError as e:
+        # A directory that exists and stats fine but cannot be listed (a mount
+        # or permission fault on readdir) is not a register the census read, and
+        # it is not one of the states the group words. The text travels on its
+        # own field, and ``names`` stays None: the read answered nothing, so no
+        # pass may borrow a listing it never got.
+        return SessionsProbe(fault=_text.fault_text(e))
+
+
+def _append_sessions_listing_fault(
+    sessions: Path, root: Path, strict: bool, findings: list[dict], fault: str
+) -> None:
+    """The row for a sessions register this run could not list.
+
+    Built like the ledger group's row for the same fault of its own directory
+    (``census_ledger.append_listing_fault``): one ``_row`` call with an explicit
+    ``severity="warn"``, not through ``_append_cannot_tell``, because that
+    helper names its check in ``subject``/``artifact`` and this row has to name
+    the register it could not read in both fields — the operator has to see
+    which directory refused the census.
+
+    The class is ``session-deleted``, which is what the deletion check already
+    uses for its cannot-tell rows (an out-of-tree ``--sessions`` override puts
+    one there too), so a run filtered to ``--only session-deleted`` reports the
+    fault rather than the silent clean of a group that read nothing. No
+    ``probe`` row is added for the same fault: ``probe`` answers a question
+    about one path it classified (the row above, for a path that is not a
+    directory at all), and one fault earning two rows of two classes reads as
+    two problems found where there was one read.
+
+    ``whole_artifact`` is what keeps the row in front of the operator under a
+    filter that named none of the sessions classes: a run that could not read
+    its input must say so whatever the filter asked for (see ``keep``).
+
+    ``fault`` arrives from ``census_text.fault_text``, which already excludes
+    the filename the read failed on, so no machine-local path is in it; it goes
+    through ``_bounded`` anyway, like every other piece of text this census did
+    not write. ``subject``/``artifact`` are the root-relative register path and
+    are deliberately not scrubbed — the scrubber would collapse
+    ``noni/sessions`` to ``<path>`` and destroy the one thing the row exists to
+    name. For a ``--sessions`` override that points outside the audited tree
+    ``_rel_to_root`` cannot root it and hands back the path it was given, which
+    is why the message narrates its path through ``_bounded``.
+    """
+    name = _rel_to_root(root, sessions)
+    findings.append(
+        _row("session-deleted", strict, name, name,
+             _clipped(f"cannot-tell: the sessions register ({_bounded(name)}) "
+                      "exists but could not be "
+                      f"listed ({_bounded(fault)}), so which session files are registered, "
+                      "and whether a committed register file was deleted, cannot be "
+                      "answered"), root,
+             severity="warn", whole_artifact=True)
+    )
 
 
 def _check_sessions_deleted(
@@ -1496,8 +1630,20 @@ def main(argv: list[str] | None = None) -> int:
         _check_ledger(ledger, git, root, findings, args.strict, ledger_probe)
         findings[:] = keep(findings)
 
-    if SESSION_CHECKS & requested:
-        _check_sessions(sessions, git, root, now, stale_after, args.strict, findings)
+    # The register is listed once per run, here, before the group is gated on the
+    # answer: `main` reads `fault` off this one listing to decide whether the
+    # group runs at all, and the same listing answers the group's file loop.
+    sessions_probe = _sessions_listing(sessions)
+
+    if (SESSION_CHECKS & requested) or sessions_probe.fault is not None:
+        # The group runs whenever one of its classes was asked for, and also
+        # whenever the register could not be listed: that row is the
+        # probe-honesty one `keep` never drops, so a run whose filter named no
+        # session class must still reach the read that faulted rather than
+        # report the clean verdict of a group that never ran. The listing is the
+        # group's own — the ledger probe answers for the ledger alone.
+        _check_sessions(sessions, git, root, now, stale_after, args.strict, findings,
+                        sessions_probe)
         findings[:] = keep(findings)
 
     if ORDERING_CHECKS & requested:

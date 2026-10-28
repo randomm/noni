@@ -351,6 +351,67 @@ def _fault_the_ledger_listing(monkeypatch, ledger: Path) -> None:
     monkeypatch.setattr(census.Path, "iterdir", boom)
 
 
+def _fault_the_sessions_listing(monkeypatch, sessions: Path,
+                                text: str = "input/output error") -> None:
+    """Make the census's listing of ``sessions`` fault, for an in-process run.
+
+    The sessions-side twin of :func:`_fault_the_ledger_listing`, and the same
+    fixture for the same reason: the fault is injected at the census's own
+    ``Path.iterdir`` of the register and never at a mode bit, because a
+    root-equivalent runner reads a 000-mode directory and a chmod fixture would
+    pass vacuously. The guard on the receiver keeps every other listing of the
+    run honest, so only the register's readdir faults — patching ``Path.glob``
+    instead would fault nothing at all, since ``glob`` swallows the ``OSError``
+    (which is the very dishonesty the census no longer has).
+
+    ``text`` defaults to the slash-free errno words an unmounted device
+    reports, so a test can assert the fault reaches the row verbatim: the
+    scrubber replaces every ``/segment`` run with its marker, and a message
+    carrying a separator could not be quoted back unchanged.
+
+    The patch goes on ``census.Path``, the name the census reaches the register
+    through; monkeypatch restores it. In-process callers only — a subprocess
+    would not see it.
+    """
+    import census
+
+    real_iterdir = census.Path.iterdir
+    target = Path(sessions)
+
+    def boom(self):
+        if self == target:
+            raise OSError(text)
+        return real_iterdir(self)
+
+    monkeypatch.setattr(census.Path, "iterdir", boom)
+
+
+def _permission_fault_on(sessions: Path, leaked: str):
+    """An ``iterdir`` replacement that faults the listing of ``sessions`` with a path.
+
+    The one shape that carries both halves of the row's rule in a single
+    exception: a ``PermissionError`` built from an errno pair puts the words in
+    ``strerror`` and the path it failed on in ``filename``, so ``str()`` holds
+    both and the row must print one of them and not the other. A plain
+    ``OSError("text")`` has neither field, which is why
+    :func:`_fault_the_sessions_listing` cannot carry a leaked path and this
+    helper exists beside it. Returns the replacement for the caller to install
+    with ``monkeypatch.setattr(census.Path, "iterdir", ...)``.
+    """
+    import census
+
+    target = Path(sessions)
+    real_iterdir = census.Path.iterdir
+    fault = OSError(13, "Permission denied - input/output error", leaked)
+
+    def boom(self):
+        if self == target:
+            raise fault
+        return real_iterdir(self)
+
+    return boom
+
+
 # --- Synthetic hygiene fixtures ------------------------------------------------
 #
 # One home for the violation strings the census hygiene tests plant. They are

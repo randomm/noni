@@ -1125,7 +1125,16 @@ def _check_sessions(
         _append_sessions_listing_fault(
             sessions, root, strict, findings, probe.fault)
         return
-    files = list(probe.names or ())
+    if probe.names is None:
+        # Unreachable through :func:`_sessions_listing`, which answers with one
+        # field or the other (see :class:`SessionsProbe`): the gate above let the
+        # group in, so a probe with neither a listing nor a fault would have the
+        # deletion question asked about a register this run never opened.
+        # Reported, not assumed clean.
+        _append_sessions_listing_fault(
+            sessions, root, strict, findings, "the register was never listed")
+        return
+    files = list(probe.names)
     claim_map: dict[str, dict[str, list[str]]] = {}
     # One read + parse per register file; both the claim map and the
     # same-identity map below are built from these results, so a file is never
@@ -1245,20 +1254,19 @@ def _check_sessions(
 class SessionsProbe:
     """The register directory's listing, answered once by :func:`_sessions_listing`.
 
-    ``names`` is the ``*.md`` listing this run took — the empty tuple for a
-    directory it listed and found no register file in, which is a read that
-    answered "nothing", and None for every state in which no such read happened
-    (no directory at all, a symlink, a path that is not a directory). ``fault``
-    is the one thing no state word may carry: the text of the ``OSError`` a
-    directory that exists, stats as a directory, and cannot be listed raised.
-    It travels beside the state rather than inside it so no reporter can render
-    it as one, and so the gate in ``main`` and the rows of
-    :func:`_check_sessions` are the answer of the *same* readdir.
+    Exactly one field is set, and that one field is the answer of one readdir:
+    ``names`` is the ``*.md`` listing this run took (the empty tuple for a
+    directory it listed and found no register file in, a read that answered
+    "nothing"), or ``fault`` is the text of the ``OSError`` a directory that
+    exists, stats as a directory and cannot be listed raised. "Listed" and "did
+    not list" are therefore distinguishable by construction rather than by a
+    convention the reporter has to remember: a probe that could mean both would
+    let the group ask the deletion question about a register it never opened,
+    which is the silent clean this ticket exists to close.
 
-    The shape is the ledger probe's (see ``census_ledger.LedgerProbe``), for the
-    same reason: the census asks a directory two questions, what is in it and
-    whether it could be read at all, and two reads of one directory are free to
-    disagree. Here the directory is asked once.
+    It is the ledger probe's shape (see ``census_ledger.LedgerProbe``) minus its
+    ``state`` field: the sessions group words no states, so there is no state
+    word here for a fault to be mistaken for.
 
     ``fault`` is built by ``census_text.fault_text``, which reads the
     exception's class and its ``strerror`` and never its ``filename``: the path a
@@ -1268,42 +1276,33 @@ class SessionsProbe:
     names: tuple[Path, ...] | None = None
     fault: str | None = None
 
-
-def listing_helper(sessions: Path) -> list[Path]:
-    """The ``*.md`` register paths ``sessions`` holds, listed with ``iterdir``.
-
-    The one listing of the register the whole census performs, and the one its
-    tests fault to prove it. It is an explicit ``Path.iterdir`` and never
-    ``Path.glob``: ``glob`` swallows the ``OSError`` that readdir raises and
-    yields nothing, so a directory that exists and cannot be read reports the
-    same clean verdict as a project that has never opened a session. Here the
-    ``OSError`` propagates and the caller decides what a fault means — see
-    :func:`_sessions_listing`, and on the ledger side the sibling helper of
-    ``census_ledger`` whose shape this copies.
-
-    Reaching the directory through the module's own ``Path`` name is what makes
-    it a seam the census's tests can fault, and why this is a module-level
-    function rather than a call closed over in a reporter: a closure binds the
-    class at import and hides the read from a patched one.
-    """
-    return [p for p in sessions.iterdir() if p.suffix == ".md"]
+    def __post_init__(self) -> None:
+        if (self.names is None) == (self.fault is None):
+            raise ValueError(
+                "SessionsProbe answers one readdir: set names (the listing, "
+                "() for a directory listed and found empty) or fault (the text "
+                "of the OSError that stopped the listing), never both and neither")
 
 
 def _sessions_listing(sessions: Path) -> SessionsProbe:
-    """List the register once; see :class:`SessionsProbe` for the fields.
+    """List the register once; the whole census performs no other readdir of it.
 
-    The caller of :func:`listing_helper` for the whole run, and the only one:
-    :func:`_check_sessions` reports from the names it returns and ``main`` gates
-    the group on the fault it returns, so neither asks the directory twice.
+    The read is an explicit ``Path.iterdir`` and never ``Path.glob``: ``glob``
+    swallows the ``OSError`` a faulted readdir raises and yields nothing, so a
+    register the run could not read would earn the same clean verdict as a
+    project that never opened a session. Here the ``OSError`` propagates and the
+    probe carries its text instead.
+
+    Both answers come from this call, so the group's file loop and ``main``'s
+    gate are the same read: ``_check_sessions`` reports from the names and
+    ``main`` opens the group on the fault. The tuple is sorted because the
+    register's reporters print sorted, and one order per run is what keeps two
+    of them naming one file the same way.
     """
     try:
-        return SessionsProbe(names=tuple(sorted(listing_helper(sessions))))
+        return SessionsProbe(names=tuple(sorted(
+            p for p in sessions.iterdir() if p.suffix == ".md")))
     except OSError as e:
-        # A directory that exists and stats fine but cannot be listed (a mount
-        # or permission fault on readdir) is not a register the census read, and
-        # it is not one of the states the group words. The text travels on its
-        # own field, and ``names`` stays None: the read answered nothing, so no
-        # pass may borrow a listing it never got.
         return SessionsProbe(fault=_text.fault_text(e))
 
 
@@ -1313,11 +1312,12 @@ def _append_sessions_listing_fault(
     """The row for a sessions register this run could not list.
 
     Built like the ledger group's row for the same fault of its own directory
-    (``census_ledger.append_listing_fault``): one ``_row`` call with an explicit
-    ``severity="warn"``, not through ``_append_cannot_tell``, because that
-    helper names its check in ``subject``/``artifact`` and this row has to name
-    the register it could not read in both fields — the operator has to see
-    which directory refused the census.
+    (``census_ledger.append_listing_fault``), whose injected arguments this
+    mirrors in kind: one ``_row`` call with an explicit ``severity="warn"``, not
+    through ``_append_cannot_tell`` — that helper fixes ``subject`` to the
+    cannot-tell sentinel and ``artifact`` to the check id, and offers neither a
+    path nor ``whole_artifact``, while this row has to name the register it could
+    not read in both fields.
 
     The class is ``session-deleted``, which is what the deletion check already
     uses for its cannot-tell rows (an out-of-tree ``--sessions`` override puts
@@ -1332,24 +1332,27 @@ def _append_sessions_listing_fault(
     filter that named none of the sessions classes: a run that could not read
     its input must say so whatever the filter asked for (see ``keep``).
 
-    ``fault`` arrives from ``census_text.fault_text``, which already excludes
-    the filename the read failed on, so no machine-local path is in it; it goes
-    through ``_bounded`` anyway, like every other piece of text this census did
-    not write. ``subject``/``artifact`` are the root-relative register path and
-    are deliberately not scrubbed — the scrubber would collapse
-    ``noni/sessions`` to ``<path>`` and destroy the one thing the row exists to
-    name. For a ``--sessions`` override that points outside the audited tree
-    ``_rel_to_root`` cannot root it and hands back the path it was given, which
-    is why the message narrates its path through ``_bounded``.
+    ``subject``/``artifact`` and the message's register clause all take the
+    census's one identifier for a directory it could not read,
+    ``census_ledger.ledger_name`` of the root-relative path — the last segment
+    when ``_rel_to_root`` could not root it, so an out-of-tree ``--sessions``
+    override names its register without printing the host directory that holds
+    it. The identifier passes through ``_stripped``, not ``_bounded``: an
+    unrootable path that reaches here can still be a home-relative form the
+    scrubber recognises, and the clause is narration, so it must not print a
+    host location; the root-relative ``noni/sessions`` the scrubber leaves
+    standing is the ordinary case and is what the row means to say. ``fault``
+    arrives from ``census_text.fault_text``, which already excludes the filename
+    the read failed on, and goes through ``_bounded`` anyway, like every other
+    piece of text this census did not write.
     """
-    name = _rel_to_root(root, sessions)
+    ident = _ledger.ledger_name(_rel_to_root(root, sessions))
     findings.append(
-        _row("session-deleted", strict, name, name,
-             _clipped(f"cannot-tell: the sessions register ({_bounded(name)}) "
-                      "exists but could not be "
-                      f"listed ({_bounded(fault)}), so which session files are registered, "
-                      "and whether a committed register file was deleted, cannot be "
-                      "answered"), root,
+        _row("session-deleted", strict, ident, ident,
+             _clipped(f"cannot-tell: the sessions register ({_stripped(ident)}) "
+                      f"exists but could not be listed ({_bounded(fault)}), so which "
+                      "session files are registered, and whether a committed register "
+                      "file was deleted, cannot be answered"), root,
              severity="warn", whole_artifact=True)
     )
 
@@ -1632,10 +1635,20 @@ def main(argv: list[str] | None = None) -> int:
 
     # The register is listed once per run, here, before the group is gated on the
     # answer: `main` reads `fault` off this one listing to decide whether the
-    # group runs at all, and the same listing answers the group's file loop.
+    # group runs at all, and the same listing answers the group's file loop. The
+    # listing is taken up front even on a run whose filter named no session
+    # class, and that costs one readdir of the register plus its sort: the
+    # gate and the rows are then the answer of the same read, which is the
+    # property the probe exists to hold, and is why the gate does not classify
+    # the directory cheaply instead and list it only if that says a fault is
+    # reportable.
     sessions_probe = _sessions_listing(sessions)
 
-    if (SESSION_CHECKS & requested) or sessions_probe.fault is not None:
+    # One field on both sides: the group runs when a session class was asked
+    # for, or when the listing faulted — and `fault` is the very field
+    # `_check_sessions` branches on, so the gate cannot open a group whose
+    # reporter would say nothing, nor leave a faulted read unreported.
+    if (SESSION_CHECKS & requested) or sessions_probe.fault:
         # The group runs whenever one of its classes was asked for, and also
         # whenever the register could not be listed: that row is the
         # probe-honesty one `keep` never drops, so a run whose filter named no

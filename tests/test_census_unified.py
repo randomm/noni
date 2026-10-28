@@ -41,6 +41,10 @@ CENSUS_PY = REPO / "skills" / "census" / "scripts" / "census.py"
 # (the same route ``tests/test_ledger_listing_ownership.py`` takes for the other
 # census splits).
 SESSIONS_PROBE_PY = REPO / "src" / "noni" / "census_sessions_probe.py"
+# The session group's per-file checks, split out of the census for the same
+# ratchet. The `glob` ban below reads it too, because a listing primitive could
+# reach for `glob` by moving into any module of the census, this one included.
+SESSIONS_CHECKS_PY = REPO / "src" / "noni" / "census_sessions_checks.py"
 
 DENYLIST_ENV_VAR = "NONI_SCRUB_DENYLIST"
 
@@ -957,10 +961,11 @@ class TestSessionsListingFault:
         for ``glob`` by moving house.
         """
         # The census's tree holds the census, the probe's tree the split-out
-        # probe; the ban below reads both, so a listing cannot reach for `glob`
-        # by moving house.
+        # probe and the checks' tree the split-out session group; the ban below
+        # reads all three, so a listing cannot reach for `glob` by moving house.
         census_trees = [(CENSUS_PY, ast.parse(_harness_source(CENSUS_PY))),
-                        (SESSIONS_PROBE_PY, ast.parse(_harness_source(SESSIONS_PROBE_PY)))]
+                        (SESSIONS_PROBE_PY, ast.parse(_harness_source(SESSIONS_PROBE_PY))),
+                        (SESSIONS_CHECKS_PY, ast.parse(_harness_source(SESSIONS_CHECKS_PY)))]
         # Two names, one listing: the sibling defines the readdir as
         # `sessions_listing` and the census wraps it as `_sessions_listing`, the
         # name `main` calls. One definition of each (a second of either is a

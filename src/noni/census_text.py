@@ -40,6 +40,58 @@ def _bounded(message: str, limit: int = 300) -> str:
     return _clipped(_stripped(message), limit)
 
 
+# The rules of the scrub, compiled once. Each is named for the shape it answers,
+# so the docstrings below can point at a rule instead of restating it.
+#
+# Two arms, kept apart because their anchors answer different questions. The
+# tilde arm is ``\B``-anchored rather than given an explicit delimiter set:
+# ``~user`` must scrub but ``a~b`` and ``v1.2~3`` must not, and ``\B`` is the
+# test that says so without listing every character that may precede a home
+# path. The leading-separator arm keeps the explicit anchor, because there the
+# character before the ``/`` is the whole question — it must be the start of the
+# string or something that cannot continue a path (a delimiter, a quote, a
+# bracket, ``=``), never a word character or a ``.``.
+#
+# A quoted fragment is matched first, and whole (``[^']*``): that is what lets a
+# path inside a quote hold a space, and what lets its opening separator sit
+# behind the quote, where no delimiter set would have found it. An escaped quote
+# (``\'``, the form a repr of a path carries) does not open a fragment.
+_QUOTED = re.compile(r"(?<!\\)'[^']*'")
+_HOME_PATH = re.compile(r"\B~[A-Za-z0-9._-]*(?:/[A-Za-z0-9._-]+)+")
+# The absolute arm, with no floor on the number of components and no stop at the
+# second separator: ``/home`` is one component and a path, and a rule that
+# matched only ``/home`` of ``/home/dev/x`` left ``/dev/x`` standing beside the
+# marker that replaced it. A space is not in the alphabet: outside a quote a
+# space ends a word, and with it a path.
+_LEADING_ABSOLUTE = re.compile(r"(?:(?<=^)|(?<=[^\w./~$-]))/[A-Za-z0-9._/-]+")
+# A whole path as the text of a quoted fragment: an absolute path, or a home
+# path whose tilde may name a user and must then hold at least one separator, or
+# a bare tilde, which inside a fragment that quotes one path is the home
+# directory the fragment holds. A component may hold an interior space — a
+# directory name may — but may not open or end with one, and the separator is
+# what makes the space part of a path rather than part of a sentence: ``/home``
+# is one component and a path while ``my dir`` is two words and is not. Each arm
+# is anchored at both ends so a fragment must read as a path from its first
+# character to its last; a fragment with prose in it falls through to the inner
+# arms, which scrub only the path inside the prose.
+_PATH_COMPONENT = r"[A-Za-z0-9._-](?:[A-Za-z0-9._ -]*[A-Za-z0-9._-])?"
+_QUOTED_PATH = re.compile(rf"/{_PATH_COMPONENT}(?:/[A-Za-z0-9._ -]+)*"
+                          rf"|~[A-Za-z0-9._-]*(?:/{_PATH_COMPONENT})+|~")
+# The inner arms, for a quoted fragment that did not read as one path: the same
+# two, except that the fragment's alphabet is the quoted one, so the tilde's
+# components may hold a space (``'~me/my dir/x'``) and the tilde may open with an
+# empty first component (``'~/x'``). The absolute arm is unchanged: a fragment
+# that is prose may hold ``input/output`` as prose, and prose does not span a
+# space.
+_INNER_HOME_PATH = re.compile(r"\B~[A-Za-z0-9._-]*(?:/[A-Za-z0-9._ -]+)+")
+# The inner absolute arm: the outer one's anchor, plus the fragment's own start.
+# A fragment's leading ``/`` has no character before it for the outer lookbehind
+# to approve, so the start of the fragment is approved by hand here. The
+# alphabet is the outer one — no space — because this arm answers a path that sit
+# inside prose, and prose separates its words at a space.
+_INNER_ABSOLUTE = re.compile(r"(?:(?<=^)|(?<=[^\w./~$-]))/[A-Za-z0-9._/-]+")
+
+
 def _stripped(message: str) -> str:
     """``message`` with runs of whitespace collapsed and host paths replaced.
 
@@ -55,19 +107,73 @@ def _stripped(message: str) -> str:
     ``input/output`` out of an ``OSError`` whose text the row exists to carry.
     Both are the finding the row states, so neither may be touched: the separator
     must open the path, following only the start of the string or a character that
-    cannot itself continue a path (a delimiter, a quote, a bracket, ``=``), never a
-    word character or a ``.``.
+    cannot itself continue a path, never a word character or a ``.``.
 
-    That anchor is a character test and not a list of punctuation, which is what
-    covers the absolute paths a two-run floor would miss: a host path can be
-    shorter than two components, and ``PermissionError`` appends the filename it
-    failed on in quotes, so ``denied: '/home/dev/x'`` is absolute with its only
-    separator behind a quote.
+    Three shapes the two-run floor missed, each a way the row used to print a
+    host path while claiming not to:
+
+    - A host path can be shorter than two components. ``/home``, ``/srv`` and the
+      mount point of a bad device are what a fault names outright, and a floor of
+      two runs left every one of them standing. The arm runs to the last
+      character that can be part of the path, so it does not stop after the first
+      separator and leave the rest of the path standing either.
+    - A path inside quotes may hold a space, which is not a path character, so a
+      run of components ends at the space and leaves the rest of the directory
+      name — ``'/home/me/my dir/decisions'`` used to lose ``/home/me`` and keep
+      ``dir/decisions``. Within quotes the space therefore continues the path, and
+      the closing quote is where it ends.
+    - ``PermissionError`` appends the filename it failed on in quotes, so
+      ``denied: '/home/dev/x'`` is absolute with its only separator behind a
+      quote. The quoted fragment is matched first and handed to
+      :func:`_scrub_inner`, which is the only rule that knows a path may hold a
+      space there and that the fragment's own start is an anchor.
+
+    A tilde is a home directory wherever it opens a path, quoted or not. The
+    quotes themselves stay: they are the message's punctuation, not part of the
+    path, and the sentence around the fault is this run's own wording.
     """
-    collapsed = " ".join(message.split())
-    return re.sub(r"(?:(?<=^)|(?<=[^\w./~$-]))(?:/[A-Za-z0-9._-]+){2,}"
-                  r"|~[A-Za-z0-9._-]*(?:/[A-Za-z0-9._-]+)+",
-                  "<path>", collapsed)
+    return _outer_scrub(" ".join(message.split()))
+
+
+def _outer_scrub(text: str) -> str:
+    """The scrub of unquoted text: quoted fragments first, then the two arms.
+
+    Ordered so a quoted fragment is consumed whole before either arm sees the
+    text — a path inside a quote is :func:`_scrub_inner`'s to answer, and only
+    its alphabet admits a space.
+    """
+    text = _QUOTED.sub(_scrub_quoted, text)
+    text = _HOME_PATH.sub("<path>", text)
+    return _LEADING_ABSOLUTE.sub("<path>", text)
+
+
+def _scrub_quoted(match: re.Match[str]) -> str:
+    """The replacement for one quoted fragment: the quotes, and the scrubbed path.
+
+    The quotes are passed to :func:`_scrub_inner` and put back around its answer
+    rather than stripped and re-added, because the arms anchor a path on the
+    character before it: inside a fragment stripped of its quotes the ``/`` that
+    opened the path has nothing before it and is no longer an anchored separator.
+    """
+    return "'" + _scrub_inner(match.group(0)[1:-1]) + "'"
+
+
+def _scrub_inner(text: str) -> str:
+    """The scrub applied to what sits between a pair of quotes.
+
+    A fragment that reads as one path (:data:`_QUOTED_PATH`) becomes the marker:
+    within quotes a space is a directory character, not a word separator, so the
+    whole fragment is the path the message quoted.
+
+    A fragment that does not read as a path (``'the ledger'``, or a sentence that
+    quotes a path in the middle) is scrubbed by the two inner arms instead, so
+    ``'a b /home/x c'`` loses the path and keeps the prose around it: quoting a
+    message does not make its sentences into paths.
+    """
+    if _QUOTED_PATH.fullmatch(text):
+        return "<path>"
+    text = _INNER_HOME_PATH.sub("<path>", text)
+    return _INNER_ABSOLUTE.sub("<path>", text)
 
 
 def _clipped(message: str, limit: int = 300) -> str:

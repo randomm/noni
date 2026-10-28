@@ -227,11 +227,17 @@ def load_issue_state(path: Path | None, states: tuple[str, ...], file_kind, boun
 
 
 def ledger_records(ledger: Path, file_kind, load_json: Callable[[bytes], object],
-                   list_records: Callable[[Path], list[str]] | None = None
+                   names: tuple[str, ...] | list[str] | None = None
                    ) -> tuple[dict[str, dict], bool, set[str], bool, str | None]:
     """The records the ledger holds, keyed by filename stem, plus three answers
     about the read: whether any lookup could be made, which names could not be
-    read, whether the listing ran at all, and why it faulted if it did.
+    read, whether this group read the ledger at all, and why that read faulted
+    if it did.
+
+    ``names`` is the census's one ledger listing, and it arrives as data: see
+    the paragraph on it at the end of this docstring, which is where the seam
+    lives. Everything below is what the reader does with the answer, whether it
+    was handed one or had to go and get it.
 
     An entry's ``decision`` cites a record by the stem of
     ``noni/decisions/<id>.json`` — the path decide.py names its records by, and
@@ -263,38 +269,46 @@ def ledger_records(ledger: Path, file_kind, load_json: Callable[[bytes], object]
     group words its listing fault the same way for the same reason.
 
     The third element separates the two ways nothing was looked up, because the
-    caller reports them differently: ``listed`` False means the listing never ran
-    (the path is absent or is not a directory — a state of the tree the ledger
-    group's own ``ledger-empty`` row owns, so ordering adds nothing) and True with
-    a fault text means the listing ran and faulted, a fault of this run's read
-    that no other class of the run sees.
+    caller reports them differently: ``listed`` False means no read was
+    attempted at all (the path is absent or is not a directory — a state of the
+    tree the ledger group's own ``ledger-empty`` row owns, so ordering adds
+    nothing) and True with a fault text means the read ran and faulted, a fault
+    of this run that no other class of the run sees.
 
-    ``list_records`` is the census's one ledger listing
-    (``census_ledger.listing_helper``), not a listing of this module's own: the
-    ledger group, the ordering group and the probe answer "which files are
-    records" from one call, and it is an ``iterdir`` rather than a ``glob`` so
-    the readdir fault below is a fault this run reports instead of an empty
-    directory it invents. It defaults to the name this module imports that
-    function under, so a test that drives this reader directly still exercises
-    the product's listing, and a test that wants to fault this group's read
-    alone — and leave the ledger group's own report honest — replaces that one
-    name here rather than ``Path.iterdir`` for the whole run.
+    ``names`` is the census's one ledger listing — the ``*.json`` names the
+    probe carried out of the run's single readdir
+    (``census_ledger.LedgerProbe.names``) — not a listing of this module's own:
+    the ledger group, the ordering group and the probe answer "which files are
+    records" from one readdir, taken with an ``iterdir`` rather than a ``glob``
+    so a directory that cannot be read is a fault this run reports instead of an
+    empty directory it invents. Handing the names in is what stops this group
+    walking the directory a second time: a second readdir that faulted after the
+    probe's had succeeded used to end the whole run in an ``OSError`` traceback.
+
+    It defaults to None, which asks the module attribute ``listing_helper`` —
+    the name this module imports that function under — for a listing of its own,
+    and it is that read whose fault the fourth element then carries. That is the
+    branch that consults ``file_kind`` on the ledger, so a caller that hands in
+    names is asked nothing of the directory. The attribute, and not the function
+    closed over, is what keeps a test of the ordering group able to fault this
+    group's read alone (see ``_listing_faults`` in
+    ``tests/test_census_ordering.py``), rather than faulting the whole run's
+    read.
     """
-    if list_records is None:
-        list_records = listing_helper
-    kind, _problem = file_kind(ledger, kind="dir")
-    if kind != "regular":
-        # An absent ledger is a readable answer ('no records'), not a fault, and
-        # a path that is not a directory is a state of the tree: in neither case
-        # did this run attempt a read worth reporting. Ordering does not
-        # re-report what ledger-empty already owns.
-        return {}, kind == "absent", set(), False, None
-    try:
-        names = list_records(ledger)
-    except OSError as e:
-        # Bounded wording only: the text is an exception from this tree, and a
-        # census row never prints a machine-local absolute path.
-        return {}, False, set(), True, f"{e.__class__.__name__}: {e.strerror or e}"
+    if names is None:
+        kind, _problem = file_kind(ledger, kind="dir")
+        if kind != "regular":
+            # An absent ledger is a readable answer ('no records'), not a fault,
+            # and a path that is not a directory is a state of the tree: in
+            # neither case did this run attempt a read worth reporting. Ordering
+            # does not re-report what ledger-empty already owns.
+            return {}, kind == "absent", set(), False, None
+        try:
+            names = listing_helper(ledger)
+        except OSError as e:
+            # Bounded wording only: the text is an exception from this tree, and
+            # a census row never prints a machine-local absolute path.
+            return {}, False, set(), True, f"{e.__class__.__name__}: {e.strerror or e}"
     records: dict[str, dict] = {}
     unreadable: set[str] = set()
     for name in sorted(names):

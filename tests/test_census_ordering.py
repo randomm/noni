@@ -179,18 +179,25 @@ def _human(repo: Path, *extra: str) -> tuple[int, str, str]:
 
 @contextlib.contextmanager
 def _listing_faults(ledger: Path, text: str = "input/output error"):
-    """Make the ORDERING GROUP'S listing of ``ledger`` fault for the block.
+    """Make the ORDERING GROUP'S read of ``ledger`` fault for the block.
 
-    The seam is ``census_ordering_readers.listing_helper``, the name
-    ``ledger_records`` looks up at call time when it was handed no
-    ``list_records`` -- not ``Path.iterdir``. Patching the class method faults
-    every listing of the run at once, so the ledger group reports the very same
-    fault with a whole-artifact row of its own that survives every
-    ``--only``/``--skip`` set (the probe-honesty rule in ``keep``), and no
-    assertion of this file's group can name a row of its own without also
-    naming that one. Faulting this group's read alone is what lets each test
-    here pin this group's rows exactly. The ledger group's own half of the same
-    fault is pinned by
+    Two seams, because the group now reads the ledger through the run's one
+    listing and a fault has to reach both halves of a run that does not have one:
+
+    - ``census_ordering.check_ordering`` is patched to hand the readers ``None``
+      for ``names``, which is what asks the readers to read the directory
+      themselves (the census normally hands them the probe's names, so without
+      this the group's read would not exist to fault);
+    - ``census_ordering_readers.listing_helper`` is the name that read then
+      calls, patched to raise for ``ledger``.
+
+    Patching ``Path.iterdir`` instead would fault every listing of the run at
+    once, so the ledger group would report the very same fault with a
+    whole-artifact row of its own that survives every ``--only``/``--skip`` set
+    (the probe-honesty rule in ``keep``), and no assertion of this file's group
+    could name a row of its own without also naming that one. Faulting this
+    group's read alone is what lets each test here pin this group's rows
+    exactly. The ledger group's own half of the same fault is pinned by
     ``test_an_unlistable_ledger_is_reported_by_the_ledger_group_too``, which
     patches ``Path.iterdir`` instead, and by ``tests/test_census_ledger_probe.py``
     and ``tests/test_census_exit_codes.py``.
@@ -201,6 +208,43 @@ def _listing_faults(ledger: Path, text: str = "input/output error"):
 
     Used with ``_run_in_process``, not with ``_run``: the census runs as a
     subprocess there, and a patch of this interpreter cannot reach it.
+    """
+    ordering = importlib.import_module("noni.census_ordering")
+    readers = importlib.import_module("noni.census_ordering_readers")
+    real_check = ordering.check_ordering
+    real_helper = readers.listing_helper
+    target = Path(ledger)
+
+    def check_without_names(*args, **kwargs):
+        # Ask the group to read the ledger for itself, so the read below exists
+        # to fault (see ``names`` on ``check_ordering``).
+        kwargs["names"] = None
+        return real_check(*args, **kwargs)
+
+    def boom(path):
+        if Path(path) == target:
+            raise OSError(text)
+        return real_helper(path)
+
+    ordering.check_ordering = check_without_names
+    readers.listing_helper = boom
+    try:
+        yield
+    finally:
+        ordering.check_ordering = real_check
+        readers.listing_helper = real_helper
+
+
+@contextlib.contextmanager
+def _ordering_record_read_faults(ledger: Path, text: str = "input/output error"):
+    """The same fault as ``_listing_faults``, without the ``names`` override.
+
+    For the test that pins the wiring of the run's one listing: it faults the
+    readers' own ``listing_helper`` and leaves the census's names in place, so a
+    run that still reached that helper for a group the probe already read fails
+    there rather than passing on the probe's names. Kept separate from
+    ``_listing_faults`` precisely so that test cannot be satisfied by the seam
+    the other tests rely on.
     """
     readers = importlib.import_module("noni.census_ordering_readers")
     real_helper = readers.listing_helper
@@ -1139,20 +1183,9 @@ def test_an_unlistable_ledger_row_stays_within_the_message_bound(tmp_path):
     """
     repo = _repo(tmp_path, "long-listing-fault")
     _seed(repo, _entry(3, BASELINE_ID))
-    readers = importlib.import_module("noni.census_ordering_readers")
-    real_helper = readers.listing_helper
-    target = repo / "noni" / "decisions"
-
-    def boom(path):
-        if Path(path) == target:
-            raise OSError("input/output error: " + "u" * 5000)
-        return real_helper(path)
-
-    readers.listing_helper = boom
-    try:
+    with _listing_faults(repo / "noni" / "decisions",
+                         "input/output error: " + "u" * 5000):
         code, rows, out, err = _run_in_process(repo)
-    finally:
-        readers.listing_helper = real_helper
     assert code == 15, (code, rows, out, err)
     assert [r["check"] for r in rows] == ["ordering-malformed"], rows
     message = rows[0]["message"]
@@ -1479,34 +1512,43 @@ def test_the_strict_reader_walks_a_deep_value_without_recursing():
 
 
 def test_the_census_lists_the_ledger_through_the_one_shared_helper():
-    """The listing is one function, and nothing re-derives it with ``glob``.
+    """The listing is one function, the run takes it once, and nothing uses ``glob``.
 
-    The record pass of ``census.py`` and the ordering readers both list the
-    ledger through ``census_ledger.listing_helper``, which calls ``iterdir``.
-    Two listing rules would be two answers to "which files are records", and
-    only one of them would raise on a readdir fault -- the ``glob`` half would
-    report the unreadable directory as an empty one, which is the dishonesty the
-    probe exists to prevent. This pins the wiring at the source, so a change
-    back to ``glob`` in either reader fails here and not in a silent row.
+    ``census_ledger.listing_helper`` is the one rule for "which files are a
+    ledger record", it is called from the probe alone, and the two passes that
+    want the answer -- the record pass of ``census.py`` and the ordering readers
+    -- are handed the probe's names. A second listing rule would be a second
+    answer, and only the ``iterdir`` half would raise on a readdir fault: the
+    ``glob`` half would report the unreadable directory as an empty one, which is
+    the dishonesty the probe exists to prevent. This pins the wiring at the
+    source, so a change back to ``glob``, or back to a second readdir, fails here
+    and not in a silent row.
 
     The session register keeps its own ``glob`` deliberately: it lists ``*.md``
     registers, not ledger records, and is another class's business.
 
     The readers module reaches the helper through a module attribute and not a
-    call it closes over, so the ordering group's listing is a seam a test can
-    fault on its own — see ``_listing_faults``. Reaching it through a private
+    call it closes over, so the ordering group's own read stays a seam a test can
+    fault on its own -- see ``_listing_faults``. Reaching it through a private
     name, or binding it at the call, would make every ordering-fault test here
     fault the ledger group's read as well."""
     census_src = _harness_source(CENSUS)
-    assert "_ledger.listing_helper(ledger)" in census_src, \
-        "the record pass no longer lists the ledger through the shared helper"
+    assert "if probe.state != \"ok\" or probe.names is None:" in census_src, \
+        "the record pass no longer reads its names off the probe"
+    assert "sorted(probe.names)" in census_src, \
+        "the record pass no longer reads the probe's names"
+    assert "_ledger.listing_helper(ledger)" not in census_src, \
+        "the record pass lists the ledger again: the run must take one readdir"
+    assert "findings, ledger_probe.names)" in census_src, \
+        "the ordering group is no longer handed the run's one listing"
     readers_src = (SCRIPTS / "census_ordering_readers.py").read_text(encoding="utf-8")
-    assert "list_records(ledger)" in readers_src, \
+    assert "names = listing_helper(ledger)" in readers_src, \
         "the ordering group no longer lists the ledger through the shared helper"
     assert "from .census_ledger import listing_helper" in readers_src, \
         "the ordering group no longer reaches the shared helper by a patchable name"
-    assert "list_records = listing_helper" in readers_src, \
-        "the ordering group's listing is not the patchable module attribute"
+    assert "if names is None:" in readers_src, \
+        "the readers no longer fall back to their own listing, so the group's " \
+        "read has no seam to fault on"
     assert "ledger.glob" not in readers_src, \
         "the ordering group lists the ledger with glob, which swallows the fault"
     assert "ledger.glob" not in census_src, \
@@ -1514,6 +1556,27 @@ def test_the_census_lists_the_ledger_through_the_one_shared_helper():
     ledger_src = (SCRIPTS / "census_ledger.py").read_text(encoding="utf-8")
     assert "ledger.iterdir()" in ledger_src, \
         "the shared helper must list with iterdir, the call that raises"
+
+
+def test_the_ordering_group_reads_the_probe_names_and_not_the_directory(
+    tmp_path, monkeypatch
+):
+    """The wiring above, seen from the run: the group's own listing is never called.
+
+    ``_ordering_record_read_faults`` faults the readers' ``listing_helper`` and
+    leaves the census's names alone, so it reaches nothing while the run hands
+    the group the probe's names. It is a control, not a duplicate of
+    ``_listing_faults``: that one asks the group to read for itself and proves
+    the fault is reported, this one proves a run that could have a second readdir
+    does not have one. An ordering row naming a fault here is a group that walked
+    the directory behind the probe's back.
+    """
+    repo = _repo(tmp_path, "group-reads-probe-names")
+    _seed(repo, _entry(3, BASELINE_ID))
+    with _ordering_record_read_faults(repo / "noni" / "decisions"):
+        code, rows, out, err = _run_in_process(repo)
+    assert code == 0, (code, rows, out, err)
+    assert rows == [], rows
 
 
 def test_the_readers_take_the_strict_reader_as_an_argument(tmp_path):

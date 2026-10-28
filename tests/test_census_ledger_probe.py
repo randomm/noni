@@ -1,10 +1,11 @@
-"""Unit tests for the ledger probe and its one listing helper.
+"""Unit tests for the ledger probe, its one listing helper, and its one row.
 
-``census_ledger`` owns two things the census depends on for its honesty about
-the ledger: the listing helper that names the ledger's ``*.json`` records, and
-the probe that classifies the ledger directory once. Both are tested here
-directly, against a patched ``Path.iterdir``, rather than only through
-``census.main`` -- the end-to-end tests in ``test_census_unified.py`` and
+``census_ledger`` owns three things the census depends on for its honesty about
+the ledger: the listing helper that names the ledger's ``*.json`` records, the
+probe that classifies the ledger directory once and carries the names it read,
+and the one row a listing that faulted earns. All are tested here directly,
+against a patched ``Path.iterdir``, rather than only through ``census.main`` --
+the end-to-end tests in ``test_census_unified.py`` and
 ``test_census_exit_codes.py`` prove the rows; these prove the read.
 
 The seam is ``Path.iterdir`` throughout. ``Path.glob`` is never the seam: the
@@ -392,6 +393,164 @@ def test_an_unreadable_ledger_empty_row_bounds_the_probe_problem(tmp_path, monke
     probe_text = msg.split("(probe error: ", 1)[1]
     assert len(probe_text) <= 301, f"foreign text past the bound: {len(probe_text)}"
     assert "not a directory" in msg, f"state word kept: {msg}"
+
+
+def test_the_listing_fault_row_is_clipped_as_a_whole(tmp_path, monkeypatch):
+    """The fault row keeps the bound every other row of the report keeps.
+
+    ``append_listing_fault`` composes its sentence around two pieces of foreign
+    text and clipped neither: the finished row was as long as the errno text
+    inside it, and a ``strerror`` of a few thousand characters (a kernel that
+    names the mount it failed on, a fuse daemon that answers at length) was a
+    row of a few thousand characters in a report whose every other row is bound.
+    The bound wraps the whole message, so the sentence this run wrote is at most
+    the bound whoever wrote the fault's words.
+
+    In-process: the fault is inside the interpreter, where no file permission
+    can plant it.
+    """
+    import census
+
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                 json.dumps(_valid_record(), indent=2))
+    ledger = repo / "noni" / "decisions"
+
+    real_iterdir = census.Path.iterdir
+
+    def boom(self):
+        if self == ledger:
+            raise OSError("input/output error: " + "u" * 5000)
+        return real_iterdir(self)
+
+    monkeypatch.setattr(census.Path, "iterdir", boom)
+    rows = _rows(repo, "--skip", "hygiene")
+    assert [r["check"] for r in rows] == ["ledger-edited"], rows
+    message = rows[0]["message"]
+    assert len(message) <= 300, f"{len(message)} chars: {message[:80]}"
+    assert "noni/decisions" in message, message
+    assert "input/output error" in message, message
+    assert "u" * 5000 not in message, message
+
+
+def _iterdir_counter(monkeypatch, ledger: Path):
+    """Patch ``Path.iterdir`` once, counting the listings of ``ledger`` it sees.
+
+    Returns ``(state, plant)``: ``state["n"]`` is the count, and ``plant(k)``
+    makes the (k + 1)-th listing of ``ledger`` raise. The single patch is the
+    point — a fixture that patches twice over its own previous patch chains two
+    counters, the outer one never reaches its guard, and the test silently stops
+    faulting anything. One patch, one counter, and the fault position is a
+    parameter a test resets between the runs it compares.
+
+    The patch goes on ``census.Path``, the name the census and its ledger module
+    share (see ``_fault_the_ledger_listing`` in ``tests/_harness.py``), so it is
+    visible to every reader of the ledger and to no other interpreter.
+    """
+    import census
+
+    real_iterdir = Path.iterdir
+    target = Path(ledger)
+    state = {"n": 0, "fault_after": 10 ** 9}
+
+    def boom(self):
+        if self == target:
+            state["n"] += 1
+            if state["n"] > state["fault_after"]:
+                raise OSError("readdir faulted after the probe")
+        return real_iterdir(self)
+
+    monkeypatch.setattr(census.Path, "iterdir", boom)
+
+    def plant(fault_after: int) -> dict:
+        state["n"] = 0
+        state["fault_after"] = fault_after
+        return state
+
+    return state, plant
+
+
+def test_the_run_lists_the_ledger_once(tmp_path, monkeypatch):
+    """One readdir of the ledger per run, whoever downstream wants its names.
+
+    The probe is the run's only listing: the record pass and the ordering readers
+    read the ``names`` it carries instead of walking the directory again. The
+    fault is planted after the first successful readdir, which is the shape no
+    single-fault test can reach: the probe's read answered, and the tree has
+    turned hostile only by the time the record pass asks the same question. A
+    run that re-listed died there with an ``OSError`` traceback out of
+    ``census.main``; a run that reads the probe's names says the same thing the
+    unfaulted run says and exits like it.
+
+    The seam is ``Path.iterdir`` with a counter, so the assertion is about the
+    count and not about which helper happened to be called: the census's own
+    git calls, the session register and the artifact reads all list other paths,
+    and only a guard that lets the first readdir of the ledger through reaches
+    the arm under test. The patch is installed once, by ``_iterdir_counter``,
+    and the fault position reset between runs: a fixture that patched twice over
+    its own previous patch would chain the counters and fault nothing.
+    """
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                 json.dumps(_valid_record(), indent=2))
+    _commit_file(repo, "noni/decisions/2026-10-02-beta.json",
+                 json.dumps(_valid_record(rec_id="2026-10-02-beta"), indent=2))
+    ledger = repo / "noni" / "decisions"
+    state, plant = _iterdir_counter(monkeypatch, ledger)
+
+    # The run with every listing honest is the control: the same tree, the same
+    # verdict the faulted run must reproduce.
+    plant(10 ** 9)
+    rows = _rows(repo, "--skip", "hygiene")
+    code = _code(repo, "--skip", "hygiene")
+    assert code == 0, f"a run that read the ledger once stays clean: {code} {rows}"
+    assert rows == [], f"the unfaulted run reports nothing: {rows}"
+
+    # The counter is the mechanism: pin that this run listed the ledger once.
+    plant(10 ** 9)
+    code = _code(repo, "--skip", "hygiene")
+    assert code == 0, (code, state)
+    assert state["n"] == 1, f"the ledger was listed {state['n']} times, expected one"
+
+    # And the second readdir faulting is what used to kill the run.
+    plant(1)
+    rows = _rows(repo, "--skip", "hygiene")
+    code = _code(repo, "--skip", "hygiene")
+    assert code == 0, f"the run must complete, not raise: {code} {rows}"
+    assert rows == [], f"the faulted run reports the same rows as the clean one: {rows}"
+
+
+def test_a_run_that_cannot_relist_the_ledger_still_checks_every_citation(
+    tmp_path, monkeypatch
+):
+    """One listing must not cost the run its checks.
+
+    The run faults its second readdir of the ledger while an entry cites a
+    record the ledger does not hold. A run that answered "no records" from the
+    fault would report the citation as matching no file, which is the dishonesty
+    the ordering group's fault row exists to prevent; a run that reads the
+    probe's names makes the same finding it makes without the fault. Both rows
+    are pinned by class and subject, so an implementation that dropped either
+    half fails here."""
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                 json.dumps(_valid_record(), indent=2))
+    order = {
+        "schema": "noni.order/1",
+        "entries": [{"issue": 7, "decision": "2026-10-01-alpha",
+                     "confirmed": "2026-10-26T00:00:00Z"},
+                    {"issue": 8, "decision": "2026-10-09-ghost",
+                     "confirmed": "2026-10-26T00:00:00Z"}],
+    }
+    _commit_file(repo, "noni/direction/order.json", json.dumps(order, indent=2))
+    state, plant = _iterdir_counter(monkeypatch, repo / "noni" / "decisions")
+    plant(1)
+    rows = _rows(repo, "--skip", "hygiene")
+    assert state["n"] == 1, f"the ledger was listed {state['n']} times, expected one"
+    assert sorted(r["check"] for r in rows) == ["ordering-malformed"], rows
+    assert [r["subject"] for r in rows] == ["#8"], rows
+    assert "2026-10-09-ghost" in rows[0]["message"], rows[0]
+    assert _code(repo, "--skip", "hygiene") == 15
 
 
 def test_the_run_probes_the_ledger_once(tmp_path, monkeypatch):

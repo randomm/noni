@@ -46,11 +46,24 @@ class LedgerProbe:
     is not git's inability to answer), while ``_check_ledger`` renders the fault
     as a `ledger-edited` cannot-tell row and stays silent on the empty class —
     which is why the text travels beside ``problem`` instead of inside it.
+
+    ``names`` is the record listing this probe took — the ``*.json`` names of a
+    directory it successfully listed (the empty tuple for a directory it listed
+    and found no record in, which is a read that answered "nothing"), and None
+    for every state in which no such read happened. It exists so the whole
+    census reads the ledger once: the record pass and the ordering readers take
+    these names instead of walking the directory a second and third time, which
+    is both the fewer syscalls and the honest answer to a tree that turns hostile
+    between two reads of it. A second readdir that faulted after the probe's
+    succeeded used to end the run with an ``OSError`` traceback out of ``main``;
+    there is no second readdir to fault now, and the names the run reports are
+    the names the run observed.
     """
 
     state: str
     problem: str | None = None
     listing_fault: str | None = None
+    names: tuple[str, ...] | None = None
 
 
 def _ledger_name(rel: str) -> str:
@@ -78,16 +91,19 @@ def _ledger_name(rel: str) -> str:
 def listing_helper(ledger: Path) -> list[str]:
     """The ``*.json`` record names ``ledger`` holds, listed with ``iterdir``.
 
-    The one listing of the ledger the whole census uses: the probe (below), the
-    record pass of ``census.py`` and the ordering readers all go through here, so
-    "which files count as a ledger record" has a single answer.
+    The one listing of the ledger the whole census performs, and the one the
+    census's tests fault to prove it: every read of the ledger's directory ends
+    here, and here alone, so "which files count as a ledger record" has a single
+    answer and a single readdir behind it. The probe of :func:`probe_ledger` is
+    the only caller; the record pass of ``census.py`` and the ordering readers
+    read the names it carries rather than calling this again.
 
     It is an explicit ``Path.iterdir`` and never ``Path.glob``: ``glob`` swallows
     the ``OSError`` that readdir raises and yields nothing, so a directory that
     exists and cannot be read would report the same verdict as a project that has
     never steered anything. Here the ``OSError`` propagates and the caller decides
-    what a fault means — the probe carries its text, the record pass never runs
-    behind a fault, and the ordering group says which check it could not perform.
+    what a fault means — the probe carries its text, and no pass runs behind a
+    fault at all.
     """
     return [p.name for p in ledger.iterdir() if p.suffix == ".json"]
 
@@ -117,7 +133,9 @@ def probe_ledger(ledger: Path, file_kind: Callable[..., tuple[str, str | None]])
     nothing, so a directory that exists and cannot be read would read as the
     recordless "empty" tree — a warn the operator could dismiss as a project that
     has not steered anything yet. ``iterdir`` raises, and the text goes out on
-    ``listing_fault`` for ``_check_ledger`` to report as a cannot-tell.
+    ``listing_fault`` for ``_check_ledger`` to report as a cannot-tell. The names
+    a successful listing produced go out on ``names``, because this is the one
+    readdir the run performs (see :class:`LedgerProbe`).
     """
     kind, problem = file_kind(ledger, kind="dir")
     if kind == "symlink":
@@ -141,15 +159,19 @@ def probe_ledger(ledger: Path, file_kind: Callable[..., tuple[str, str | None]])
         return LedgerProbe("absent")
     if kind == "absent":
         # noni/ is there and decisions/ is not: no record can be censusable
-        # under it, the same finding as a recordless decisions/ directory.
-        return LedgerProbe("empty")
+        # under it, the same finding as a recordless decisions/ directory. The
+        # empty tuple, not None: this read did happen and answered "no names",
+        # so the passes below may take that answer rather than list again.
+        return LedgerProbe("empty", names=())
     try:
         names = listing_helper(ledger)
     except OSError as e:
         # A directory that exists and stats fine but cannot be listed (a mount
         # or permission fault on readdir) is not a ledger the census can read,
         # and it is not one of the states LEDGER_EMPTY_MESSAGES words. The text
-        # travels on its own field so no reporter can mistake it for a state.
+        # travels on its own field so no reporter can mistake it for a state,
+        # and ``names`` stays None: the read answered nothing, so no downstream
+        # pass may borrow a listing it never got.
         #
         # ``str(e)`` is the whole fault, path included: OSError appends the path
         # it failed on (``[Errno 2] No such file or directory: '/home/x/decisions'``)
@@ -158,20 +180,22 @@ def probe_ledger(ledger: Path, file_kind: Callable[..., tuple[str, str | None]])
         # is where the machine-local path is removed -- not here, where raising
         # would turn the one row about an unreadable ledger into a traceback.
         return LedgerProbe("empty", listing_fault=str(e))
+    # A decisions/ directory that holds no *.json record is "empty", not "ok":
+    # the census exits 0 here so a freshly attached project is not permanently
+    # red, and the git-backed deletion check still reports how the ledger got
+    # empty (operator decision, issue #33). A directory that holds a record is
+    # "ok". Both carry the names they listed, because both read them.
     if not names:
-        # A decisions/ directory that exists and holds no *.json record: the
-        # census exits 0 here so a freshly attached project is not permanently
-        # red. The git-backed deletion check still runs and reports how the
-        # ledger got empty (operator decision, issue #33).
-        return LedgerProbe("empty")
-    return LedgerProbe("ok")
+        return LedgerProbe("empty", names=())
+    return LedgerProbe("ok", names=tuple(names))
 
 
 def append_listing_fault(ledger: Path, root: Path, findings: list[dict],
                          strict: bool, fault: str, *,
                          row: Callable[..., dict],
                          rel_to_root: Callable[[Path, Path], str],
-                         bounded: Callable[[str], str]) -> None:
+                         bounded: Callable[[str], str],
+                         clipped: Callable[[str], str]) -> None:
     """The row for a ledger directory this run could not list.
 
     A probe that read nothing reports it, under the probe-honesty rule: the
@@ -203,7 +227,8 @@ def append_listing_fault(ledger: Path, root: Path, findings: list[dict],
     fault reads as the same path in all three fields, and an out-of-tree one
     keeps a non-path identifier (its last segment) rather than a host directory:
     the row says which ledger it could not read without saying where the host
-    keeps it.
+    keeps it. The rooting is asked once, into ``name``, because the three uses
+    are one question about one path and a row must not disagree with itself.
 
     ``check`` is ``ledger-edited`` exactly: ``main`` filters the ledger group
     against that id plus ``ledger-empty``, and a row under any other id would
@@ -212,11 +237,21 @@ def append_listing_fault(ledger: Path, root: Path, findings: list[dict],
     operator under a filter that named none of the ledger classes: a run that
     could not read its input must say so whatever the filter asks for (see
     ``keep`` and the census's module docstring).
+
+    ``clipped`` wraps the finished message, the way the ordering group's
+    equivalent row is wrapped (``census_ordering`` clips its listing-fault
+    sentence): the bound a report keeps is a property of the row, and a fault
+    whose ``strerror`` runs to thousands of characters must not make a row of
+    thousands of characters. The scrubbing of the foreign pieces stays
+    ``bounded``'s job, applied to each fragment before the sentence is clipped,
+    so clipping the whole cannot cut a host path loose at the cut.
     """
-    subject = _ledger_name(rel_to_root(root, ledger))
+    name = rel_to_root(root, ledger)
+    subject = _ledger_name(name)
     findings.append(
         row("ledger-edited", strict, subject, subject,
-            f"cannot-tell: the ledger directory ({bounded(rel_to_root(root, ledger))}) "
-            "exists but could not be "
-            f"listed ({bounded(fault)}), so whether a committed record was deleted "
-            "or edited cannot be answered", root, severity="warn", whole_artifact=True))
+            clipped(f"cannot-tell: the ledger directory ({bounded(name)}) "
+                    "exists but could not be "
+                    f"listed ({bounded(fault)}), so whether a committed record was deleted "
+                    "or edited cannot be answered"), root, severity="warn",
+            whole_artifact=True))

@@ -601,9 +601,11 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
     second read of the directory and a second chance to disagree with the first,
     so the group reports from the answer that got it here.
 
-    Composition only: the ledger-empty probe, then record I/O + schema
+    The composition only: the ledger-empty probe, then record I/O + schema
     validation, the edited check (git-backed), the deleted check (git-backed)
-    and the supersede-chain check, in that order. ledger-empty only ADDS rows:
+    and the supersede-chain check, in that order. The record pass reads the
+    probe's own names, so the group's read of the directory is the probe's
+    single readdir (see ``LedgerProbe.names``). ledger-empty only ADDS rows:
     the states where the record pass has nothing to say. The git-backed
     integrity checks run whatever the empty probe found — see the
     deleted-sole-record regression tests in tests/test_census_unified.py.
@@ -627,10 +629,10 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
         # says what the read could not do (`census_ledger.append_listing_fault`).
         _ledger.append_listing_fault(
             ledger, root, findings, strict, probe.listing_fault,
-            row=_row, rel_to_root=_rel_to_root, bounded=_bounded)
+            row=_row, rel_to_root=_rel_to_root, bounded=_bounded, clipped=_clipped)
         return
     _check_ledger_empty(probe, ledger, root, findings, strict)
-    valid, unparseable = _check_ledger_records(ledger, root, findings, probe.state)
+    valid, unparseable = _check_ledger_records(ledger, root, findings, probe)
     _check_ledger_edited(valid, unparseable, git, root, findings, strict)
     could_not_answer = _check_ledger_deleted(ledger, git, root, findings, strict)
     if could_not_answer and probe.state == "empty":
@@ -685,28 +687,38 @@ def _check_ledger_empty(probe: _ledger.LedgerProbe, ledger: Path, root: Path,
 
 
 def _check_ledger_records(ledger: Path, root: Path, findings: list[dict],
-                          state: str) -> tuple[list[tuple[str, Path, dict]], list[tuple[str, Path]]]:
+                          probe: _ledger.LedgerProbe
+                          ) -> tuple[list[tuple[str, Path, dict]], list[tuple[str, Path]]]:
     """I/O + schema validation. Returns (valid, unparseable) where each entry
     of unparseable is (name, path) of a file that exists on disk but failed
     parsing — it still gets the git edited check.
 
-    ``state`` is the ledger path's state word as answered by `_ledger_probe`
-    (via `_check_ledger`): this pass only reads records, so any state other
-    than "ok" is ledger-empty's finding and adds no row here. "ok" means the
-    directory holds at least one ``*.json`` name, so every row this pass adds
-    is a malformed-record failure.
+    ``probe`` is the run's one classification of ``ledger``, and this pass reads
+    both of its answers and asks neither again: ``probe.state`` for whether a
+    record pass is warranted at all, and ``probe.names`` for the records
+    themselves. The names are the probe's because the probe's readdir is the
+    only one this run performs — a second listing was a second read of a tree
+    that can change under the run, and one that faulted after the probe's had
+    succeeded raised out of ``main`` as a traceback rather than a row.
+
+    ``state`` other than "ok" means this pass reads no records at all, so any
+    state other than "ok" is ledger-empty's finding and adds no row here. "ok"
+    means the directory holds at least one ``*.json`` name, so every row this
+    pass adds is a malformed-record failure.
     """
     def add(check: str, subject: str, artifact: str, message: str) -> None:
         findings.append(_row(check, False, subject, artifact, message, root))
 
-    if state != "ok":
+    if probe.state != "ok" or probe.names is None:
         # ledger-empty owns every no-ledger state (absent, not a directory,
         # symlink, and any probe fault folded into one of them) as a warn that
         # names the state; this pass keeps only the malformed-record failures,
-        # so a ledger that is not there adds no ledger-record row here.
+        # so a ledger that is not there adds no ledger-record row here. The
+        # ``names is None`` arm is belt and braces: no state of "ok" is ever
+        # built without the names that produced it.
         return [], []
 
-    names = sorted(_ledger.listing_helper(ledger))
+    names = sorted(probe.names)
     valid: list[tuple[str, Path, dict]] = []
     unparseable: list[tuple[str, Path]] = []
     for name in names:
@@ -1270,17 +1282,23 @@ from . import census_ordering_readers as _ordering_readers  # noqa: E402
 def _check_ordering(
     order: Path, ledger: Path, root: Path, now: datetime, ordering_stale_after: timedelta,
     issue_state: _ordering_readers.IssueState, strict: bool, findings: list[dict],
+    names: tuple[str, ...] | None,
 ) -> None:
     """The ordering group, run by the module beside this file.
 
     The row factory, the two helpers a row is built from and the readers module
     are passed in rather than imported, so the row shape, its visibility marker
     and the machine-local-path rule stay written in exactly one place: this file.
+
+    ``names`` is the run's one ledger listing, the probe's, handed down for the
+    group's record lookups: the ordering group reads the ledger the census
+    already read and never walks the directory again (see
+    ``LedgerProbe.names``).
     """
     _ordering.check_ordering(order, ledger, root, now, ordering_stale_after, issue_state,
                             strict, findings, row=_row, rel_to_root=_rel_to_root,
                             file_kind=_file_kind, bounded=_bounded, parse_iso=_parse_iso,
-                            clipped=_clipped,
+                            clipped=_clipped, names=names,
                             readers=_ordering_readers,
                             load_json_strict=_census_json.load_json_strict,
                             names_zone=_ordering_readers.names_zone)
@@ -1470,7 +1488,7 @@ def main(argv: list[str] | None = None) -> int:
                         _ordering_readers.load_issue_state(
                             issue_state_path, _ordering.ISSUE_STATE_STATES,
                             _file_kind, _bounded, _census_json.load_json_strict),
-                        args.strict, findings)
+                        args.strict, findings, ledger_probe.names)
         findings[:] = keep(findings)
         # The closed check's question comes only from --issue-state, which an
         # adapter or the operator produces. Without it the class is not run, and

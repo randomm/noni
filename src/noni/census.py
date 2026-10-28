@@ -586,10 +586,38 @@ class LedgerProbe:
     error is never reported as a symlink that is not there) and lets
     `_check_ledger` hand one answer to every reporter instead of letting each
     re-classify the same path and drift.
+
+    ``listing_fault`` is the one fault no state word may carry: the OSError text
+    of a ``decisions/`` directory that exists, stats as a directory, and cannot
+    be listed. The read answered nothing, so no word of LEDGER_EMPTY_MESSAGES
+    describes it — those four name states of the tree, and "unlistable" is a
+    fault of this run's read. ``state`` keeps "empty" so the git-backed deletion
+    question is still put when git can answer it (the probe's inability to list
+    is not git's inability to answer), while `_check_ledger` renders the fault
+    as a `ledger-edited` cannot-tell row and stays silent on the empty class —
+    which is why the text travels beside ``problem`` instead of inside it.
     """
 
     state: str
     problem: str | None = None
+    listing_fault: str | None = None
+
+
+def _probe_listing_fault(ledger: Path) -> str | None:
+    """The OSError text of a ledger listing this run cannot make, or None.
+
+    The one question `main` must answer before it decides whether to run the
+    ledger group at all: the group's ``--only`` filter is a contract about
+    classes, and a probe that could not read its input is not a class — it is
+    the run losing the ability to answer anything. The row is produced once
+    the group runs; this answers only whether the group has to run even when
+    the filter named none of its classes.
+
+    A probe that raises something other than ``OSError`` is a bug in this file,
+    not a fault of the tree, and is left to propagate: swallowing it here would
+    be the very silence the probe-honesty rule forbids.
+    """
+    return _ledger_probe(ledger).listing_fault
 
 
 def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict],
@@ -603,13 +631,26 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
     integrity checks run whatever the empty probe found — see the
     deleted-sole-record regression tests in tests/test_census_unified.py.
 
-    The one row the composition adds itself: when the deletion check could not
-    put its question to git and the ledger reads as "empty", the run says so
-    (probe honesty, issue #33). "Empty" is the only state that can mean
-    "committed records were deleted", and this check is the only signal for
-    that, so a silent one here would let a gutted ledger read as a plain
-    no-ledger warning — the row is warn by default, fail under --strict."""
+    The two rows the composition adds itself, both probe honesty:
+
+    * a listing that faulted gets one cannot-tell row of its own and stops the
+      group there (`_append_listing_fault`): the probe read nothing, so no
+      state word it answered is one this run established and no record pass can
+      be trusted either;
+    * when the deletion check could not put its question to git and the ledger
+      reads as "empty", the run says so (probe honesty, issue #33). "Empty" is
+      the only state that can mean "committed records were deleted", and this
+      check is the only signal for that, so a silent one here would let a
+      gutted ledger read as a plain no-ledger warning — the row is warn by
+      default, fail under --strict."""
     probe = _ledger_probe(ledger)
+    if probe.listing_fault is not None:
+        # The probe could not list the ledger, so no state word it answered is
+        # one this run established: the empty class stays silent, the record
+        # pass has nothing trustworthy to read, and the one row the group adds
+        # says what the read could not do (`_append_listing_fault`).
+        _append_listing_fault(ledger, root, findings, strict, probe.listing_fault)
+        return
     _check_ledger_empty(probe, ledger, root, findings, strict)
     valid, unparseable = _check_ledger_records(ledger, root, findings, probe.state)
     _check_ledger_edited(valid, unparseable, git, root, findings, strict)
@@ -642,6 +683,13 @@ def _ledger_probe(ledger: Path) -> LedgerProbe:
 
     The child is classified before the parent: ``noni`` committed as a plain
     file must read as "not a directory", not "absent".
+
+    The listing is an explicit ``Path.iterdir``, never ``Path.glob``: glob
+    swallows the OSError that readdir raises and yields nothing, so a
+    directory that exists and cannot be read would read as the recordless
+    "empty" tree — a warn the operator could dismiss as a project that has
+    not steered anything yet. ``iterdir`` raises, and the text goes out on
+    ``listing_fault`` for `_check_ledger` to report as a cannot-tell.
     """
     kind, problem = _file_kind(ledger, kind="dir")
     if kind == "symlink":
@@ -668,11 +716,13 @@ def _ledger_probe(ledger: Path) -> LedgerProbe:
         # under it, the same finding as a recordless decisions/ directory.
         return LedgerProbe("empty")
     try:
-        names = [p.name for p in ledger.glob("*.json")]
+        names = [p.name for p in ledger.iterdir() if p.suffix == ".json"]
     except OSError as e:
         # A directory that exists and stats fine but cannot be listed (a mount
-        # or permission fault on readdir) is not a ledger the census can read.
-        return LedgerProbe("not a directory", str(e))
+        # or permission fault on readdir) is not a ledger the census can read,
+        # and it is not one of the states LEDGER_EMPTY_MESSAGES words. The text
+        # travels on its own field so no reporter can mistake it for a state.
+        return LedgerProbe("empty", listing_fault=str(e))
     if not names:
         # A decisions/ directory that exists and holds no *.json record: the
         # census exits 0 here so a freshly attached project is not permanently
@@ -862,6 +912,37 @@ def _append_cannot_tell(check: str, reason: str, strict: bool, findings: list[di
     })
 
 
+def _append_listing_fault(ledger: Path, root: Path, findings: list[dict],
+                          strict: bool, fault: str) -> None:
+    """The row for a ledger directory this run could not list.
+
+    A probe that read nothing reports it, under the probe-honesty rule: the
+    alternative is the run calling an unreadable ledger an empty one, which is
+    the verdict a project that has never steered anything also earns. Built
+    with ``_row`` and an explicit ``severity="warn"`` rather than through
+    `_append_cannot_tell`, because the row must name the ledger it could not
+    read in both ``subject`` and ``artifact`` — the helper names its check —
+    and because `_check_sessions_deleted` shares that helper and must not have
+    its shape changed for this case. The OSError text is foreign and passes
+    through `_bounded`; the root-relative path is this census's own wording
+    and does not, so a machine-local path can only enter through the fault.
+
+    ``check`` is ``ledger-edited`` exactly: ``main`` filters the ledger group
+    against that id plus ``ledger-empty``, and a row under any other id would
+    be dropped by an ``--only``/``--skip`` run rather than reported by it. The
+    row is also marked whole-artifact, which is what keeps it in front of the
+    operator under a filter that named none of the ledger classes: a run that
+    could not read its input must say so whatever the filter asks for (see
+    ``keep`` and the module docstring).
+    """
+    path = _rel_to_root(root, ledger)
+    findings.append(
+        _row("ledger-edited", strict, path, path,
+             f"cannot-tell: the ledger directory ({path}) exists but could not be "
+             f"listed ({_bounded(fault)}), so whether a committed record was deleted "
+             "or edited cannot be answered", root, severity="warn", whole_artifact=True))
+
+
 def _check_ledger_deleted(ledger: Path, git: Git | None, root: Path, findings: list[dict],
                           strict: bool) -> bool:
     """The deleted-record check (append-only ledger rule).
@@ -886,7 +967,13 @@ def _check_ledger_deleted(ledger: Path, git: Git | None, root: Path, findings: l
     record pass is what reports a record that exists on disk: this check only
     reports paths history shows and the working tree does not hold. Session
     files are intentionally NOT checked here: ending a session via its status
-    field is the protocol, and deleting a session file is not a violation."""
+    field is the protocol, and deleting a session file is not a violation.
+
+    Unlike `_check_sessions_deleted`, this check asks git even when the ledger
+    directory is gone: records are append-only, so a committed ``decisions/``
+    directory deleted whole is the deletion the operator must be told about,
+    while a session register is expected to hold no file at all for a project
+    that has never opened a session."""
     if git is None:
         # No git tree was named at all (not a repository, or rev-parse could
         # not answer): there is nothing to ask.
@@ -909,10 +996,6 @@ def _check_ledger_deleted(ledger: Path, git: Git | None, root: Path, findings: l
             "ledger-edited",
             f"the ledger path ({_rel_to_root(root, ledger)}) is outside the audited git tree, "
             "so whether a committed record was deleted cannot be answered", strict, findings)
-        return False
-    if ledger.is_dir() is False:
-        # No ledger directory to have lost a record: ledger-empty owns that
-        # state, and the question was answered (there is nothing to delete).
         return False
     for rel in sorted(git.added_paths_under(prefix)):
         if (top / rel).is_file():
@@ -1499,7 +1582,12 @@ def main(argv: list[str] | None = None) -> int:
         return [f for f in group_findings
                 if f["check"] in requested or f.get(WHOLE_ARTIFACT_KEY)]
 
-    if (LEDGER_CHECKS | {"ledger-empty"}) & requested:
+    if (LEDGER_CHECKS | {"ledger-empty"}) & requested or _probe_listing_fault(ledger):
+        # The group runs whenever one of its classes was asked for, and also
+        # whenever the probe could not list the ledger: that row is the
+        # probe-honesty one `keep` never drops, so a run whose filter named no
+        # ledger class must still reach the read that faulted rather than
+        # report the clean verdict of a group that never ran.
         _check_ledger(ledger, git, root, findings, args.strict)
         findings[:] = keep(findings)
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -1560,10 +1561,18 @@ class TestLedgerStateVocabulary:
         row carries the error text so the operator sees what actually failed.
 
         The fault is injected at the probe's own listing of the ledger (its
-        glob), not at the record pass and not at a stat the rest of the census
-        also performs — so the ledger is a real directory at probe time and
-        only the probe's readdir faults, which is exactly the state where a
+        ``iterdir``), not at the record pass and not at a stat the rest of the
+        census also performs — so the ledger is a real directory at probe time
+        and only the probe's readdir faults, which is exactly the state where a
         label of "symlink" would be a lie about which state occurred.
+
+        The seam is the probe's listing call itself, not ``Path.glob``: glob
+        swallows the OSError readdir raises and yields nothing, so a fault
+        injected there would reach the probe as a recordless directory rather
+        than as a fault. The row that carries the text is the ``ledger-edited``
+        cannot-tell of a ledger that could not be listed, not a ``ledger-empty``
+        row: an unreadable ledger answers no state word, so no state word is
+        rendered for it.
         """
         import census
 
@@ -1575,27 +1584,181 @@ class TestLedgerStateVocabulary:
                       json.dumps(_valid_record(), indent=2))
         ledger = repo / "noni" / "decisions"
 
-        real_glob = census.Path.glob
+        real_iterdir = census.Path.iterdir
 
-        def boom(self, pattern):
+        def boom(self):
             if self == ledger:
                 raise OSError("input/output error")
-            return real_glob(self, pattern)
+            return real_iterdir(self)
 
-        monkeypatch.setattr(census.Path, "glob", boom)
+        monkeypatch.setattr(census.Path, "iterdir", boom)
         rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
-        rows = [r for r in _ndjson_rows(out) if r.get("check") == "ledger-empty"]
+        rows = [r for r in _ndjson_rows(out) if r.get("check") == "ledger-edited"]
         assert len(rows) == 1, f"expected one row: {rows}"
-        assert "input/output error" in rows[0]["message"], (
+        assert "input" in rows[0]["message"] and "error" in rows[0]["message"], (
             f"the OSError text must survive into the row: {rows[0]['message']}"
         )
         assert "symlink" not in rows[0]["message"], (
             f"an I/O fault must not be reported as a symlink: {rows[0]['message']}"
         )
-        # The probe faulted, so there is no censusable ledger: its warn is the
-        # only row the ledger group adds (the record pass runs on the real
-        # directory and finds its one valid record).
+        # The probe faulted, so there is no censusable ledger and no state word
+        # to render: its warn is the only row the ledger group adds (the record
+        # pass runs on the real directory and finds its one valid record).
+        empty = [r for r in _ndjson_rows(out) if r.get("check") == "ledger-empty"]
+        assert empty == [], f"an unreadable ledger is not an empty one: {empty}"
         assert rc == 0, f"the state stays warn, got {rc}\n{err}"
+
+    def test_an_unreadable_ledger_adds_no_state_word_row(self, tmp_path, monkeypatch):
+        """The probe-honesty half of the same fault: the four words of
+        LEDGER_EMPTY_MESSAGES name states of the tree, and "exists but could
+        not be listed" is not one of them. The run reports the fault under the
+        ledger-edited class and renders none of those words for it."""
+        import census
+
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                      json.dumps(_valid_record(), indent=2))
+        ledger = repo / "noni" / "decisions"
+
+        real_iterdir = census.Path.iterdir
+
+        def boom(self):
+            if self == ledger:
+                raise OSError("readdir denied")
+            return real_iterdir(self)
+
+        monkeypatch.setattr(census.Path, "iterdir", boom)
+        _rc, out, _err = _run_census(repo, json_out=True, skip_hygiene=True)
+        rows = _ndjson_rows(out)
+        assert [r["check"] for r in rows if r.get("kind") == "finding"] == ["ledger-edited"], rows
+        row = [r for r in rows if r.get("check") == "ledger-edited"][0]
+        for word in census.LEDGER_EMPTY_STATES:
+            assert f"({word})" not in row["message"], (
+                f"a state word the probe never established: {row['message']}"
+            )
+        assert row["subject"] == row["artifact"] == "noni/decisions", (
+            f"subject and artifact name the ledger, root-relative: {row}"
+        )
+        assert not row["subject"].startswith("/"), (
+            f"no machine-local path in the row: {row}"
+        )
+
+
+class TestLedgerWholeDirectoryDeletion:
+    """A committed ``noni/decisions/`` directory that no longer exists is still
+    a deletion: records are append-only, so the whole-directory case must reach
+    exit 12 the way the loss of a single file already does.
+
+    The distinction these cases hold is between git *answering* "history never
+    held a record" and git being unable to answer at all: the first is the lone
+    ledger-empty warn, the second the cannot-tell row. The fixtures wipe the
+    directory with ``git rm -r`` rather than the file-deletion helper, which
+    iterates a directory that has to exist to be iterated."""
+
+    def test_exit_12_deleted_whole_directory_committed(self, tmp_path):
+        """Records committed, then the whole ``noni/decisions/`` deleted and the
+        deletion committed: one ledger-edited "deleted" row per record, exit 12,
+        with the ledger-empty warn present alongside them."""
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                      json.dumps(_valid_record(), indent=2))
+        _commit_file(repo, "noni/decisions/2026-10-02-beta.json",
+                      json.dumps(_valid_record("2026-10-02-beta"), indent=2))
+        _git(repo, "rm", "-r", "-q", "noni/decisions")
+        _git(repo, "commit", "-q", "-m", "delete the ledger directory")
+        assert not (repo / "noni" / "decisions").exists()
+        rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
+        assert rc == 12, f"expected exit 12, got {rc}\nstderr: {err}\n{out}"
+        rows = [r for r in _ndjson_rows(out) if r.get("kind") == "finding"]
+        deleted = [r for r in rows if r["check"] == "ledger-edited"]
+        assert [r["subject"] for r in deleted] == [
+            "2026-10-01-alpha.json", "2026-10-02-beta.json"], (
+            f"one deleted row per committed record: {deleted}"
+        )
+        for row in deleted:
+            assert "deleted" in row["message"], row["message"]
+            assert row["severity"] == "fail" and row["code"] == 12, row
+        assert [r["check"] for r in rows if r["check"] == "ledger-empty"] == ["ledger-empty"], (
+            f"the gone directory is still the ledger-empty warn too: {rows}"
+        )
+
+    def test_exit_12_deleted_whole_directory_uncommitted(self, tmp_path):
+        """The same wipe with the deletion left uncommitted: the working tree is
+        not the source of the question, git history is, so the rows and the
+        exit code match the committed case."""
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                      json.dumps(_valid_record(), indent=2))
+        shutil.rmtree(repo / "noni" / "decisions")
+        assert not (repo / "noni" / "decisions").exists()
+        rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
+        assert rc == 12, f"expected exit 12, got {rc}\nstderr: {err}\n{out}"
+        rows = [r for r in _ndjson_rows(out) if r.get("kind") == "finding"]
+        deleted = [r for r in rows if r["check"] == "ledger-edited"]
+        assert [r["subject"] for r in deleted] == ["2026-10-01-alpha.json"], rows
+        assert "deleted" in deleted[0]["message"], deleted[0]["message"]
+
+    def test_record_history_that_never_existed_is_only_the_warn(self, tmp_path):
+        """The counterpart the fix must not break: git answered, and history
+        never held a record under the path. Whether ``noni/decisions/`` is an
+        empty directory or gone entirely, that tree is exactly one
+        ledger-empty warn and exit 0 -- cannot-tell is for the run that got no
+        answer, not for the answer "there was never anything here"."""
+        kept = _init_repo(tmp_path / "kept")
+        _commit_file(kept, "noni/decisions/.gitkeep", "")
+        _commit_file(kept, "noni/README.md", "noni lives here\n")
+        rc, out, err = _run_census(kept, json_out=True, skip_hygiene=True)
+        assert rc == 0, f"expected exit 0, got {rc}\nstderr: {err}\n{out}"
+        assert [r["check"] for r in _ndjson_rows(out) if r.get("kind") == "finding"] == [
+            "ledger-empty"], out
+
+        gone = _init_repo(tmp_path / "gone")
+        _commit_file(gone, "noni/README.md", "noni lives here\n")
+        (gone / "noni" / "decisions").mkdir()
+        rc, out, err = _run_census(gone, json_out=True, skip_hygiene=True)
+        assert rc == 0, f"expected exit 0, got {rc}\nstderr: {err}\n{out}"
+        checks = [r["check"] for r in _ndjson_rows(out) if r.get("kind") == "finding"]
+        assert checks == ["ledger-empty"], (
+            f"an uncommitted empty directory that history never held is the "
+            f"warn alone, no deleted row: {checks}"
+        )
+
+    def test_record_history_and_deleted_dir_with_no_git_answer_says_cannot_tell(
+        self, tmp_path, monkeypatch
+    ):
+        """When git cannot answer, the cannot-tell row applies unchanged: a
+        whole-directory wipe on a tree whose history the census could not read
+        must not read as the honest "nothing was ever deleted" verdict."""
+        import census
+
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                      json.dumps(_valid_record(), indent=2))
+        _git(repo, "rm", "-r", "-q", "noni/decisions")
+        _git(repo, "commit", "-q", "-m", "delete the ledger directory")
+        monkeypatch.setattr(census, "Git", lambda top: _UnreadableGit())
+        # The directory is gone from disk, so the probe answers "absent" and the
+        # group would report the plain no-ledger warn. Force the state the
+        # criterion describes -- a ledger that reads as having been emptied --
+        # so this case turns on the git read alone.
+        monkeypatch.setattr(census, "_ledger_probe",
+                            lambda ledger: census.LedgerProbe("empty"))
+        rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
+        assert rc == 0, f"cannot-tell is a warn: expected exit 0, got {rc}\n{err}"
+        rows = [r for r in _ndjson_rows(out) if r.get("kind") == "finding"]
+        assert sorted(r["check"] for r in rows) == ["ledger-edited", "ledger-empty"], rows
+        empty = [r for r in rows if r["check"] == "ledger-empty"][0]
+        assert empty["severity"] == "warn" and empty["code"] == 42, empty
+        assert "(empty)" in empty["message"], empty["message"]
+        row = [r for r in rows if r["check"] == "ledger-edited"][0]
+        assert row["subject"] == "cannot-tell", row
+        assert row["severity"] == "warn" and row["code"] == 12, row
+        assert "could not run" in row["message"], row["message"]
+        rc_strict, _out, err = _run_census(repo, "--strict", skip_hygiene=True)
+        assert rc_strict == 12, (
+            f"--strict escalates the cannot-tell to ledger-edited's code, got "
+            f"{rc_strict}\nstderr: {err}"
+        )
 
 
 class TestHygieneRowContract:

@@ -222,3 +222,50 @@ def test_fault_text_names_a_fault_with_no_words_of_its_own_by_its_class():
     assert census_text.fault_text(named) == "PermissionError"
     assert "someone" not in census_text.fault_text(named)
     assert census_text.fault_text(OSError(13, None)) == "PermissionError"
+
+
+def test_fault_text_of_a_fault_that_is_not_an_oserror_names_its_class_only():
+    """A caller may hand the helper any exception, so anything without the
+    structured fields is reduced to its class name.
+
+    ``ValueError("/home/x/y")`` has no ``strerror``, no filename and no errno: its
+    ``str()`` is exactly the message somebody passed, which is a path the row must
+    not print. The class name is the most that fault can say about itself.
+    """
+    assert census_text.fault_text(ValueError("/home/x/y")) == "ValueError"
+
+
+def test_fault_text_treats_a_non_string_or_empty_strerror_as_absent():
+    """``strerror`` is a field of the exception, not a promise about it.
+
+    A fault can hold a number, a tuple, or the empty string in it. Quoting such a
+    value verbatim would put ``repr`` noise -- or a bare ``Name: `` -- in a row, so
+    the helper falls through to the arms that ask what else the fault knows.
+    """
+    assert census_text.fault_text(OSError(13, 7, "/home/someone/x")) == "PermissionError"
+    assert census_text.fault_text(OSError(13, ("a", "b"), "/home/someone/x")) == "PermissionError"
+    assert census_text.fault_text(OSError(13, "", "/home/someone/x")) == "PermissionError"
+    # The filename check is a type test too: a fault holding one does not fall
+    # through to the plain-message arm, which would quote a value of any shape.
+    assert census_text.fault_text(OSError(13, 7, ("x", "y"))) == "PermissionError"
+
+
+def test_every_text_fault_text_returns_is_scrubbed_and_clipped():
+    """The helper is the whole bound, so no caller has to remember to bound it.
+
+    Two arms could have leaked: a ``strerror`` carrying a host path, and the
+    plain-message arm, whose text is the message handed to the raise. Both go
+    through the same scrub-and-clip as every other foreign message, so a message
+    of any length comes back at or under the census's message limit and no
+    absolute path comes back at all.
+    """
+    strerror = census_text.fault_text(OSError(13, "could not open /home/someone/x"))
+    assert "/home/someone" not in strerror, strerror
+    assert "PermissionError" in strerror and "could not open" in strerror, strerror
+
+    plain = census_text.fault_text(OSError("x" * 5000))
+    assert len(plain) <= 300, len(plain)
+    assert plain.endswith("..."), plain[-10:]
+
+    long_strerror = census_text.fault_text(OSError(13, "y" * 5000))
+    assert len(long_strerror) <= 300, len(long_strerror)

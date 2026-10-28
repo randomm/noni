@@ -1017,7 +1017,54 @@ def test_both_groups_name_an_unreadable_ledger_with_one_identifier(tmp_path):
     assert "the decision ledger (decisions)" in ordering_row["message"], ordering_row["message"]
     for field in ("subject", "artifact", "message"):
         assert str(outside) not in ordering_row[field], ordering_row[field]
-        assert "ledger-home" not in ordering_row[field], ordering_row[field]
+
+
+def test_no_ordering_row_names_an_out_of_tree_ledger_by_its_host_directory(tmp_path):
+    """Every row of the group names the ledger the one way, out-of-tree included.
+
+    An out-of-tree ``--ledger`` cannot be rooted, so ``rel_to_root`` hands back the
+    machine-local absolute path -- and a row that interpolates that value directly
+    prints the directory the host keeps the ledger in. There are two places the
+    group names the ledger in prose (the listing-fault row and the per-entry
+    citation row), and both take the identifier from ``ledger_name``: the group has
+    no identity default to fall back on, so a caller that forgets the argument does
+    not get a path printed by default.
+    """
+    repo = _repo(tmp_path, "out-of-tree-ledger-rows")
+    _seed(repo, _entry(3, BASELINE_ID), _entry(4, "no-such-record"))
+    outside = tmp_path / "ledger-home" / "decisions"
+    outside.mkdir(parents=True)
+    (outside / f"{BASELINE_ID}.json").write_text(
+        json.dumps({"id": BASELINE_ID, "date": "2026-10-01T00:00:00Z", "asked_by": "developer",
+                    "questions": [{"id": "q1", "text": "Order?", "options": ["a", "b"],
+                                   "answer": "a"}], "by": "Replay",
+                    "scope": "release ordering", "status": "decided", "supersedes": None},
+                   indent=2) + "\n",
+        encoding="utf-8")
+
+    with _ordering_record_read_faults(outside, "input/output error"):
+        code, rows, out, err = _run_in_process(repo, "--ledger", str(outside),
+                                              "--only", "ordering-malformed")
+    assert code == 15, (code, out, err)
+    citation_rows = [r for r in rows if "matches no record file" in r["message"]]
+    assert citation_rows, rows
+    for row in citation_rows:
+        for field in ("subject", "artifact", "message"):
+            assert str(outside.parent) not in row[field], f"{field}: {row[field]!r}"
+            assert "ledger-home" not in row[field], f"{field}: {row[field]!r}"
+        assert "(decisions)" in row["message"], row["message"]
+
+    with _listing_faults(outside):
+        code, rows, out, err = _run_in_process(repo, "--ledger", str(outside),
+                                              "--only", "ordering-malformed")
+    assert code == 15, (code, out, err)
+    listing_rows = [r for r in rows if "could not be listed" in r["message"]]
+    assert listing_rows, rows
+    for row in listing_rows:
+        for field in ("subject", "artifact", "message"):
+            assert str(outside.parent) not in row[field], f"{field}: {row[field]!r}"
+            assert "ledger-home" not in row[field], f"{field}: {row[field]!r}"
+        assert "the decision ledger (decisions)" in row["message"], row["message"]
 
 
 def test_a_committed_canonical_artifact_is_clean(tmp_path):

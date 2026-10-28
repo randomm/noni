@@ -146,7 +146,7 @@ def check_ordering(
     row: Callable[..., dict], rel_to_root: Callable[[Path, Path], str], file_kind,
     bounded: Callable[[str], str], parse_iso, readers, names_zone,
     load_json_strict: Callable[[bytes], object], clipped: Callable[[str], str],
-    ledger_name: Callable[[str], str] = lambda rel: rel,
+    ledger_name: Callable[[str], str],
     names: tuple[str, ...] | None = None,
 ) -> None:
     """Check the ordering artifact; append its findings to ``findings``.
@@ -172,13 +172,15 @@ def check_ordering(
     copy of any of them here would be a second contract for the same row.
 
     ``ledger_name`` is the census's one rule for naming a ledger a run could not
-    read (``census_ledger.ledger_name``), and the listing-fault row takes the
-    ledger's name from it rather than scrubbing the root-relative path itself:
-    both groups' rows for one unreadable ledger then name it identically, and the
+    read (``census_ledger.ledger_name``), and it is required: every place this
+    group names the ledger in a row -- the listing-fault row and the per-entry
+    citation row -- takes the identifier from it rather than interpolating the
+    root-relative path itself. An out-of-tree ``--ledger`` override cannot be
+    rooted, so that path is a machine-local directory, and a default that handed
+    back the path unchanged would print it for any caller that forgot the
+    argument. Both groups' rows for one ledger then name it identically, and the
     scrubber is left to its safety-net job on foreign text instead of being asked
-    to redact a path this census wrote and still leave it identifiable. It
-    defaults to the identity so a direct caller with no ledger group to agree
-    with keeps the path it passed.
+    to redact a path this census wrote and still leave it identifiable.
 
     ``names`` is the run's one ledger listing — the names the census's probe
     read — and it goes straight to the readers, which is what keeps the whole
@@ -277,7 +279,11 @@ def check_ordering(
                 # decision text, read from the artifact: a value of any length is
                 # a row of at most the bound, as every other row of the report is.
                 add("ordering-malformed", subject, rel_to_root(root, order),
-                    clipped(f"{why} ({rel_ledger})"), whole_artifact=True)
+                    # The ledger is named by ``ledger_name`` for the same reason
+                    # the listing-fault row above is: an out-of-tree ``--ledger``
+                    # makes this path a host directory, and the row only needs to
+                    # say which ledger it means.
+                    clipped(f"{why} ({ledger_name(rel_ledger)})"), whole_artifact=True)
 
         confirmed = parse_iso(entry.get("confirmed")) if isinstance(
             entry.get("confirmed"), str) else None

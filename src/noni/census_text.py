@@ -221,15 +221,44 @@ def fault_text(e: OSError) -> str:
     Keeping the plain-message text is safe for the same reason the rest of this
     helper is -- there is no filename in it -- and it is what a caller that
     raised with its own sentence expects, whose words the row exists to print.
+
+    The helper is also the *bound*, so a caller never has to remember to bound
+    what it returns: every text below leaves through :func:`_bounded`, which
+    scrubs and clips. That matters most for the plain-message arm, whose text is
+    whatever the raise was handed -- a message of any length, and any path shape
+    a caller's own sentence happened to hold -- and it matters for ``strerror``,
+    which a device driver or a C library may fill with anything. A row that
+    quotes this helper is therefore bounded by construction, not by whichever
+    call site remembered the wrapper.
+
+    A fault that is not an ``OSError`` at all (a ``ValueError`` raised where a
+    read was expected, say) has none of the structured fields this helper reads,
+    and its ``str()`` is the caller's own message -- which is exactly the text
+    the helper exists to keep out of a row. Such a fault is named by its class
+    and nothing else. ``strerror`` is treated the same way when it is present
+    but is not a usable string (a number, a tuple, or empty): it is absent for
+    every purpose here, and the arms below answer instead.
     """
     name = type(e).__name__
+    if not isinstance(e, OSError):
+        # Not a filesystem fault at all: none of the fields below exist, and the
+        # only text such an exception carries is the message somebody passed to
+        # it -- which may be a path, a payload, or anything else that belongs in
+        # a traceback rather than a row. The class is the honest answer.
+        return name
     strerror = getattr(e, "strerror", None)
+    if not isinstance(strerror, str) or not strerror:
+        strerror = None
     filename = getattr(e, "filename", None)
     filename2 = getattr(e, "filename2", None)
-    if strerror:
+    if not isinstance(filename, (str, bytes)):
+        filename = None
+    if not isinstance(filename2, (str, bytes)):
+        filename2 = None
+    if strerror is not None:
         # The words are kept whether or not a filename came with them: a fault
         # that knows both is the common case, and the path is simply not quoted.
-        return f"{name}: {strerror}"
+        return _bounded(f"{name}: {strerror}")
     if filename is not None or filename2 is not None:
         # A fault with a path and no words: str(e) of this shape is the path.
         return name
@@ -238,7 +267,7 @@ def fault_text(e: OSError) -> str:
         return name
     # A fault built from a plain message: str(e) is that message and nothing
     # else, and no filename field is set to contradict it.
-    return f"{name}: {e}"
+    return _bounded(f"{name}: {e}")
 
 
 def _clipped(message: str, limit: int = 300) -> str:

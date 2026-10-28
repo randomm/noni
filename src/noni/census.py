@@ -620,9 +620,10 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
     The two rows the composition adds itself, both probe honesty:
 
     * a listing that faulted gets one cannot-tell row of its own and stops the
-      group there (`census_ledger.append_listing_fault`): the probe read nothing,
-      so no state word it answered is one this run established and no record
-      pass can be trusted either;
+      group there (`census_ledger.append_listing_fault`, called with this group's
+      own ``ledger-edited`` class, noun and question): the probe read nothing, so
+      no state word it answered is one this run established and no record pass
+      can be trusted either;
     * when the deletion check could not put its question to git and the ledger
       reads as "empty", the run says so (probe honesty, issue #33). "Empty" is
       the only state that can mean "committed records were deleted", and this
@@ -636,6 +637,9 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
         # says what the read could not do (`census_ledger.append_listing_fault`).
         _ledger.append_listing_fault(
             ledger, root, findings, strict, probe.listing_fault,
+            check="ledger-edited", noun="the ledger directory",
+            unknown="so whether a committed record was deleted or edited cannot be "
+                    "answered",
             row=_row, rel_to_root=_rel_to_root, bounded=_bounded, clipped=_clipped)
         return
     _check_ledger_empty(probe, ledger, root, findings, strict)
@@ -1167,8 +1171,6 @@ def _sessions_listing(sessions: Path) -> SessionsProbe:
         return SessionsProbe(fault=_text.fault_text(e) or type(e).__name__)
 
 
-
-
 def _check_sessions(
     sessions: Path, git: Git | None, root: Path, now: datetime, stale_after: timedelta,
     strict: bool, findings: list[dict], probe: SessionsProbe
@@ -1351,13 +1353,7 @@ def _append_sessions_listing_fault(
         check="session-deleted", noun="the sessions register",
         unknown="so which session files are registered, and whether a committed "
                 "register file was deleted, cannot be answered",
-        row=_row, rel_to_root=_rel_to_root, bounded=_bounded, clipped=_clipped,
-        ledger_name=_ledger.ledger_name,
-        # This group's sentence is the long one (its skeleton is 181 characters
-        # against the ledger's 142), so its two foreign fragments get a tighter
-        # budget: 300 - 181 leaves room for both and keeps the verdict clause of
-        # the row the census clips to 300 (see ``fragment_bound``).
-        fragment_bound=55)
+        row=_row, rel_to_root=_rel_to_root, bounded=_bounded, clipped=_clipped)
 
 
 def _check_sessions_deleted(

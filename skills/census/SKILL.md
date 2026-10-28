@@ -166,16 +166,27 @@ The same rule extends to the classes that report their own absence:
   deletion check is the only signal that committed records were deleted, so a
   silent one would let a gutted ledger read as a plain no-ledger warning. It is
   a warn by default (exit 0) and a failure at 12 under `--strict`.
-- **An unreadable ledger is never `empty`.** The probe lists `decisions/` with
-  an explicit `iterdir`, because `glob` swallows the `OSError` a readdir raises
-  and yields nothing — which would let a directory the run could not read report
-  the same exit 0 warn as a project that has never steered anything. When the
-  listing faults, no state word of the class is rendered (those four name states
-  of the tree, and "unlistable" is a fault of this run's read): the run adds one
-  `ledger-edited` `cannot-tell` row whose `subject` and `artifact` both carry
-  the root-relative ledger path and whose message carries the `OSError` text,
-  bounded and stripped of machine-local paths. It is a warn at exit 0 and a
-  failure at 12 under `--strict`.
+- **An unreadable ledger is never `empty`.** The census lists `decisions/` with
+  an explicit `iterdir`, through one listing helper that the probe, the record
+  pass and the ordering group all use, because `glob` swallows the `OSError` a
+  readdir raises and yields nothing — which would let a directory the run could
+  not read report the same exit 0 warn as a project that has never steered
+  anything. The ledger is classified once per run: the run decides from that one
+  probe whether the group reports at all, and the same probe answers the rows,
+  so two reads of one directory cannot disagree about it. Because the listing is
+  shared, a faulted listing is reported by both groups that read it — the ledger
+  group's row below, and the ordering group's row that names the citation check
+  it could not perform.
+
+  When the listing faults, no state word of the class is rendered (those four
+  name states of the tree, and "unlistable" is a fault of this run's read): the
+  run adds one `ledger-edited` `cannot-tell` row whose `subject` and `artifact`
+  both carry the ledger path and whose message carries the `OSError` text,
+  bounded and stripped of machine-local paths. The path is root-relative
+  (`noni/decisions`) whenever the census could root it; for a `--ledger`
+  override that points outside the audited tree the row keeps the path's last
+  segment, since the machine-local directory that holds it must not reach a
+  report. It is a warn at exit 0 and a failure at 12 under `--strict`.
 - **`hygiene` (50)** always reports, a clean tree included. When the
   deny-list class is not active (its file is `absent`, `corrupt`, or present
   with no entries) the run emits one `hygiene` row naming that state; a scan

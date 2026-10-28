@@ -1712,6 +1712,12 @@ class TestLedgerWholeDirectoryDeletion:
         assert [r["check"] for r in _ndjson_rows(out) if r.get("kind") == "finding"] == [
             "ledger-empty"], out
 
+        # gone: a tree whose history DID answer, and answered "this directory
+        # was never added" -- the commits hold only noni/README.md, so
+        # `rev-parse` resolves and the deletion check puts its question, and
+        # finds no addition under the prefix to report as deleted. An
+        # uncommitted empty decisions/ on disk is the answer "there was never
+        # anything here", which is the warn alone.
         gone = _init_repo(tmp_path / "gone")
         _commit_file(gone, "noni/README.md", "noni lives here\n")
         (gone / "noni" / "decisions").mkdir()
@@ -1724,25 +1730,31 @@ class TestLedgerWholeDirectoryDeletion:
         )
 
     def test_record_history_and_deleted_dir_with_no_git_answer_says_cannot_tell(
-        self, tmp_path, monkeypatch
+        self, tmp_path
     ):
         """When git cannot answer, the cannot-tell row applies unchanged: a
         whole-directory wipe on a tree whose history the census could not read
-        must not read as the honest "nothing was ever deleted" verdict."""
-        import census
+        must not read as the honest "nothing was ever deleted" verdict.
 
+        The tree is built the way the criterion describes it -- records
+        committed, then the whole ``noni/decisions/`` directory removed -- and
+        git is made unable to answer by taking the history away from the
+        reading tool (the ``.git`` directory is deleted after the commits, so
+        ``rev-parse`` fails for real). Nothing patches the probe's state: the
+        probe answers "empty" for a tree that genuinely holds no record, and
+        the cannot-tell row is what the run owes the operator on top of the
+        warn. Patching the probe here would only ever prove the reporter.
+        """
         repo = _init_repo(tmp_path / "repo")
         _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
                       json.dumps(_valid_record(), indent=2))
-        _git(repo, "rm", "-r", "-q", "noni/decisions")
-        _git(repo, "commit", "-q", "-m", "delete the ledger directory")
-        monkeypatch.setattr(census, "Git", lambda top: _UnreadableGit())
-        # The directory is gone from disk, so the probe answers "absent" and the
-        # group would report the plain no-ledger warn. Force the state the
-        # criterion describes -- a ledger that reads as having been emptied --
-        # so this case turns on the git read alone.
-        monkeypatch.setattr(census, "_ledger_probe",
-                            lambda ledger: census.LedgerProbe("empty"))
+        _commit_file(repo, "noni/decisions/2026-10-02-beta.json",
+                      json.dumps(_valid_record("2026-10-02-beta"), indent=2))
+        shutil.rmtree(repo / "noni" / "decisions")
+        assert not (repo / "noni" / "decisions").exists()
+        # git made unable to answer, by the tree rather than by a stub: no
+        # history left for `rev-parse` to resolve.
+        shutil.rmtree(repo / ".git")
         rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
         assert rc == 0, f"cannot-tell is a warn: expected exit 0, got {rc}\n{err}"
         rows = [r for r in _ndjson_rows(out) if r.get("kind") == "finding"]
@@ -1759,6 +1771,30 @@ class TestLedgerWholeDirectoryDeletion:
             f"--strict escalates the cannot-tell to ledger-edited's code, got "
             f"{rc_strict}\nstderr: {err}"
         )
+
+    def test_deleted_dir_with_no_git_answer_says_cannot_tell_under_a_ledger_filter(
+        self, tmp_path
+    ):
+        """The same verdict through a filter that named only the ledger classes.
+
+        The cannot-tell row of a ledger the deletion check could not put to git
+        is not whole-artifact (``_append_cannot_tell`` composes it), so it is
+        kept only because the filter named its class. A run filtered to the
+        ledger classes must still report it; that is the contract SKILL.md
+        states for the whole-directory case, and this pins it for the filter
+        an operator is most likely to use when the ledger went missing.
+        """
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                      json.dumps(_valid_record(), indent=2))
+        shutil.rmtree(repo / "noni" / "decisions")
+        shutil.rmtree(repo / ".git")
+        rc, out, err = _run_census(repo, "--only", "ledger-edited",
+                                   "--only", "ledger-empty", "--strict",
+                                   json_out=True, skip_hygiene=True)
+        rows = [r for r in _ndjson_rows(out) if r.get("kind") == "finding"]
+        assert sorted(r["check"] for r in rows) == ["ledger-edited", "ledger-empty"], rows
+        assert rc == 12, f"expected 12, got {rc}\n{err}\n{out}"
 
 
 class TestHygieneRowContract:

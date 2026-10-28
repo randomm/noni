@@ -34,7 +34,13 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 import census  # noqa: E402
-from _harness import _commit_file, _home_path_violation, _init_repo, _secret_violation  # noqa: E402
+from _harness import (  # noqa: E402
+    _commit_file,
+    _fault_the_ledger_listing,
+    _home_path_violation,
+    _init_repo,
+    _secret_violation,
+)
 
 # Synthetic violation shapes, built by tests/_harness.py from public_safety's
 # own pattern tables (see there for why they are not literals and why the
@@ -119,28 +125,8 @@ def test_recordless_ledger_dir_is_ledger_empty_warn(tmp_path):
     repo = _init_repo(tmp_path / "repo")
     _commit_file(repo, "noni/decisions/.gitkeep", "")
     assert _run(repo, "--skip", "hygiene") == 0
+    assert _run(repo, "--skip", "hygiene", "--strict") == 42
     assert _run(repo, "--only", "ledger-empty", "--strict") == 42
-
-
-def _fault_the_ledger_listing(monkeypatch, ledger: Path) -> None:
-    """Make the census's listing of ``ledger`` fault, for an in-process run.
-
-    Injected at the probe's own ``Path.iterdir`` and never at a mode bit: a
-    root-equivalent runner reads a 000-mode directory, so a chmod fixture would
-    read as listable and the test would pass vacuously. The guard on the path
-    keeps every other listing of the run honest, so only the probe's readdir
-    faults. The seam is iterdir and not glob: glob swallows the OSError and
-    yields nothing, which is the very dishonesty the probe no longer has.
-    """
-    real_iterdir = census.Path.iterdir
-    target = Path(ledger)
-
-    def boom(self):
-        if self == target:
-            raise OSError("readdir denied")
-        return real_iterdir(self)
-
-    monkeypatch.setattr(census.Path, "iterdir", boom)
 
 
 def test_unreadable_ledger_dir_is_cannot_tell_not_empty(tmp_path, monkeypatch):

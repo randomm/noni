@@ -593,8 +593,13 @@ def _ledger_probe(ledger: Path) -> _ledger.LedgerProbe:
 
 
 def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict],
-                  strict: bool) -> None:
+                  strict: bool, probe: _ledger.LedgerProbe) -> None:
     """Check the steering ledger; append findings (each a partial finding row).
+
+    ``probe`` is the run's one classification of ``ledger``, built by ``main``
+    before it decided whether this group runs at all: a second probe would be a
+    second read of the directory and a second chance to disagree with the first,
+    so the group reports from the answer that got it here.
 
     Composition only: the ledger-empty probe, then record I/O + schema
     validation, the edited check (git-backed), the deleted check (git-backed)
@@ -615,7 +620,6 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
       check is the only signal for that, so a silent one here would let a
       gutted ledger read as a plain no-ledger warning — the row is warn by
       default, fail under --strict."""
-    probe = _ledger_probe(ledger)
     if probe.listing_fault is not None:
         # The probe could not list the ledger, so no state word it answered is
         # one this run established: the empty class stays silent, the record
@@ -636,18 +640,6 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
             "(no readable git history), so whether committed records were deleted "
             "from it cannot be answered", strict, findings)
     _check_ledger_chain(valid, ledger, root, findings)
-
-
-def _probe_listing_fault(ledger: Path) -> str | None:
-    """The OSError text of a ledger listing this run cannot make, or None.
-
-    The one question `main` must answer before it decides whether to run the
-    ledger group at all, asked of the probe module beside this file: the group's
-    ``--only`` filter is a contract about classes, and a probe that could not read
-    its input is not a class — it is the run losing the ability to answer
-    anything, so the group has to run whatever the filter asked for.
-    """
-    return _ledger.listing_fault(ledger, _file_kind)
 
 
 def _check_ledger_empty(probe: _ledger.LedgerProbe, ledger: Path, root: Path,
@@ -680,7 +672,11 @@ def _check_ledger_empty(probe: _ledger.LedgerProbe, ledger: Path, root: Path,
     if detail is None:
         return
     if probe.problem:
-        detail = f"{detail} (probe error: {probe.problem})"
+        # Foreign text from this tree, so it gets the bound-and-scrub the
+        # listing-fault row applies to its fault text: a row built from someone
+        # else's error must not smuggle a host path or run past the length every
+        # other row keeps. The sentence around it is this census's own wording.
+        detail = f"{detail} (probe error: {_bounded(probe.problem)})"
     artifact = _rel_to_root(root, ledger)
     findings.append(
         _row("ledger-empty", strict, artifact, artifact,
@@ -710,7 +706,7 @@ def _check_ledger_records(ledger: Path, root: Path, findings: list[dict],
         # so a ledger that is not there adds no ledger-record row here.
         return [], []
 
-    names = sorted(p.name for p in ledger.glob("*.json"))
+    names = sorted(_ledger.listing_helper(ledger))
     valid: list[tuple[str, Path, dict]] = []
     unparseable: list[tuple[str, Path]] = []
     for name in names:
@@ -1052,9 +1048,20 @@ def _stripped(message: str) -> str:
     The path-stripping half of :func:`_bounded`, alone: a caller that composed a
     sentence out of root-relative paths it derived itself needs the collapsing and
     nothing else.
+
+    The pattern is anchored: the separator must begin the string or follow
+    punctuation a row puts around a path (whitespace, a bracket, a quote, a
+    colon, a comma), rather than matching the first ``/`` seen anywhere.
+    Unanchored it ate the middle of a root-relative path too, so a scrubbed
+    ``noni/decisions`` came out as ``noni<path>`` — neither the path nor a
+    usable stand-in — and the row that reports an unreadable ledger failed to
+    name it. The rule is about a machine-local path, which begins with a
+    separator; a root-relative one is the finding the row states, and the census
+    narrates it inside parentheses, so the bracket belongs in the anchor set.
     """
     collapsed = " ".join(message.split())
-    return re.sub(r"(?:/[A-Za-z0-9._-]+)+", "<path>", collapsed)
+    return re.sub(r"(?:(?<=^)|(?<=[\s(\[<\",:]))(?:/[A-Za-z0-9._-]+){2,}",
+                  "<path>", collapsed)
 
 
 def _clipped(message: str, limit: int = 300) -> str:
@@ -1479,13 +1486,19 @@ def main(argv: list[str] | None = None) -> int:
         return [f for f in group_findings
                 if f["check"] in requested or f.get(WHOLE_ARTIFACT_KEY)]
 
-    if (LEDGER_CHECKS | {"ledger-empty"}) & requested or _probe_listing_fault(ledger):
+    # The ledger is classified once per run, here, before the group is gated on
+    # the answer: `main` reads `listing_fault` off this one probe to decide
+    # whether the group runs at all, and the same probe goes into
+    # `_check_ledger` for the rows.
+    ledger_probe = _ledger_probe(ledger)
+
+    if (LEDGER_CHECKS | {"ledger-empty"}) & requested or ledger_probe.listing_fault:
         # The group runs whenever one of its classes was asked for, and also
         # whenever the probe could not list the ledger: that row is the
         # probe-honesty one `keep` never drops, so a run whose filter named no
         # ledger class must still reach the read that faulted rather than
         # report the clean verdict of a group that never ran.
-        _check_ledger(ledger, git, root, findings, args.strict)
+        _check_ledger(ledger, git, root, findings, args.strict, ledger_probe)
         findings[:] = keep(findings)
 
     if SESSION_CHECKS & requested:

@@ -224,7 +224,8 @@ def load_issue_state(path: Path | None, states: tuple[str, ...], file_kind, boun
     return IssueState(state, None, True)
 
 
-def ledger_records(ledger: Path, file_kind, load_json: Callable[[bytes], object]
+def ledger_records(ledger: Path, file_kind, load_json: Callable[[bytes], object],
+                   list_records: Callable[[Path], list[str]] | None = None
                    ) -> tuple[dict[str, dict], bool, set[str], bool, str | None]:
     """The records the ledger holds, keyed by filename stem, plus three answers
     about the read: whether any lookup could be made, which names could not be
@@ -265,7 +266,18 @@ def ledger_records(ledger: Path, file_kind, load_json: Callable[[bytes], object]
     group's own ``ledger-empty`` row owns, so ordering adds nothing) and True with
     a fault text means the listing ran and faulted, a fault of this run's read
     that no other class of the run sees.
+
+    ``list_records`` is the census's one ledger listing
+    (``census_ledger.listing_helper``), not a listing of this module's own: the
+    ledger group, the ordering group and the probe answer "which files are
+    records" from one call, and it is an ``iterdir`` rather than a ``glob`` so
+    the readdir fault below is a fault this run reports instead of an empty
+    directory it invents. It defaults to the same function object, so a test
+    that drives this reader directly still exercises the product's listing.
     """
+    if list_records is None:
+        from . import census_ledger as _ledger
+        list_records = _ledger.listing_helper
     kind, _problem = file_kind(ledger, kind="dir")
     if kind != "regular":
         # An absent ledger is a readable answer ('no records'), not a fault, and
@@ -274,15 +286,16 @@ def ledger_records(ledger: Path, file_kind, load_json: Callable[[bytes], object]
         # re-report what ledger-empty already owns.
         return {}, kind == "absent", set(), False, None
     try:
-        paths = sorted(ledger.glob("*.json"))
+        names = list_records(ledger)
     except OSError as e:
         # Bounded wording only: the text is an exception from this tree, and a
         # census row never prints a machine-local absolute path.
         return {}, False, set(), True, f"{e.__class__.__name__}: {e.strerror or e}"
     records: dict[str, dict] = {}
     unreadable: set[str] = set()
-    for candidate in paths:
-        stem = candidate.name[: -len(".json")]
+    for name in sorted(names):
+        candidate = ledger / name
+        stem = name[: -len(".json")]
         fkind, _fproblem = file_kind(candidate)
         if fkind != "regular":
             # Exists but is not something this run may read: never read through

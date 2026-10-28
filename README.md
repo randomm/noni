@@ -23,7 +23,7 @@ Four artifacts, all committed files under `noni/`, all read by the census:
 |---|---|---|
 | steering ledger | one JSON file per dated, attributed decision under `noni/decisions/` | `decide.py` |
 | ordering | the issues you want worked next, in order, in `noni/direction/order.json` | `order.py` |
-| session register | one file per session under `noni/sessions/`, with its claims | `register.py` and `claim.py` |
+| session register | one file per session under `noni/sessions/`, with its claims | `register.py`, `claim.py`, `release.py` and `close.py` |
 | census | nothing: it reads the three above and reports | read-only |
 
 Claims are signals, not locks. A claim tells everyone else what you intend to
@@ -56,8 +56,9 @@ Run these from a release of noni you trust: they execute its scripts.
 
 Installing is the other route, and the same code either way: `pip install
 noni` gives one `noni` command in place of a path per tool (`noni decide`,
-`noni census`, `noni register`, `noni claim`, `noni order`), and both routes
-print the same bytes. `noni --help` names the five subcommands.
+`noni census`, `noni register`, `noni claim`, `noni release`, `noni close`,
+`noni order`), and both routes
+print the same bytes. `noni --help` names the seven subcommands.
 
 The census is read-only: it never writes, so `git status --porcelain` is empty
 after either run.
@@ -74,7 +75,7 @@ nothing to arbitrate) are counted there and do not change the verdict.
 
 Read `noni/skills/<skill>/SKILL.md` for what each writer accepts and refuses.
 The steering-ledger and sessions-claims skills keep record-shape detail in
-their `references/` directories. `noni --help` names the five subcommands and
+their `references/` directories. `noni --help` names the seven subcommands and
 `noni <tool> --help` the flags of one.
 
 ## How it works
@@ -104,7 +105,8 @@ the exit codes it returns.
 ## Status
 
 Shipped, and covered by the test suite: the steering ledger with its supersede
-chain, the session register and claim protocol, the ordering artifact, the
+chain, the session register with its claim, release and close verbs, the
+ordering artifact, the
 unified census with its honest exit codes, and the `noni` package that carries
 them (`pip install noni`, then `noni <tool>`).
 

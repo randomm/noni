@@ -17,6 +17,16 @@ import json
 from conftest import _git_ok, build_bare_origin, push_with_retry, run_claim, run_register
 
 
+def _sid_of(stdout: str) -> str:
+    """The session id from a ``--no-commit`` register line.
+
+    The line names the file it left in the work tree
+    (``... -> <path>/<id>.md left uncommitted``); the id is the stem.
+    """
+    tail = stdout.strip().split(" -> ")[-1].rsplit(" left uncommitted", 1)[0]
+    return tail.rsplit("/", 1)[-1].removesuffix(".md")
+
+
 def test_two_clones_double_claim_census_flags(tmp_path, run_sessions_census):
     """Two clones commit a claim for the same task on the same branch; both
     land after push-retry; the census exits 30 naming the task."""
@@ -27,14 +37,19 @@ def test_two_clones_double_claim_census_flags(tmp_path, run_sessions_census):
     build_bare_origin(origin, [clone_a, clone_b])
 
     # Each clone registers its own session (different identity, same task).
-    reg_a = run_register(clone_a, "developer", host="clone-a", worktree=str(clone_a))
-    reg_b = run_register(clone_b, "reviewer", host="clone-b", worktree=str(clone_b))
+    # --no-commit: register.py commits its own file, and this fixture wants to
+    # make those two commits itself so each clone's register commit sits on its
+    # own side of the race the push-retry test is about.
+    reg_a = run_register(clone_a, "developer", host="clone-a",
+                         worktree=str(clone_a), **{"no-commit": None})
+    reg_b = run_register(clone_b, "reviewer", host="clone-b",
+                         worktree=str(clone_b), **{"no-commit": None})
     assert reg_a.returncode == 0, reg_a.stderr
     assert reg_b.returncode == 0, reg_b.stderr
 
     # Extract the session ids from the register output.
-    sid_a = reg_a.stdout.strip().split("->")[0].split("registered session ")[1].strip()
-    sid_b = reg_b.stdout.strip().split("->")[0].split("registered session ")[1].strip()
+    sid_a = _sid_of(reg_a.stdout)
+    sid_b = _sid_of(reg_b.stdout)
     assert sid_a != sid_b, "session-ids must be distinct (collision-free by construction)"
 
     # Commit each register file.
@@ -74,13 +89,13 @@ def test_register_allocates_distinct_files(tmp_path):
     repo = tmp_path / "repo"
     (repo / "noni" / "sessions").mkdir(parents=True)
 
-    reg1 = run_register(repo, "developer", host="h1")
-    reg2 = run_register(repo, "reviewer", host="h2")
+    reg1 = run_register(repo, "developer", host="h1", **{"no-commit": None})
+    reg2 = run_register(repo, "reviewer", host="h2", **{"no-commit": None})
     assert reg1.returncode == 0
     assert reg2.returncode == 0
 
-    sid1 = reg1.stdout.split("registered session ")[1].split(" ->")[0].strip()
-    sid2 = reg2.stdout.split("registered session ")[1].split(" ->")[0].strip()
+    sid1 = _sid_of(reg1.stdout)
+    sid2 = _sid_of(reg2.stdout)
     assert sid1 != sid2
 
     # The files exist and are distinct.

@@ -39,6 +39,9 @@ SRC = REPO / "src"
 PRODUCT_MODULES = (
     "integrations/adapter_protocol.py",
     "integrations/github-issues/github_issues_adapter.py",
+    "src/noni/_session_git.py",
+    "src/noni/close.py",
+    "src/noni/release.py",
     "src/noni/census.py",
     "src/noni/census_hygiene.py",
     "src/noni/census_json.py",
@@ -87,6 +90,16 @@ def subprocess_env(base: dict | None = None) -> dict:
     Every test launcher of a product Python script goes through this, which
     is what makes the subprocess half of the coverage gate fire.
 
+    ``PYTHONPATH`` is pinned to this tree's ``src/`` and put first. The suite
+    runs in a worktree while the venv carries an editable install of ``noni``
+    pointing at the checkout it was installed from, and a wrapper resolves
+    ``from noni import register`` through the *installed* path — so without
+    this pin the child runs another tree's modules: the worktree's tests assert
+    against one copy of the product and exercise another. Prepending (not
+    replacing) keeps an inherited path element that a caller put there on
+    purpose, and keeps ``sys.path.insert`` in conftest honest for the in-process
+    route: both routes now resolve ``noni`` into this tree.
+
     ``COLUMNS`` is forced (see :data:`HELP_COLUMNS`) so the ``--help``
     byte-for-byte comparisons are width-independent: argparse wraps its usage
     and option help to the terminal width, so without the pin the wrapper and
@@ -97,6 +110,9 @@ def subprocess_env(base: dict | None = None) -> dict:
     env = dict(os.environ if base is None else base)
     env["COVERAGE_PROCESS_START"] = COVERAGE_PROCESS_START
     env["COLUMNS"] = HELP_COLUMNS
+    inherited = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (str(SRC) + os.pathsep + inherited
+                         if inherited else str(SRC))
     return env
 
 
@@ -120,6 +136,9 @@ from noni.public_safety import HOME_PATH_PATTERNS, SECRET_PATTERNS  # noqa: E402
 # the *same objects* the console route imports, which is what makes a seam a test
 # installs visible to the other route as well.
 for _alias, _pkg_name in (
+    ("_session_git", "_session_git"),
+    ("close", "close"),
+    ("release", "release"),
     ("census", "census"),
     ("census_hygiene", "census_hygiene"),
     ("census_json", "census_json"),
@@ -489,8 +508,13 @@ def git_pin_date(repo: Path, iso_utc: str, *args: str) -> subprocess.CompletedPr
     env["GIT_CONFIG_SYSTEM"] = "/dev/null"
     env["GIT_AUTHOR_DATE"] = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     env["GIT_COMMITTER_DATE"] = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    # core.hooksPath at the null device, like every writer's own git call: a
+    # fixture that commits (or amends) must not run the repository's hooks any
+    # more than the product does, and this helper runs a bare 'git' where the
+    # writers run their hardened one.
     proc = subprocess.run(
-        ["git", "-C", str(repo), "-c", "commit.gpgsign=false", *args],
+        ["git", "-C", str(repo), "-c", "commit.gpgsign=false",
+         "-c", "core.hooksPath=" + os.devnull, *args],
         capture_output=True,
         text=True,
         env=env,
@@ -509,13 +533,20 @@ def build_bare_origin(origin: Path, worktrees: list[Path]) -> None:
     shared — not one clone of another) and starts with one committed file so
     it has a commit to push. The caller then drives register.py / claim.py /
     push-retry against the clones.
+
+    Every clone takes ``main`` from the clone command itself, not from its own
+    ``init.defaultbranch``: the suite's sandboxed HOME carries no gitconfig, so
+    a plain clone falls back to git's own default (master) and lands on a
+    branch origin never had. That is invisible while the fixture alone commits,
+    because the manual ``checkout -b main`` moves the uncommitted files over —
+    but a writer that commits by itself (register.py) puts its commit on
+    master, and the push of ``main`` then has nothing to push.
     """
     origin.mkdir(parents=True, exist_ok=True)
     _git_ok(origin, "init", "-q", "--bare")
     first = worktrees[0]
     first.mkdir(parents=True, exist_ok=True)
-    _git_ok(first, "init", "-q")
-    _git_ok(first, "checkout", "-q", "-b", "main")
+    _git_ok(first, "init", "-q", "-b", "main")
     (first / "README.md").write_text("test repo\n")
     _git_ok(first, "add", "README.md")
     _git_ok(first, "commit", "-q", "-m", "initial commit")
@@ -523,8 +554,7 @@ def build_bare_origin(origin: Path, worktrees: list[Path]) -> None:
     _git_ok(first, "push", "-q", "-u", "origin", "main")
     for wt in worktrees[1:]:
         wt.mkdir(parents=True, exist_ok=True)
-        _git_ok(wt.parent, "clone", "-q", str(origin), str(wt))
-        _git_ok(wt, "checkout", "-q", "-b", "main")
+        _git_ok(wt.parent, "clone", "-q", "-b", "main", str(origin), str(wt))
 
 
 def advance_origin_with_claim(
@@ -654,6 +684,8 @@ CENSUS_SESSIONS = SESSIONS_SKILL / "census-sessions.sh"
 CENSUS_SESSIONS_PY = SESSIONS_SKILL / "census-sessions.py"
 REGISTER = SESSIONS_SKILL / "register.py"
 CLAIM = SESSIONS_SKILL / "claim.py"
+CLOSE = SESSIONS_SKILL / "close.py"
+RELEASE = SESSIONS_SKILL / "release.py"
 DECIDE = STEERING_SKILL / "decide.py"
 ORDER = DIRECTION_SKILL / "order.py"
 CENSUS = CENSUS_SKILL / "census.py"
@@ -742,15 +774,29 @@ def run_order(repo: Path, *args: str, env: Mapping[str, str] | None = None,
 
 
 def run_register(repo: Path, identity: str, **kwargs) -> subprocess.CompletedProcess[str]:
-    """Run register.py with --repo repo --identity identity and extra kwargs."""
+    """Run register.py with --repo repo --identity identity and extra kwargs.
+
+    Launched under the deterministic identity env, like the other writers that
+    commit (``run_claim``, ``_run_session_writer``): register.py makes its own
+    commit, and the suite's autouse fixture clears ``GIT_AUTHOR_*`` /
+    ``GIT_COMMITTER_*`` from the environment, so a launcher that inherited the
+    ambient env would have git refuse the commit for want of an identity — the
+    writer answers that honestly with exit 3, which is not what the fixture
+    means to be testing. A ``--no-commit`` run is unaffected by the pin.
+    """
     extra = []
     for key, value in kwargs.items():
-        extra.extend([f"--{key}", str(value)])
+        if value is None:
+            extra.append(f"--{key}")
+        else:
+            extra.extend([f"--{key}", str(value)])
+    full_env = subprocess_env()
+    full_env.update(_git_env_with_identity())
     return subprocess.run(
         [sys.executable, str(REGISTER), "--repo", str(repo), "--identity", identity, *extra],
         capture_output=True,
         text=True,
-        env=subprocess_env(),
+        env=full_env,
         timeout=120,
     )
 
@@ -779,6 +825,58 @@ def run_claim(
         "--task", task,
         *extra,
     ]
+    if push:
+        cmd.append("--push")
+    full_env = subprocess_env()
+    full_env.update(_git_env_with_identity())
+    return subprocess.run(cmd, capture_output=True, text=True, env=full_env, timeout=120)
+
+
+def run_close(
+    repo: Path, session_id: str, push: bool = False, **kwargs
+) -> subprocess.CompletedProcess[str]:
+    """Run close.py with ``--repo repo --session-id SID`` and optional --push.
+
+    Mirrors :func:`run_claim`: the deterministic identity env (close.py commits
+    under the tree's configured identity, and a --no-commit run must not be
+    influenced by a host gitconfig either), and the same
+    ``**{"no-commit": None}`` form for a valueless flag.
+    """
+    return _run_session_writer(CLOSE, repo, session_id, push=push, **kwargs)
+
+
+def run_release(
+    repo: Path, session_id: str, task: str, push: bool = False, **kwargs
+) -> subprocess.CompletedProcess[str]:
+    """Run release.py with the standard arguments and optional --push.
+
+    Same launcher contract as :func:`run_claim` (deterministic identity env,
+    ``**{"no-commit": None}`` for a valueless flag): the two writers that name
+    a task commit under the tree's identity, so both are launched the same way.
+    """
+    return _run_session_writer(RELEASE, repo, session_id, task=task, push=push, **kwargs)
+
+
+def _run_session_writer(
+    script: Path, repo: Path, session_id: str, *, task: str | None = None,
+    push: bool = False, **kwargs,
+) -> subprocess.CompletedProcess[str]:
+    """One sessions writer under the running interpreter, argv built the same way.
+
+    close.py and release.py differ only in whether a ``--task`` is named, so the
+    argv build lives in one place and cannot drift from :func:`run_claim`'s.
+    """
+    extra = []
+    for key, value in kwargs.items():
+        if value is None:
+            extra.append(f"--{key}")
+        else:
+            extra.extend([f"--{key}", str(value)])
+    cmd = [sys.executable, str(script), "--repo", str(repo),
+           "--session-id", session_id]
+    if task is not None:
+        cmd += ["--task", task]
+    cmd += extra
     if push:
         cmd.append("--push")
     full_env = subprocess_env()

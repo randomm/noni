@@ -490,20 +490,36 @@ def _registered_clone(tmp_path: Path) -> tuple[Path, Path, str, str]:
     clone = tmp_path / "clone"
     build_bare_origin(origin, [clone])
 
-    reg = run_register(clone, "developer", host="clone", worktree=str(clone))
+    # register.py commits its own file, and this fixture wants to make the
+    # commit itself (the rebase tests compare this run's HEAD against a commit
+    # it created by hand), so the writer is asked to leave the file in the work
+    # tree: --no-commit is the documented form for a caller that commits.
+    reg = run_register(clone, "developer", host="clone", worktree=str(clone),
+                       **{"no-commit": None})
     assert reg.returncode == 0, reg.stderr
     registered = reg.stdout.strip()
-    needle = "registered session "
+    needle = "left uncommitted"
     assert needle in registered, (
         f"register.py no longer prints its documented success line ({needle!r}): "
         f"{registered!r}"
     )
-    sid = registered.split(needle)[1].split()[0]
+    sid = _sid_of_uncommitted(registered)
     session_file = f"noni/sessions/{sid}.md"
     _git(clone, "add", "noni/sessions/")
     _git(clone, "commit", "-q", "-m", "register")
     _git(clone, "push", "-q", "origin", "main")
     return origin, clone, sid, session_file
+
+
+def _sid_of_uncommitted(line: str) -> str:
+    """The session id in a ``--no-commit`` line: ``.../<id>.md left uncommitted``.
+
+    The two success lines name the same thing in different shapes (an id after
+    ``registered session`` for the committing run, a path for the one that left
+    the file in the work tree), and this fixture asks for the second.
+    """
+    tail = line.split(" -> ")[-1].rsplit(" left uncommitted", 1)[0]
+    return tail.rsplit("/", 1)[-1].removesuffix(".md")
 
 
 def test_rebase_conflict_is_aborted_and_reported_as_exit_5(tmp_path: Path) -> None:

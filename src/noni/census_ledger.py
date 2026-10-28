@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from .census_text import fault_text
+from .census_text import _stripped, fault_text
 
 
 @dataclass(frozen=True)
@@ -204,55 +204,106 @@ def probe_ledger(ledger: Path, file_kind: Callable[..., tuple[str, str | None]])
     return LedgerProbe("ok", names=tuple(names))
 
 
-def append_listing_fault(ledger: Path, root: Path, findings: list[dict],
+def _identifier_scrub(text: str) -> str:
+    """The scrub an identifier field gets: the census's one path rule.
+
+    An identifier is the census's own answer to "which directory", not foreign
+    text, so it does not go through the bound-and-scrub the fault text takes --
+    but it is still a name the run got from a path, and a path a caller spelled
+    out of a home directory must not be printed back in the two fields a report
+    is joined on. The scrub's rule is about a machine-local path, so a
+    root-relative identifier like ``noni/decisions`` passes through untouched:
+    applying it is what keeps the guarantee without costing the ordinary case
+    its name.
+    """
+    return _stripped(text)
+
+
+def append_listing_fault(dir_: Path, root: Path, findings: list[dict],
                          strict: bool, fault: str, *,
+                         check: str = "ledger-edited",
+                         noun: str = "the ledger directory",
+                         unknown: str = ("so whether a committed record was "
+                                         "deleted or edited cannot be answered"),
                          row: Callable[..., dict],
                          rel_to_root: Callable[[Path, Path], str],
-                         bounded: Callable[[str], str],
-                         clipped: Callable[[str], str]) -> None:
-    """The row for a ledger directory this run could not list.
+                         bounded: Callable[..., str],
+                         clipped: Callable[[str], str],
+                         ledger_name: Callable[[str], str] = ledger_name,
+                         fragment_bound: int = 90,
+                         scrub: Callable[[str], str] = _identifier_scrub) -> None:
+    """The row for a directory this run could not list.
+
+    The one composition of this row, shared by the ledger group and (for its
+    register) the sessions group: a second copy is how two rows that mean the
+    same thing come to disagree about shape, scrubbing and severity.
 
     A probe that read nothing reports it, under the probe-honesty rule: the
-    alternative is the run calling an unreadable ledger an empty one, which is
+    alternative is the run calling an unreadable directory an empty one, which is
     the verdict a project that has never steered anything also earns. Built
     with ``row`` and an explicit ``severity="warn"`` rather than through the
-    census's ``_append_cannot_tell``, because the row must name the ledger it
+    census's ``_append_cannot_tell``, because the row must name the directory it
     could not read in both ``subject`` and ``artifact`` — the helper names its
     check — and because ``_check_sessions_deleted`` shares that helper and must
     not have its shape changed for this case.
 
     Every piece of foreign text the row carries comes from outside this census
-    and passes through ``bounded``: the fault text and the ledger path itself.
+    and passes through ``bounded``, the census's one bound-and-scrub for text
+    nobody here wrote: the fault text, and the directory path wherever the row
+    narrates it.
+
+    ``fragment_bound`` is the budget each of those two foreign fragments gets,
+    and it has to be a number the row's own sentence can pay for. ``clipped``
+    keeps 300 characters for the finished row, and the row is that sentence with
+    two pieces of foreign text dropped into it: give the fragments the whole 300
+    and an errno text of any length fills the row, so the clause ``clipped``
+    cuts off is the one this census wrote -- the one that says what could not be
+    answered. Binding each fragment to what the sentence leaves over costs a long
+    ``strerror`` the tail of its own padding instead. The default is the number
+    the ledger group's sentence affords (its skeleton is 140 characters, so two
+    fragments of 90 land the row at its bound with its verdict intact); a group
+    whose sentence is longer passes the number its own skeleton affords, because
+    that arithmetic belongs with whoever wrote the sentence. It is a bound rather
+    than a truncation of the operator's diagnosis: the fault's words are the
+    finding only up to the point where the row's own finding would have to go to
+    make room for them, and the row is a cannot-tell about one directory, not a
+    transcript of the device that refused it.
     That is the same rule the ordering group's equivalent row follows
     (``census_ordering`` composes its listing-fault sentence with the fault text
     passed through ``bounded``), and it is what makes the row safe for an
-    out-of-tree ``--ledger`` override: ``rel_to_root`` cannot root a path that
-    lies outside the audited tree, so it hands back the machine-local absolute
-    path it was given, and a row that quoted that raw would print a host path in
-    a report that promises never to print one. The fault text no longer carries
-    a filename at all (see :func:`census_text.fault_text`), so the scrub here is
-    a net over text that should need none rather than the rule that keeps the row
-    clean.
+    out-of-tree ``--ledger`` or ``--sessions`` override: ``rel_to_root`` cannot
+    root a path that lies outside the audited tree, so it hands back the
+    machine-local absolute path it was given, and a row that quoted that raw
+    would print a host path in a report that promises never to print one. The
+    fault text no longer carries a filename at all (see
+    :func:`census_text.fault_text`), so the scrub here is a net over text that
+    should need none rather than the rule that keeps the row clean.
 
     The path is scrubbed wherever it is *narrated* — in the message's "the
-    ledger directory (…)" clause — and left as ``rel_to_root`` answered it in
-    ``subject``/``artifact``, which is the row's identifier, not its prose: the
-    census's own rows name the ledger root-relative there (a
+    ledger directory (…)" clause — and left unscrubbed in
+    ``subject``/``artifact``, which are the row's identifier and not its prose:
+    the census's own rows name the directory root-relative there (a
     ``ledger-empty`` row's subject is ``noni/decisions``), and scrubbing the
-    identifier would collapse the one field a caller joins on. So an in-repo
-    fault reads as the same path in all three fields, and an out-of-tree one
-    keeps a non-path identifier (its last segment) rather than a host directory:
-    the row says which ledger it could not read without saying where the host
-    keeps it. The rooting is asked once, into ``name``, because the three uses
-    are one question about one path and a row must not disagree with itself.
+    identifier would collapse the one field a caller joins on. ``ledger_name`` is
+    what keeps that identifier from being a host location: it reduces the
+    unrootable form ``rel_to_root`` had to hand back to its last segment, so an
+    in-repo fault reads as the same root-relative path in all three fields and an
+    out-of-tree one names its directory without saying where the host keeps it.
+    The rooting is asked once, into ``name``, because the three uses are one
+    question about one path and a row must not disagree with itself.
 
-    ``check`` is ``ledger-edited`` exactly: ``main`` filters the ledger group
-    against that id plus ``ledger-empty``, and a row under any other id would
-    be dropped by an ``--only``/``--skip`` run rather than reported by it. The
-    row is also marked whole-artifact, which is what keeps it in front of the
-    operator under a filter that named none of the ledger classes: a run that
-    could not read its input must say so whatever the filter asks for (see
-    ``keep`` and the census's module docstring).
+    ``check``/``noun``/``unknown`` are the three things the shared shape does not
+    fix: the class the group reports this under, the directory it names, and the
+    question the faulted read took away. The ledger group takes the defaults
+    (``ledger-edited``, its own wording, and ``ledger_name`` itself, which is
+    also the argument name); the sessions group calls with its own class, noun
+    and question. ``check`` is ``ledger-edited`` by default exactly: ``main``
+    filters the ledger group against that id plus ``ledger-empty``, and a row
+    under any other id would be dropped by an ``--only``/``--skip`` run rather
+    than reported by it. The row is also marked whole-artifact, which is what
+    keeps it in front of the operator under a filter that named none of the
+    group's classes: a run that could not read its input must say so whatever the
+    filter asks for (see ``keep`` and the census's module docstring).
 
     ``clipped`` wraps the finished message, the way the ordering group's
     equivalent row is wrapped (``census_ordering`` clips its listing-fault
@@ -262,12 +313,24 @@ def append_listing_fault(ledger: Path, root: Path, findings: list[dict],
     ``bounded``'s job, applied to each fragment before the sentence is clipped,
     so clipping the whole cannot cut a host path loose at the cut.
     """
-    name = rel_to_root(root, ledger)
-    subject = ledger_name(name)
+    name = rel_to_root(root, dir_)
+    # The identifier is the census's one answer to "which directory": the
+    # root-relative path where the census could root it, and the last segment
+    # where it could not (``ledger_name``). ``scrub`` is the net under it, for the
+    # form neither half of that reduction can decide -- a relative override the
+    # census cannot root is a path as its caller spelled it, and a caller who
+    # spelled one out of a home directory must not have it printed back in the two
+    # fields a report is joined on. Root-relative names like ``noni/decisions``
+    # pass through it untouched, which is why applying it to the identifier is
+    # safe: the scrub's rule is about a machine-local path and the ordinary
+    # identifier is not one.
+    subject = scrub(ledger_name(name))
+    # Bound each foreign fragment before the sentence around it is clipped, so
+    # the clause this census wrote -- the row's diagnosis -- is what survives.
+    bounded_name = bounded(name, fragment_bound)
     findings.append(
-        row("ledger-edited", strict, subject, subject,
-            clipped(f"cannot-tell: the ledger directory ({bounded(name)}) "
+        row(check, strict, subject, subject,
+            clipped(f"cannot-tell: {noun} ({bounded_name}) "
                     "exists but could not be "
-                    f"listed ({bounded(fault)}), so whether a committed record was deleted "
-                    "or edited cannot be answered"), root, severity="warn",
-            whole_artifact=True))
+                    f"listed ({bounded(fault, fragment_bound)}), {unknown}"), root,
+            severity="warn", whole_artifact=True))

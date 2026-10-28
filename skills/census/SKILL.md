@@ -186,22 +186,28 @@ The same rule extends to the classes that report their own absence:
   (`noni/decisions`) whenever the census could root it; for a `--ledger`
   override that points outside the audited tree the row keeps the path's last
   segment, since the machine-local directory that holds it must not reach a
-  report. It is a warn at exit 0 and a failure at 12 under `--strict`.
+  report. A relative override the census cannot root (one that does not sit
+  under `--repo`) keeps the path as it was given in `subject` and `artifact`,
+  and the scrubber's `<path>` marker wherever it is narrated. It is a warn at
+  exit 0 and a failure at 12 under `--strict`.
 - **An unreadable `noni/sessions/` is never clean.** A `noni/sessions/` that
   stats as a directory and cannot be listed earns exactly one `session-deleted`
   `cannot-tell` row — the class the deletion check already uses for its
   cannot-tells — marked whole-artifact, with the register's name in `subject`,
-  `artifact` and its message (root-relative `noni/sessions`, or the path's last
-  segment for a `--sessions` override that points outside the audited tree) and
-  the `OSError` text in the message, bounded and stripped of machine-local
+  `artifact` and its message, under the same naming rule the ledger bullet
+  above states (root-relative `noni/sessions` when the census could root it,
+  the last segment for an out-of-tree `--sessions` override, and the path as
+  given in the identifier fields for a relative override it could not root),
+  and the `OSError` text in the message, bounded and stripped of machine-local
   paths. It is a warn at exit 0 and a failure at 44 under `--strict`, and the
   group adds no other row: the read answered nothing, so no file was seen, no
   claim was compared, and the git-backed deletion question is not put either.
-  The register is listed with the same explicit `iterdir` and one listing rule
-  the ledger bullet above describes, so a fault cannot hide behind a listing
-  primitive that swallows it. A `noni/sessions/` that is simply absent stays
-  what it always was: clean, because no sessions registered is a real state and
-  not a failed read.
+  The register is listed with an explicit `iterdir`, never `glob`, which
+  swallows the readdir `OSError`. The register is read once per run, whatever
+  the filter names, so the gate that opens the group and the rows it reports
+  are the answer of that one readdir. A `noni/sessions/` that is simply absent
+  stays what it always was: clean, because no sessions registered is a real
+  state and not a failed read.
 - **`hygiene` (50)** always reports, a clean tree included. When the
   deny-list class is not active (its file is `absent`, `corrupt`, or present
   with no entries) the run emits one `hygiene` row naming that state; a scan

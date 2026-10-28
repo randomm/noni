@@ -39,6 +39,8 @@ import re
 from pathlib import Path
 from typing import Callable, NamedTuple
 
+from .census_ledger import listing_helper
+
 # A decision record id is what decide.py writes: <YYYY-MM-DD>-<slug> of
 # lowercase letters, digits and dashes. The same shape the writer refuses a
 # name outside of, so a name that could escape the ledger directory is refused
@@ -272,12 +274,14 @@ def ledger_records(ledger: Path, file_kind, load_json: Callable[[bytes], object]
     ledger group, the ordering group and the probe answer "which files are
     records" from one call, and it is an ``iterdir`` rather than a ``glob`` so
     the readdir fault below is a fault this run reports instead of an empty
-    directory it invents. It defaults to the same function object, so a test
-    that drives this reader directly still exercises the product's listing.
+    directory it invents. It defaults to the name this module imports that
+    function under, so a test that drives this reader directly still exercises
+    the product's listing, and a test that wants to fault this group's read
+    alone — and leave the ledger group's own report honest — replaces that one
+    name here rather than ``Path.iterdir`` for the whole run.
     """
     if list_records is None:
-        from . import census_ledger as _ledger
-        list_records = _ledger.listing_helper
+        list_records = listing_helper
     kind, _problem = file_kind(ledger, kind="dir")
     if kind != "regular":
         # An absent ledger is a readable answer ('no records'), not a fault, and

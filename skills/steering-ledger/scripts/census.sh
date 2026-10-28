@@ -128,33 +128,13 @@ fi
 
 command -v jq >/dev/null 2>&1 || { echo "census.sh: jq not found on $(hostname 2>/dev/null || echo unknown)" >&2; exit 3; }
 
-classify_dir_state() {
-  # The three states a ledger path can be in, told apart before the -d test
-  # collapses them: a symlink whose target is not a directory, and a path with
-  # no permissions at all, must both reach the 10:missing-dir refusal rather
-  # than the (10:empty-ledger) branch further down (which has a fallback that
-  # reports a clean-looking empty ledger for a path it could not stat).
-  #   "ok"              -d passed
-  #   "symlink-broken"  -L passed but the link resolves to no directory
-  #                     (a dangling or looping link, or one into a file)
-  #   "unreadable"      a stat error: ENOENT (no such path), ENOTDIR (a path
-  #                     component is a file), EACCES (no search permission on
-  #                     a parent), or any other stat failure
-  #   "not-a-dir"       a regular file or device: no ledger can live under it
-  if [ -d "$1" ]; then
-    printf 'ok\n'
-  elif [ -L "$1" ]; then
-    printf 'symlink-broken\n'
-  elif ! stat "$1" >/dev/null 2>&1; then
-    printf 'unreadable\n'
-  else
-    printf 'not-a-dir\n'
-  fi
-}
-
-DIR_STATE="$(classify_dir_state "$LEDGER_DIR")"
-if [ "$DIR_STATE" != "ok" ]; then
-  echo "census.sh: ledger dir not found: $LEDGER_DIR ($DIR_STATE) (10:missing-dir)" >&2
+# Refuse every non-directory here rather than at the (10:empty-ledger) branch
+# below: a dangling symlink and a plain file both fail -d, and a fallback that
+# cannot stat the path must not answer "no records" for it. A directory that
+# exists but cannot be listed stays on the find branch, which reports that
+# state as its own. The refusal names the path, not which state it was.
+if [ ! -d "$LEDGER_DIR" ]; then
+  echo "census.sh: ledger dir not found: $LEDGER_DIR (10:missing-dir)" >&2
   exit 10
 fi
 

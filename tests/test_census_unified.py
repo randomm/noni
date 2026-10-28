@@ -6,15 +6,45 @@ class, runs census.main(), and asserts the exit code and output.
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import shutil
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 
-from _harness import _commit_file, _git, _home_path_violation, _init_repo, _secret_violation  # noqa: E402
+import census_ledger  # noqa: E402
+from _harness import (  # noqa: E402
+    _HOME_PATH_KNOWN_IDENTITY,
+    _commit_file,
+    _fault_the_sessions_listing,
+    _git,
+    _harness_source,
+    _home_path_violation,
+    _init_repo,
+    _permission_fault_on,
+    _secret_violation,
+)
+
+# The census wrapper the skill documents, for the checks that pin a guard on the
+# source it lives in (``_harness_source`` follows the wrapper to the package
+# module that holds the logic).
+CENSUS_PY = REPO / "skills" / "census" / "scripts" / "census.py"
+# The sessions register's probe, split out of the census for the file-size
+# ratchet. ``_harness_source`` follows a wrapper only to the one package module
+# it imports, so a check of a split-out module names the package file directly
+# (the same route ``tests/test_ledger_listing_ownership.py`` takes for the other
+# census splits).
+SESSIONS_PROBE_PY = REPO / "src" / "noni" / "census_sessions_probe.py"
+# The session group's per-file checks, split out of the census for the same
+# ratchet. The `glob` ban below reads it too, because a listing primitive could
+# reach for `glob` by moving into any module of the census, this one included.
+SESSIONS_CHECKS_PY = REPO / "src" / "noni" / "census_sessions_checks.py"
 
 DENYLIST_ENV_VAR = "NONI_SCRUB_DENYLIST"
 
@@ -120,6 +150,39 @@ def _hygiene_target():
     module = census._load_public_safety()
     assert module is not None, "scripts/public_safety.py must be loadable for the hygiene tests"
     return module
+
+
+def _sessions_fixture(tmp_path) -> Path:
+    """A repo with two committed register files, so a fault alone decides.
+
+    The ledger is committed too: an isolated fixture repo always emits the
+    ``ledger-empty`` warn, and a test that counted every finding row of the run
+    would be counting another group's row rather than the fault's. Used by the
+    deleted-file class and the listing-fault class, whose rows both have to be
+    the fault's and not another group's.
+    """
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                 json.dumps(_valid_record(), indent=2))
+    _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md", _session_body("developer"))
+    _commit_file(repo, "noni/sessions/2026-10-01-bbbbbb.md", _session_body("reviewer"))
+    return repo
+
+
+def _sessions_fault_row(sessions_arg: str, fault: str) -> dict:
+    """The one fault row the shared builder composes for a register path.
+
+    Drives ``_append_sessions_listing_fault`` directly with the census's own
+    injected helpers, so a claim about which scrubber a field passes through is a
+    claim about the row and not about how a test wires the same functions
+    together.
+    """
+    census = census_module()
+    found: list[dict] = []
+    census._append_sessions_listing_fault(
+        Path(sessions_arg), Path("/srv/repos/proj"), False, found, fault)
+    assert len(found) == 1, found
+    return found[0]
 
 
 def _ndjson_rows(stdout: str) -> list[dict]:
@@ -426,7 +489,7 @@ class TestSessionDeleted:
         return repo
 
     def test_deleted_session_file_is_reported(self, tmp_path):
-        repo = self._plant(tmp_path)
+        repo = _sessions_fixture(tmp_path)
         (repo / "noni/sessions/2026-10-01-bbbbbb.md").unlink()
         rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
         assert rc == 0, f"warn class must exit 0 without --strict, got {rc}\nstderr: {err}"
@@ -440,7 +503,7 @@ class TestSessionDeleted:
         assert row["fix"]
 
     def test_deleted_session_file_strict_exits_44(self, tmp_path):
-        repo = self._plant(tmp_path)
+        repo = _sessions_fixture(tmp_path)
         (repo / "noni/sessions/2026-10-01-bbbbbb.md").unlink()
         rc, out, err = _run_census(repo, "--only", "session-deleted", "--strict", skip_hygiene=True)
         assert rc == 44, f"expected 44 under --strict, got {rc}\nstderr: {err}\nstdout: {out}"
@@ -448,7 +511,7 @@ class TestSessionDeleted:
     def test_deletion_committed_is_still_reported(self, tmp_path):
         """The deletion being committed does not hide it: git history is the
         source, not the diff."""
-        repo = self._plant(tmp_path)
+        repo = _sessions_fixture(tmp_path)
         (repo / "noni/sessions/2026-10-01-bbbbbb.md").unlink()
         _commit_dir_state(repo, "noni/sessions")
         rc, out, err = _run_census(repo, "--only", "session-deleted", "--strict", skip_hygiene=True)
@@ -457,7 +520,7 @@ class TestSessionDeleted:
     def test_deleted_non_session_file_is_ignored(self, tmp_path):
         """A path under noni/sessions/ that is not an allocated register file
         is not this class's business."""
-        repo = self._plant(tmp_path)
+        repo = _sessions_fixture(tmp_path)
         _commit_file(repo, "noni/sessions/notes.md", "scratch\n")
         (repo / "noni/sessions/notes.md").unlink()
         rc, out, err = _run_census(repo, skip_hygiene=True)
@@ -466,13 +529,846 @@ class TestSessionDeleted:
 
     def test_never_committed_file_is_not_a_deletion(self, tmp_path):
         """Nothing in history ever held the file, so nothing was deleted."""
-        repo = self._plant(tmp_path)
+        repo = _sessions_fixture(tmp_path)
         path = repo / "noni/sessions/2026-10-01-cccccc.md"
         path.write_text(_session_body("stranger"))
         path.unlink()
         rc, out, err = _run_census(repo, skip_hygiene=True)
         assert rc == 0, f"expected 0, got {rc}\nstderr: {err}"
         assert "session-deleted" not in out, f"unexpected row: {out}"
+
+
+class TestSessionsProbeContract:
+    """The probe's own contract, asserted where it is written: at construction and
+    at the reporter boundary.
+
+    :class:`TestSessionsListingFault` covers what a faulted register earns
+    through ``census.main``; these are the probe as a type. One test is what an
+    illegal probe does (it raises, so no caller can build one that means two
+    things), and the rest are what ``_check_sessions`` answers to each probe it
+    is handed -- the only place the field meanings ("listed and empty" versus
+    "did not read") can be pinned, since every end-to-end test reaches the
+    reporter through a fault the listing function produced. The ledger side pins
+    its probe the same way in ``test_census_ledger_probe``.
+    """
+
+    def test_the_probe_admits_only_listed_or_faulted(self):
+        """The probe's type is the invariant, not a comment about it.
+
+        ``names=()`` means "listed, and nothing was there" and ``fault`` means
+        "the listing raised"; the two must not be able to mean each other, or a
+        register this run never opened reports the same clean as one it read and
+        found empty -- which is the shape this ticket exists to separate. The
+        illegal shapes raise at construction, so the gate in ``main`` and the
+        branch in ``_check_sessions`` cannot drift apart by construction either.
+        """
+        import census
+
+        listed = census.SessionsProbe(names=())
+        assert (listed.names, listed.fault) == ((), None), listed
+        faulted = census.SessionsProbe(fault="readdir denied")
+        assert (faulted.names, faulted.fault) == (None, "readdir denied"), faulted
+        for illegal in ({}, {"names": (), "fault": "readdir denied"}):
+            with pytest.raises(ValueError):
+                census.SessionsProbe(**illegal)
+        # The field types are the other half of the boundary: an ill-typed probe
+        # has to fail where it is built, not three frames later inside the
+        # reporter's file loop (a str element has no .name) or inside the row's
+        # scrubber (a bytes fault has no .split).
+        for wrong in ({"names": ["2026-10-01-aaaaaa.md"]}, {"names": "x.md"},
+                      {"fault": b"readdir denied"}, {"fault": 5}, {"fault": ()}):
+            with pytest.raises(TypeError):
+                census.SessionsProbe(**wrong)
+
+    def _rows_of(self, repo: Path, probe_value) -> list[dict]:
+        """What ``_check_sessions`` appends for one probe, with no git to ask.
+
+        The reporter's boundary, asserted with the census's own ``_check_sessions``
+        and a git that answers nothing, so the only thing a row can be reacting to
+        is the probe it was handed.
+        """
+        import census
+
+        found: list[dict] = []
+        census._check_sessions(repo / "noni" / "sessions", _UnreadableGit(), repo,
+                               self.NOW, self.WEEK, False, found, probe_value)
+        return found
+
+    NOW = datetime(2026, 10, 2, tzinfo=timezone.utc)
+    WEEK = timedelta(days=7)
+
+    def test_a_probe_that_listed_nothing_earns_no_row(self, tmp_path):
+        """``names=()`` means "listed, and nothing was there": no row, no verdict.
+
+        The shape the ticket turned from a silent clean into a distinguishable
+        answer, so it is pinned at the reporter itself: an empty listing is not a
+        fault row, and it is not a deletion answer either -- with no git here the
+        question has no answer to fake.
+        """
+        import census
+
+        repo = _sessions_fixture(tmp_path)
+        assert self._rows_of(repo, census.SessionsProbe(names=())) == []
+
+    def test_a_probe_that_listed_files_answers_for_those_files(self, tmp_path):
+        """The names the probe carries are the files the group classifies.
+
+        Two committed active sessions census clean, and the same repo with one
+        file removed earns exactly the deletion row that removal deserves: the
+        reporter reads the listing it was handed and asks git about those paths,
+        in the order the probe carries them.
+        """
+        import census
+
+        repo = _sessions_fixture(tmp_path)
+        register = repo / "noni" / "sessions"
+        real_git = census.Git(repo)
+        assert real_git.available, "the fixture repo must be a git tree for this pin"
+
+        listed = census_module()._sessions_listing(register)
+        found: list[dict] = []
+        census._check_sessions(register, real_git, repo, self.NOW, self.WEEK,
+                               False, found, listed)
+        assert found == [], f"two committed active sessions census clean: {found}"
+
+        (register / "2026-10-01-bbbbbb.md").unlink()
+        found: list[dict] = []
+        census._check_sessions(register, census.Git(repo), repo, self.NOW, self.WEEK,
+                               False, found, census_module()._sessions_listing(register))
+        assert [r["check"] for r in found] == ["session-deleted"], found
+        assert found[0]["subject"] == "2026-10-01-bbbbbb.md", found[0]
+
+    def test_a_probe_that_faulted_earns_one_row_and_no_question(self, tmp_path):
+        """A faulted listing is one whole-artifact row: no file rows, no deletion ask.
+
+        The deletion question is the one a faulted read cannot answer, so the row
+        is the group's only output -- and it is the row's own shape that is
+        asserted here (warn, its code, the register in both identifier fields, the
+        whole-artifact marker), since a filtered run depends on that marker.
+        """
+        import census
+
+        repo = _sessions_fixture(tmp_path)
+        found = self._rows_of(repo, census.SessionsProbe(fault="readdir denied"))
+        assert [r["check"] for r in found] == ["session-deleted"], found
+        row = found[0]
+        assert row["severity"] == "warn" and row["code"] == 44, row
+        assert row["subject"] == row["artifact"] == "noni/sessions", row
+        assert "readdir denied" in row["message"], row
+        assert row[census.WHOLE_ARTIFACT_KEY] is True, row
+
+class TestSessionsListingFault:
+    """A ``noni/sessions/`` that cannot be listed is a fault, not a clean register.
+
+    ``Path.glob`` swallows the ``OSError`` readdir raises and yields nothing, so
+    while the register was listed with ``glob`` a directory the run could not
+    read reported the same verdict as a project that had never opened a session.
+    The register is listed with ``iterdir`` now, and these are the rows that
+    fault earns — the sessions-side twin of ``TestLedgerStateVocabulary``'s
+    ledger-listing tests, kept to the same contract and the same fault-injection
+    seam for the same reason (a chmod fixture is vacuous on a root-equivalent
+    runner, and patching ``glob`` would fault nothing).
+    """
+
+
+    def test_unlistable_sessions_dir_is_one_cannot_tell_row(self, tmp_path, monkeypatch):
+        """One row of the class the deletion check already uses, naming the register."""
+        repo = _sessions_fixture(tmp_path)
+        _fault_the_sessions_listing(monkeypatch, repo / "noni" / "sessions")
+        rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
+        assert rc == 0, f"cannot-tell is a warn, got {rc}\nstderr: {err}\n{out}"
+        rows = [r for r in _ndjson_rows(out) if r.get("check") == "session-deleted"]
+        assert len(rows) == 1, f"expected exactly one row: {rows}"
+        row = rows[0]
+        assert row["severity"] == "warn", f"cannot-tell is a warn: {row}"
+        assert row["code"] == 44, row
+        assert row["subject"] == row["artifact"] == "noni/sessions", (
+            f"subject and artifact name the register, root-relative: {row}"
+        )
+        assert not row["subject"].startswith("/"), (
+            f"no machine-local path in the row: {row}"
+        )
+        assert row["message"].startswith("cannot-tell: "), (
+            f"every cannot-tell row says so with this prefix: {row['message']}"
+        )
+
+    def test_the_fault_text_reaches_the_row_and_its_path_does_not(
+        self, tmp_path, monkeypatch
+    ):
+        """Both halves of the rule on one fault text: keep the words, drop the path.
+
+        ``PermissionError`` renders its ``str()`` as the errno words *and* the
+        path it failed on, so the two halves pull against each other and each
+        rule broken alone passes the other's test. The words survive because
+        ``census_text.fault_text`` quotes the ``strerror``; the path never
+        appears because that helper never reads ``filename``.
+
+        The words are checked at the length the producer answers with, not the
+        length the row prints: the row binds the foreign fragment to what its own
+        sentence can pay for (``fault_bound`` in
+        ``census_ledger.append_listing_fault``), so a fault whose text runs past
+        that budget loses its tail, not the register's name or the verdict. The
+        filename is checked in all three rendered fields, not only the message:
+        the two identifier fields are the ones a caller joins on, and a leak
+        there is the leak that matters.
+        """
+        repo = _sessions_fixture(tmp_path)
+        leaked = _home_path_violation()
+        monkeypatch.setattr(
+            census_module().Path, "iterdir",
+            _permission_fault_on(repo / "noni" / "sessions", leaked))
+        _rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
+        rows = [r for r in _ndjson_rows(out) if r.get("check") == "session-deleted"]
+        assert len(rows) == 1, f"expected one row: {rows}"
+        row = rows[0]
+        # The errno words are the finding. Measured against fault_text's own
+        # answer so the fragment bound cannot silently drop part of them and
+        # this assertion go green on a shorter string.
+        # The words the row can carry are the ones the fragment bound leaves:
+        # fault_text's answer is what the probe stores, and the shared builder
+        # binds that fragment to what its own sentence pays for. Assert the
+        # errno phrase the fixture was built to carry, which is shorter than the
+        # bound, so this fails if the producer or the scrub dropped the words.
+        assert "input/output error" in row["message"], (
+            f"the errno words are the finding and must survive the scrub: "
+            f"{row['message']!r}"
+        )
+        for field in ("subject", "artifact", "message"):
+            assert leaked not in row[field], (
+                f"the row leaked a machine-local absolute path in {field}: "
+                f"{row[field]!r}"
+            )
+            for part in (".ssh", "id_ed25519"):
+                assert part not in row[field], (
+                    f"a component of the fault's filename reached {field}: "
+                    f"{row[field]!r}"
+                )
+        # The register is named root-relative, and naming it is the row's point:
+        # the scrub that drops the host path may not drop this too.
+        assert "noni/sessions" in row["message"], row["message"]
+
+    def test_the_fault_adds_no_other_session_row(self, tmp_path, monkeypatch):
+        """One row for the fault, and no row about a file this run never saw.
+
+        Three dishonesties are closed here at once. No file-based class may
+        report on files nobody read: a second active session sharing one identity
+        is a ``session-same-identity`` row on a register the run could not open,
+        and a ``session-stalled`` cannot-tell would be a verdict on a file whose
+        status was never parsed. The git-backed deletion question is not put
+        either: for a directory this run could not enumerate, "missing from the
+        working tree" is not something the run established, so the file the test
+        deletes below earns no deletion row.
+        """
+        repo = _sessions_fixture(tmp_path)
+        _commit_file(repo, "noni/sessions/2026-10-01-cccccc.md", _session_body("developer"))
+        (repo / "noni/sessions/2026-10-01-bbbbbb.md").unlink()
+        _fault_the_sessions_listing(monkeypatch, repo / "noni" / "sessions")
+        rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
+        rows = [r for r in _ndjson_rows(out)
+                if r.get("kind") == "finding" and r.get("artifact") == "noni/sessions"]
+        assert [r["check"] for r in rows] == ["session-deleted"], (
+            f"the fault's own row and nothing else from the sessions group: {rows}"
+        )
+        assert rows[0]["subject"] == "noni/sessions", (
+            f"the one row names the directory it could not list, not a file: {rows[0]}"
+        )
+        assert rc == 0, f"the row is a warn, got {rc}\nstderr: {err}"
+
+    def test_the_fault_is_not_reported_as_a_probe_row(self, tmp_path, monkeypatch):
+        """One read, one row: the fault is not double-booked under ``probe``.
+
+        ``probe`` answers a question about a path this run classified (the row
+        for a sessions path that is not a directory at all). A listing fault
+        earns the deletion class's cannot-tell only, so one failed readdir does
+        not read as two separate problems found.
+        """
+        repo = _sessions_fixture(tmp_path)
+        _fault_the_sessions_listing(monkeypatch, repo / "noni" / "sessions")
+        _rc, out, _err = _run_census(repo, json_out=True, skip_hygiene=True)
+        rows = [r for r in _ndjson_rows(out) if r.get("check") == "probe"]
+        assert rows == [], f"a listing fault is not a probe classification: {rows}"
+
+    def test_the_row_survives_a_filter_that_named_no_session_class(
+        self, tmp_path, monkeypatch
+    ):
+        """The filter cannot buy back the clean verdict.
+
+        ``--only`` drops rows of classes it does not name, and this is a
+        ``session-deleted`` row like any other — but it is also a whole-artifact
+        row, about the directory the group was asked to read rather than one file
+        inside it, so the group's filter keeps it and the group runs even when
+        the filter named none of its classes.
+        """
+        repo = _sessions_fixture(tmp_path)
+        _fault_the_sessions_listing(monkeypatch, repo / "noni" / "sessions")
+        for extra in (("--only", "ledger-record"), ("--skip", "session-deleted"),
+                      ("--only", "session-double", "--strict")):
+            rows = [r for r in _ndjson_rows(_run_census(repo, *extra, json_out=True,
+                                                        skip_hygiene=True)[1])
+                    if r.get("kind") == "finding"]
+            found = [r for r in rows if r.get("check") == "session-deleted"]
+            assert len(found) == 1, f"{extra}: the unreadable register must be reported: {rows}"
+            assert "could not be listed" in found[0]["message"], found[0]
+
+    def test_the_row_escalates_to_44_under_strict(self, tmp_path, monkeypatch):
+        """Warn by default, the class's 44 under ``--strict``.
+
+        ``--only session-deleted`` names the class outright and hygiene is
+        skipped, so this row alone decides the exit code: proving the promotion
+        runs through ``_row``'s severity override rather than a hard-coded word.
+        """
+        repo = _sessions_fixture(tmp_path)
+        _fault_the_sessions_listing(monkeypatch, repo / "noni" / "sessions")
+        rc, out, err = _run_census(repo, "--only", "session-deleted", "--strict",
+                                   skip_hygiene=True)
+        assert rc == 44, f"expected 44 under --strict, got {rc}\nstderr: {err}\n{out}"
+
+    def test_the_group_runs_for_the_fault_under_a_filter_of_another_group(
+        self, tmp_path, monkeypatch
+    ):
+        """The gate, not just the filter: a run that skipped the group would be a silent run.
+
+        ``keep`` cannot help a group that never ran, so ``main`` lists the
+        register once, reads the fault off that listing, and runs the group on the
+        answer even when the filter named none of its classes. This pins both
+        halves at once: with the fault planted and a filter of the ledger group
+        only, the fault still reaches the report.
+        """
+        repo = _sessions_fixture(tmp_path)
+        _fault_the_sessions_listing(monkeypatch, repo / "noni" / "sessions")
+        # The probe is answered by the same ``iterdir`` the group reads through,
+        # so a probe that consulted a stat instead of a listing would say "no
+        # fault" here and the group would never run.
+        probe = census_module()._sessions_listing(repo / "noni" / "sessions")
+        assert probe.fault is not None and probe.names is None, probe
+        rc, out, err = _run_census(repo, "--only", "ledger-record",
+                                   json_out=True, skip_hygiene=True)
+        rows = [r for r in _ndjson_rows(out)
+                if r.get("kind") == "finding" and r.get("artifact") == "noni/sessions"]
+        assert [r["check"] for r in rows] == ["session-deleted"], (
+            f"the group must run for the fault even under another group's filter: {rows}"
+        )
+        assert rc == 0, f"the row is a warn, got {rc}\nstderr: {err}"
+
+    def test_a_readable_register_lists_once_and_answers_its_names(self, tmp_path):
+        """The other half of the gate: a listable register answers with names, no fault.
+
+        A probe that always answered "faulted" would run the sessions group on
+        every filtered run, quietly paying for a listing on runs that asked for
+        none; one that dropped the names would leave the group no files to check.
+        """
+        repo = _sessions_fixture(tmp_path)
+        probe = census_module()._sessions_listing(repo / "noni" / "sessions")
+        assert probe.fault is None, probe.fault
+        assert [p.name for p in (probe.names or ())] == [
+            "2026-10-01-aaaaaa.md", "2026-10-01-bbbbbb.md"], probe
+
+    def test_the_listing_is_the_one_readdir(self, tmp_path):
+        """``_sessions_listing`` is the single answer to "which files are a register file".
+
+        Every ``*.md`` entry the directory holds, in the order the probe carries
+        them: a file whose name is not an allocated register name is in the
+        listing on purpose -- the file loop gives it its ``session-malformed``
+        row -- and a non-``.md`` entry is not, so it earns no session row at all.
+
+        The ``glob`` half of this contract is not asserted here. It is a property
+        of the listing function's own body and :meth:`test_the_listing_is_iterdir
+        and_not_glob` pins it at that scope, from the AST, where a change of
+        spelling cannot hide it; a behavioural test cannot see which primitive a
+        function used, only what it returned.
+        """
+        import census
+
+        sessions = tmp_path / "sessions"
+        sessions.mkdir()
+        for name in ("2026-10-01-bbbbbb.md", "2026-10-01-aaaaaa.md", "notes.md", "order.json"):
+            (sessions / name).write_text("x\n")
+        listed = [p.name for p in census._sessions_listing(sessions).names]
+        assert listed == ["2026-10-01-aaaaaa.md", "2026-10-01-bbbbbb.md", "notes.md"], listed
+        assert "order.json" not in listed, listed
+
+    def test_the_listing_raises_where_glob_would_yield_nothing(
+        self, tmp_path, monkeypatch
+    ):
+        """The bug, stated as the probe's contract: a faulted readdir is not lost.
+
+        The census may not classify a directory it could not enumerate, and the
+        only listing primitive that says so is ``iterdir``. On the interpreters
+        this suite runs on, ``glob`` does not surface the fault the way
+        ``iterdir`` does (it yields no entries rather than raising, and any it
+        does raise is not the one this contract runs on), so the pair is pinned
+        here: the read's ``OSError`` leaves the listing function, and no other
+        reader of the register may reach for the primitive that swallows it.
+
+        Both forms are asserted: the raw call raises (the primitive is the one
+        that reports), and the probe carries the words rather than answering
+        "listed, nothing there" (the fault is never lost on its way to a row).
+        """
+        import census
+
+        sessions = tmp_path / "sessions"
+        sessions.mkdir()
+        (sessions / "2026-10-01-aaaaaa.md").write_text("x\n")
+        _fault_the_sessions_listing(monkeypatch, sessions)
+        with pytest.raises(OSError):
+            census.Path.iterdir(sessions)
+        probe = census._sessions_listing(sessions)
+        assert probe.names is None and probe.fault is not None, probe
+        assert "input/output error" in probe.fault, probe.fault
+
+    def test_the_group_reports_no_file_rows_at_all_behind_the_fault(
+        self, tmp_path, monkeypatch
+    ):
+        """The empty-listing shape must not be reachable by way of the fault.
+
+        Had the group kept a ``glob`` listing, the same fault would have handed
+        it an empty list and it would have reported "no sessions registered":
+        the exit 0 and the silence below are what that read produced, and they
+        are now produced only by a register the census actually read (see
+        :meth:`test_a_missing_sessions_dir_is_still_clean`).
+        """
+        repo = _sessions_fixture(tmp_path)
+        _fault_the_sessions_listing(monkeypatch, repo / "noni" / "sessions")
+        rc, out, err = _run_census(repo, "--only", "session-malformed", "--strict",
+                                   json_out=True, skip_hygiene=True)
+        rows = [r for r in _ndjson_rows(out)
+                if r.get("kind") == "finding" and r.get("artifact") == "noni/sessions"]
+        assert [r["check"] for r in rows] == ["session-deleted"], (
+            f"the fault's row survives its own class's filter, and no file row "
+            f"is invented behind it: {rows}"
+        )
+        assert rc == 44, f"the fault row is promoted, got {rc}\nstderr: {err}"
+
+    def test_the_listing_is_iterdir_and_not_glob(self):
+        """The source pins the seam: ``glob`` swallowing the fault is the bug.
+
+        A change back to ``glob`` makes every fault test above pass vacuously --
+        the listing would return nothing, the group would report no rows, and the
+        run would exit 0 exactly as it did before the fix. This check fails on the
+        source instead, so the regression cannot arrive as a passing suite.
+
+        It reads the call graph, not a string: the bug is any listing primitive
+        that swallows the readdir ``OSError``, and a pin written against one
+        spelling of it (``sessions.glob("*.md")``) is satisfied by every other --
+        ``sessions.glob(pattern)``, ``Path.glob(sessions, ...)`` -- while the
+        silent clean is back. So the pin asks two AST questions of the source the
+        register's listing lives in: the register's own listing function calls
+        ``iterdir`` and holds no ``glob`` call, and no ``glob`` call is anywhere
+        else in the census's own modules either. The listing's body sits in
+        ``census_sessions_probe`` (the file-size ratchet moved the probe out of
+        ``census.py``, which keeps the one call site of it); the ban covers every
+        module of the census, the split-outs included, so a listing cannot reach
+        for ``glob`` by moving house.
+        """
+        # The census's tree holds the census, the probe's tree the split-out
+        # probe and the checks' tree the split-out session group; the ban below
+        # reads all three, so a listing cannot reach for `glob` by moving house.
+        census_trees = [(CENSUS_PY, ast.parse(_harness_source(CENSUS_PY))),
+                        (SESSIONS_PROBE_PY, ast.parse(_harness_source(SESSIONS_PROBE_PY))),
+                        (SESSIONS_CHECKS_PY, ast.parse(_harness_source(SESSIONS_CHECKS_PY)))]
+        # Two names, one listing: the sibling defines the readdir as
+        # `sessions_listing` and the census wraps it as `_sessions_listing`, the
+        # name `main` calls. One definition of each (a second of either is a
+        # second reader of the register), and the `iterdir` assertion below is
+        # asked of the one that actually lists -- the wrapper holds no readdir of
+        # its own, by the same rule that keeps the run to one read.
+        for name in ("_sessions_listing", "sessions_listing"):
+            defs = [node for _, tree in census_trees for node in ast.walk(tree)
+                    if isinstance(node, ast.FunctionDef) and node.name == name]
+            assert len(defs) == 1, \
+                f"the register's listing is no longer defined once under {name}, " \
+                "so this pin has nothing to scope to"
+        listings = [node for node in (
+            n for _, tree in census_trees for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef)
+            and n.name in ("_sessions_listing", "sessions_listing"))
+            if {c.func.attr for c in ast.walk(node)
+                if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)}
+            & {"iterdir", "glob"}]
+        assert len(listings) == 1, \
+            "the register's reader is no longer the one function that performs a " \
+            "readdir, so this pin has nothing to scope to"
+        listing_calls = {node.func.attr for node in ast.walk(listings[0])
+                         if isinstance(node, ast.Call)
+                         and isinstance(node.func, ast.Attribute)}
+        assert "iterdir" in listing_calls, \
+            "the register is no longer listed with iterdir, the call that raises"
+        assert "glob" not in listing_calls, \
+            "the register's listing reached for glob, which swallows the fault and " \
+            "reads an unreadable directory as an empty one"
+        # The wider ban is a separate claim from the register's own rule, and it
+        # is a claim about the census's modules: no listing primitive in any of
+        # them may swallow an OSError the census then has to answer for.
+        module_calls = {node.func.attr
+                        for _, tree in census_trees
+                        for node in ast.walk(tree)
+                        if isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Attribute)}
+        assert "glob" not in module_calls, \
+            "a glob call is back in the census; glob swallows the fault and reads " \
+            "an unreadable directory as an empty one"
+
+    def test_the_register_is_listed_once_and_the_group_gates_on_that_answer(
+        self, tmp_path, monkeypatch
+    ):
+        """One readdir, and the gate answers from it: pinned at the syscall and the AST.
+
+        Two halves, because the contract has two halves. The behavioural one
+        counts the register's readdirs for a whole run and says "one": a gate
+        that classified the directory through a second reader, or a group that
+        listed again behind the probe, fails here whatever it named itself. The
+        source one asks the AST how many times ``main`` calls the register's one
+        reader -- a docstring that mentions it does not count, and a second
+        reader with another name is already caught by the counter.
+
+        That the gate and the reporter agree on the fault itself is the end-to-end
+        job of :meth:`test_the_group_runs_for_the_fault_under_a_filter_of_another_
+        group`, which plants a real fault and insists the row reaches a run whose
+        filter named no session class. Pinning the two spellings as text instead
+        would fail a refactor that kept the invariant and pass one that broke it.
+        """
+        repo = _sessions_fixture(tmp_path)
+        register = repo / "noni" / "sessions"
+        _fault_the_sessions_listing(monkeypatch, register)
+
+        import census
+
+        real_iterdir = census.Path.iterdir
+        reads: list[str] = []
+
+        def spy(self):
+            if self == register:
+                reads.append(str(self))
+            return real_iterdir(self)
+
+        monkeypatch.setattr(census.Path, "iterdir", spy)
+        rc, out, err = _run_census(repo, "--only", "ledger-record",
+                                   json_out=True, skip_hygiene=True)
+        assert len(reads) == 1, \
+            f"the register was listed {len(reads)} times in one run: {reads}"
+        rows = [r for r in _ndjson_rows(out) if r.get("check") == "session-deleted"]
+        assert len(rows) == 1 and rows[0]["subject"] == "noni/sessions", (
+            f"the one listing is also what the group reported from: {rows}"
+        )
+        assert rc == 0, f"the fault row is a warn, got {rc}\nstderr: {err}"
+
+        tree = ast.parse(_harness_source(CENSUS_PY))
+        defined = {node.name for node in ast.walk(tree)
+                   if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        assert "_sessions_listing" in defined, \
+            "the register's one reader is gone from the census"
+        call_sites = [node for node in ast.walk(tree)
+                      if isinstance(node, ast.Call)
+                      and isinstance(node.func, ast.Name)
+                      and node.func.id == "_sessions_listing"]
+        assert len(call_sites) == 1, (
+            f"the register has {len(call_sites)} listing call sites; the gate and "
+            "the rows must be the answer of one readdir"
+        )
+
+    def test_an_unlistable_register_outside_the_tree_leaks_no_absolute_path(
+        self, tmp_path, monkeypatch
+    ):
+        """An out-of-tree ``--sessions`` whose listing faults must not print a host path.
+
+        The override is the case where ``_rel_to_root`` cannot root the register
+        and hands back the machine-local absolute path it was given. The ledger
+        twin of this row keeps only the path's last segment
+        (``census_ledger.ledger_name``), and this row takes the same identifier
+        from the same helper, so the two siblings cannot drift back apart: the
+        operator learns which register could not be listed, and the host
+        directory that holds it never reaches the report.
+        """
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                     json.dumps(_valid_record(), indent=2))
+        outside = tmp_path / "elsewhere-home" / "sessions"
+        outside.mkdir(parents=True)
+        (outside / "2026-10-01-aaaaaa.md").write_text(_session_body("developer"),
+                                                      encoding="utf-8")
+        needle = str(outside)
+        monkeypatch.setattr(
+            census_module().Path, "iterdir",
+            _permission_fault_on(outside, needle))
+
+        rc, out, err = _run_census(repo, "--sessions", str(outside),
+                                   json_out=True, skip_hygiene=True)
+        rows = [r for r in _ndjson_rows(out) if r.get("check") == "session-deleted"]
+        assert len(rows) == 1, f"expected the one fault row: {rows}"
+        row = rows[0]
+        assert row["subject"] == row["artifact"] == "sessions", (
+            f"the row names the register by its last segment, as the ledger row does: {row}"
+        )
+        for field in ("subject", "artifact", "message"):
+            assert needle not in row[field], \
+                f"machine-local path leaked in {field}: {row[field]!r}"
+        assert "could not be listed" in row["message"], row["message"]
+        # The fault's words are kept to what the sentence can pay for. This is the
+        # long sentence at its shortest useful fault: the fixture's errno pair is
+        # ``PermissionError`` with a ``Permission denied - input/output error``
+        # strerror, and the budget the raw out-of-tree path leaves over cuts it to
+        # the class and the head of the words. What may not survive is the path.
+        assert "Permission" in row["message"], row["message"]
+        assert rc == 0, f"a fault is a warn, got {rc}\nstderr: {err}"
+
+        # A home-relative form is the shape ``ledger_name``'s last-segment rule
+        # cannot reduce to a bare segment. The row's identifier is that rule
+        # applied to the *scrubbed* path, which is why the two fields that a
+        # caller joins on and the prose clause cannot disagree about one path:
+        # the scrub turns the home form into its marker and the reduction has
+        # nothing left to keep. Asserted through the shared builder rather than
+        # by composing the helpers by hand, so the row cannot drift from the
+        # helpers it is documented to use.
+        home_form = f"~{_HOME_PATH_KNOWN_IDENTITY}/elsewhere/sessions"
+        row = _sessions_fault_row(home_form, "readdir denied")
+        for field in ("subject", "artifact", "message"):
+            assert _HOME_PATH_KNOWN_IDENTITY not in row[field], (
+                f"the unrootable home form reached {field}: {row[field]!r}"
+            )
+        # The three fields hold one answer about one path: the identifier rule's
+        # answer, which the row narrates and joins on alike. They cannot disagree,
+        # because they are built from one call to ``ledger_name``.
+        assert row["subject"] == row["artifact"] == "sessions", row
+        assert "(sessions) exists but could not be listed" in row["message"], row
+
+    def test_the_row_budget_is_what_its_own_sentence_leaves(
+        self, tmp_path
+    ):
+        """The fault gets the room the sentence does not use, and nothing more.
+
+        The bound is arithmetic on the sentence actually built, not a number a
+        caller guesses and hands in: measure the message with the fault left
+        empty, subtract that from the 300 the row keeps, and the fault text is
+        bound to what is left over. A caller that later lengthens its own clause
+        pays for it out of the fault's budget automatically, so the row cannot
+        drift past its bound by a group editing its prose.
+
+        The test reads the budget off the finished row rather than off a
+        constant: with a 5000-character fault the row must sit at the bound, must
+        still end with the group's own ``unknown`` clause, and must have spent its
+        slack on the fault's padding -- which is the same fact as "the budget is
+        the sentence's leftover", seen from the outside. The path is the short
+        root-relative one, because the slack is measured against the whole
+        sentence: a caller that hands in a long path is charged for it too (see
+        :meth:`test_the_row_keeps_its_verdict_whatever_the_fault_and_path_said`).
+        """
+        skeleton_head = "could not be listed ("
+        row_bound = census_ledger.ROW_BOUND
+        for filler in ("u", "e"):
+            row = _sessions_fault_row("noni/sessions", filler * 5000)
+            message = row["message"]
+            assert len(message) <= row_bound, f"{len(message)} chars: {message[:80]}"
+            assert message.endswith("cannot be answered"), (
+                f"the verdict clause is the last thing the row should lose: "
+                f"{message[-120:]!r}"
+            )
+            # The leftover went to the fault: only the clip's own ellipsis stays
+            # out of it. So the row sits at its bound, and a budget any smaller
+            # would have cut the fault short of what the sentence could pay for.
+            assert len(message) >= row_bound - 3, message[-60:]
+            assert len(message) <= row_bound, message[-60:]
+            start = message.index(skeleton_head) + len(skeleton_head)
+            assert message[start] == filler, (
+                f"the fault is not what filled the row's slack: {message[start - 20:start + 20]!r}"
+            )
+
+    def test_the_ledger_row_keeps_its_verdict_on_a_long_fault(self, tmp_path, monkeypatch):
+        """The same budget rule, at the other caller of the shared builder.
+
+        The ledger group's sentence is not the sessions group's sentence, so a
+        budget that was right for one is not a budget the other may claim: the
+        row is built by the same function and must arrive at the same place -- at
+        the bound, ending in its own verdict clause -- from a fault of the same
+        length. Reached through ``census.main`` with a faulted readdir, because
+        the ledger caller is the one the group's own filter drives.
+        """
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                     json.dumps(_valid_record(), indent=2))
+        _fault_the_sessions_listing(monkeypatch, repo / "noni" / "decisions",
+                                    text="u" * 5000)
+        _rc, out, err = _run_census(repo, "--only", "ledger-edited", json_out=True,
+                                    skip_hygiene=True)
+        rows = [r for r in _ndjson_rows(out) if r.get("check") == "ledger-edited"]
+        assert len(rows) == 1, f"expected the one fault row: {rows}"
+        message = rows[0]["message"]
+        assert len(message) <= 300, f"{len(message)} chars: {message[:80]}"
+        assert message.endswith("cannot be answered"), (
+            f"the ledger's own verdict clause lost to its bound: {message[-120:]!r}"
+        )
+        assert "noni/decisions" in message, message
+
+    def test_the_row_keeps_its_verdict_whatever_the_fault_and_path_said(
+        self, tmp_path
+    ):
+        """The row's own finding survives the bound, however hostile its inputs.
+
+        The sentence is the row's diagnosis and the fault dropped into it is
+        foreign text, so the fault is bound to what the sentence leaves over:
+        ``clipped`` must cut the tail of a 3000-character ``strerror``, never the
+        clause that says what could not be answered. Three input categories the
+        bound used to eat that clause for, at the row's full 300 characters: an
+        ordinary root-relative path, a relative path the caller walked far out of
+        the tree, and an absolute one it cannot root at all. No test calls the
+        shared builder by hand: the row is reached through the group's own entry
+        point (``_append_sessions_listing_fault``, or ``census.main`` for the
+        ledger twin below), so a claim about the row is a claim about what the
+        product renders and not about how a test wires the helpers together.
+
+        The row is bounded against the sentence it actually builds, so the two
+        halves of the rule pull against each other and both are asserted here:
+        the fault's padding is what the clip cuts (the census's own words survive
+        at both ends of the row), and a path that is not root-relative never
+        reaches the row at its raw length -- the unrootable forms are reduced to
+        their last segment by ``ledger_name`` before the sentence is built.
+        """
+        for path, fault in (
+            ("noni/sessions", "u" * 3000),
+            ("build/home/someone/.aws/" + "a" * 240 + "/sessions", "u" * 3000),
+            ("/abs/home/elsewhere/sessions", "y" * 3000),
+        ):
+            row = _sessions_fault_row(path, fault)
+            message = row["message"]
+            assert len(message) <= census_ledger.ROW_BOUND, f"{len(message)} chars"
+            # The census's own words, at both ends of the sentence, whatever the
+            # caller handed in for the path and whatever the fault said.
+            assert message.startswith("cannot-tell: the sessions register "), message[:60]
+            assert message.endswith("cannot be answered"), (
+                f"the row lost the verdict clause to its own bound: "
+                f"{message[-120:]!r}"
+            )
+            assert "exists but could not be listed (" in message, message[:140]
+            # One identifier, three fields, and it is never the raw path the
+            # caller spelled -- the root-relative form is kept, everything else
+            # is reduced to its last segment.
+            name = census_ledger.ledger_name(path)
+            assert row["subject"] == row["artifact"] == name, row
+            assert f"({name}) exists" in message, message[:140]
+            if not path.startswith("noni/"):
+                assert path not in message, f"raw path leaked: {message[:140]}"
+
+    def test_a_fault_with_no_words_at_all_still_says_which_class_refused(
+        self, tmp_path, monkeypatch
+    ):
+        """A blank ``strerror`` is answered with the class name, not silence.
+
+        A driver can hand back an errno with no text at all. The row is a
+        cannot-tell about one directory, and its point is that a read was
+        attempted and refused; a fault field that came back empty would leave
+        that clause to print nothing but its own parentheses, and the gate and
+        the reporter would be reading a field whose emptiness means two things.
+        """
+        # A repo whose register is the directory the guard below refuses, so the
+        # fault is reached through census.main and not only through the listing
+        # function: the gate is the other reader of the fault field, and an empty
+        # one would leave the group unrun -- the silent clean this ticket exists
+        # to close.
+        repo = _sessions_fixture(tmp_path)
+        register = repo / "noni" / "sessions"
+        census = census_module()
+        real_iterdir = census.Path.iterdir
+
+        def blank_boom(self):
+            # An errno with no text at all: the shape a driver hands back when it
+            # refuses a readdir without saying why. Whitespace-only strerror is
+            # the case, because the scrubber collapses it to nothing.
+            if self == register:
+                raise OSError(5, "   ")
+            return real_iterdir(self)
+
+        monkeypatch.setattr(census.Path, "iterdir", blank_boom)
+        probe = census._sessions_listing(register)
+        assert probe.names is None and probe.fault, (
+            f"a faulted read never carries an empty fault field: {probe!r}"
+        )
+
+        # A run whose filter named no session class at all: the gate is the only
+        # thing standing between this fault and a clean exit 0.
+        rc, out, err = _run_census(repo, "--only", "ledger-record",
+                                   json_out=True, skip_hygiene=True)
+        rows = [r for r in _ndjson_rows(out) if r.get("check") == "session-deleted"]
+        assert len(rows) == 1, (
+            f"a blank-strerror fault must still open the group and earn its row: "
+            f"{rows}"
+        )
+        assert "OSError" in rows[0]["message"], (
+            f"a fault that carried no words must still name the class: "
+            f"{rows[0]['message']!r}"
+        )
+        assert "could not be listed" in rows[0]["message"], rows[0]
+        assert rc == 0, f"the fault row is a warn, got {rc}\nstderr: {err}"
+
+    def test_a_symlinked_override_outside_the_tree_reports_the_fault(
+        self, tmp_path, monkeypatch
+    ):
+        """The gate is the read, so a register reached through a link cannot read clean.
+
+        The path the census classifies and the path it lists are the one the
+        caller gave it. Here a register of the audited tree is reached through a
+        symlink under ``noni/``, so the classification follows the link to a
+        directory and the readdir faults: exactly the pair the fault row exists
+        for. A gate that classified the directory first and reached the listing
+        only when the classification looked listable would be a second read
+        entitled to disagree with the first, and this is the case it would get
+        wrong -- a clean run for a register nobody read.
+        """
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                     json.dumps(_valid_record(), indent=2))
+        register = tmp_path / "real-register"
+        register.mkdir()
+        (register / "2026-10-01-aaaaaa.md").write_text(_session_body("developer"),
+                                                       encoding="utf-8")
+        (tmp_path / "repo" / "noni" / "linked").symlink_to(register)
+        _fault_the_sessions_listing(monkeypatch, register)
+
+        rc, out, err = _run_census(repo, "--sessions", str(register), json_out=True,
+                                   skip_hygiene=True)
+        rows = [r for r in _ndjson_rows(out)
+                if r.get("kind") == "finding" and r.get("check") == "session-deleted"]
+        assert len(rows) == 1, (
+            f"the symlinked register the run could not list must be reported: {rows}"
+        )
+        assert "could not be listed" in rows[0]["message"], rows[0]
+        assert rc == 0, f"the fault row is a warn, got {rc}\nstderr: {err}"
+
+    def test_a_readable_register_behaves_exactly_as_before(self, tmp_path):
+        """The fix must not disturb the paths that already worked.
+
+        A committed, listable register with two active sessions censuses clean
+        (the deletion check finds nothing missing), and the same repo with one
+        file removed still reports that deletion: the group's normal reads go
+        through the same call now and must answer as they did on the base commit.
+        """
+        repo = _sessions_fixture(tmp_path)
+        rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
+        assert rc == 0, f"a readable register censuses clean, got {rc}\nstderr: {err}\n{out}"
+        rows = [r for r in _ndjson_rows(out) if r.get("kind") == "finding"]
+        assert rows == [], f"a committed ledger and a readable register are clean: {rows}"
+        (repo / "noni/sessions/2026-10-01-bbbbbb.md").unlink()
+        rc, out, err = _run_census(repo, "--only", "session-deleted",
+                                   json_out=True, skip_hygiene=True)
+        rows = [r for r in _ndjson_rows(out) if r.get("check") == "session-deleted"]
+        assert len(rows) == 1 and rows[0]["subject"] == "2026-10-01-bbbbbb.md", rows
+        assert rc == 0, f"warn class exits 0, got {rc}\nstderr: {err}"
+
+    def test_a_missing_sessions_dir_is_still_clean(self, tmp_path):
+        """No register at all is a state of the tree, not a fault of this read.
+
+        The acceptance criterion names it explicitly: a missing ``noni/sessions/``
+        keeps its old behaviour, which is silence. The fault row exists precisely
+        to separate "could not look" from "nothing to see", so the second of
+        those must stay wordless or the first is worth nothing.
+        """
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "README.md", "# repo\n")
+        rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
+        assert rc == 0, f"no sessions dir is clean, got {rc}\nstderr: {err}\n{out}"
+        rows = [r for r in _ndjson_rows(out)
+                if r.get("kind") == "finding" and r.get("artifact") == "noni/sessions"]
+        assert rows == [], (
+            f"a missing register adds no row of its own: {rows}"
+        )
 
 
 class TestHygiene:

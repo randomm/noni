@@ -46,6 +46,8 @@ PRODUCT_MODULES = (
     "src/noni/census_ordering.py",
     "src/noni/census_ordering_readers.py",
     "src/noni/census_sessions.py",
+    "src/noni/census_sessions_checks.py",
+    "src/noni/census_sessions_probe.py",
     "src/noni/census_text.py",
     "src/noni/claim.py",
     "src/noni/cli.py",
@@ -125,6 +127,7 @@ for _alias, _pkg_name in (
     ("census_ordering", "census_ordering"),
     ("census_ordering_readers", "census_ordering_readers"),
     ("census_sessions", "census_sessions"),
+    ("census_sessions_probe", "census_sessions_probe"),
     ("census_text", "census_text"),
     ("claim", "claim"),
     ("decide", "decide"),
@@ -320,35 +323,89 @@ def _commit_file(repo: Path, rel: str, content: str) -> None:
 
 
 # --- Injected ledger-listing faults -------------------------------------------
+#
+# One builder for both groups' faulted readdirs. The seam is the census's own
+# ``Path.iterdir`` and never a mode bit: a root-equivalent runner reads a
+# 000-mode directory, so a chmod fixture would read as listable and the test
+# would pass vacuously. It is never ``Path.glob`` either -- ``glob`` swallows
+# the ``OSError`` a readdir raises and yields nothing, which is the very
+# dishonesty the census no longer has, so patching it would fault nothing at all.
 
 
-def _fault_the_ledger_listing(monkeypatch, ledger: Path) -> None:
-    """Make the census's listing of ``ledger`` fault, for an in-process run.
+def _permission_fault_guard(target: Path, *, text: str = "input/output error",
+                            filename: str | None = None):
+    """The ``Path.iterdir`` replacement that faults one directory's readdir.
 
-    One home for the seam, which three test files otherwise restate inline. The
-    fault is injected at the probe's own ``Path.iterdir`` and never at a mode
-    bit: a root-equivalent runner reads a 000-mode directory, so a chmod fixture
-    would read as listable and the test would pass vacuously. The guard on the
-    path keeps every other listing of the run honest, so only the probe's
-    readdir faults. The seam is ``iterdir`` and not ``glob``: ``glob`` swallows
-    the ``OSError`` and yields nothing, which is the dishonesty the probe no
-    longer has (see ``census_ledger.listing_helper``).
+    The guard on the receiver keeps every other listing of the run honest, so
+    only the named directory's readdir faults. The exception is built inside the
+    guard, so each raise hands the census a fresh ``OSError`` and nothing a
+    handler does to it can leak into a later raise.
 
-    The patch is installed on ``census.Path``, the name the census and its
-    ledger module share. Tests that drive the census in-process (``census.main``
-    in this interpreter) are the only callers: a subprocess would not see it.
+    With ``filename`` the fault is the errno-pair form that puts the words in
+    ``strerror`` and the path it failed on in ``filename``, so ``str()`` holds
+    both and a row built from it must print one of them and not the other; that
+    is the shape the row's path-leak rule is tested against. Without it the
+    fault is a plain ``OSError(text)``, whose ``str()`` is the words alone.
+
+    Returns the replacement; the callers below install it, and a test that needs
+    to install it itself (to fault a path the census does not reach by default)
+    gets the same builder. In-process callers only -- a subprocess would not see
+    the patch.
     """
     import census
 
+    target = Path(target)
     real_iterdir = census.Path.iterdir
-    target = Path(ledger)
 
     def boom(self):
         if self == target:
-            raise OSError("readdir denied")
+            raise (OSError(13, text, filename) if filename is not None
+                   else OSError(text))
         return real_iterdir(self)
 
-    monkeypatch.setattr(census.Path, "iterdir", boom)
+    return boom
+
+
+def _fault_the_ledger_listing(monkeypatch, ledger: Path) -> None:
+    """Fault the census's listing of ``ledger`` for an in-process run.
+
+    One install over :func:`_permission_fault_guard`, so the ledger and sessions
+    sides of the seam are the same fixture and cannot drift into two conventions
+    for it (see the block comment for why the seam is ``iterdir``).
+    """
+    import census
+
+    monkeypatch.setattr(census.Path, "iterdir",
+                        _permission_fault_guard(ledger, text="readdir denied"))
+
+
+def _fault_the_sessions_listing(monkeypatch, sessions: Path,
+                                text: str = "input/output error") -> None:
+    """Fault the census's listing of ``sessions`` for an in-process run.
+
+    The sessions-side twin of :func:`_fault_the_ledger_listing`: same builder,
+    same seam, same in-process-only caveat. ``text`` defaults to the slash-free
+    errno words an unmounted device reports, so a test can quote the fault back
+    out of the row unchanged -- the scrubber replaces every ``/segment`` run with
+    its marker, and a message carrying a separator could not be.
+    """
+    import census
+
+    monkeypatch.setattr(census.Path, "iterdir",
+                        _permission_fault_guard(sessions, text=text))
+
+
+def _permission_fault_on(sessions: Path, leaked: str):
+    """The installable fixture of a fault that carries a path in ``filename``.
+
+    Thin over :func:`_permission_fault_guard`, and named for what it tests: the
+    one shape that carries both halves of the row's rule in a single exception,
+    so the row must print the words and not the path. Returns the replacement for
+    the caller to install with ``monkeypatch.setattr(census.Path, "iterdir", ...)``.
+    """
+    return _permission_fault_guard(sessions,
+                                   text="Permission denied - input/output error",
+                                   filename=leaked)
 
 
 # --- Synthetic hygiene fixtures ------------------------------------------------

@@ -12,12 +12,13 @@ In each case the census reports a probe failure (warn by default, fail under
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 import census  # noqa: E402
-from _harness import _git, _init_repo  # noqa: E402
+from _harness import _fault_the_sessions_listing, _git, _init_repo  # noqa: E402
 
 
 def _session_body(identity: str) -> str:
@@ -113,6 +114,70 @@ def test_missing_sessions_dir_is_clean(tmp_path):
     _git(repo, "commit", "-q", "--allow-empty", "-m", "no sessions dir")
     rc, out, err = _run(repo)
     assert rc == 0, f"no sessions dir is clean, got {rc}\nstderr: {err}\nstdout: {out}"
+
+
+def test_unlistable_sessions_dir_is_cannot_tell_not_clean(tmp_path, monkeypatch):
+    """A noni/sessions/ that exists and cannot be listed is not an empty register.
+
+    The register was listed with ``Path.glob``, which swallows the ``OSError``
+    readdir raises and yields nothing: a directory the run could not read earned
+    the same exit 0 and the same silence as a project that had never opened a
+    session, which is the one shape of "clean" the census is not allowed to
+    invent. The listing is an ``iterdir`` now, the fault propagates to the group,
+    and the group answers with the cannot-tell row of the class its deletion
+    check already uses for cannot-tells.
+
+    The fault is injected at the census's own ``iterdir`` of the register and not
+    at a mode bit, because a root-equivalent runner reads a 000-mode directory
+    and a chmod fixture would assert nothing. The errno words are slash-free so
+    the scrubber leaves them standing and the test can ask for them verbatim.
+    """
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "noni" / "sessions").mkdir(parents=True)
+    _git(repo, "add", "noni/sessions/")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "add empty register")
+    _fault_the_sessions_listing(monkeypatch, repo / "noni" / "sessions")
+
+    rc, out, err = _run(repo, "--skip", "hygiene", "--json")
+    assert rc == 0, f"cannot-tell is a warn (exit 0), got {rc}\nstderr: {err}\nstdout: {out}"
+    rows = [json.loads(line) for line in out.splitlines()
+            if line.strip() and json.loads(line).get("check") == "session-deleted"]
+    assert len(rows) == 1, f"expected one cannot-tell row, got {rows}"
+    row = rows[0]
+    assert row["severity"] == "warn", f"a fault is not a violation: {row}"
+    assert row["message"].startswith("cannot-tell: "), row["message"]
+    assert "could not be listed" in row["message"], row["message"]
+    assert "input/output error" in row["message"], (
+        f"the OSError text is the finding the row exists to print: {row['message']}"
+    )
+    assert "noni/sessions" in row["message"], (
+        f"the row must name the register it could not read: {row['message']}"
+    )
+    assert not row["subject"].startswith("/"), (
+        f"no machine-local path in the row: {row}"
+    )
+
+
+def test_unlistable_sessions_dir_fails_under_strict(tmp_path, monkeypatch):
+    """The cannot-tell of an unreadable register is promoted by --strict.
+
+    ``--only session-deleted`` and ``--skip hygiene`` leave this row as the only
+    one that can decide the exit code, so 44 here proves the promotion ran
+    through the row factory's severity override and the run's ``strict`` flag
+    rather than through a word hard-coded for the class.
+    """
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "noni" / "sessions").mkdir(parents=True)
+    _git(repo, "add", "noni/sessions/")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "add empty register")
+    _fault_the_sessions_listing(monkeypatch, repo / "noni" / "sessions")
+
+    rc, out, err = _run(repo, "--only", "session-deleted", "--strict",
+                        "--skip", "hygiene")
+    assert rc == 44, (
+        "an unreadable register under --strict must be the class's 44, not the "
+        f"silent 0 the swallow used to return: got {rc}\nstderr: {err}\nstdout: {out}"
+    )
 
 
 # --- Byte-exact edit-after-commit integrity checks ------------------------------

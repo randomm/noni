@@ -23,6 +23,10 @@ leaves the run at 0 and lifts it to 12 under --strict (the row's class code),
 never at 42 -- which belongs to the ledger-empty warn the fault must not be
 mistaken for. See test_unreadable_ledger_dir_is_cannot_tell_not_empty.
 
+A sessions directory that exists but cannot be listed is the same shape of fault
+on the other artifact, and is reported as a ``session-deleted`` cannot-tell row:
+0, and 44 under --strict. See test_exit_44_unlistable_sessions_dir.
+
 The four warn classes 42/43/44/50 are reported without --strict but exit 0;
 --strict promotes each to its own code.
 """
@@ -37,6 +41,7 @@ import census  # noqa: E402
 from _harness import (  # noqa: E402
     _commit_file,
     _fault_the_ledger_listing,
+    _fault_the_sessions_listing,
     _home_path_violation,
     _init_repo,
     _secret_violation,
@@ -327,6 +332,74 @@ def test_exit_44_session_deleted(tmp_path):
     (repo / "noni/sessions/2026-10-01-bbbbbb.md").unlink()
     assert _run(repo) == 0
     assert _run(repo, "--only", "session-deleted", "--strict") == 44
+
+
+def test_exit_44_unlistable_sessions_dir(tmp_path, monkeypatch):
+    """A noni/sessions/ that exists and cannot be listed is the warn
+    session-deleted cannot-tell: exit 0 without --strict, 44 under --strict.
+
+    The pair sits beside test_exit_44_session_deleted on purpose: both rows are
+    the same class, and the tree differs only in whether the census could read
+    it. The alternative was the fault exiting 0 silently as an empty register --
+    indistinguishable, in the exit code and in the rows, from a project that has
+    never opened a session.
+
+    The ledger holds one record so no ledger-empty warn competes for the code,
+    and hygiene is skipped: its always-on "deny-list inactive" row would decide
+    a --strict run on its own (42/50), which is the convention every warn-class
+    test here follows.
+    """
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/decisions/2026-10-01-a.json",
+                 json.dumps(_valid_record(), indent=2))
+    _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md", _session_body("dev"))
+    _fault_the_sessions_listing(monkeypatch, repo / "noni" / "sessions")
+
+    assert _run(repo, "--skip", "hygiene") == 0
+    assert _run(repo, "--skip", "hygiene", "--strict") == 44
+    assert _run(repo, "--only", "session-deleted", "--strict") == 44
+    rows = [r for r in _rows(repo, "--skip", "hygiene") if r.get("kind") == "finding"]
+    assert [r["check"] for r in rows] == ["session-deleted"], (
+        f"a register this run could not list answers no session question, so the "
+        f"group's only row is the fault's own: {rows}"
+    )
+    assert rows[0]["severity"] == "warn" and rows[0]["code"] == 44, rows[0]
+    assert "input/output error" in rows[0]["message"], (
+        f"the OSError text must reach the operator: {rows[0]['message']}"
+    )
+    assert not rows[0]["subject"].startswith("/"), (
+        f"no machine-local path in the row: {rows[0]}"
+    )
+
+
+def test_the_unlistable_sessions_row_survives_a_filter_that_named_no_session_class(
+    tmp_path, monkeypatch
+):
+    """The filter must not be able to buy back the clean verdict.
+
+    ``--only`` drops rows of classes it does not name, and the fault row is a
+    ``session-deleted`` row like any other. What it is also is a whole-artifact
+    row about the directory the group was asked to read: the group's filter keeps
+    it, and the group runs even when the filter named none of its classes -- a
+    run that could not read the register and said nothing would report the same
+    clean as a run that read it and found nothing."""
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/decisions/2026-10-01-a.json",
+                 json.dumps(_valid_record(), indent=2))
+    _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md", _session_body("dev"))
+    _fault_the_sessions_listing(monkeypatch, repo / "noni" / "sessions")
+
+    for extra in (("--only", "ledger-record"), ("--skip", "session-deleted"),
+                  ("--only", "session-double", "--strict")):
+        rows = [r for r in _rows(repo, "--skip", "hygiene", *extra)
+                if r.get("kind") == "finding" and r.get("artifact") == "noni/sessions"]
+        assert [r["check"] for r in rows] == ["session-deleted"], (
+            f"{extra}: the unreadable register must still be reported: {rows}"
+        )
+        assert "could not be listed" in rows[0]["message"], rows[0]
+        # warn by default, 44 under --strict, whichever filter was used.
+        expected = 44 if "--strict" in extra else 0
+        assert _run(repo, "--skip", "hygiene", *extra) == expected, f"{extra}"
 
 
 def test_exit_50_hygiene(tmp_path):

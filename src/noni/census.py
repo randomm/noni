@@ -619,9 +619,10 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
     The two rows the composition adds itself, both probe honesty:
 
     * a listing that faulted gets one cannot-tell row of its own and stops the
-      group there (`census_ledger.append_listing_fault`): the probe read nothing,
-      so no state word it answered is one this run established and no record
-      pass can be trusted either;
+      group there (`census_ledger.append_listing_fault`, called with this group's
+      own ``ledger-edited`` class, noun and question): the probe read nothing, so
+      no state word it answered is one this run established and no record pass
+      can be trusted either;
     * when the deletion check could not put its question to git and the ledger
       reads as "empty", the run says so (probe honesty, issue #33). "Empty" is
       the only state that can mean "committed records were deleted", and this
@@ -635,6 +636,9 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
         # says what the read could not do (`census_ledger.append_listing_fault`).
         _ledger.append_listing_fault(
             ledger, root, findings, strict, probe.listing_fault,
+            check="ledger-edited", noun="the ledger directory",
+            unknown="so whether a committed record was deleted or edited cannot be "
+                    "answered",
             row=_row, rel_to_root=_rel_to_root, bounded=_bounded, clipped=_clipped)
         return
     _check_ledger_empty(probe, ledger, root, findings, strict)
@@ -991,14 +995,15 @@ def _repo_sha1(path: Path) -> str | None:
         return None
 
 
-# --- Ledger and hygiene splits -------------------------------------------------
-# The ledger probe and the hygiene class, with the checker hygiene imports, live
-# in census_ledger.py and census_hygiene.py beside this file. All are ordinary
-# package imports: inside an installed wheel there is no sibling file to load by
-# path, and the census's trust in its checker is module identity (see
-# census_hygiene._trusted_public_safety), not a resolved filesystem path. The row
-# mechanics each one uses are handed in at the call, so the row shape keeps its
-# one owner here. The ledger alias is `_ledger` in the house style of the sibling
+# --- Ledger, sessions-probe and hygiene splits ---------------------------------
+# The ledger probe, the sessions register's probe and the hygiene class, with the
+# checker hygiene imports, live in census_ledger.py, census_sessions_probe.py and
+# census_hygiene.py beside this file. All are ordinary package imports: inside an
+# installed wheel there is no sibling file to load by path, and the census's trust
+# in its checker is module identity (see census_hygiene._trusted_public_safety),
+# not a resolved filesystem path. The row mechanics each one uses are handed in
+# at the call, so the row shape keeps its one owner here. The aliases are
+# `_ledger`, `_sessions_probe` and so on in the house style of the sibling
 # split-outs (`_helpers`, `_ordering`, `_ordering_readers`): the `_` prefix marks
 # the module and the group's own Path argument, `ledger`, stays a name no alias
 # takes.
@@ -1010,6 +1015,42 @@ from . import census_text as _text  # noqa: E402
 # one object rather than a copy, so a caller (and the census's own tests) still
 # names it through the module it already imports.
 LedgerProbe = _ledger.LedgerProbe
+
+# The sessions probe lives in census_sessions_probe.py beside this file, with the
+# same split census_ledger made: the module owns the register's one readdir and
+# the one row a faulted listing earns, and the row mechanics it uses are handed
+# in at the call so the row shape keeps its one owner here. The census's
+# `_sessions_listing` below is the sibling's `sessions_listing` one call site, so
+# the run's gate and its rows are the answer of one readdir.
+from . import census_sessions_probe as _sessions_probe  # noqa: E402
+
+# Re-exported as the one object, not a copy, so a caller (and the census's own
+# tests) still names the probe's type through the module it already imports.
+SessionsProbe = _sessions_probe.SessionsProbe
+
+
+def _sessions_listing(sessions: Path) -> SessionsProbe:
+    """The register's one listing, taken by the census exactly once per run.
+
+    The census's own `_ledger_probe` twin: the body is the sibling's, this is the
+    seam the census's tests patch and the one place `main` asks for the register.
+    """
+    return _sessions_probe.sessions_listing(sessions)
+
+
+def _append_sessions_listing_fault(
+    sessions: Path, root: Path, strict: bool, findings: list[dict], fault: str
+) -> None:
+    """The register's one faulted-listing row, composed in ``census_sessions_probe``.
+
+    The row mechanics are the census's own and are handed in at the call, so the
+    row shape keeps its single owner here (see the sibling's docstring for the
+    row itself and ``census_ledger.append_listing_fault`` for its composition).
+    """
+    _sessions_probe.append_sessions_listing_fault(
+        sessions, root, strict, findings, fault,
+        row=_row, rel_to_root=_rel_to_root, bounded=_bounded, clipped=_clipped)
+
 
 # The hygiene class's own parts stay reachable as members of the census: they are
 # re-exports of one object, not copies, so the census keeps its single owner of
@@ -1055,230 +1096,65 @@ def _git_env() -> dict[str, str]:
 
 
 # --- Session checks -------------------------------------------------------------
+# The register's classes live in census_sessions_checks.py beside this file, the
+# way the ledger's live in census_ledger.py and the ordering's in
+# census_ordering.py: this file keeps the CLI, the exit-code table, the row shape
+# and the group wiring, and the sibling keeps the per-file loop of the register
+# and the verdicts built from it. Its register constants (SESSION_NAME_RE and the
+# two tables beside it above) stay declared here, the file that owns the check
+# contract, and the sibling reads them through this module rather than copying
+# them, so a compiled pattern has one definition. The row mechanics are handed in
+# at the call, exactly as the ordering group's are, so no second file composes a
+# row.
+from . import census_sessions_checks as _sessions_checks  # noqa: E402
+
 
 def _parse_session(body: str) -> tuple[dict[str, str], list[str], list[str]]:
-    """Parse a session register body into (fields, claims, problems)."""
-    fields: dict[str, str] = {}
-    claims: list[str] = []
-    problems: list[str] = []
-    for raw in body.splitlines():
-        line = raw.strip()
-        if not line.startswith("- "):
-            continue
-        key, sep, value = line[2:].partition(":")
-        if not sep:
-            continue
-        key = key.strip()
-        value = value.strip()
-        if key in SESSION_REQUIRED_FIELDS:
-            fields[key] = value
-        elif key == "claim":
-            if not value:
-                problems.append("claim row with no task reference")
-            else:
-                claims.append(value)
-    for field in SESSION_REQUIRED_FIELDS:
-        if field not in fields:
-            problems.append(f"missing field: {field}")
-    return fields, claims, problems
+    """The register body parse, composed in ``census_sessions_checks``.
+
+    Re-exported as the one function, not a copy, so a caller (and the census's
+    own tests) still names it through the module it already imports.
+    """
+    return _sessions_checks.parse_session(body)
+
+
+def _is_non_terminal(fields: dict[str, str]) -> bool:
+    """The register's one "still open" test, composed in ``census_sessions_checks``
+    and re-exported as the one function for the same reason as `_parse_session`."""
+    return _sessions_checks.is_non_terminal(fields)
 
 
 def _check_sessions(
     sessions: Path, git: Git | None, root: Path, now: datetime, stale_after: timedelta,
-    strict: bool, findings: list[dict]
+    strict: bool, findings: list[dict], probe: SessionsProbe
 ) -> None:
-    """Check the session register; append its findings to ``findings``.
+    """The session group, run by the module beside this file.
 
-    A missing sessions directory is a clean state (no sessions registered);
-    an unreadable or non-directory path is a probe failure, never clean.
-    Stalled sessions and probe failures are warnings by default and failures
-    under --strict.
+    The row factory, the classifier a probe row is built from, the root-relative
+    identifier, the faulted-listing row and the deletion check are passed in
+    rather than imported, so the row shape, its visibility marker and the
+    machine-local-path rule stay written in exactly one place: this file (see the
+    sibling's docstring for the group's own rules).
     """
-    def add(check: str, subject: str, artifact: str, message: str) -> None:
-        findings.append(_row(check, strict, subject, artifact, message, root))
-
-    kind, problem = _file_kind(sessions, kind="dir")
-    if kind == "absent":
-        return
-    if kind != "regular":
-        add("probe", str(sessions), str(sessions), f"sessions path is not a readable directory: {problem}")
-        return
-
-    files = sorted(sessions.glob("*.md"))
-    claim_map: dict[str, dict[str, list[str]]] = {}
-    # One read + parse per register file; both the claim map and the
-    # same-identity map below are built from these results, so a file is never
-    # classified twice by two loops that could drift.
-    by_files: dict[str, list[str]] = {}
-    for path in files:
-        name = path.name
-        if not SESSION_NAME_RE.match(name):
-            add("session-malformed", name, str(path), "filename is not the allocated <YYYY-MM-DD>-<6 hex>.md shape")
-            continue
-        fkind, fproblem = _file_kind(path)
-        if fkind != "regular":
-            add("probe", name, str(path), f"session file unreadable: {fproblem}")
-            continue
-        try:
-            body = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            # The bytes of an undecodable file are hostile content, so the row
-            # names the class and echoes none of them.
-            add("session-malformed", name, str(path), "file unreadable: not valid UTF-8")
-            continue
-        except OSError as e:
-            add("session-malformed", name, str(path),
-                f"file unreadable: {_text.fault_text(e)}")
-            continue
-        fields, claims, problems = _parse_session(body)
-        if problems:
-            missing_identity = "missing field: identity" in problems
-            if missing_identity and claims:
-                add(
-                    "session-claim",
-                    name,
-                    str(path),
-                    "claim row committed without a register file: " + "; ".join(problems),
-                )
-            else:
-                add("session-malformed", name, str(path), "; ".join(problems))
-            continue
-        non_terminal = _is_non_terminal(fields)
-        if non_terminal:
-            for task in claims:
-                claim_map.setdefault(task, {}).setdefault(fields.get("identity", ""), []).append(name)
-            # session-same-identity (warn 43): identity is the key the whole
-            # protocol keys on — the register writer and the claim writer both
-            # refuse to write into a file someone else allocated — so two
-            # non-terminal register files carrying one identity mean the
-            # allocation was hand-edited or copied. The legacy per-epic shim
-            # reports the narrower claim-overlap case separately; this class is
-            # the unified census's own (warn-only) view of shared identity, and
-            # it does not change what session-double fires on.
-            identity = fields.get("identity", "").strip()
-            if identity:
-                by_files.setdefault(identity, []).append(name)
-
-        # Staleness: the signals are the register file itself and the git
-        # history that last touched it. Both must say stale (agreement); any
-        # signal missing or unreadable is cannot-tell (warn), never stalled.
-        if fields.get("status", "").strip().lower() == "active":
-            if git is not None and git.available:
-                rel = _rel_to(git.top, path)
-                entry = None if rel is None else git.last_commit(rel)
-                if entry is None:
-                    add(
-                        "session-stalled",
-                        name,
-                        str(path),
-                        "cannot-tell: no commit history for this session file in this tree (shallow clone, or never committed)",
-                    )
-                else:
-                    age = now - datetime.fromtimestamp(entry[0], tz=timezone.utc)
-                    if age > stale_after:
-                        commit = entry[1]
-                        add(
-                            "session-stalled",
-                            name,
-                            str(path),
-                            f"stalled: status is active and no commit for this file in the last {stale_after} "
-                            f"(last commit {commit[:7]})",
-                        )
-            else:
-                add(
-                    "session-stalled",
-                    name,
-                    str(path),
-                    "cannot-tell: git history unavailable in this tree; staleness cannot be computed",
-                )
-
-    for task in sorted(claim_map):
-        by_identity = claim_map[task]
-        if len(by_identity) > 1:
-            details = "; ".join(f"{ident}: {', '.join(sorted(sess))}" for ident, sess in sorted(by_identity.items()))
-            add(
-                "session-double",
-                task,
-                str(sessions),
-                f"double-claim: task {task} is actively claimed by {len(by_identity)} identities ({details})",
-            )
-
-    # session-same-identity (warn 43) is answered from the same single pass:
-    # by_files was filled with exactly the non-terminal, parseable files.
-    for identity in sorted(by_files):
-        names = sorted(by_files[identity])
-        if len(names) > 1:
-            add(
-                "session-same-identity",
-                identity,
-                str(sessions),
-                f"session-same-identity: {len(names)} non-terminal session files share identity "
-                f"{identity!r} ({', '.join(names)}); identity is the key the protocol keys on — "
-                "one identity should hold one open register file",
-            )
-
-    _check_sessions_deleted(sessions, git, root, strict, findings)
+    _sessions_checks.check_sessions(
+        sessions, git, root, now, stale_after, strict, findings, probe,
+        row=_row, file_kind=_file_kind, rel_to=_rel_to,
+        append_listing_fault=_append_sessions_listing_fault,
+        check_sessions_deleted=_check_sessions_deleted)
 
 
 def _check_sessions_deleted(
     sessions: Path, git: Git | None, root: Path, strict: bool, findings: list[dict]
 ) -> None:
-    """The deleted-session-file check (warn 44).
+    """The deleted-session-file check, composed in ``census_sessions_checks``.
 
-    A session register file that HEAD-reachable history shows was added, but
-    that is gone from the working tree, is reported here. Ending a session
-    goes through its ``status`` field; deleting the register file destroys the
-    attribution and the claim history the census reads, so it is a violation
-    (unlike the legacy shim, which stays silent on deletions).
-
-    Only paths shaped like an allocated register file (``SESSION_NAME_RE``)
-    are considered — anything else under noni/sessions/ is not a register
-    file and its removal is not this class's business. When the question
-    cannot be answered the class says so rather than leaving a filtered run to
-    read "no rows" as "nothing was deleted": see the two guards below for who
-    gets the cannot-tell row and who does not, and why.
+    The row factory, the root-relative identifier and the cannot-tell row are the
+    census's own and are handed in at the call, so the row shape and the
+    cannot-tell severity rule keep their single owner here.
     """
-    if git is None or not git.available or git.top is None:
-        # No history to answer from — and this is NOT reported as a cannot-tell
-        # here, deliberately: a --repo that is simply not a git repository has
-        # no register history to speak of, and hygiene (not-run) plus
-        # session-stalled ("cannot-tell: git history unavailable", once per
-        # active file) already own that state. This class's cannot-tell is
-        # reserved for the case where the census *was* reading a git tree and
-        # the --sessions override moved the register out of it: that is the
-        # one configuration in which the append-only check stops running.
-        return
-    top = git.top
-    try:
-        prefix = sessions.resolve().relative_to(top.resolve()).as_posix()
-    except ValueError:
-        # The register lives outside this git tree, so the append-only question
-        # cannot be answered from its history: reported, not swallowed.
-        _append_cannot_tell(
-            "session-deleted",
-            f"the sessions path ({_rel_to_root(root, sessions)}) is outside the audited git "
-            "tree, so whether a committed register file was deleted cannot be answered",
-            strict, findings)
-        return
-    for rel in sorted(git.added_paths_under(prefix)):
-        name = rel.rsplit("/", 1)[-1]
-        if not SESSION_NAME_RE.match(name):
-            continue
-        if (top / rel).is_file():
-            continue
-        findings.append(
-            _row("session-deleted", strict, name, str(top / rel),
-                 f"deleted: session file {name} is in git history but missing from the "
-                 "working tree; sessions end via their status field, never by deleting the "
-                 "register file", root)
-        )
-
-
-def _is_non_terminal(fields: dict[str, str]) -> bool:
-    """True when a parsed session file is still open: its status is none of
-    INACTIVE_STATUSES. The one definition of "non-terminal" the register
-    reports use (claims, staleness, same-identity)."""
-    return fields.get("status", "").strip().lower() not in INACTIVE_STATUSES
+    _sessions_checks.check_sessions_deleted(
+        sessions, git, root, strict, findings,
+        row=_row, rel_to_root=_rel_to_root, append_cannot_tell=_append_cannot_tell)
 
 
 # --- Ordering checks -----------------------------------------------------------
@@ -1496,8 +1372,20 @@ def main(argv: list[str] | None = None) -> int:
         _check_ledger(ledger, git, root, findings, args.strict, ledger_probe)
         findings[:] = keep(findings)
 
-    if SESSION_CHECKS & requested:
-        _check_sessions(sessions, git, root, now, stale_after, args.strict, findings)
+    # One readdir of the register per run, taken here before the group is gated
+    # on its answer, so the gate and the rows are the same read. It is
+    # unconditional, and so costs one readdir plus its sort even on a run whose
+    # filter named no session class: a register the run could not list must be
+    # reportable whatever the filter asked for, and one read is what keeps the
+    # gate and the rows from disagreeing about whether that read happened.
+    sessions_probe = _sessions_listing(sessions)
+
+    # The same field, tested the same way as `_check_sessions` tests it, so the
+    # gate cannot open a group whose reporter would say nothing, nor leave a
+    # faulted read unreported.
+    if (SESSION_CHECKS & requested) or sessions_probe.fault is not None:
+        _check_sessions(sessions, git, root, now, stale_after, args.strict, findings,
+                        sessions_probe)
         findings[:] = keep(findings)
 
     if ORDERING_CHECKS & requested:

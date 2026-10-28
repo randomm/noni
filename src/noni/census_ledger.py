@@ -77,30 +77,32 @@ def ledger_name(rel: str) -> str:
     """The identifier a row uses for a directory it could not read.
 
     The root-relative path when the census could root it: a plain path below the
-    repo root (``noni/decisions``, ``noni/sessions``) -- no empty segment, no
-    ``.`` or ``..``, no leading ``~``, and at least two segments so it names a
-    directory of the tree and not a bare fragment. That is the only form the
-    census wrote itself, and it is the form a caller joins on, so it is kept whole.
+    repo root (``noni/decisions``, ``noni/sessions``) -- two or more segments, a
+    real name in each (no empty segment, no ``.`` or ``..``, nothing longer than a
+    directory is ever named), the first not opening with ``~``. That is the only
+    form the census wrote itself, and it is the form a caller joins on, so it is
+    kept whole.
 
-    Everything else is a path the caller spelled out of its own cwd or home,
-    which ``rel_to_root`` could not root and handed back unchanged: an absolute
-    path, a ``~user`` form, or a relative walk out of the tree. None of those may
-    be printed -- the report promises no machine-local path, and an identifier
-    field cannot go through the scrubber because a marker there is not a name
-    anybody can join on. So the identifier is that path's last segment, or
-    ``ledger`` when it has nothing to keep, and no path shape can put a location
-    in the two fields the row is joined on.
+    Everything else is a path the caller spelled out of its own cwd or home, which
+    ``rel_to_root`` could not root and handed back unchanged: an absolute path, a
+    ``~user`` form, a relative walk out of the tree. None of those may be printed
+    -- the report promises no machine-local path, and an identifier field cannot go
+    through the scrubber because a marker there is not a name anybody can join on.
+    So the identifier is that path's last segment, with a dot segment (which names
+    no directory) dropped in favour of the generic word, and no path shape puts a
+    location in the two fields the row is joined on.
 
     It is the census's one answer to "which directory did this run fail to read",
     shared by the ledger, sessions and ordering rows for the same fault.
     """
-    stripped = rel.rstrip("/")
-    parts = stripped.split("/")
-    rootable = (len(parts) >= 2 and all(len(p) <= _ROOT_SEGMENT_MAX for p in parts)
-                and "" not in parts and ".." not in parts
-                and "." not in parts and not parts[0].startswith("~"))
-    if rootable:
-        return stripped
+    parts = rel.rstrip("/").split("/")
+    if any(p in ("", ".", "..") or len(p) > _ROOT_SEGMENT_MAX for p in parts):
+        # Not a plain path below the repo root, so not a name the census wrote.
+        # The last segment alone is all the row may print; a segment that names no
+        # directory (a dot, or a run of them) names nothing at all.
+        return parts[-1].strip(".") or "ledger"
+    if len(parts) >= 2 and not parts[0].startswith("~"):
+        return "/".join(parts)
     return parts[-1] or "ledger"
 
 
@@ -264,10 +266,9 @@ def append_listing_fault(dir_: Path, root: Path, findings: list[dict],
     everything the census's own prose does not spend, up to ``ROW_BOUND`` and
     never below ``_MIN_FAULT_BOUND``: the sentence around the fault is what the
     group wrote, so the sentence is what pays, and the clause the census wrote is
-    never what ``clipped`` cuts. A group that lengthens its own wording pays for
-    it out of the fault's slack rather than out of the bound every other row of
-    the report keeps, and a caller never has to recompute a number to keep the row
-    inside its own length.
+    never what ``clipped`` cuts. A group that lengthens its own wording pays for it
+    out of the fault's slack rather than out of the bound every other row of the
+    report keeps, and no caller passes a number that could go stale.
     """
     # The identifier is the one answer to "which directory", asked of one rooting
     # so that ``subject``, ``artifact`` and the clause the row narrates cannot
@@ -276,18 +277,23 @@ def append_listing_fault(dir_: Path, root: Path, findings: list[dict],
     # through the scrubber: a scrubbed identifier is a marker, and a marker is not
     # a name a caller can join on or an operator can act on.
     name = ledger_name(rel_to_root(root, dir_))
-    # The budget is what the sentence leaves over. The row is composed with the
-    # fault empty and measured, so the sum is the very sentence this row prints --
-    # not an estimate of it -- and the fault gets the slack up to ``ROW_BOUND``.
-    # The census wrote the sentence, so the sentence is what pays: a group that
-    # lengthens its clause, or a caller that hands in a long path, buys a shorter
-    # fault and never a row that ``clipped`` cuts through the verdict clause.
-    # Floored so a sentence already at the bound still names the fault it got.
-    skeleton = (f"cannot-tell: {noun} ({name}) exists but could not be "
-                f"listed (), {unknown}")
-    fault_bound = max(ROW_BOUND - len(skeleton), _MIN_FAULT_BOUND)
+
+    def compose(with_fault: str) -> str:
+        """The finished message, with ``with_fault`` in the fault's parentheses.
+
+        One composition, used twice: once with the fault empty to measure what the
+        sentence itself costs, once with the fault's own words in it. Measuring the
+        sentence this row actually builds is what makes the budget a bound and not
+        an estimate -- a number a caller had guessed would have to be recomputed
+        every time a group reworded its clause.
+        """
+        return (f"cannot-tell: {noun} ({name}) exists but could not be listed "
+                f"({with_fault}), {unknown}")
+
+    # The budget is what the sentence leaves over, floored so a group whose prose
+    # already fills the bound still names the fault that refused it.
+    fault_bound = max(ROW_BOUND - len(compose("")), _MIN_FAULT_BOUND)
     findings.append(
         row(check, strict, name, name,
-            clipped(f"cannot-tell: {noun} ({name}) exists but could not be listed "
-                    f"({bounded(fault, fault_bound)}), {unknown}"), root,
+            clipped(compose(bounded(fault, fault_bound))), root,
             severity="warn", whole_artifact=True))

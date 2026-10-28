@@ -68,6 +68,20 @@ def _fault_iterdir(monkeypatch, target: Path, text: str = "readdir denied"):
 # --- the identifier -------------------------------------------------------------
 
 
+def _is_census_written_path(rel: str) -> bool:
+    """The predicate the identifier rule reads, spelled out for its own test.
+
+    A path is what the census wrote when it is a plain path below the repo root:
+    two or more segments, none empty, none ``.`` or ``..``, the first not opening
+    with ``~``, and no segment longer than a directory is ever named. Everything
+    else is a path a caller spelled, and the row may print only its last segment.
+    """
+    parts = rel.rstrip("/").split("/")
+    return (len(parts) >= 2 and all(p not in ("", ".", "..") for p in parts)
+            and not parts[0].startswith("~")
+            and all(len(p) <= census_ledger._ROOT_SEGMENT_MAX for p in parts))
+
+
 @pytest.mark.parametrize("rel,expected", (
     # The ordinary case: a path the census could root keeps its root-relative form.
     ("noni/decisions", "noni/decisions"),
@@ -88,6 +102,9 @@ def _fault_iterdir(monkeypatch, target: Path, text: str = "readdir denied"):
     # stays root-relative however many segments it holds.
     ("x/" + "b" * 79, "x/" + "b" * 79),
     ("a/b/c/d/e", "a/b/c/d/e"),
+    # A dot segment is a walk, not a name, so it is not root-relative either.
+    ("./noni/decisions", "decisions"),
+    ("noni/./decisions", "decisions"),
     # Nothing left to name: the generic word, never an empty field.
     ("", "ledger"),
     ("/", "ledger"),
@@ -97,11 +114,11 @@ def test_ledger_name_keeps_a_root_relative_path_and_shrinks_the_rest(rel, expect
 
     The row's ``subject``/``artifact`` are joined on, so they cannot go through the
     scrubber, and they are rendered too, so they cannot carry a host path either.
-    The reduction is what settles that: only a path the census could root (two
-    segments below the repo root, no empty segment, no ``..``, no leading ``~``)
-    is a path the census wrote, and every path it could not root is one the caller
-    spelled, of which the last segment is all the row may print.
+    The reduction is what settles that, and it is stated as a predicate over the
+    path (see :func:`_is_census_written_path`) rather than as a list of shapes to
+    shrink: a rule that names shapes is a rule that misses one.
     """
+    assert _is_census_written_path(rel) == (expected == rel)
     assert census_ledger.ledger_name(rel) == expected
 
 
@@ -116,14 +133,17 @@ def test_ledger_name_answers_for_every_path_shape_it_may_be_handed():
     for rel in ("~deploy/a/b c", "~/x/y", "../host-dir/decisions",
                 "../../home/someone/decisions", "/abs/host-dir/decisions", "/", "",
                 "noni/decisions", "noni/a~b", "a//b", "a/./b", "decisions", "//", "~",
-                "/home/someone/decisions"):
+                "/home/someone/decisions", "a/./", "./noni/decisions", "noni//"):
         name = census_ledger.ledger_name(rel)
         assert name, f"{rel!r} answered an empty identifier"
         assert "\\" not in name and "\n" not in name, f"{rel!r} -> {name!r}"
+        assert len(name) <= max(len(rel), census_ledger._ROOT_SEGMENT_MAX), \
+            f"{rel!r} -> {name!r}: an identifier is never longer than its path"
         if name != rel:  # a root-relative path is kept whole, everything else shrunk
             assert not name.startswith("/") and not name.startswith("~"), \
                 f"{rel!r} -> {name!r}: an identifier may not be a location"
-            assert ".." not in name.split("/"), f"{rel!r} -> {name!r} escapes the tree"
+            assert ".." not in name.split("/") and "." not in name.split("/"), \
+                f"{rel!r} -> {name!r} escapes the tree"
 
 
 def test_ledger_name_never_shrinks_a_root_relative_path():

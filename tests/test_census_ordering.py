@@ -789,8 +789,11 @@ def test_an_unlistable_ledger_is_reported_and_never_reads_as_clean(tmp_path):
         assert rows[0]["severity"] == "fail", rows[0]
         assert rows[0]["subject"] == ORDER_REL, rows[0]
         assert "noni/decisions" in rows[0]["message"], rows[0]
-        # The OSError's own text reaches the row, through the census's
-        # machine-local-path scrubbing (which is why the two words are split).
+        # The OSError's own text reaches the row. It goes through the census's
+        # machine-local-path scrubbing, which is anchored so that it stops at
+        # absolute and home paths and leaves this errno text whole; the
+        # assertions are written by substring, not by the whole phrase, so they
+        # hold whichever way the scrub lands.
         assert "OSError" in rows[0]["message"], rows[0]
         assert "input" in rows[0]["message"], rows[0]
         # A whole-artifact row survives a filter that named none of its classes.

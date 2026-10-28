@@ -1595,7 +1595,7 @@ class TestLedgerStateVocabulary:
         rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
         rows = [r for r in _ndjson_rows(out) if r.get("check") == "ledger-edited"]
         assert len(rows) == 1, f"expected one row: {rows}"
-        assert "input" in rows[0]["message"] and "error" in rows[0]["message"], (
+        assert "input/output error" in rows[0]["message"], (
             f"the OSError text must survive into the row: {rows[0]['message']}"
         )
         assert "symlink" not in rows[0]["message"], (
@@ -1642,6 +1642,60 @@ class TestLedgerStateVocabulary:
         assert not row["subject"].startswith("/"), (
             f"no machine-local path in the row: {row}"
         )
+
+    def test_probe_error_text_keeps_its_words_and_drops_its_path(self, tmp_path, monkeypatch):
+        """One OSError text, both halves of the scrub rule, in the row that carries it.
+
+        The fault is the one ``PermissionError`` raises: its ``str()`` is the errno
+        words *and* the path it failed on, so a single row must keep the first and
+        drop the second. They pull against each other, and each rule broken on its
+        own passes the other's test. An unanchored scrub ate the middle of every
+        ``/`` it saw, so it took ``input/output`` with it and the row that exists
+        to say what failed said nothing; an anchored scrub of two-run paths only
+        left the quoted one-component path standing, since its only separator
+        follows a quote. This pins both halves at once.
+
+        The home path is the harness fixture rather than a literal: a tracked file
+        carrying one would trip the census's own hygiene class.
+        """
+        import census
+
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                      json.dumps(_valid_record(), indent=2))
+        ledger = repo / "noni" / "decisions"
+        leaked = _home_path_violation()
+
+        real_iterdir = census.Path.iterdir
+        # str() of the fault is what the row renders, and OSError builds it from
+        # the errno pair: strerror carries the words, filename the path. The
+        # errno words are extended so the one text holds both halves of the rule.
+        fault = OSError(13, "Permission denied - input/output error", leaked)
+
+        def boom(self):
+            if self == ledger:
+                raise fault
+            return real_iterdir(self)
+
+        monkeypatch.setattr(census.Path, "iterdir", boom)
+        _rc, out, _err = _run_census(repo, json_out=True, skip_hygiene=True)
+        rows = [r for r in _ndjson_rows(out) if r.get("check") == "ledger-edited"]
+        assert len(rows) == 1, f"expected one row: {rows}"
+        message = rows[0]["message"]
+        assert "input/output error" in message, (
+            f"the errno words are the finding and must survive the scrub: {message}"
+        )
+        assert leaked not in message, (
+            f"the row leaked a machine-local absolute path: {message}"
+        )
+        assert "<path>" in message, (
+            f"the scrub must mark the path it removed, not silently delete it: "
+            f"{message}"
+        )
+        # The ledger is named root-relative, and naming it is the row's whole
+        # point: the scrub that drops the host path may not drop this too.
+        assert rows[0]["subject"] == rows[0]["artifact"] == "noni/decisions", rows[0]
+        assert "noni/decisions" in message, message
 
 
 class TestLedgerWholeDirectoryDeletion:

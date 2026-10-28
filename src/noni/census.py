@@ -1049,18 +1049,26 @@ def _stripped(message: str) -> str:
     sentence out of root-relative paths it derived itself needs the collapsing and
     nothing else.
 
-    The pattern is anchored: the separator must begin the string or follow
-    punctuation a row puts around a path (whitespace, a bracket, a quote, a
-    colon, a comma), rather than matching the first ``/`` seen anywhere.
-    Unanchored it ate the middle of a root-relative path too, so a scrubbed
-    ``noni/decisions`` came out as ``noni<path>`` — neither the path nor a
-    usable stand-in — and the row that reports an unreadable ledger failed to
-    name it. The rule is about a machine-local path, which begins with a
-    separator; a root-relative one is the finding the row states, and the census
-    narrates it inside parentheses, so the bracket belongs in the anchor set.
+    The rule is about a machine-local path: one written from the root (``/…``) or
+    from a home directory (``~/…``, ``~someone/…``). The anchor is what makes it
+    that rule and not a hunt for the first ``/`` anywhere. Unanchored it ate the
+    middle of a root-relative path, so a scrubbed ``noni/decisions`` came out as
+    ``noni<path>`` — neither the path nor a usable stand-in — and it ate
+    ``input/output`` out of an ``OSError`` whose text the row exists to carry.
+    Both are the finding the row states, so neither may be touched: the separator
+    must open the path, following only the start of the string or a character that
+    cannot itself continue a path (a delimiter, a quote, a bracket, ``=``), never a
+    word character or a ``.``.
+
+    That anchor is a character test and not a list of punctuation, which is what
+    covers the absolute paths a two-run floor would miss: a host path can be
+    shorter than two components, and ``PermissionError`` appends the filename it
+    failed on in quotes, so ``denied: '/home/dev/x'`` is absolute with its only
+    separator behind a quote.
     """
     collapsed = " ".join(message.split())
-    return re.sub(r"(?:(?<=^)|(?<=[\s(\[<\",:]))(?:/[A-Za-z0-9._-]+){2,}",
+    return re.sub(r"(?:(?<=^)|(?<=[^\w./~$-]))(?:/[A-Za-z0-9._-]+){2,}"
+                  r"|~[A-Za-z0-9._-]*(?:/[A-Za-z0-9._-]+)+",
                   "<path>", collapsed)
 
 

@@ -24,20 +24,16 @@ visible reason (same contract as the scrub); the structural purity checks
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 
-# Import the shared pattern registry and the deny-list loader from
-# scripts/public_safety.py so that new secret shapes or path patterns are
-# added in exactly one place and the banned vocabulary is the same deny-list
-# the scrub uses (never a committed list of real names).
-_scripts_dir = str(REPO / "scripts")
-if _scripts_dir not in sys.path:
-    sys.path.insert(0, _scripts_dir)
+# The shared pattern registry and the deny-list loader, from the package's own
+# checker, so that new secret shapes or path patterns are added in exactly one
+# place and the banned vocabulary is the same deny-list the scrub uses (never a
+# committed list of real names).
 from public_safety import (  # noqa: E402
     FIXTURE_HOME_PATH_PATTERNS,
     HOME_PATH_PATTERNS,
@@ -57,7 +53,7 @@ PRODUCT = REPO / "docs" / "PRODUCT.md"
 # deny-list is absent or inactive, the vocabulary check is skipped via
 # pytest.skip with a visible reason (same contract as the scrub's deny-list
 # class) while the structural checks below still run.
-_DENYLIST = load_denylist()
+_DENYLIST = load_denylist(REPO)
 FORBIDDEN_VOCAB = [
     (re.compile(re.escape(entry), re.IGNORECASE), "external tool/project vocabulary")
     for entry in _DENYLIST.entries

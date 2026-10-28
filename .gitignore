@@ -3,6 +3,12 @@ __pycache__/
 .venv/
 uv.lock
 noni.egg-info/
+# build droppings: `python -m build` writes these into the tree it builds;
+# they are copies of the package, not tracked content, and the scrub check reads
+# git-tracked files only, so a copy that leaked in would be scanned as product
+# source (see tests/test_wheel_contents.py, which builds into its own temp dir)
+build/
+dist/
 .pytest_cache/
 # coverage data: `coverage run` writes .coverage, parallel subprocess runs
 # write .coverage.<host>.<pid>.<seq>, `coverage html` writes htmlcov/

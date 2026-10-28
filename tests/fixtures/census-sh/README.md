@@ -1,7 +1,8 @@
 Fixtures for the census.sh `--help` output tests.
 
-`usage.txt` holds the canonical header the census.sh and census-sessions.sh
-`--help` output must contain: the usage line for each entry point and the
-first exit-code line. The scripts generate their help from their own header
-comment (no hard-coded sed line range), so the help text is stable as long
-as the header keeps these lines; the tests assert on these exact strings.
+`usage.txt` and `sessions-usage.txt` hold the lines both census `--help`
+routes must carry: the usage line for each entry point and the first
+exit-code line. The help text itself is the package constant
+`noni.shim_help.CENSUS_SH_HELP` / `CENSUS_SESSIONS_SH_HELP`, which the shim
+and `noni census --help` both print; the fixtures name the lines that
+constant must keep, so the tests compare both routes against them.

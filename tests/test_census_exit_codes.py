@@ -24,14 +24,9 @@ The four warn classes 42/43/44/50 are reported without --strict but exit 0;
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-_CENSUS_DIR = str(REPO / "skills" / "census" / "scripts")
-if _CENSUS_DIR not in sys.path:
-    sys.path.insert(0, _CENSUS_DIR)
-
 import census  # noqa: E402
 from _harness import _commit_file, _home_path_violation, _init_repo, _secret_violation  # noqa: E402
 
@@ -40,10 +35,6 @@ from _harness import _commit_file, _home_path_violation, _init_repo, _secret_vio
 # construction is not copy-pasted into this file).
 _HOME_PATH = _home_path_violation()
 _SECRET = _secret_violation()
-
-_scripts_dir = str(REPO / "scripts")
-if _scripts_dir not in sys.path:
-    sys.path.insert(0, _scripts_dir)
 
 
 def _valid_record(rec_id="2026-10-01-alpha", status="decided", supersedes=None) -> dict:

@@ -19,17 +19,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-from _harness import REGISTER as REGISTER_SCRIPT
-from _harness import subprocess_env
+from _harness import SRC, subprocess_env
 from conftest import run_register
 
-# register.py is a script, not a package (packages = [] in pyproject.toml), so
-# reaching its helpers is the repo's established sys.path insertion, done here
-# because pytest's rootdir handling does not put a skill scripts/ dir on the
-# path. The subprocess driver below does its own insertion instead of relying
-# on this one: it lives in tmp_path, not next to register.py.
-if str(REGISTER_SCRIPT.parent) not in sys.path:
-    sys.path.insert(0, str(REGISTER_SCRIPT.parent))
+# The product is the noni package; _harness puts src/ on sys.path, so the
+# register helpers are reachable here as `from noni import register`. No skill
+# scripts/ dir goes on the path: the wrapper there is a shim, and a lookalike
+# earlier on sys.path must not be trusted as the writer's own code.
 
 
 def _fields(body: str) -> dict:
@@ -124,8 +120,8 @@ def _run_patched_allocation(tmp_path: Path, repo: Path, identity: str, session_i
     driver.write_text(
         "import os\n"
         "import sys\n"
-        f"sys.path.insert(0, {str(REGISTER_SCRIPT.parent)!r})\n"
-        "import register\n"
+        f"sys.path.insert(0, {str(SRC)!r})\n"
+        "from noni import register\n"
         "register._make_session_id = lambda: os.environ['NONI_TEST_SESSION_ID']\n"
         "raise SystemExit(register.main(sys.argv[1:]))\n",
         encoding="utf-8",

@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import ast
 import contextlib
-import importlib.util
 import io
 import json
 import os
@@ -54,6 +53,7 @@ from _harness import (
     _init_repo,
     _script_ast,
     git_pin_date,
+    load_package_module,
     run_order,
     subprocess_env,
 )
@@ -78,45 +78,30 @@ ORDERING_CHECKS = ("ordering-malformed", "ordering-stale", "ordering-closed")
 
 
 def _schema_module() -> object:
-    """orderschema.py loaded as a module: the artifact's shape, from the product.
+    """orderschema.py as a fresh module object: the artifact's shape, from the product.
 
     The tests that need the canonical renderer or the timestamp parser ask the
-    module that owns them, which is the same object order.py loads by path. A
-    copy in the test file would be a second contract.
+    module that owns them. A copy of the contract in the test file would be a
+    second one, so this is the product's code, exec'd again under a private name
+    rather than the shared package module: the seam test replaces ``order_bytes``
+    on the *shared* module (which is what the writer resolves), and a test that
+    rendered from that same object afterwards would inherit the lie.
     """
-    path = SKILL_DIR / "scripts" / "orderschema.py"
-    spec = importlib.util.spec_from_file_location("noni_orderschema_under_test", path)
-    if spec is None or spec.loader is None:  # pragma: no cover - path is fixed
-        raise RuntimeError(f"cannot load the order schema from {path}")
-    sys.modules.pop(spec.name, None)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_package_module("orderschema")
 
 
 def _gitwrite_module() -> object:
     """gitwrite.py loaded as a module, for the tests that name its constants."""
-    path = SKILL_DIR / "scripts" / "gitwrite.py"
-    spec = importlib.util.spec_from_file_location("noni_order_gitwrite_under_test", path)
-    if spec is None or spec.loader is None:  # pragma: no cover - path is fixed
-        raise RuntimeError(f"cannot load the order git helper from {path}")
-    sys.modules.pop(spec.name, None)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    from noni import order_gitwrite
+
+    return order_gitwrite
 
 
 def _order_module() -> object:
     """order.py loaded as a module, for the tests that drive its internals."""
-    spec = importlib.util.spec_from_file_location("noni_order_under_test", ORDER)
-    if spec is None or spec.loader is None:  # pragma: no cover - path is fixed
-        raise RuntimeError(f"cannot load order module from {ORDER}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    from noni import order
+
+    return order
 
 
 def _orderstate_module() -> object:
@@ -127,15 +112,9 @@ def _orderstate_module() -> object:
     subprocess run would print, and a copy of the read in the test file would be
     a second contract for it.
     """
-    path = SKILL_DIR / "scripts" / "orderstate.py"
-    spec = importlib.util.spec_from_file_location("noni_orderstate_under_test", path)
-    if spec is None or spec.loader is None:  # pragma: no cover - path is fixed
-        raise RuntimeError(f"cannot load the order state reader from {path}")
-    sys.modules.pop(spec.name, None)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    from noni import orderstate
+
+    return orderstate
 
 
 def _order_path(repo: Path) -> Path:
@@ -928,7 +907,7 @@ def test_a_git_call_that_times_out_is_never_read_as_a_clean_answer(tmp_path, mon
     assert str(_gitwrite_module().GIT_TIMEOUT) in err.getvalue(), err.getvalue()
 
 
-def test_every_git_call_disables_hooks_signing_and_external_transports(tmp_path):
+def test_every_git_call_disables_hooks_signing_and_external_transports(tmp_path, monkeypatch):
     """No hook, no signing, no external transport, and no hang: the writer must
     not be able to wedge itself or run the tree's own scripts on the operator's
     behalf. Global config is NOT neutralised: the commit is made under the
@@ -943,13 +922,13 @@ def test_every_git_call_disables_hooks_signing_and_external_transports(tmp_path)
     real_run = subprocess.run
 
     repo = _repo(tmp_path)
-    module.gitwrite.git = _spied_git(real_run, seen)
-    try:
-        with contextlib.redirect_stdout(io.StringIO()):
-            code = module.main(["--repo", str(repo), "add", "7", "--decision", BASELINE_ID,
-                                "--now", NOW])
-    finally:
-        del module.gitwrite.git
+    # The spy lives on the helper's own module object, which is the shared
+    # package module the writer resolves through, so the product's git calls are
+    # the ones this spy sees. monkeypatch restores the helper's own call after.
+    monkeypatch.setattr(module.gitwrite, "git", _spied_git(real_run, seen))
+    with contextlib.redirect_stdout(io.StringIO()):
+        code = module.main(["--repo", str(repo), "add", "7", "--decision", BASELINE_ID,
+                            "--now", NOW])
     assert code == 0, code
     own = [c for c in seen if _writer_git_call(c, repo)]
     assert own, f"the writer made no git call of its own: {seen}"
@@ -1025,28 +1004,24 @@ def test_a_planned_order_that_cannot_be_rendered_is_refused(tmp_path, monkeypatc
     assert (repo / ORDER_REL).read_bytes() == before
 
 
-def test_the_commit_names_only_the_written_path(tmp_path):
+def test_the_commit_names_only_the_written_path(tmp_path, monkeypatch):
     """The staged-set rule is in the command line itself: add and commit both
     carry `-- <path>`, and the commit carries --only."""
     seen: list[list[str]] = []
     module = _order_module()
     real_run = subprocess.run
 
-    def spy(cmd, *args, **kwargs):
-        seen.append(list(cmd))
-        return real_run(cmd, *args, **kwargs)
-
     # Driven in-process through the writer's own git helper, so the calls the
     # spy sees are the writer's: the subprocess run would put them behind a
     # process boundary the spy cannot cross.
     repo = _repo(tmp_path)
-    module.gitwrite.git = _spied_git(real_run, seen)
-    try:
-        with contextlib.redirect_stdout(io.StringIO()):
-            code = module.main(["--repo", str(repo), "add", "7", "--decision", BASELINE_ID,
-                                "--now", NOW])
-    finally:
-        del module.gitwrite.git
+    # The spy lives on the helper's own module object, which is the shared
+    # package module the writer resolves through, so the product's git calls are
+    # the ones this spy sees. monkeypatch restores the helper's own call after.
+    monkeypatch.setattr(module.gitwrite, "git", _spied_git(real_run, seen))
+    with contextlib.redirect_stdout(io.StringIO()):
+        code = module.main(["--repo", str(repo), "add", "7", "--decision", BASELINE_ID,
+                            "--now", NOW])
     assert code == 0, code
     own = [c for c in seen if _writer_git_call(c, repo)]
     assert own, f"the writer made no git call of its own: {seen}"
@@ -1741,8 +1716,11 @@ def test_no_secrets_or_machine_local_paths_in_the_new_skill_and_fixture(tmp_path
     """The scrub's own patterns, applied to the two new files by name: the gate
     that covers them is parametrised over SKILL_FILES, and a parametrisation
     that quietly stopped including a file would be invisible without this."""
-    sys.path.insert(0, str(REPO / "scripts"))
-    from public_safety import FIXTURE_HOME_PATH_PATTERNS, HOME_PATH_PATTERNS, SECRET_PATTERNS
+    from public_safety import (  # noqa: E402  (registered by _harness)
+        FIXTURE_HOME_PATH_PATTERNS,
+        HOME_PATH_PATTERNS,
+        SECRET_PATTERNS,
+    )
     for path in (SKILL_DIR / "SKILL.md", ORDER, FIXTURE):
         text = path.read_text(encoding="utf-8")
         for lineno, line in enumerate(text.splitlines(), 1):

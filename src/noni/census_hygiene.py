@@ -2,51 +2,51 @@
 
 Split from ``census.py`` so each file stays the size one responsibility is
 worth: ``census.py`` owns the CLI, the exit-code table, the row shape and the
-group wiring, and this module owns the checker it loads and the one class it
-reports. It is loaded by path from ``census.py`` — the census never puts a
-directory on ``sys.path``, where a lookalike earlier on the path could be
-trusted as its hygiene class — and the three things a row is built from (the
-row factory, the census-relative artifact id, and the bounding of a foreign
-message) are handed in at the call, so the census keeps its single owner of the
-row shape.
+group wiring, and this module owns the checker it imports and the one class it
+reports. Both are ordinary package imports (``noni.public_safety``): neither is
+loaded by path any more, because inside an installed wheel there is no sibling
+file to load and no directory a lookalike could be found on.
 
 The scan is an import, never a subprocess, and the module it imports is
-verified before it runs: ``scripts/public_safety.py`` is a committed, editable
-file of the tree being audited, so the check here is that the census ran the
-checker it intends to report about, not a defence against a repository that
-rewrites its own gate (see ``skills/census/SKILL.md``, "census exit 50 is not
-the public_safety gate").
+verified before it runs: ``public_safety`` is a committed, editable file of the
+tree being audited when that tree carries its own copy, so the check here is
+that the census ran the checker it intends to report about — the package module
+captured at import time and identified by its own ``__name__`` and type — not
+some other object (see ``skills/census/SKILL.md``, "census exit 50 is not the
+public_safety gate").
 """
 
 from __future__ import annotations
 
 import collections.abc
 import contextlib
-import importlib.util
 import os
 import sys
+import types
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
-# scripts/public_safety.py lives at <repo-root>/scripts relative to the census
-# (four levels below the repo root; this file sits beside census.py). The
-# census loads it by path rather than importing it by name: scripts/ is not a
-# package, tests add their own sys.path entries, and a path load is what lets
-# the census verify the file it is about to execute.
-SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
+from . import public_safety as _PACKAGE_PUBLIC_SAFETY
+
+# The artifact a not-run hygiene row names, in the census's own hygiene artifact
+# namespace. It is a fixed package-relative literal rather than a path computed
+# from a file's location: the census never prints a machine-local absolute path,
+# and the same bytes must come out of the in-place wrapper and of `noni census`
+# from the wheel. See skills/census/SKILL.md, "The hygiene artifact namespace".
+HYGIENE_SCAN_ARTIFACT = "noni/public_safety.py"
 
 
 class PublicSafetyModule(Protocol):
-    """The slice of scripts/public_safety.py the census depends on.
+    """The slice of ``noni.public_safety`` the census depends on.
 
-    The scanner is loaded dynamically, so this is the only checked description
-    of the contract between the arbiter and the checker it runs: a signature
-    drift on public_safety's side is a type error against this Protocol rather
-    than an AttributeError at census time. ``_denylist_active`` is a private
-    helper of that module; the census calls it because public_safety is a gate
-    file whose surface this release may not widen, and `_trusted_public_safety`
-    requires it at runtime precisely so the coupling is detected as a not-run
-    row rather than an AttributeError.
+    The scanner is reached through a lookup rather than a static import, so this
+    is the only checked description of the contract between the arbiter and the
+    checker it runs: a signature drift on public_safety's side is a type error
+    against this Protocol rather than an AttributeError at census time.
+    ``_denylist_active`` is a private helper of that module; the census calls it
+    because public_safety is a gate file whose surface this release may not
+    widen, and `_trusted_public_safety` requires it at runtime precisely so the
+    coupling is detected as a not-run row rather than an AttributeError.
     """
 
     def scrub_tracked_files(self, repo: Path) -> tuple[list[str], str | None, Any]: ...
@@ -82,68 +82,56 @@ GIT_ENV_NEUTRAL = {
 
 
 def _load_public_safety() -> PublicSafetyModule | None:
-    """Import scripts/public_safety.py for the in-process hygiene scan.
+    """Import ``noni.public_safety`` for the in-process hygiene scan.
 
-    Returns None when the module cannot be imported (a stripped checkout that
-    carries the skill without scripts/) or is not the file the census expects
-    to find at SCRIPTS_DIR: the caller then reports that the scan did not run
-    instead of reporting clean.
+    Returns None when the module cannot be imported (a package installed
+    without it) or is not the module this census's own package owns: the caller
+    then reports that the scan did not run instead of reporting clean.
 
     The module is taken from the census's own ``sys.modules`` slot when that
-    entry already points at this tree's ``SCRIPTS_DIR`` — the seams tests
-    monkeypatch (``_default_denylist_file``, ``DENYLIST_ENV_VAR``) live on that
-    one object, and a fresh load would silently run the scan past a patched
-    deny-list. An entry from a different tree is not this census's checker, so
-    the file is then loaded by path from ``SCRIPTS_DIR`` and re-verified before
-    it is executed.
+    entry already *is* the package's checker — the seams tests monkeypatch
+    (``_default_denylist_file``, ``DENYLIST_ENV_VAR``) live on that one object,
+    and a fresh import could hand back a different one. Anything else under
+    that key is not this census's checker, so the package module is returned
+    instead (see :func:`_trusted_public_safety` for what makes it the checker).
     """
     existing = sys.modules.get(CENSUS_PS_MODULE_KEY)
     if _trusted_public_safety(existing):
         return existing
-    path = (SCRIPTS_DIR / "public_safety.py").resolve()
-    if not path.is_file():
-        return None
-    spec = importlib.util.spec_from_file_location(CENSUS_PS_MODULE_KEY, path)
-    if spec is None or spec.loader is None:
-        return None
-    module = importlib.util.module_from_spec(spec)
-    # Register under the census's own key before exec (the canonical importlib
-    # recipe): a module body that imports itself would otherwise find no entry
-    # in sys.modules. The shared "public_safety" name is never written.
-    sys.modules[CENSUS_PS_MODULE_KEY] = module
-    try:
-        spec.loader.exec_module(module)
-    except Exception:
+    if not _trusted_public_safety(_PACKAGE_PUBLIC_SAFETY):
         # The scan could not be loaded: the caller reports the scan as not run
-        # (never a clean), and the half-built module must not stay registered.
-        sys.modules.pop(CENSUS_PS_MODULE_KEY, None)
+        # (never a clean).
         return None
-    # Executing a module is executing the tree's code: only keep it when it is
-    # still the file we asked for and exposes the contract above.
-    if not _trusted_public_safety(module):
-        sys.modules.pop(CENSUS_PS_MODULE_KEY, None)
-        return None
-    return module
+    sys.modules[CENSUS_PS_MODULE_KEY] = _PACKAGE_PUBLIC_SAFETY
+    return _PACKAGE_PUBLIC_SAFETY
 
 
 def _trusted_public_safety(module: object) -> bool:
-    """True when ``module`` is the checker at SCRIPTS_DIR/public_safety.py and
-    carries the members `_check_hygiene` calls. The resolved path is re-checked
-    on every call, so a module registered under the census's key from elsewhere
-    (or a sibling sys.path shadow) is not executed or trusted.
+    """True when ``module`` is the package's own checker and carries the members
+    :func:`check_hygiene` calls.
+
+    Trust is module **identity against the package import captured once at
+    import time** — the object ``from . import public_safety`` bound, under the
+    name it declares for itself (``noni.public_safety``, and it must be a real
+    ``types.ModuleType``). The bare ``"public_safety"`` ``sys.modules`` alias is
+    deliberately *not* consulted: it is a convenience name the test harness
+    registers for tests written against the old flat ``scripts/`` layout, and an
+    entry under a name that short is a substitution route, not an anchor. An
+    object that merely carries the same attributes (or that an earlier tree put
+    under the census's own key) is neither executed nor trusted.
 
     The name "trusted" is scoped honestly: public_safety is a committed, editable
-    file of the very tree being audited, so this is a *consistency* check (the
-    census ran the checker it intends to report about, not a stale or foreign
-    module), not a defence against a repository that rewrites its own gate. The
-    gate that cannot be satisfied by editing the audited tree is
-    `scripts/public_safety.py` run from a clean operator checkout before
-    publishing — see skills/census/SKILL.md, "census exit 50 is not the
-    public_safety gate".
+    file of the very tree being audited when that tree ships its own copy, so
+    this is a *consistency* check (the census ran the checker it intends to
+    report about, not a stale or foreign module), not a defence against a
+    repository that rewrites its own gate. The gate that cannot be satisfied by
+    editing the audited tree is `scripts/public_safety.py` run from a clean
+    operator checkout before publishing — see skills/census/SKILL.md, "census
+    exit 50 is not the public_safety gate".
     """
-    if module is None:
+    if module is not _PACKAGE_PUBLIC_SAFETY:
         return False
-    if Path(getattr(module, "__file__", "")).resolve() != (SCRIPTS_DIR / "public_safety.py").resolve():
+    if not isinstance(module, types.ModuleType) or module.__name__ != "noni.public_safety":
         return False
     return all(callable(getattr(module, name, None))
                for name in ("scrub_tracked_files", "_denylist_active", "load_denylist"))
@@ -228,8 +216,7 @@ def _split_violation(violation: str, labels: set[str]) -> tuple[str, int, str] |
 
 
 def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
-                  row: Callable[..., dict], bounded: Callable[[str], str],
-                  rel_to_census: Callable[[Path], str]) -> None:
+                  row: Callable[..., dict], bounded: Callable[[str], str]) -> None:
     """The public-repo hygiene class (warn 50): the tracked-file scan, run
     in-process (an import, never a subprocess) over the census's own git tree.
 
@@ -252,20 +239,20 @@ def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
     ``hygiene scan`` = the scan itself, ``deny-list`` = the deny-list half of
     the scan, anything else = ``path:line`` of a violating tracked file (whose
     artifact is that file, root-relative, while the first two name the checker
-    from the skill directory — see SKILL.md, "The hygiene artifact
-    namespace"). The deny-list read follows public_safety's own precedence, so
-    this class reports the same verdict the operator's own
+    in the package-relative hygiene namespace — see SKILL.md, "The hygiene
+    artifact namespace"). The deny-list read follows public_safety's own
+    precedence, so this class reports the same verdict the operator's own
     ``scripts/public_safety.py`` gate gives.
     """
     def add(subject: str, artifact: str, message: str) -> None:
         # The artifact is already the string the row must carry: either the
         # violating file's path as public_safety reported it (already
-        # tree-relative) or the checker's id in the skill-relative hygiene
-        # namespace. It is never a path to be re-rooted into --repo.
+        # tree-relative) or the checker's id in the hygiene artifact namespace.
+        # It is never a path to be re-rooted into --repo.
         findings.append(row("hygiene", strict, subject, artifact, message, Path(),
                             relative_artifact=False))
 
-    scan_artifact = rel_to_census(SCRIPTS_DIR / "public_safety.py")
+    scan_artifact = HYGIENE_SCAN_ARTIFACT
 
     if top is None:
         add(
@@ -278,16 +265,14 @@ def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
 
     public_safety = _load_public_safety()
     if public_safety is None:
-        # The skill is installed on its own, without the repo's scripts/ dir:
-        # name the path that was probed relative to this file, because a path
-        # outside the audited tree has no root-relative form (and the census
-        # never prints a machine-local absolute path).
+        # The package was installed without its checker: name the module that
+        # was asked for, never a resolved filesystem path (the census never
+        # prints a machine-local absolute path).
         add(
             "hygiene scan",
             scan_artifact,
-            "hygiene scan did not run: public_safety is not importable from the repo's "
-            f"scripts directory ({rel_to_census(SCRIPTS_DIR)}) — this run is not a "
-            "hygiene-clean guarantee",
+            "hygiene scan did not run: public_safety is not importable from the "
+            "noni package — this run is not a hygiene-clean guarantee",
         )
         return
 
@@ -365,9 +350,13 @@ def _pinned_hygiene_env():
     The deny-list is deliberately NOT pinned here: public_safety's own
     precedence governs (see scripts/public_safety.py, "Deny-list sources"), so
     the census reports the same deny-list verdict the operator's own
-    ``scripts/public_safety.py`` gate would — an untracked deny-list left next
-    to the checker, or named by NONI_SCRUB_DENYLIST, is the vocabulary the
-    publish-before-push rule expects there. One owner for that rule.
+    ``scripts/public_safety.py`` gate would — the untracked deny-list of the
+    tree being audited, or one named by NONI_SCRUB_DENYLIST, is the vocabulary
+    the publish-before-push rule expects there. One owner for that rule.
+
+    The two config files are not pinned here: public_safety passes them to its
+    own ``git ls-files`` directly, so the hardening travels with the call rather
+    than depending on who wrapped it.
     """
     saved = {k: os.environ.get(k) for k in GIT_ENV_NEUTRAL}
     os.environ.update(GIT_ENV_NEUTRAL)

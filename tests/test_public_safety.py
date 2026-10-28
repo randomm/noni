@@ -9,20 +9,16 @@ tool name appears in this file or its fixtures.
 
 from __future__ import annotations
 
+import os
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 
-# Make the scripts/ directory importable so `import public_safety` resolves
-# to scripts/public_safety.py.
-_scripts_dir = str(REPO / "scripts")
-if _scripts_dir not in sys.path:
-    sys.path.insert(0, _scripts_dir)
-
+# The package module is the only importable home of the checker; the bare alias
+# is registered by _harness from the same package object.
 import public_safety  # noqa: E402
 from _harness import _git  # noqa: E402
 
@@ -42,7 +38,7 @@ def clean_repo(tmp_path, monkeypatch):
     _git(repo, "add", "config.json")
     _git(repo, "commit", "-q", "-m", "snapshot")
 
-    monkeypatch.setattr(public_safety, "_default_denylist_file", lambda: tmp_path / "absent-denylist.txt")
+    monkeypatch.setattr(public_safety, "_default_denylist_file", lambda repo: tmp_path / "absent-denylist.txt")
     monkeypatch.delenv(public_safety.DENYLIST_ENV_VAR, raising=False)
     return repo
 
@@ -94,7 +90,7 @@ def test_scrub_fails_on_denylist_entry(clean_repo, tmp_path, monkeypatch):
     """A deny-list entry (loaded from the local untracked file) is flagged."""
     denylist = tmp_path / "absent-denylist.txt"
     denylist.write_text("# comment\n\nsynthetic-project-name\n", encoding="utf-8")
-    monkeypatch.setattr(public_safety, "_default_denylist_file", lambda: denylist)
+    monkeypatch.setattr(public_safety, "_default_denylist_file", lambda repo: denylist)
 
     (clean_repo / "note.md").write_text("port from synthetic-project-name\n", encoding="utf-8")
     _git(clean_repo, "add", "note.md")
@@ -127,9 +123,9 @@ def test_denylist_present_but_empty_is_not_active(clean_repo, tmp_path, monkeypa
     """
     empty = tmp_path / "empty-denylist.txt"
     empty.write_text("# only comments so far\n\n", encoding="utf-8")
-    monkeypatch.setattr(public_safety, "_default_denylist_file", lambda: empty)
+    monkeypatch.setattr(public_safety, "_default_denylist_file", lambda repo: empty)
 
-    result = public_safety.load_denylist()
+    result = public_safety.load_denylist(clean_repo)
     assert result.entries == []
     assert result.status == "ok"
     assert result.source == empty.as_posix()
@@ -150,15 +146,15 @@ def test_scrub_denylist_env_var_precedence(clean_repo, tmp_path, monkeypatch):
     file_denylist = tmp_path / "absent-denylist.txt"
     file_denylist.write_text("synthetic-file-name\n", encoding="utf-8")
 
-    monkeypatch.setattr(public_safety, "_default_denylist_file", lambda: file_denylist)
+    monkeypatch.setattr(public_safety, "_default_denylist_file", lambda repo: file_denylist)
     monkeypatch.setenv(public_safety.DENYLIST_ENV_VAR, env_denylist.as_posix())
 
-    result = public_safety.load_denylist()
+    result = public_safety.load_denylist(clean_repo)
     assert result.source == file_denylist.as_posix()
     assert result.entries == ["synthetic-file-name"]
 
     file_denylist.unlink()
-    result = public_safety.load_denylist()
+    result = public_safety.load_denylist(clean_repo)
     assert result.source == env_denylist.as_posix()
     assert result.entries == ["synthetic-env-name"]
 
@@ -282,9 +278,9 @@ def test_denylist_corrupt_file_degrades_gracefully(clean_repo, tmp_path, monkeyp
     exit-2 guard fires instead of reporting a false clean."""
     corrupt = tmp_path / "corrupt-denylist.bin"
     corrupt.write_bytes(b"\x80\x81\x82 not utf8")
-    monkeypatch.setattr(public_safety, "_default_denylist_file", lambda: corrupt)
+    monkeypatch.setattr(public_safety, "_default_denylist_file", lambda repo: corrupt)
 
-    result = public_safety.load_denylist()
+    result = public_safety.load_denylist(clean_repo)
     assert result.entries == []
     assert result.status == "corrupt"
 
@@ -304,10 +300,10 @@ def test_denylist_corrupt_default_falls_through_to_env_var(clean_repo, tmp_path,
     env_denylist = tmp_path / "env-denylist.txt"
     env_denylist.write_text("synthetic-env-name\n", encoding="utf-8")
 
-    monkeypatch.setattr(public_safety, "_default_denylist_file", lambda: corrupt)
+    monkeypatch.setattr(public_safety, "_default_denylist_file", lambda repo: corrupt)
     monkeypatch.setenv(public_safety.DENYLIST_ENV_VAR, env_denylist.as_posix())
 
-    result = public_safety.load_denylist()
+    result = public_safety.load_denylist(clean_repo)
     assert result.status == "ok"
     assert result.source == env_denylist.as_posix()
     assert result.entries == ["synthetic-env-name"]
@@ -315,6 +311,91 @@ def test_denylist_corrupt_default_falls_through_to_env_var(clean_repo, tmp_path,
     # A visible notice was printed for the corrupt default file.
     captured = capsys.readouterr()
     assert "unreadable" in captured.err
+
+
+def test_denylist_is_read_from_the_audited_tree_not_the_cwd(tmp_path, monkeypatch):
+    """The default deny-list is sought in the tree being audited, not in the
+    process's working directory.
+
+    The scrub is given a tree and the wheel copy of this module sits anywhere on
+    the machine, so a default path derived from ``Path.cwd()`` finds the operator
+    deny-list only by accident — a publishing gate run from another directory
+    silently drops the whole operator-name half and still prints nothing. The
+    fixture puts the deny-list at the audited root with a tracked file carrying
+    its entry, runs the scan with the process cwd somewhere else, and requires
+    the violation to be found."""
+    repo = tmp_path / "audited"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    (repo / "note.md").write_text("port from synthetic-project-name\n", encoding="utf-8")
+    _git(repo, "add", "note.md")
+    _git(repo, "commit", "-q", "-m", "snapshot")
+    (repo / public_safety.DENYLIST_FILENAME).write_text(
+        "synthetic-project-name\n", encoding="utf-8"
+    )
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.delenv(public_safety.DENYLIST_ENV_VAR, raising=False)
+
+    result = public_safety.load_denylist(repo)
+    assert result.status == "ok", f"the audited tree's deny-list was not read: {result}"
+    assert result.entries == ["synthetic-project-name"]
+    assert result.source == str((repo / public_safety.DENYLIST_FILENAME).resolve())
+
+    violations, source, _ = public_safety.scrub_tracked_files(repo)
+    assert source is not None, "the scrub did not activate the deny-list class"
+    assert [v for v in violations if v.startswith("note.md:1:")
+            and "deny-list entry" in v], violations
+
+
+def test_denylist_is_loaded_from_the_audited_tree(tmp_path, monkeypatch):
+    """A tree that carries its own untracked deny-list is scanned with it, with
+    no environment variable involved."""
+    repo = tmp_path / "audited"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    (repo / "note.md").write_text("port from synthetic-project-name\n", encoding="utf-8")
+    _git(repo, "add", "note.md")
+    _git(repo, "commit", "-q", "-m", "snapshot")
+    (repo / public_safety.DENYLIST_FILENAME).write_text(
+        "synthetic-project-name\n", encoding="utf-8"
+    )
+    monkeypatch.delenv(public_safety.DENYLIST_ENV_VAR, raising=False)
+
+    result = public_safety.load_denylist(repo)
+    assert result.entries == ["synthetic-project-name"], result
+
+
+def test_repo_local_fsmonitor_helper_does_not_run_during_a_scan(clean_repo):
+    """The scan's ``git ls-files`` is hardened against the audited tree's own
+    config.
+
+    ``core.fsmonitor`` names a program git execs to ask which files changed, so
+    a config planted in the tree being scanned turns a read-only listing into
+    execution of that tree's code under the scanner's privileges. The helper here
+    exits 0 and writes a marker, so the marker's absence is the assertion; the
+    scan still returning its violations for the tree is the control that says the
+    listing itself happened.
+    """
+    marker = clean_repo / "FSMONITOR_RAN"
+    helper = clean_repo / "fsmonitor-helper.sh"
+    helper.write_text(
+        "#!/bin/sh\n" + "printf x > " + str(marker) + "\nexit 0\n", encoding="utf-8"
+    )
+    helper.chmod(0o755)
+    _git(clean_repo, "config", "core.fsmonitor", str(helper))
+    # A fresh mtime on the index is what asks git to query the monitor: without
+    # it the stat cache answers and the helper is never reached, so the
+    # assertion would pass for no reason.
+    index = clean_repo / ".git" / "index"
+    stat_before = index.stat()
+    os.utime(index, ns=(stat_before.st_atime_ns, stat_before.st_mtime_ns + 2_000_000_000))
+
+    violations, _source, _ = public_safety.scrub_tracked_files(clean_repo)
+    assert violations == []
+    assert not marker.exists(), "the scrub ran a core.fsmonitor helper it must not run"
 
 
 def test_noni_repo_is_clean():

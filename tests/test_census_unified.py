@@ -15,10 +15,6 @@ REPO = Path(__file__).resolve().parent.parent
 
 from _harness import _commit_file, _git, _home_path_violation, _init_repo, _secret_violation  # noqa: E402
 
-_scripts_dir = str(REPO / "scripts")
-if _scripts_dir not in sys.path:
-    sys.path.insert(0, _scripts_dir)
-
 DENYLIST_ENV_VAR = "NONI_SCRUB_DENYLIST"
 
 # Synthetic violation shapes, built by tests/_harness.py from public_safety's
@@ -665,7 +661,7 @@ class TestHygiene:
                       json.dumps(_valid_record(), indent=2))
         corrupt = tmp_path / "corrupt-denylist.txt"
         corrupt.write_bytes(b"\xff\xfe\x00\x01not utf8")
-        monkeypatch.setattr(public_safety, "_default_denylist_file", lambda: corrupt)
+        monkeypatch.setattr(public_safety, "_default_denylist_file", lambda repo: corrupt)
         rc, out, err = _run_census(repo, json_out=True)
         assert rc == 0, f"expected 0 (warn) without --strict, got {rc}\n{err}"
         rows = [r for r in _ndjson_rows(out) if r.get("check") == "hygiene"]
@@ -683,7 +679,7 @@ class TestHygiene:
                       json.dumps(_valid_record(), indent=2))
         empty = tmp_path / "empty-denylist.txt"
         empty.write_text("# only a comment\n", encoding="utf-8")
-        monkeypatch.setattr(public_safety, "_default_denylist_file", lambda: empty)
+        monkeypatch.setattr(public_safety, "_default_denylist_file", lambda repo: empty)
         rc, out, err = _run_census(repo, json_out=True)
         assert rc == 0, f"expected 0 (warn) without --strict, got {rc}\n{err}"
         rows = [r for r in _ndjson_rows(out) if r.get("check") == "hygiene"]
@@ -835,12 +831,16 @@ class TestHygiene:
         assert "did not run" in rows[0]["message"]
         assert rows[0]["code"] == 50
         # The artifact is pinned, not just "truthy": the not-run row names the
-        # checker from the skill directory (the hygiene artifact namespace),
+        # checker by its package-relative id (the hygiene artifact namespace),
         # and a row that pointed anywhere else would send a caller to the wrong
-        # file when it goes to fix the scan.
-        assert rows[0]["artifact"] == "../../../scripts/public_safety.py", (
-            f"not-run row must name the checker from the skill dir: {rows[0]}"
+        # file when it goes to fix the scan. Read from the product's constant so
+        # the row and the checker's own name cannot drift apart unnoticed.
+        import census_hygiene
+
+        assert rows[0]["artifact"] == census_hygiene.HYGIENE_SCAN_ARTIFACT, (
+            f"not-run row must name the checker: {rows[0]}"
         )
+        assert rows[0]["artifact"] == "noni/public_safety.py", rows[0]
 
     def test_non_git_repo_strict_lifts_the_exit(self, tmp_path):
         """The not-run row is a warn like any other hygiene row: --strict turns
@@ -1702,14 +1702,16 @@ class TestHygieneRowContract:
         """
         import census
 
+        # A fresh load: the census's own slot may already hold the checker from an
+        # earlier test, and this one is about what the *loader* registers.
+        sys.modules.pop(census.CENSUS_PS_MODULE_KEY, None)
         module = census._load_public_safety()
-        assert module is not None, "scripts/public_safety.py must be loadable"
+        assert module is not None, "the package's public_safety must be loadable"
         assert census.CENSUS_PS_MODULE_KEY == "noni_census_public_safety"
         assert sys.modules.get(census.CENSUS_PS_MODULE_KEY) is module
-        # The census's own loader never registers under the shared name; a test
-        # that imported the module normally may have, so assert about the
-        # census's write, not about the registry's contents.
-        assert module.__name__ == census.CENSUS_PS_MODULE_KEY
+        # The census's own loader never registers under the shared name; it hands
+        # back the package module, which carries the package-qualified name.
+        assert module.__name__ == "noni.public_safety"
 
     def test_module_from_another_tree_is_not_trusted(self, tmp_path, monkeypatch):
         """A public_safety whose __file__ is not SCRIPTS_DIR/public_safety.py is
@@ -1746,6 +1748,81 @@ class TestHygieneRowContract:
         # entirely, i.e. reported a hygiene-clean guarantee on a scan that never
         # ran; the real checker's absent deny-list is what the row must name.
         assert "absent" in rows[0]["message"], f"row: {rows[0]}"
+
+    def test_object_under_the_bare_public_safety_alias_is_not_trusted(self, monkeypatch):
+        """The bare "public_safety" sys.modules entry is not a trust anchor.
+
+        The bare alias is a convenience the test harness registers for tests that
+        were written against the old flat scripts/ layout; a foreign object
+        registered under that same name is a substitution route, so the checker
+        the census trusts is the package module captured once — identified by
+        its own ``__name__`` — and nothing reached through the bare alias.
+        """
+        import types
+
+        import census
+
+        import noni.public_safety as package_public_safety
+
+        impostor = types.ModuleType("public_safety")
+        impostor.scrub_tracked_files = lambda repo: []
+        impostor._denylist_active = lambda denylist: True
+        impostor.load_denylist = lambda: None
+        monkeypatch.setitem(sys.modules, "public_safety", impostor)
+        sys.modules.pop(census.CENSUS_PS_MODULE_KEY, None)
+        module = census._load_public_safety()
+        assert module is not impostor, (
+            "the census trusted an object registered under the bare alias"
+        )
+        assert module is package_public_safety
+
+    def test_non_module_object_with_the_right_attributes_is_not_trusted(self, monkeypatch):
+        """Carrying the three members is not enough: the object must be a module
+        whose ``__name__`` is the package's own."""
+        import census
+
+        import noni.public_safety as package_public_safety
+
+        class _LooksLikeTheChecker:
+            __name__ = "noni.public_safety"
+
+            @staticmethod
+            def scrub_tracked_files(repo):
+                raise AssertionError("the lookalike must never be executed")
+
+            @staticmethod
+            def _denylist_active(denylist):
+                return True
+
+            @staticmethod
+            def load_denylist():
+                return None
+
+        lookalike = _LooksLikeTheChecker()
+        monkeypatch.setitem(sys.modules, census.CENSUS_PS_MODULE_KEY, lookalike)
+        assert census._trusted_public_safety(lookalike) is False
+        assert census._load_public_safety() is package_public_safety
+
+        # A module object that is not the package's checker: right type, wrong
+        # __name__, and registered nowhere the census consults.
+        import types
+
+        wrong_name = types.ModuleType("noni.public_safety")
+        wrong_name.scrub_tracked_files = lambda repo: []
+        wrong_name._denylist_active = lambda denylist: True
+        wrong_name.load_denylist = lambda: None
+        monkeypatch.setitem(sys.modules, census.CENSUS_PS_MODULE_KEY, wrong_name)
+        assert census._trusted_public_safety(wrong_name) is False
+        assert census._load_public_safety() is package_public_safety
+
+    def test_the_package_checker_is_trusted(self):
+        """The positive case of the same predicate, so the two tests above cannot
+        be satisfied by a predicate that simply refuses everything."""
+        import census
+
+        import noni.public_safety as package_public_safety
+
+        assert census._trusted_public_safety(package_public_safety) is True
 
 
 class TestCheckContractIsDerived:

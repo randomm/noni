@@ -32,6 +32,13 @@ history. History violations are **reported** (below) and never rewritten here.
    The CLI exits with status 2 (not 0) when the deny-list class was not
    active — absent, unreadable, or present-but-empty (zero usable entries) —
    so it will not report a false "clean" in any of those states.
+
+   `scripts/public_safety.py` is a wrapper: the checks it runs live in
+   `src/noni/public_safety.py`, and the wrapper adds only the tree to audit
+   (this repository's root) and the exit-code contract above. Scrubbing the
+   package and scrubbing the wrapper are the same check over the same tree;
+   `tests/test_wheel_contents.py` is what keeps the built wheel from shipping a
+   file this check never saw.
 2. **Neutral identity.** Configure a neutral git identity for the new repo
    (e.g. a project name + a project-local email); do not reuse a personal
    identity, hostname or employer address.

@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Callable, NamedTuple
 
 from .census_ledger import listing_helper
+from .census_text import fault_text
 
 # A decision record id is what decide.py writes: <YYYY-MM-DD>-<slug> of
 # lowercase letters, digits and dashes. The same shape the writer refuses a
@@ -115,7 +116,7 @@ def load_order(order: Path, file_kind, bounded, parse_iso, shape: Callable[[obje
     try:
         raw = order.read_bytes()
     except OSError as e:
-        return None, f"the order file is unreadable: {bounded(str(e))}"
+        return None, f"the order file is unreadable: {bounded(fault_text(e))}"
     try:
         value = load_json(raw)
     except UnicodeDecodeError:
@@ -188,7 +189,7 @@ def load_issue_state(path: Path | None, states: tuple[str, ...], file_kind, boun
         raw = path.read_bytes()
     except OSError as e:
         return IssueState(None, bounded(f"the --issue-state file ({name}) is "
-                                        f"unreadable: {bounded(str(e))}"), True)
+                                        f"unreadable: {bounded(fault_text(e))}"), True)
     try:
         value = load_json(raw)
     except UnicodeDecodeError:
@@ -263,10 +264,13 @@ def ledger_records(ledger: Path, file_kind, load_json: Callable[[bytes], object]
 
     The second element says whether a lookup could be made at all — a ledger that
     answered nothing must not have every entry's decision reported as matching no
-    file — and the fourth then carries the OSError's own text, because a row that
+    file — and the fourth then carries the fault's own wording, because a row that
     says only "could not be listed" sends the operator to look for a missing
     directory when the tree answered with a fault. ``ledger-empty`` in the ledger
-    group words its listing fault the same way for the same reason.
+    group words its listing fault the same way for the same reason, and both take
+    the wording from ``census_text.fault_text``: the class and the ``strerror``,
+    never the filename the read failed on, which the row names by its own
+    identifier in any case.
 
     The third element separates the two ways nothing was looked up, because the
     caller reports them differently: ``listed`` False means no read was
@@ -306,9 +310,10 @@ def ledger_records(ledger: Path, file_kind, load_json: Callable[[bytes], object]
         try:
             names = listing_helper(ledger)
         except OSError as e:
-            # Bounded wording only: the text is an exception from this tree, and
-            # a census row never prints a machine-local absolute path.
-            return {}, False, set(), True, f"{e.__class__.__name__}: {e.strerror or e}"
+            # The fault's own words, and nothing of the path: the row that
+            # renders this already names the ledger by the census's identifier,
+            # and a filename is the one part of an OSError no row may carry.
+            return {}, False, set(), True, fault_text(e)
     records: dict[str, dict] = {}
     unreadable: set[str] = set()
     for name in sorted(names):

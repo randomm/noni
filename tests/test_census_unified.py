@@ -1644,16 +1644,21 @@ class TestLedgerStateVocabulary:
         )
 
     def test_probe_error_text_keeps_its_words_and_drops_its_path(self, tmp_path, monkeypatch):
-        """One OSError text, both halves of the scrub rule, in the row that carries it.
+        """One OSError text, both halves of the rule, in the row that carries it.
 
         The fault is the one ``PermissionError`` raises: its ``str()`` is the errno
         words *and* the path it failed on, so a single row must keep the first and
         drop the second. They pull against each other, and each rule broken on its
         own passes the other's test. An unanchored scrub ate the middle of every
         ``/`` it saw, so it took ``input/output`` with it and the row that exists
-        to say what failed said nothing; an anchored scrub of two-run paths only
-        left the quoted one-component path standing, since its only separator
-        follows a quote. This pins both halves at once.
+        to say what failed said nothing; a rule that dropped the fault instead of
+        its path would leave the operator with a bare class name.
+
+        The path is gone because the producer never wrote it: the row is built
+        from the exception's class and its ``strerror``, so the marker the scrub
+        leaves behind has no part to replace. This row no longer prints one, and
+        asking it to would ask for the path to have been in the text first. The
+        scrub's own marker is pinned in tests/test_census_text_scrub.py.
 
         The home path is the harness fixture rather than a literal: a tracked file
         carrying one would trip the census's own hygiene class.
@@ -1688,10 +1693,10 @@ class TestLedgerStateVocabulary:
         assert leaked not in message, (
             f"the row leaked a machine-local absolute path: {message}"
         )
-        assert "<path>" in message, (
-            f"the scrub must mark the path it removed, not silently delete it: "
-            f"{message}"
-        )
+        for part in (".ssh", "id_ed25519"):
+            assert part not in message, (
+                f"a component of the fault's filename reached the row: {message}"
+            )
         # The ledger is named root-relative, and naming it is the row's whole
         # point: the scrub that drops the host path may not drop this too.
         assert rows[0]["subject"] == rows[0]["artifact"] == "noni/decisions", rows[0]

@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from .census_text import fault_text
+
 
 @dataclass(frozen=True)
 class LedgerProbe:
@@ -47,6 +49,11 @@ class LedgerProbe:
     as a `ledger-edited` cannot-tell row and stays silent on the empty class —
     which is why the text travels beside ``problem`` instead of inside it.
 
+    Both fault fields are built by ``census_text.fault_text``, which reads the
+    exception's class and its ``strerror`` and never its filename: the path a
+    read failed on is the one part of an ``OSError`` no row may carry, and the
+    row names the ledger by the census's own identifier in any case.
+
     ``names`` is the record listing this probe took — the ``*.json`` names of a
     directory it successfully listed (the empty tuple for a directory it listed
     and found no record in, which is a read that answered "nothing"), and None
@@ -66,7 +73,7 @@ class LedgerProbe:
     names: tuple[str, ...] | None = None
 
 
-def _ledger_name(rel: str) -> str:
+def ledger_name(rel: str) -> str:
     """The identifier a row uses for a ledger it could not read.
 
     The root-relative path when the census could root it (``noni/decisions``).
@@ -75,6 +82,12 @@ def _ledger_name(rel: str) -> str:
     last segment (``decisions``) still tells the operator which ledger the row
     is about without printing the directory the host keeps it in. A trailing
     separator drops out rather than yielding an empty id.
+
+    It is the census's one answer to "what do I call a ledger this run could not
+    read", which is why the ordering group's listing-fault row takes the same
+    identifier from here rather than running the census's root-relative path
+    through the scrubber and hoping the marker that comes out still names the
+    directory the row is about.
 
     A root-relative path is one segment below the repo root (``noni/decisions``
     is two), so that is the test for "rootable": the override's absolute form
@@ -173,13 +186,14 @@ def probe_ledger(ledger: Path, file_kind: Callable[..., tuple[str, str | None]])
         # and ``names`` stays None: the read answered nothing, so no downstream
         # pass may borrow a listing it never got.
         #
-        # ``str(e)`` is the whole fault, path included: OSError appends the path
-        # it failed on (``[Errno 2] No such file or directory: '/home/x/decisions'``)
-        # and ``e.filename`` holds it outright. It is foreign text, so every row
-        # that renders it passes it through the census's scrub-and-bound, which
-        # is where the machine-local path is removed -- not here, where raising
-        # would turn the one row about an unreadable ledger into a traceback.
-        return LedgerProbe("empty", listing_fault=str(e))
+        # ``fault_text`` is the whole fault minus its path: OSError appends the
+        # path it failed on (``[Errno 2] No such file or directory:
+        # '/home/x/decisions'``) and ``e.filename`` holds it outright, so the row
+        # is built from the exception's class and its ``strerror`` instead of
+        # being scrubbed after the fact. The scrubber stays a safety net for text
+        # whose shape nobody knows; it is no longer the thing standing between a
+        # host directory and a published report.
+        return LedgerProbe("empty", listing_fault=fault_text(e))
     # A decisions/ directory that holds no *.json record is "empty", not "ok":
     # the census exits 0 here so a freshly attached project is not permanently
     # red, and the git-backed deletion check still reports how the ledger got
@@ -208,15 +222,17 @@ def append_listing_fault(ledger: Path, root: Path, findings: list[dict],
     not have its shape changed for this case.
 
     Every piece of foreign text the row carries comes from outside this census
-    and passes through ``bounded``: the OSError text, whose ``str(e)`` appends
-    the path the readdir failed on, and the ledger path itself. That is the same
-    rule the ordering group's equivalent row follows (``census_ordering``
-    composes its listing-fault sentence with the fault text passed through
-    ``bounded``), and it is what makes the row safe for an out-of-tree
-    ``--ledger`` override: ``rel_to_root`` cannot root a path that lies outside
-    the audited tree, so it hands back the machine-local absolute path it was
-    given, and a row that quoted that raw would print a host path in a report
-    that promises never to print one.
+    and passes through ``bounded``: the fault text and the ledger path itself.
+    That is the same rule the ordering group's equivalent row follows
+    (``census_ordering`` composes its listing-fault sentence with the fault text
+    passed through ``bounded``), and it is what makes the row safe for an
+    out-of-tree ``--ledger`` override: ``rel_to_root`` cannot root a path that
+    lies outside the audited tree, so it hands back the machine-local absolute
+    path it was given, and a row that quoted that raw would print a host path in
+    a report that promises never to print one. The fault text no longer carries
+    a filename at all (see :func:`census_text.fault_text`), so the scrub here is
+    a net over text that should need none rather than the rule that keeps the row
+    clean.
 
     The path is scrubbed wherever it is *narrated* — in the message's "the
     ledger directory (…)" clause — and left as ``rel_to_root`` answered it in
@@ -247,7 +263,7 @@ def append_listing_fault(ledger: Path, root: Path, findings: list[dict],
     so clipping the whole cannot cut a host path loose at the cut.
     """
     name = rel_to_root(root, ledger)
-    subject = _ledger_name(name)
+    subject = ledger_name(name)
     findings.append(
         row("ledger-edited", strict, subject, subject,
             clipped(f"cannot-tell: the ledger directory ({bounded(name)}) "

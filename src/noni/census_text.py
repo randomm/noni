@@ -15,6 +15,15 @@ stay short enough to read:
 - :func:`_clipped` — cut to a length, with an ellipsis when it was cut.
 - :func:`_bounded` — both halves, for text that came from outside.
 
+Those three are a *net*, not a guarantee: a regex can only guess at what a path
+looks like, and every round of review has found another shape it missed (a bare
+``~user``, a component outside the ASCII alphabet, a path whose only separator
+sits behind an escaped quote). The guarantee lives one step earlier, in
+:func:`fault_text`, which builds a row's fault wording from the structured
+fields of an ``OSError`` so the filename part of the fault is never in the text
+the row renders at all. A path the producer never wrote cannot be missed by a
+scrubber.
+
 The names are the ones ``census.py`` re-exports and the group call sites pass as
 arguments, so a helper is never redefined by whichever module needs it.
 """
@@ -47,17 +56,22 @@ def _bounded(message: str, limit: int = 300) -> str:
 # tilde arm is ``\B``-anchored rather than given an explicit delimiter set:
 # ``~user`` must scrub but ``a~b`` and ``v1.2~3`` must not, and ``\B`` is the
 # test that says so without listing every character that may precede a home
-# path. The leading-separator arm keeps the explicit anchor, because there the
-# character before the ``/`` is the whole question — it must be the start of the
-# string or something that cannot continue a path (a delimiter, a quote, a
-# bracket, ``=``), never a word character or a ``.``.
+# path. Its tail is the other half of the rule: the path ends at a separator or
+# at a character that cannot continue one (``\B`` cannot answer that question at
+# the end of the string, so ``$`` answers it there), which is what lets the bare
+# ``~deploy`` of a service account scrub as well as ``~deploy/x`` does while
+# ``a~b`` and ``v1.2~3`` stay untouched. The leading-separator arm keeps the
+# explicit anchor, because there the character before the ``/`` is the whole
+# question -- it must be the start of the string or something that cannot
+# continue a path (a delimiter, a quote, a bracket, ``=``), never a word
+# character or a ``.``.
 #
 # A quoted fragment is matched first, and whole (``[^']*``): that is what lets a
 # path inside a quote hold a space, and what lets its opening separator sit
 # behind the quote, where no delimiter set would have found it. An escaped quote
 # (``\'``, the form a repr of a path carries) does not open a fragment.
 _QUOTED = re.compile(r"(?<!\\)'[^']*'")
-_HOME_PATH = re.compile(r"\B~[A-Za-z0-9._-]*(?:/[A-Za-z0-9._-]+)+")
+_HOME_PATH = re.compile(r"\B~[A-Za-z0-9._-]*(?:/[A-Za-z0-9._-]*)*(?:/|(?=[^\w./~-])|$)")
 # The absolute arm, with no floor on the number of components and no stop at the
 # second separator: ``/home`` is one component and a path, and a rule that
 # matched only ``/home`` of ``/home/dev/x`` left ``/dev/x`` standing beside the
@@ -174,6 +188,57 @@ def _scrub_inner(text: str) -> str:
         return "<path>"
     text = _INNER_HOME_PATH.sub("<path>", text)
     return _INNER_ABSOLUTE.sub("<path>", text)
+
+
+def fault_text(e: OSError) -> str:
+    """The row text of a filesystem fault, built without its filename.
+
+    ``OSError`` renders itself as the errno words *plus the path it failed on*
+    (``[Errno 13] Permission denied: '/home/someone/my dir/x'``), and it keeps
+    that path outright on ``e.filename`` and ``e.filename2``. A row that quotes
+    ``str(e)`` therefore starts with a host path already in it and relies on a
+    regex downstream to take it out — and the regex has lost every race it has
+    been in, because the shapes a path can take are not enumerable. So the row
+    is built from the structured fields instead: the exception's class and its
+    ``strerror``, which are the half that says what failed.
+
+    The row never needs the path. Every caller of this helper reports a fault on
+    an artifact the census already names itself — the ledger group's row puts the
+    root-relative ledger path in ``subject``, ``artifact`` and its own prose, and
+    the ordering group's listing fault does the same — so the filename would add
+    a machine-local location to a report that promises not to print one, and
+    nothing else. The words the exception carries alongside it are a different
+    matter: ``strerror`` says what failed, which is the finding the row exists to
+    print, so it stays. ``str(e)`` mixes the two in one string, which is exactly
+    why the string is not what is quoted here.
+
+    An ``OSError`` raised from a plain message (``OSError("input/output error")``,
+    which is what a test and what a hand-written raise produce) has no
+    ``strerror`` and no filename: its message *is* the finding, so it is kept --
+    ``str(e)`` of that shape is the message alone, with no path to carry. A
+    fault that carries a filename and an errno pair keeps the words and loses the
+    path: the two are different fields and only one of them is the location.
+    Keeping the plain-message text is safe for the same reason the rest of this
+    helper is -- there is no filename in it -- and it is what a caller that
+    raised with its own sentence expects, whose words the row exists to print.
+    """
+    name = type(e).__name__
+    strerror = getattr(e, "strerror", None)
+    filename = getattr(e, "filename", None)
+    filename2 = getattr(e, "filename2", None)
+    if strerror:
+        # The words are kept whether or not a filename came with them: a fault
+        # that knows both is the common case, and the path is simply not quoted.
+        return f"{name}: {strerror}"
+    if filename is not None or filename2 is not None:
+        # A fault with a path and no words: str(e) of this shape is the path.
+        return name
+    if getattr(e, "errno", None) is not None:
+        # An errno with no words of its own: str(e) would be "[Errno 13] None".
+        return name
+    # A fault built from a plain message: str(e) is that message and nothing
+    # else, and no filename field is set to contradict it.
+    return f"{name}: {e}"
 
 
 def _clipped(message: str, limit: int = 300) -> str:

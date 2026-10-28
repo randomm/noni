@@ -21,6 +21,7 @@ import json
 from pathlib import Path
 
 import census_ledger  # noqa: E402
+import pytest
 from _harness import (  # noqa: E402
     _commit_file,
     _fault_the_ledger_listing,
@@ -136,21 +137,25 @@ def test_probe_records_listing_fault_text_on_the_probe(tmp_path, monkeypatch):
     _fault_iterdir(monkeypatch, ledger, "readdir denied")
 
     probe = census_ledger.probe_ledger(ledger, _kind_dir_ok)
-    assert probe.listing_fault == "readdir denied", probe
+    # The fault's words with its class in front of them: the text a row renders,
+    # built by ``census_text.fault_text`` from the structured fields so the
+    # filename is never in it (see ``test_fault_text_never_carries_the_filename``
+    # in tests/test_census_text_scrub.py for the rule itself).
+    assert probe.listing_fault == "OSError: readdir denied", probe
     assert probe.state == "empty", probe
 
 
 def test_probe_reports_a_fault_whose_oserror_carries_a_path(tmp_path, monkeypatch):
-    """The probe carries the whole fault, path and all, and never raises.
+    """The probe never raises over a fault that carries a path, and never carries it.
 
     ``OSError`` appends the path it failed on to ``str(e)`` and keeps it in
-    ``e.filename``, so the probe's field is where a host path legitimately
-    lives on its way to a row. Refusing to record it would cost the operator
-    the only thing that identifies the fault, and raising would turn the row
-    about an unreadable ledger into a traceback. The path is removed at render
-    time instead: every row that quotes this field passes it through the
-    census's scrub-and-bound (see
-    ``test_unreadable_ledger_outside_the_repo_leaks_no_absolute_path``)."""
+    ``e.filename``, so the probe's field is the place to take it out: the row is
+    built from the exception's class and its ``strerror``, which are the half that
+    says what failed. Dropping the whole fault would cost the operator the only
+    thing that identifies it, and raising would turn the row about an unreadable
+    ledger into a traceback. Nothing downstream has to scrub what was never
+    carried here (the scrubber stays a net for other foreign text).
+    """
     ledger = tmp_path / "decisions"
     ledger.mkdir()
     (ledger / "2026-10-01-a.json").write_text("{}")
@@ -167,6 +172,10 @@ def test_probe_reports_a_fault_whose_oserror_carries_a_path(tmp_path, monkeypatc
     probe = census_ledger.probe_ledger(ledger, _kind_dir_ok)
     assert probe.listing_fault is not None, probe
     assert "Input/output error" in probe.listing_fault, probe
+    # The whole path, and no part of it: the row names the ledger itself, so the
+    # filename the read failed on is a host location and nothing else.
+    assert str(host) not in probe.listing_fault, probe.listing_fault
+    assert "host-dir" not in probe.listing_fault, probe.listing_fault
 
 
 def test_probe_answers_ok_for_a_ledger_with_a_record(tmp_path):
@@ -256,7 +265,7 @@ def test_probe_fault_on_a_real_repository_ledger(tmp_path, monkeypatch):
     (ledger / "2026-10-01-a.json").write_text("{}")
     _fault_iterdir(monkeypatch, ledger)
     probe = census_ledger.probe_ledger(ledger, _kind_dir_ok)
-    assert probe.listing_fault == "readdir denied", probe
+    assert probe.listing_fault == "OSError: readdir denied", probe
     assert probe.state == "empty", (
         "an unlistable ledger keeps the state word so the git-backed deletion "
         "question is still put when git can answer it"
@@ -431,6 +440,103 @@ def test_the_listing_fault_row_is_clipped_as_a_whole(tmp_path, monkeypatch):
     assert "noni/decisions" in message, message
     assert "input/output error" in message, message
     assert "u" * 5000 not in message, message
+
+
+def _host_shaped_faults() -> list[tuple[OSError, tuple[str, ...]]]:
+    """The faults whose filename the scrubber has kept losing, and their parts.
+
+    Built at runtime, never literals: a tracked file carrying one of these paths
+    would trip the census's own hygiene class. Each is the shape a real fault on
+    a real host takes -- a service account's home, a directory whose name holds a
+    space and characters outside the ASCII alphabet -- and each is a shape the
+    path arms of ``census_text._stripped`` cannot be relied on to catch, which is
+    why the row is built without the filename instead of scrubbed after it.
+    """
+    return [
+        (OSError(13, "Permission denied", "/home/someone/\u00fcn\u00ef c\u00f6de/my dir/"),
+         ("someone", "\u00fcn\u00ef", "c\u00f6de", "my dir")),
+        (OSError(13, "Permission denied", "~deploy"), ("deploy",)),
+    ]
+
+
+@pytest.mark.parametrize("case", range(2))
+def test_the_listing_fault_row_carries_no_part_of_the_filename(tmp_path, monkeypatch, case):
+    """The ledger group's row for an unlistable ledger names the fault, never the path.
+
+    Two faults, both of which the scrubber has historically lost: a filename with
+    a non-ASCII component and a space in it, and the bare home of a service
+    account. Neither may reach any field of the row, and the row still has to say
+    what failed and which ledger it could not read -- so the assertions pull in
+    both directions and a rule that dropped the fault's words to keep its
+    silence would fail here too.
+
+    The fault is planted in the interpreter, at the probe's own listing.
+    """
+    import census
+
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                 json.dumps(_valid_record(), indent=2))
+    ledger = repo / "noni" / "decisions"
+    fault, parts = _host_shaped_faults()[case]
+
+    real_iterdir = census.Path.iterdir
+
+    def boom(self):
+        if self == ledger:
+            raise fault
+        return real_iterdir(self)
+
+    monkeypatch.setattr(census.Path, "iterdir", boom)
+    rows = _rows(repo, "--skip", "hygiene")
+    assert [r["check"] for r in rows] == ["ledger-edited"], rows
+    row = rows[0]
+    for field in ("subject", "artifact", "message"):
+        for part in parts:
+            assert part not in row[field], f"{part!r} leaked into {field}: {row[field]!r}"
+        assert "/home/someone" not in row[field], row[field]
+    # What the row is for: the fault's own words, and the ledger it could not read.
+    assert "Permission denied" in row["message"], row["message"]
+    assert "PermissionError" in row["message"], row["message"]
+    assert row["subject"] == row["artifact"] == "noni/decisions", row
+
+
+@pytest.mark.parametrize("case", range(2))
+def test_the_ledger_empty_probe_error_carries_no_part_of_the_filename(
+        tmp_path, monkeypatch, case):
+    """The other row that quotes an ``OSError``: ``probe.problem`` in ``ledger-empty``.
+
+    The fault here comes from a stat rather than a readdir, which is a different
+    producer (``_file_kind``) and a different row (``ledger-empty``, composed with
+    a state word and the census's own path). Same rule: the row is built from the
+    exception's class and its ``strerror``, so no part of the filename reaches it
+    and nothing downstream has to recognise the path to remove it.
+    """
+    import census
+
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/README.md", "noni lives here\n")
+    ledger = repo / "noni" / "decisions"
+    ledger.mkdir()
+    fault, parts = _host_shaped_faults()[case]
+
+    real_is_dir = census.Path.is_dir
+
+    def boom_is_dir(self):
+        if self == ledger:
+            raise fault
+        return real_is_dir(self)
+
+    monkeypatch.setattr(census.Path, "is_dir", boom_is_dir)
+    empty = [r for r in _rows(repo, "--skip", "hygiene") if r["check"] == "ledger-empty"]
+    assert len(empty) == 1, empty
+    row = empty[0]
+    for field in ("subject", "artifact", "message"):
+        for part in parts:
+            assert part not in row[field], f"{part!r} leaked into {field}: {row[field]!r}"
+    assert "probe error" in row["message"], row["message"]
+    assert "Permission denied" in row["message"], row["message"]
+    assert "not a directory" in row["message"], row["message"]
 
 
 def _iterdir_counter(monkeypatch, ledger: Path):

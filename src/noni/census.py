@@ -480,6 +480,12 @@ def _file_kind(path: Path, kind: str = "file") -> tuple[str, str | None]:
     entry of the requested kind is readable. Symlinked or non-regular
     artefacts are reported as probe failures (never read through a link), and
     a missing entry is absent (a real state, not an oversight).
+
+    The problem half is the text a row quotes when the classification itself
+    faulted, so it comes from ``census_text.fault_text``: a stat that raises
+    hands the census an ``OSError`` whose ``str()`` ends in the path it failed
+    on, and no row may carry that path. Every other return of this function is a
+    fixed sentence this file wrote.
     """
     try:
         if path.is_symlink():
@@ -493,7 +499,7 @@ def _file_kind(path: Path, kind: str = "file") -> tuple[str, str | None]:
             if not path.is_file():
                 return "nonregular", "path is not a regular file"
     except OSError as e:
-        return "nonregular", str(e)
+        return "nonregular", _text.fault_text(e)
     return "regular", None
 
 
@@ -742,7 +748,11 @@ def _check_ledger_records(ledger: Path, root: Path, findings: list[dict],
             unparseable.append((name, path))
             continue
         except OSError as e:
-            add("ledger-record", name, str(path), f"record is unreadable: {e}")
+            # The filename is the path of the record itself, which this row
+            # already carries in ``artifact``: the fault contributes its class
+            # and its errno words, nothing else.
+            add("ledger-record", name, str(path),
+                f"record is unreadable: {_text.fault_text(e)}")
             unparseable.append((name, path))
             continue
         try:
@@ -1111,8 +1121,14 @@ def _check_sessions(
             continue
         try:
             body = path.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError) as e:
-            add("session-malformed", name, str(path), f"file unreadable: {e}")
+        except UnicodeDecodeError:
+            # The bytes of an undecodable file are hostile content, so the row
+            # names the class and echoes none of them.
+            add("session-malformed", name, str(path), "file unreadable: not valid UTF-8")
+            continue
+        except OSError as e:
+            add("session-malformed", name, str(path),
+                f"file unreadable: {_text.fault_text(e)}")
             continue
         fields, claims, problems = _parse_session(body)
         if problems:
@@ -1301,7 +1317,8 @@ def _check_ordering(
                             clipped=_clipped, names=names,
                             readers=_ordering_readers,
                             load_json_strict=_census_json.load_json_strict,
-                            names_zone=_ordering_readers.names_zone)
+                            names_zone=_ordering_readers.names_zone,
+                            ledger_name=_ledger.ledger_name)
 
 
 # --- CLI -----------------------------------------------------------------------

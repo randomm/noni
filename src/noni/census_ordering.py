@@ -146,6 +146,7 @@ def check_ordering(
     row: Callable[..., dict], rel_to_root: Callable[[Path, Path], str], file_kind,
     bounded: Callable[[str], str], parse_iso, readers, names_zone,
     load_json_strict: Callable[[bytes], object], clipped: Callable[[str], str],
+    ledger_name: Callable[[str], str] = lambda rel: rel,
     names: tuple[str, ...] | None = None,
 ) -> None:
     """Check the ordering artifact; append its findings to ``findings``.
@@ -169,6 +170,15 @@ def check_ordering(
     imported: ``census.py`` owns the row shape and the bounded wording of a
     foreign message, neither module carries a sys.path entry of its own, and a
     copy of any of them here would be a second contract for the same row.
+
+    ``ledger_name`` is the census's one rule for naming a ledger a run could not
+    read (``census_ledger.ledger_name``), and the listing-fault row takes the
+    ledger's name from it rather than scrubbing the root-relative path itself:
+    both groups' rows for one unreadable ledger then name it identically, and the
+    scrubber is left to its safety-net job on foreign text instead of being asked
+    to redact a path this census wrote and still leave it identifiable. It
+    defaults to the identity so a direct caller with no ledger group to agree
+    with keeps the path it passed.
 
     ``names`` is the run's one ledger listing — the names the census's probe
     read — and it goes straight to the readers, which is what keeps the whole
@@ -229,13 +239,19 @@ def check_ordering(
         # owns the report, an I/O fault of the listing is visible only here: no
         # other class of this run sees it.
         add("ordering-malformed", ORDER_DEFAULT_SUBJECT, rel_to_root(root, order),
-            # The whole composed sentence is clipped, not just the OSError text
+            # The whole composed sentence is clipped, not just the fault text
             # inside it: the row's length is a property of the row, and a fault
             # whose strerror runs to thousands of characters is otherwise a row
             # past the bound every other row of the report keeps. ``clipped`` and
             # not ``bounded`` because the sentence names the ledger by a path the
             # row must keep; the fault text itself still goes through ``bounded``.
-            clipped(f"the decision ledger ({bounded(rel_ledger)}) could not be listed"
+            # The ledger is named by ``ledger_name``, the identifier the ledger
+            # group's own row for this same fault uses, so the two rows agree on
+            # which directory they could not read -- and the fault text carries no
+            # filename at all (``census_ordering_readers`` builds it with
+            # ``census_text.fault_text``), so the ``bounded`` here is a net over
+            # text that should need none.
+            clipped(f"the decision ledger ({bounded(ledger_name(rel_ledger))}) could not be listed"
                     f"{'' if listing_fault is None else ': ' + bounded(listing_fault)}, "
                     "so no entry's decision citation could be checked against the records "
                     "the ledger holds"), whole_artifact=True)

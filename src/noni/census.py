@@ -982,6 +982,7 @@ def _repo_sha1(path: Path) -> str | None:
 # takes.
 from . import census_hygiene as _helpers  # noqa: E402
 from . import census_ledger as _ledger  # noqa: E402
+from . import census_text as _text  # noqa: E402
 
 # The probe's type stays reachable as a member of this census, re-exported as the
 # one object rather than a copy, so a caller (and the census's own tests) still
@@ -999,6 +1000,13 @@ _load_public_safety = _helpers._load_public_safety
 _trusted_public_safety = _helpers._trusted_public_safety
 _hygiene_labels = _helpers._hygiene_labels
 _split_violation = _helpers._split_violation
+# The message scrub's own parts stay reachable as members of the census for the
+# same reason: one object, not a copy, so the text rules keep their single owner
+# in ``census_text`` while a caller (and the census's own tests) still names them
+# through the module it already imports.
+_bounded = _text._bounded
+_stripped = _text._stripped
+_clipped = _text._clipped
 # The census's own git calls and public_safety's in-process scan share one
 # pinned environment, so the table of variables to pin has one owner: here.
 GIT_ENV_NEUTRAL = _helpers.GIT_ENV_NEUTRAL
@@ -1025,62 +1033,6 @@ def _git_env() -> dict[str, str]:
 
 
 # --- Session checks -------------------------------------------------------------
-
-def _bounded(message: str, limit: int = 300) -> str:
-    """Bound an exception-derived message and strip machine-local absolute
-    paths from it: a row built from someone else's error text must not smuggle
-    a host path into a report that promises not to print one.
-
-    The scrubbing is what makes this the right wrapper for a foreign message, and
-    the wrong one for a sentence this census composed itself: a row that names the
-    ledger as ``noni/decisions`` is naming a root-relative path on purpose, and a
-    wrapper that shortened it to ``<path>`` would destroy the very thing the row
-    is telling the operator to look at. So the two halves are separate here and
-    the group hands each one what it needs: this for text that came from outside,
-    :func:`_clipped` for the finished sentence around it.
-    """
-    return _clipped(_stripped(message), limit)
-
-
-def _stripped(message: str) -> str:
-    """``message`` with runs of whitespace collapsed and host paths replaced.
-
-    The path-stripping half of :func:`_bounded`, alone: a caller that composed a
-    sentence out of root-relative paths it derived itself needs the collapsing and
-    nothing else.
-
-    The rule is about a machine-local path: one written from the root (``/…``) or
-    from a home directory (``~/…``, ``~someone/…``). The anchor is what makes it
-    that rule and not a hunt for the first ``/`` anywhere. Unanchored it ate the
-    middle of a root-relative path, so a scrubbed ``noni/decisions`` came out as
-    ``noni<path>`` — neither the path nor a usable stand-in — and it ate
-    ``input/output`` out of an ``OSError`` whose text the row exists to carry.
-    Both are the finding the row states, so neither may be touched: the separator
-    must open the path, following only the start of the string or a character that
-    cannot itself continue a path (a delimiter, a quote, a bracket, ``=``), never a
-    word character or a ``.``.
-
-    That anchor is a character test and not a list of punctuation, which is what
-    covers the absolute paths a two-run floor would miss: a host path can be
-    shorter than two components, and ``PermissionError`` appends the filename it
-    failed on in quotes, so ``denied: '/home/dev/x'`` is absolute with its only
-    separator behind a quote.
-    """
-    collapsed = " ".join(message.split())
-    return re.sub(r"(?:(?<=^)|(?<=[^\w./~$-]))(?:/[A-Za-z0-9._-]+){2,}"
-                  r"|~[A-Za-z0-9._-]*(?:/[A-Za-z0-9._-]+)+",
-                  "<path>", collapsed)
-
-
-def _clipped(message: str, limit: int = 300) -> str:
-    """``message`` cut to ``limit`` characters, with an ellipsis when it was cut.
-
-    The length half of :func:`_bounded`, alone: the bound a row keeps is a property
-    of the row, so it is applied to the finished sentence a reporter composed,
-    whose own path fragments must survive (see :func:`_bounded`).
-    """
-    return message if len(message) <= limit else message[: limit - 3] + "..."
-
 
 def _parse_session(body: str) -> tuple[dict[str, str], list[str], list[str]]:
     """Parse a session register body into (fields, claims, problems)."""

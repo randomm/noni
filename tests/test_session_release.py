@@ -12,9 +12,18 @@ file's failure rather than a silently passing assertion.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
-from _harness import _git_ok, build_bare_origin, run_claim, run_register, run_release
+from _harness import (
+    RELEASE,
+    _git_ok,
+    build_bare_origin,
+    run_claim,
+    run_from,
+    run_register,
+    run_release,
+)
 
 from noni import release as release_mod
 
@@ -345,3 +354,88 @@ def test_release_never_deletes_the_session_file(tmp_path):
     assert proc.returncode == release_mod.EXIT_OK, proc.stderr
     assert session.is_file()
     assert "- claims:" in session.read_text(encoding="utf-8")
+
+
+# --- State root: --repo names it, the cwd does not ----------------------------
+#
+# release.py removes one claim row from one file, so the pair of assertions is
+# the whole contract: the row is gone from the state root's register, and the
+# decoy register beside the cwd still carries both of its rows.
+
+RELEASE_STATE_DIR = "release-state-root"
+RELEASE_CWD_DIR = "release-cwd"
+RELEASE_DECOY_DIR = "release-decoy"
+
+
+def _release_state_root(tmp_path, sid="2026-10-01-aaaaaa"):
+    """The state repository: a git repo whose only state is one session holding
+    the two claim rows release.py chooses between."""
+    origin = tmp_path / f"{RELEASE_STATE_DIR}.origin.git"
+    root = tmp_path / RELEASE_STATE_DIR
+    build_bare_origin(origin, [root])
+    session = root / "noni" / "sessions" / f"{sid}.md"
+    session.parent.mkdir(parents=True, exist_ok=True)
+    session.write_text(BODY.format(sid=sid), encoding="utf-8")
+    _git_ok(root, "add", f"noni/sessions/{sid}.md")
+    _git_ok(root, "-c", "user.name=Replay", "-c", "user.email=replay@fixture.invalid",
+            "commit", "-q", "-m", f"register: {sid}")
+    _git_ok(root, "push", "-q", "origin", "main")
+    return root, session
+
+
+def _release_case(tmp_path, sid="2026-10-01-aaaaaa"):
+    """The three trees of one release state-root run: (root, session, decoy, cwd)."""
+    root, session = _release_state_root(tmp_path, sid)
+    decoy = tmp_path / RELEASE_DECOY_DIR
+    decoy_session = decoy / "noni" / "sessions" / f"{sid}.md"
+    decoy_session.parent.mkdir(parents=True, exist_ok=True)
+    decoy_session.write_text(BODY.format(sid=sid), encoding="utf-8")
+    cwd = tmp_path / RELEASE_CWD_DIR
+    cwd.mkdir(parents=True, exist_ok=True)
+    return root, session, decoy_session, cwd
+
+
+def _release_from(cwd: Path, repo: Path, sid: str, task: str
+                  ) -> subprocess.CompletedProcess[str]:
+    """release.py launched from ``cwd``, with ``--repo`` naming the state root."""
+    return run_from(cwd, RELEASE, "--repo", str(repo), "--session-id", sid,
+                    "--task", task)
+
+
+def test_release_removes_the_row_in_the_state_root_only(tmp_path):
+    """The row disappears from the state root's register and the decoy register
+    beside the cwd keeps both of its rows."""
+    sid = "2026-10-01-aaaaaa"
+    root, session, decoy_session, cwd = _release_case(tmp_path, sid)
+    decoy_bytes = decoy_session.read_bytes()
+
+    proc = _release_from(cwd, root, sid, "#1")
+    assert proc.returncode == release_mod.EXIT_OK, f"{proc.returncode}: {proc.stderr}"
+
+    body = session.read_text(encoding="utf-8")
+    assert "- claim: #1" not in body, "the state root's row was not released"
+    assert "- claim: #2" in body, "the writer released a row nobody named"
+    assert _git_ok(root, "log", "-1", "--format=%s").stdout.strip().startswith("release:"), \
+        "the release was not committed in the state repository"
+    assert decoy_session.read_bytes() == decoy_bytes, (
+        "the run edited the decoy register beside its cwd, so the register path "
+        "resolved from somewhere other than --repo"
+    )
+    assert not (cwd / "noni").exists(), "the run created noni/ under the cwd"
+
+
+def test_release_refuses_a_repo_that_is_not_a_directory(tmp_path):
+    """A --repo naming no directory is refused (exit 4) naming the argument, and
+    the decoy register beside the cwd keeps both of its rows."""
+    sid = "2026-10-01-aaaaaa"
+    _root, _session, decoy_session, cwd = _release_case(tmp_path, sid)
+    decoy_bytes = decoy_session.read_bytes()
+
+    proc = _release_from(cwd, tmp_path / "no-such-state-root", sid, "#1")
+    assert proc.returncode == release_mod.EXIT_USAGE, proc.returncode
+    assert "--repo" in proc.stderr.lower(), proc.stderr
+    assert "is not a directory" in proc.stderr, proc.stderr
+    assert decoy_session.read_bytes() == decoy_bytes, (
+        "a refused run edited the decoy register beside its cwd"
+    )
+    assert not (cwd / "noni").exists()

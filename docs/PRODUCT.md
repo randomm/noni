@@ -95,14 +95,36 @@ promise: git delays the second claimant, it does not lock them out.
 either a script with an honest exit code or a census check that catches its
 violation. Prose states the protocol; scripts and census hold the line.
 
-## 7. Proposed state layout in an attached project (E1/E2 specs finalize)
+## 7. State layout and the state root
+
+All noni state of one project lives under one **state root**, in this layout:
 
 ```
-<project>/noni/
+<state root>/noni/
   direction/   standing direction, release trains, Now-state ordering
   decisions/   steering ledger: one file per dated record
   sessions/    one committed file per session (registration + claims), one writer each
 ```
+
+The state root is a directory holding (or about to hold) that `noni/` tree, and
+`--repo` is the only flag that names it:
+
+- **Default: the attached project's own repository**, so the state is the tree
+  at `<project>/noni/` and every tool run without `--repo` reads and writes
+  there. Direction stays next to the code it steers, its history is the
+  repository's history, and there is no second repository to clone.
+- **Alternative: a separate private state repository** carrying the identical
+  `noni/` layout, selected by passing its path as `--repo`. Choose it when the
+  code repository is public and the direction should not be published with it,
+  or when a team keeps the direction of several repositories in one private
+  place. Same layout, same writers, same census: only the path changes.
+
+There is no third mechanism: no environment variable and no config file
+selects the state root. Every shipped tool resolves every `noni/` path from
+`--repo` — never from the tool's own location, and never from the current
+directory beyond `--repo`'s default. A `--repo` that is missing, or is not a
+directory, stops the command with a clear message and a non-zero code (the
+fail-closed rule, §6).
 
 Results are recomputed on demand by the census (no `census/` directory). The
 census is read-only: running it leaves `git status --porcelain` empty. Trends,
@@ -138,7 +160,10 @@ plan driver (label `epic`).
 
 ## 9. First dogfood
 
-noni on noni's own repo: E1–E5 are filed as GitHub issues (the work carrier),
-noni's own `noni/` state will hold the direction layer (the direction), and
-the plan/work driver sessions are the first agent sessions to register,
-claim and get censused.
+noni on noni's own project: E1–E5 are filed as GitHub issues (the work carrier),
+noni's own `noni/` state lives in a private state repository that holds the
+direction layer (the direction), and the plan/work driver sessions are the
+first agent sessions to register, claim and get censused. This public
+repository holds none of that state: it documents the layout (§7) and ships
+the skills, the writers and the census. Run its tools with `--repo` naming the
+state repository, and this checkout is never the state root.

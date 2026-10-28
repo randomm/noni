@@ -15,17 +15,24 @@ from __future__ import annotations
 CENSUS_SH_HELP = """The census entry point. Two checks live under this name, each with its own
 exit-code table and its own golden fixtures under tests/fixtures/:
 
-  census.sh [LEDGER_DIR]                  the decisions census (E1)
+  census.sh <state-root>/noni/decisions        the decisions census (E1)
       columns: id date by status live supersedes
-      codes:   0 clean | 3 jq missing | 10 record/ledger unusable
-               | 12 edited after commit | 20 supersede chain broken
+      codes:   0 clean | 2 no ledger dir given | 3 jq missing
+               | 10 record/ledger unusable | 12 edited after commit
+               | 20 supersede chain broken
       a record is valid when it carries the eight top-level required
       fields (plus the optional source field) and the chain resolves
 
-  census.sh --sessions [SESSIONS_DIR]     the sessions census (E2)
+  census.sh --sessions <state-root>/noni/sessions   the sessions census (E2)
       one NDJSON row per finding; read-only, output to stdout only
-      codes:   0 clean | 3 python3 missing | 30 double-claim
-               | 31 claim without a register file | 32 malformed session file
+      codes:   0 clean | 2 no sessions dir given | 3 python3 missing
+               | 30 double-claim | 31 claim without a register file
+               | 32 malformed session file
+
+The one argument each check takes is the state directory of the state root —
+the directory --repo names for the writers — and neither check has a
+current-directory default: run with no argument, either path is a usage error
+(2) rather than a census of whatever noni/ happened to sit next to the caller.
 
 The two checks are never mixed in one run: the dispatch below selects the
 E1 or the E2 path from the flag set, and the exit code is whichever check
@@ -38,11 +45,14 @@ CENSUS_SESSIONS_SH_HELP = """Census of the session register: one NDJSON row per 
 files under noni/sessions/. Read-only — never writes, never mutates a
 session file. Output goes to stdout only (no writes under noni/census/).
 
-  census-sessions.sh [SESSIONS_DIR]
+  census-sessions.sh <state-root>/noni/sessions
 
-SESSIONS_DIR defaults to noni/sessions relative to the current working
-directory. Pass the sessions directory of the clone you want to audit
-(e.g. <clone>/noni/sessions).
+The one argument is the sessions directory of the state root — the directory
+--repo names for the writers, with noni/sessions under it. Pass the sessions
+directory of the clone you want to audit. There is no current-directory
+default: a run with no argument is a usage error (2), because a relative
+default would census whatever noni/sessions happened to sit next to the
+caller and report a clean the caller never pointed at.
 
 The census is the deterministic arbiter for the claim protocol. Two active
 claims on the same task from different identities are a double-claim: git
@@ -58,6 +68,8 @@ the exit code — the priority only selects which code is returned — so all
 findings are always in the NDJSON output:
   0   clean — every session file valid (five required fields each), no
       double-claims, all claims have a register file
+  2   usage: no sessions directory was given, or the one given is not a
+      directory (the state root is named by the caller, never by the cwd)
   3   the interpreter it would run is missing (see NONI_PYTHON below)
   30  double-claim: two active claims on the same task from different
       identities (the arbiter check)

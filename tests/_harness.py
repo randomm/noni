@@ -704,6 +704,7 @@ TOOL_WRAPPERS: tuple[tuple[str, Path], ...] = (
 
 
 def run_noni(*args: str, env: Mapping[str, str] | None = None,
+             cwd: Path | None = None,
              timeout: int = 120) -> subprocess.CompletedProcess[str]:
     """The installed console command over ``noni.cli:main``, as a subprocess.
 
@@ -720,7 +721,7 @@ def run_noni(*args: str, env: Mapping[str, str] | None = None,
     full = subprocess_env() if env is None else dict(env)
     full["COLUMNS"] = HELP_COLUMNS
     return subprocess.run(cmd, capture_output=True, text=True, env=full,
-                          timeout=timeout)
+                          timeout=timeout, **_cwd_kwarg(cwd))
 
 
 def run_wrapper(script: Path, *args: str, env: Mapping[str, str] | None = None,
@@ -755,6 +756,7 @@ def _order_module() -> object:
 
 
 def run_order(repo: Path, *args: str, env: Mapping[str, str] | None = None,
+              cwd: Path | None = None,
               ) -> subprocess.CompletedProcess[str]:
     """Run order.py with ``--repo repo`` plus the arguments given as plain strings.
 
@@ -770,10 +772,12 @@ def run_order(repo: Path, *args: str, env: Mapping[str, str] | None = None,
         full_env.update(_git_env_with_identity())
     else:
         full_env.update(env)
-    return subprocess.run(cmd, capture_output=True, text=True, env=full_env, timeout=120)
+    return subprocess.run(cmd, capture_output=True, text=True, env=full_env,
+                          timeout=120, **_cwd_kwarg(cwd))
 
 
-def run_register(repo: Path, identity: str, **kwargs) -> subprocess.CompletedProcess[str]:
+def run_register(repo: Path, identity: str, cwd: Path | None = None,
+                 **kwargs) -> subprocess.CompletedProcess[str]:
     """Run register.py with --repo repo --identity identity and extra kwargs.
 
     Launched under the deterministic identity env, like the other writers that
@@ -798,11 +802,13 @@ def run_register(repo: Path, identity: str, **kwargs) -> subprocess.CompletedPro
         text=True,
         env=full_env,
         timeout=120,
+        **_cwd_kwarg(cwd),
     )
 
 
 def run_claim(
-    repo: Path, session_id: str, task: str, push: bool = False, **kwargs
+    repo: Path, session_id: str, task: str, push: bool = False,
+    cwd: Path | None = None, **kwargs
 ) -> subprocess.CompletedProcess[str]:
     """Run claim.py with the standard arguments and optional --push.
 
@@ -829,11 +835,13 @@ def run_claim(
         cmd.append("--push")
     full_env = subprocess_env()
     full_env.update(_git_env_with_identity())
-    return subprocess.run(cmd, capture_output=True, text=True, env=full_env, timeout=120)
+    return subprocess.run(cmd, capture_output=True, text=True, env=full_env,
+                          timeout=120, **_cwd_kwarg(cwd))
 
 
 def run_close(
-    repo: Path, session_id: str, push: bool = False, **kwargs
+    repo: Path, session_id: str, push: bool = False, cwd: Path | None = None,
+    **kwargs
 ) -> subprocess.CompletedProcess[str]:
     """Run close.py with ``--repo repo --session-id SID`` and optional --push.
 
@@ -842,11 +850,12 @@ def run_close(
     influenced by a host gitconfig either), and the same
     ``**{"no-commit": None}`` form for a valueless flag.
     """
-    return _run_session_writer(CLOSE, repo, session_id, push=push, **kwargs)
+    return _run_session_writer(CLOSE, repo, session_id, push=push, cwd=cwd, **kwargs)
 
 
 def run_release(
-    repo: Path, session_id: str, task: str, push: bool = False, **kwargs
+    repo: Path, session_id: str, task: str, push: bool = False,
+    cwd: Path | None = None, **kwargs
 ) -> subprocess.CompletedProcess[str]:
     """Run release.py with the standard arguments and optional --push.
 
@@ -854,12 +863,25 @@ def run_release(
     ``**{"no-commit": None}`` for a valueless flag): the two writers that name
     a task commit under the tree's identity, so both are launched the same way.
     """
-    return _run_session_writer(RELEASE, repo, session_id, task=task, push=push, **kwargs)
+    return _run_session_writer(RELEASE, repo, session_id, task=task, push=push,
+                               cwd=cwd, **kwargs)
+
+
+def _cwd_kwarg(cwd: Path | None) -> dict[str, str]:
+    """The ``cwd=`` keyword for a launcher's ``subprocess.run``, or none.
+
+    Every launcher takes an optional ``cwd`` so its isolation test can run the
+    tool from a directory that is not the state root; passing ``cwd=None``
+    would mean something different to ``subprocess.run`` in older releases
+    than omitting it, so the keyword is simply absent when the caller did not
+    name a directory (the historical behaviour: inherit pytest's own).
+    """
+    return {} if cwd is None else {"cwd": str(cwd)}
 
 
 def _run_session_writer(
     script: Path, repo: Path, session_id: str, *, task: str | None = None,
-    push: bool = False, **kwargs,
+    push: bool = False, cwd: Path | None = None, **kwargs,
 ) -> subprocess.CompletedProcess[str]:
     """One sessions writer under the running interpreter, argv built the same way.
 
@@ -881,11 +903,52 @@ def _run_session_writer(
         cmd.append("--push")
     full_env = subprocess_env()
     full_env.update(_git_env_with_identity())
-    return subprocess.run(cmd, capture_output=True, text=True, env=full_env, timeout=120)
+    return subprocess.run(cmd, capture_output=True, text=True, env=full_env,
+                          timeout=120, **_cwd_kwarg(cwd))
+
+
+def run_from(cwd: Path, script: Path, *args: str,
+             identity: bool = True,
+             env: Mapping[str, str] | None = None,
+             ) -> subprocess.CompletedProcess[str]:
+    """One product entry point launched from a directory that is not the state root.
+
+    The state-root contract every shipped tool makes is that ``--repo`` alone
+    decides where noni state is read and written. A launcher that always ran in
+    the test's own directory could not tell that promise from the same tool
+    quietly reading a ``noni/`` tree next to its cwd, because the two trees were
+    never separated. This launches under an explicit ``cwd`` and leaves the argv
+    verbatim, so a test plants a decoy ``noni/`` under ``cwd``, points ``--repo``
+    at the state root elsewhere, and the assertion measures the difference.
+
+    ``script`` is either a wrapper under ``skills/*/scripts/`` or a package
+    module file under ``src/noni/``: both are launched by path, which is the
+    form the skills and the README document. ``identity`` applies the same
+    deterministic git identity the committing launchers use (``run_claim``,
+    ``run_order``, ``run_decide``): a writer launched from a foreign cwd still
+    commits under the harness identity, so a failure is the tool's and not the
+    absence of an author. A caller that wants the bare environment (a refusal
+    with no identity, say) passes ``identity=False`` and its own ``env``.
+
+    A relative ``script`` is the one case the cwd must not decide, so it is
+    rooted at this repository before the launch: otherwise a relative wrapper
+    path would resolve against the foreign cwd and name no file at all.
+    """
+    full_env = subprocess_env()
+    if env is None:
+        if identity:
+            full_env.update(_git_env_with_identity())
+    else:
+        full_env.update(env)
+    script_path = script if script.is_absolute() else REPO / script
+    return subprocess.run([sys.executable, str(script_path), *args],
+                          capture_output=True, text=True, env=full_env,
+                          cwd=str(cwd), timeout=120)
 
 
 def run_decide(repo: Path, *args: str, env: Mapping[str, str] | None = None,
-               extra: list[str] | None = None) -> subprocess.CompletedProcess[str]:
+               extra: list[str] | None = None,
+               cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     """Run decide.py with ``--repo repo`` plus the flags given as plain strings.
 
     The flags are passed as plain strings (``"--slug", "scheduler"``) rather
@@ -909,4 +972,5 @@ def run_decide(repo: Path, *args: str, env: Mapping[str, str] | None = None,
         full_env.update(_git_env_with_identity())
     else:
         full_env.update(env)
-    return subprocess.run(cmd, capture_output=True, text=True, env=full_env, timeout=120)
+    return subprocess.run(cmd, capture_output=True, text=True, env=full_env,
+                          timeout=120, **_cwd_kwarg(cwd))

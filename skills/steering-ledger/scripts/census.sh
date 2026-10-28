@@ -2,14 +2,15 @@
 # The census entry point. Two checks live under this name, each with its own
 # exit-code table and its own golden fixtures under tests/fixtures/:
 #
-#   census.sh [LEDGER_DIR]                  the decisions census (E1)
+#   census.sh <state-root>/noni/decisions   the decisions census (E1)
 #       columns: id date by status live supersedes
-#       codes:   0 clean | 3 jq missing | 10 record/ledger unusable
-#                | 12 edited after commit | 20 supersede chain broken
+#       codes:   0 clean | 2 no ledger dir given | 3 jq missing
+#                | 10 record/ledger unusable | 12 edited after commit
+#                | 20 supersede chain broken
 #       a record is valid when it carries the eight top-level required
 #       fields (plus the optional source field) and the chain resolves
 #
-#   census.sh --sessions [SESSIONS_DIR]     the sessions census (E2)
+#   census.sh --sessions <state-root>/noni/sessions   the sessions census (E2)
 #       one NDJSON row per finding; read-only, output to stdout only
 #       codes:   0 clean | 3 python3 missing | 30 double-claim
 #                | 31 claim without a register file | 32 malformed session file
@@ -40,12 +41,15 @@ fi
 # Census of the steering ledger: one line per dated decision record under
 # noni/decisions/. Read-only — never writes, never mutates a record.
 #
-#   census.sh [LEDGER_DIR]
+#   census.sh <state-root>/noni/decisions
 #
-# LEDGER_DIR defaults to the current directory; pass the ledger directory of
-# the clone you want to audit (e.g. noni/decisions/). The script reads the
-# records and, when LEDGER_DIR lives inside a git worktree, the git history to
-# attribute authors and detect post-commit edits.
+# The one argument is the ledger directory of the state root — the directory
+# --repo names for the writers, with noni/decisions under it. There is no
+# current-directory default: a run with no argument is a usage error (2),
+# because a default of "." would audit whatever directory the caller happened
+# to stand in, and a census of the wrong tree is worse than no census. The
+# script reads the records and, when the ledger directory lives inside a git
+# worktree, the git history to attribute authors and detect post-commit edits.
 #
 # Columns: id  date  by  status  live  supersedes
 # A CHAIN block follows on stderr when the supersede chain is broken.
@@ -56,6 +60,8 @@ fi
 # been evaluated — the stderr message says so.
 #   0   clean — every record valid (the eight top-level required fields
 #       plus the optional source field), chain intact
+#   2   usage: no ledger directory was given (the state root is named by the
+#       caller, never by the cwd)
 #   3   jq not found on the reading machine
 #   10  a record is missing or malformed, or the ledger is unusable —
 #       five distinct sub-classes, all named on the stderr line:
@@ -112,15 +118,54 @@ for arg in "$@"; do
     *) LEDGER_DIR="${arg%/}" ;;
   esac
 done
-[ -z "$LEDGER_DIR" ] && LEDGER_DIR="."
+# No default: the state root is named by the caller, never by the directory
+# the run happens to sit in. An empty LEDGER_DIR here means the run was given
+# no ledger at all, which is a usage error (2) and not a census of the cwd.
+if [ -z "$LEDGER_DIR" ]; then
+  echo "census.sh: usage: census.sh <state-root>/noni/decisions (pass the ledger directory of the state root; there is no current-directory default)" >&2
+  exit 2
+fi
 
 command -v jq >/dev/null 2>&1 || { echo "census.sh: jq not found on $(hostname 2>/dev/null || echo unknown)" >&2; exit 3; }
-[ -d "$LEDGER_DIR" ] || { echo "census.sh: ledger dir not found: $LEDGER_DIR (10:missing-dir)" >&2; exit 10; }
+
+classify_dir_state() {
+  # The three states a ledger path can be in, told apart before the -d test
+  # collapses them: a symlink whose target is not a directory, and a path with
+  # no permissions at all, must both reach the 10:missing-dir refusal rather
+  # than the (10:empty-ledger) branch further down (which has a fallback that
+  # reports a clean-looking empty ledger for a path it could not stat).
+  #   "ok"              -d passed
+  #   "symlink-broken"  -L passed but the link resolves to no directory
+  #                     (a dangling or looping link, or one into a file)
+  #   "unreadable"      a stat error: ENOENT (no such path), ENOTDIR (a path
+  #                     component is a file), EACCES (no search permission on
+  #                     a parent), or any other stat failure
+  #   "not-a-dir"       a regular file or device: no ledger can live under it
+  if [ -d "$1" ]; then
+    printf 'ok\n'
+  elif [ -L "$1" ]; then
+    printf 'symlink-broken\n'
+  elif ! stat "$1" >/dev/null 2>&1; then
+    printf 'unreadable\n'
+  else
+    printf 'not-a-dir\n'
+  fi
+}
+
+DIR_STATE="$(classify_dir_state "$LEDGER_DIR")"
+if [ "$DIR_STATE" != "ok" ]; then
+  echo "census.sh: ledger dir not found: $LEDGER_DIR ($DIR_STATE) (10:missing-dir)" >&2
+  exit 10
+fi
 
 # Resolve the git top-level so attribution and the post-commit-edit check can
 # address paths relative to it. Empty when the ledger is not in a git tree
 # (a tarball or non-git directory): those checks then skip rather than fail,
 # and a record with no reachable history is reported on its own terms.
+# The ledger dir was already refused above when it was absent or unreadable
+# (10:missing-dir), so a failure to cd here means the directory became
+# unusable mid-run: it fails closed rather than resolving git against the
+# caller's cwd.
 GIT_TOP=""
 if GIT_T="$(cd "$LEDGER_DIR" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)" \
    && [ -n "$GIT_T" ] && [ -d "$GIT_T" ]; then

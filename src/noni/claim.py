@@ -29,8 +29,8 @@ Exit codes:
        failure, a detached HEAD, an unresolvable branch, or a git call that
        timed out)
     4  the task reference is not a non-empty token (empty, whitespace-only,
-       or with embedded whitespace), --branch is not a safe ref name, or
-       --no-commit was combined with --push
+       or with embedded whitespace), --branch is not a safe ref name,
+       --no-commit was combined with --push, or --repo is not a directory
     5  the rebase hit a conflict: the rebase started and stopped mid-flight,
        so claim.py ran git rebase --abort, which leaves HEAD on the branch it
        was invoked on, at the claim commit this run made (the abort resets
@@ -364,6 +364,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     repo = Path(args.repo)
+    # The state root is checked before the register file is looked for: a
+    # --repo naming no directory is a usage error, not a missing session, and
+    # the message names the argument the caller got wrong (the shape
+    # register.py, close.py and release.py already use).
+    if not repo.is_dir():
+        return _report(
+            EXIT_USAGE,
+            f"{labels.CLAIM}: --repo {args.repo} is not a directory",
+            "pass the repository root that holds noni/sessions/",
+        )
     task = args.task.strip()
     if not task or not TASK_RE.fullmatch(task):
         print(

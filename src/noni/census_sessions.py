@@ -11,8 +11,17 @@ check that catches it at read time. A claim committed without a register file
 is flagged (distinct code) but the session's work is not blocked — the census
 is report-only.
 
+The one argument is the sessions directory of the state root — the directory
+``--repo`` names for the writers, with ``noni/sessions`` under it. It is never
+resolved from the current directory: a run with no argument is a usage error
+(2), not a census of whatever ``noni/sessions`` happened to sit next to the
+caller.
+
 Exit codes (lowest wins when several fire, 30 < 31 < 32):
     0   clean — every session file valid, no double-claims
+    2   usage: no sessions directory was given, or the one given is not a
+        directory (fail closed — the census never reports a clean it did not
+        read)
     3   a required tool is missing (checked by the bash wrapper)
     30  double-claim: two active claims on the same task from different identities
     31  a claim row was committed without a register file (work not blocked)
@@ -34,6 +43,7 @@ from . import labels
 REQUIRED_FIELDS = ("identity", "host/worktree", "started", "status", "claims")
 
 EXIT_CLEAN = 0
+EXIT_USAGE = 2
 EXIT_DOUBLE_CLAIM = 30
 EXIT_NO_REGISTER = 31
 EXIT_MALFORMED = 32
@@ -183,7 +193,27 @@ def run_census(sessions_dir: Path) -> tuple[int, list[dict]]:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    sessions_dir = Path(argv[0]) if argv else Path("noni/sessions")
+    # The state root is named by the caller and never inferred from the
+    # directory the run happens to sit in: a default of `noni/sessions`
+    # relative to the cwd would census (and report clean for) a register the
+    # caller never pointed at. Same fail-closed shape as the writers' --repo.
+    if not argv:
+        print(
+            f"{labels.CENSUS_SESSIONS}: usage: "
+            "census-sessions.py <state-root>/noni/sessions "
+            "(pass the sessions directory of the state root; there is no "
+            "current-directory default)",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+    sessions_dir = Path(argv[0])
+    if not sessions_dir.is_dir():
+        print(
+            f"{labels.CENSUS_SESSIONS}: sessions dir not found or not a "
+            f"directory: {sessions_dir}",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
     status, rows = run_census(sessions_dir)
 
     for row in rows:

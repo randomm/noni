@@ -23,7 +23,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from _harness import subprocess_env
+from _harness import run_from, subprocess_env
 
 REPO = Path(__file__).resolve().parent.parent
 FIXTURES = REPO / "tests" / "fixtures"
@@ -304,3 +304,274 @@ def test_every_fixture_has_its_exit_code():
         assert fx["exit_code"] == code_in_name, (
             f"{f.name}: exit_code in fixture is {fx['exit_code']} but filename says {code_in_name}"
         )
+
+
+# --- State root: the sessions directory is named by the caller, not by cwd ----
+#
+# The sessions census takes its state root as one argument (the sessions
+# directory of the state root) rather than as a --repo flag, so the contract
+# here is the same one the writers are held to with a different shape: the
+# directory the run reads is the directory it was given, and the cwd decides
+# nothing. Three trees: the state root's register, a decoy register beside the
+# cwd carrying a double-claim of its own, and an empty cwd a stray write would
+# show up in.
+
+CENSUS_STATE_DIR = "sessions-census-state-root"
+CENSUS_CWD_DIR = "sessions-census-cwd"
+CENSUS_DECOY_DIR = "sessions-census-decoy"
+
+
+def _sessions_census_case(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """The three trees of one sessions-census run: (state root, decoy, cwd).
+
+    The state root's register is clean and the decoy's is the double-claim, so
+    exit 0 is the answer that can only come from reading the right directory: a
+    run driven by the cwd would have reported the decoy's two active claims on
+    one task. The fixture shape is the one the golden fixtures use.
+    """
+    root = tmp_path / CENSUS_STATE_DIR / "noni" / "sessions"
+    _write_sessions_dir(root, {
+        "2026-10-01-aaaaaa.md": {
+            "identity": "developer", "host/worktree": "ws-1",
+            "started": "2026-10-01T10:00:00Z", "status": "active",
+            "claims": ["#1"],
+        },
+        "2026-10-01-bbbbbb.md": {
+            "identity": "reviewer", "host/worktree": "ws-2",
+            "started": "2026-10-01T11:00:00Z", "status": "active",
+            "claims": ["#2"],
+        },
+    })
+    decoy = tmp_path / CENSUS_DECOY_DIR / "noni" / "sessions"
+    _write_sessions_dir(decoy, {
+        "2026-10-01-cccccc.md": {
+            "identity": "one", "host/worktree": "ws-3",
+            "started": "2026-10-01T10:00:00Z", "status": "active",
+            "claims": ["#999"],
+        },
+        "2026-10-01-dddddd.md": {
+            "identity": "two", "host/worktree": "ws-4",
+            "started": "2026-10-01T10:00:00Z", "status": "active",
+            "claims": ["#999"],
+        },
+    })
+    cwd = tmp_path / CENSUS_CWD_DIR
+    cwd.mkdir(parents=True, exist_ok=True)
+    return root, decoy, cwd
+
+
+def test_the_state_root_named_by_the_caller_is_the_only_one_read(tmp_path):
+    """A clean state root censuses clean while a decoy register beside the cwd
+    holds a double-claim the run must never see.
+
+    The entry point is the wrapper the skill documents, launched from the cwd
+    with the state root's sessions directory passed as its argument."""
+    entry = REPO / "skills" / "sessions-claims" / "scripts" / "census-sessions.py"
+    root, _decoy, cwd = _sessions_census_case(tmp_path)
+
+    proc = run_from(cwd, entry, str(root), identity=False)
+    assert proc.returncode == 0, (
+        f"the state root is clean, so the decoy must not have been read: "
+        f"{proc.returncode}\n{proc.stdout}\n{proc.stderr}"
+    )
+    assert proc.stdout.strip() == "", f"a clean run reports nothing: {proc.stdout}"
+    assert "#999" not in proc.stdout, "the decoy's double-claim reached the output"
+    assert not (cwd / "noni").exists(), "the census is read-only: it wrote under the cwd"
+
+
+def test_the_state_roots_own_double_claim_fires_from_a_foreign_cwd(tmp_path):
+    """The other half of the pair: a double-claim in the state root is reported
+    even though the cwd holds a clean decoy register.
+
+    Without this the test above could be satisfied by a census that read no
+    directory at all: both would exit 0."""
+    entry = REPO / "skills" / "sessions-claims" / "scripts" / "census-sessions.py"
+    _root, decoy, cwd = _sessions_census_case(tmp_path)
+    # Swap the two registers: the state root is now the double-claim, the decoy
+    # beside the cwd is the clean one.
+    root = tmp_path / CENSUS_STATE_DIR / "noni" / "sessions"
+    for name in list(root.glob("*.md")):
+        name.unlink()
+    _write_sessions_dir(root, {
+        "2026-10-01-eeeeee.md": {
+            "identity": "one", "host/worktree": "ws-1",
+            "started": "2026-10-01T10:00:00Z", "status": "active",
+            "claims": ["#77"],
+        },
+        "2026-10-01-ffffff.md": {
+            "identity": "two", "host/worktree": "ws-2",
+            "started": "2026-10-01T10:00:00Z", "status": "active",
+            "claims": ["#77"],
+        },
+    })
+
+    proc = run_from(cwd, entry, str(root), identity=False)
+    assert proc.returncode == 30, (
+        f"the state root's own double-claim must fire: {proc.returncode}\n"
+        f"{proc.stdout}\n{proc.stderr}"
+    )
+    rows = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
+    assert any(r.get("type") == "double-claim" and r["task"] == "#77" for r in rows), rows
+    assert "#999" not in proc.stdout
+    assert decoy.is_dir(), "the decoy register must still be there to have been ignored"
+
+
+# --- Every entry point names the state root; none resolves it from the cwd -----
+#
+# The module, the .sh wrapper and the steering-ledger --sessions dispatch are
+# three routes to one arbiter. A cwd-relative default on any of them would
+# census (and report clean for) a register the caller never pointed at, so the
+# rule is pinned per route: the run reads the directory it was given, and with
+# no directory it fails closed with exit 2 rather than inventing one.
+
+# The three routes the product documents. The package module itself is not one
+# of them: it imports ``from . import labels``, so running it by path fails on
+# the import rather than censusing anything, and the in-place entry point the
+# skills sell is the thin wrapper beside it.
+CENSUS_SH = REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"
+SHIM = REPO / "skills" / "sessions-claims" / "scripts" / "census-sessions.sh"
+WRAPPER = REPO / "skills" / "sessions-claims" / "scripts" / "census-sessions.py"
+
+
+def _run_argv(cwd: Path, argv: list[str]) -> subprocess.CompletedProcess[str]:
+    """One sessions-census route launched from ``cwd`` with argv given verbatim.
+
+    The list form is deliberate: the three routes differ only in the command
+    prefix (``python``, ``bash``, ``bash census.sh --sessions``), so one runner
+    keeps the cwd, the environment and the timeout identical across them and a
+    pass on one route means the same thing as a pass on another.
+    """
+    return subprocess.run(argv, capture_output=True, text=True,
+                          env=subprocess_env(), cwd=str(cwd), timeout=60)
+
+
+def _routes(cwd: Path, target: Path | None) -> list[list[str]]:
+    """Every entry point for one sessions census of ``target`` (None = no argument).
+
+    ``target`` is passed as one argv entry (or omitted entirely) so the routes
+    differ only in how they reach the same core.
+    """
+    arg = [str(target)] if target is not None else []
+    return [
+        [sys.executable, str(WRAPPER), *arg],
+        ["bash", str(SHIM), *arg],
+        ["bash", str(CENSUS_SH), "--sessions", *arg],
+    ]
+
+
+def test_no_shipped_entry_point_carries_a_cwd_relative_state_default():
+    """The census's cwd-relative defaults are gone from every entry point, and
+    a new one cannot quietly reintroduce one.
+
+    Three sites used to resolve state from wherever the run sat: the package
+    module defaulted to ``Path("noni/sessions")``, the sessions shim to the
+    same relative path, and the steering-ledger shim to ``"."``. A default of
+    that shape is not a convenience here -- it is a verdict on a tree the
+    caller never named, reported in the same bytes as a verdict on the state
+    root. This pins the absence of the shape itself, on top of the behavioural
+    tests above that pin the refusal.
+    """
+    sites = {
+        "src/noni/census_sessions.py": ['Path("noni/sessions")',
+                                        "Path('noni/sessions')"],
+        "skills/sessions-claims/scripts/census-sessions.sh":
+            ['SESSIONS_DIR="noni/sessions"', 'SESSIONS_DIR="."',
+             'SESSIONS_DIR="$PWD'],
+        "skills/steering-ledger/scripts/census.sh": ['LEDGER_DIR="."',
+                                                     'LEDGER_DIR="./"',
+                                                     'LEDGER_DIR="$PWD"'],
+    }
+    for rel, banned in sites.items():
+        source = (REPO / rel).read_text(encoding="utf-8")
+        for needle in banned:
+            assert needle not in source, f"{rel} still defaults state to {needle!r}"
+
+
+def test_no_route_writes_anything_under_the_cwd(tmp_path):
+    """All three routes, pointed at the state root from a foreign cwd, leave it
+    empty: the census is read-only, and a cwd it cannot read from is the one
+    place it must not end up having touched.
+
+    The one file a launched interpreter is allowed to leave behind is its own
+    coverage data file (the gate measures subprocesses, and the launched
+    interpreter writes its data where it starts). Those are named, not swept:
+    the assertion is about ``noni/``, and it still fails on anything else.
+    """
+    root, _decoy, cwd = _sessions_census_case(tmp_path)
+    for argv in _routes(cwd, root):
+        proc = _run_argv(cwd, argv)
+        assert proc.returncode == 0, f"{argv[:3]}: {proc.returncode}\n{proc.stderr}"
+        strays = [p.name for p in cwd.iterdir() if not p.name.startswith(".coverage")]
+        assert strays == [], f"{argv[:3]} wrote under the cwd: {strays}"
+        assert not (cwd / "noni").exists(), f"{argv[:3]} created noni/ under the cwd"
+
+
+def test_no_route_reads_a_decoy_beside_the_cwd(tmp_path):
+    """All three routes read the state root and not the decoy beside the cwd.
+
+    The decoy carries a double-claim, so exit 0 is the only answer that can
+    come from the right directory: a route still driven by the cwd would have
+    reported 30 for the register sitting next to it.
+    """
+    root, _decoy, cwd = _sessions_census_case(tmp_path)
+    for argv in _routes(cwd, root):
+        proc = _run_argv(cwd, argv)
+        assert proc.returncode == 0, f"{argv[:3]}: {proc.returncode}\n{proc.stdout}\n{proc.stderr}"
+        assert "#999" not in proc.stdout, f"{argv[:3]} read the decoy register"
+
+
+def test_every_route_refuses_a_missing_sessions_dir(tmp_path):
+    """The state root's sessions directory removed: every route fails closed.
+
+    A census that cannot find its register has no findings to report, and a
+    run that printed nothing and exited 0 would be read as a clean census by
+    whoever scripted it. The refusal names the path it was given and exits 2.
+    """
+    root, _decoy, cwd = _sessions_census_case(tmp_path)
+    for name in root.iterdir():
+        name.unlink()
+    root.rmdir()
+    for argv in _routes(cwd, root):
+        proc = _run_argv(cwd, argv)
+        assert proc.returncode == 2, f"{argv[:3]}: {proc.returncode}\n{proc.stderr}"
+        assert "noni" in proc.stderr, f"{argv[:3]} must name the path: {proc.stderr}"
+        assert str(root) in proc.stderr, f"{argv[:3]} must name the path it failed on: {proc.stderr}"
+        assert proc.stdout.strip() == "", f"{argv[:3]} printed rows for a tree it could not read"
+
+
+def test_every_route_refuses_a_sessions_dir_that_is_not_a_directory(tmp_path):
+    """The same refusal for a sessions path that exists but is not a directory.
+
+    The two states are the pair the contract pins: a missing path and a path
+    that answers to something else (here a plain file) are both usage errors,
+    not a census over an empty register.
+    """
+    root, _decoy, cwd = _sessions_census_case(tmp_path)
+    for name in root.iterdir():
+        name.unlink()
+    root.rmdir()
+    root.write_text("i am a file, not a sessions directory\n", encoding="utf-8")
+    for argv in _routes(cwd, root):
+        proc = _run_argv(cwd, argv)
+        assert proc.returncode == 2, f"{argv[:3]}: {proc.returncode}\n{proc.stderr}"
+        assert str(root) in proc.stderr, f"{argv[:3]} must name the path: {proc.stderr}"
+        assert proc.stdout.strip() == "", f"{argv[:3]} printed rows for a non-directory"
+
+
+def test_no_route_invents_a_state_root_when_given_no_argument(tmp_path):
+    """No argument, from a cwd holding a complete decoy register: exit 2 on every
+    route, and no NDJSON row.
+
+    This is the regression the cwd-relative defaults used to allow. With a
+    default of ``noni/sessions`` the run would have found the decoy and
+    reported 30 for a register nobody pointed it at; with a default of ``.``
+    (the steering-ledger shim's old one) it would have audited the cwd as a
+    ledger. Either way the exit code would have described a tree other than
+    the caller's.
+    """
+    _root, decoy, cwd = _sessions_census_case(tmp_path)
+    assert decoy.is_dir(), "the decoy is the whole point: it must be there to be refused"
+    for argv in _routes(cwd, None):
+        proc = _run_argv(cwd, argv)
+        assert proc.returncode == 2, f"{argv[:3]}: {proc.returncode}\n{proc.stdout}\n{proc.stderr}"
+        assert proc.stdout.strip() == "", f"{argv[:3]} censused the decoy: {proc.stdout}"

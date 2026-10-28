@@ -43,6 +43,14 @@ The identity is permanent: it survives across commits, pulls, and clones. The
 host/worktree, started, and claims are ephemeral: they describe this working
 copy and this session's current work.
 
+Every `noni/` path the four writers and the sessions census take is resolved
+from `--repo` — the one flag that names the state root: the attached project's
+own repository by default, or a separate directory carrying the same `noni/`
+layout when a team keeps its direction in a private state repository. No tool
+reads or writes state relative to its own location or the current directory
+beyond `--repo`'s default, and a `--repo` naming no directory is refused before
+anything is written.
+
 Read `references/register.md` before writing a register file. Read
 `references/claim.md` before making a claim or releasing one. Read
 `references/census.md` before reporting on the session state.
@@ -180,7 +188,7 @@ is stopped. Exit codes (the full table, with the abort post-condition, is in
 | `1` | the register file for `--session-id` does not exist (register first) |
 | `2` | the session file is malformed (no `- claims:` marker, not readable as UTF-8) or the session already claims the same task |
 | `3` | push failed after 3 fetch-rebase-push attempts; also a failed fetch, a detached HEAD, an unresolvable branch, a git call that timed out, or a `git add`/`git commit` that git refused |
-| `4` | usage error: bad `--task` or `--branch` value, or `--no-commit` with `--push` |
+| `4` | usage error: bad `--task` or `--branch` value, `--no-commit` with `--push`, or a `--repo` that is not a directory |
 | `5` | rebase conflict: the rebase started and stopped; the script aborts it, which leaves the clone on the branch it was invoked on at the claim commit it made (if the abort itself fails, the message says the clone needs manual cleanup) |
 | `6` | rebase refused: the rebase never started (the hint names committing or stashing), or its state could not be read (no abort run, and the message says so) |
 
@@ -190,17 +198,22 @@ post-condition and its one exception.
 ## The sessions census
 
 ```
-scripts/census-sessions.sh [SESSIONS_DIR]
+scripts/census-sessions.sh <state-root>/noni/sessions
 
 # equivalent entry point (the steering-ledger census dispatches here)
-census.sh --sessions [SESSIONS_DIR]
+census.sh --sessions <state-root>/noni/sessions
 ```
+
+The one argument is the sessions directory of the state root (`--repo` plus
+`noni/sessions`); there is no current-directory default, so a run with no
+argument is the usage error `2`.
 
 Read-only, NDJSON on stdout, honest exit code:
 
 | code | meaning |
 |---|---|
 | `0` | clean — every session file valid, no double-claims |
+| `2` | usage: no sessions directory was given, or the one given is not a directory |
 | `3` | the interpreter the wrapper runs is not found on the reading machine |
 | `30` | double-claim: two active claims on the same task from different identities |
 | `31` | a claim row was committed without a register file (work is not blocked — report only) |

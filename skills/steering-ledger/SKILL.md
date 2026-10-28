@@ -30,6 +30,13 @@ correcting a record. Read `references/census.md` before reporting on the ledger
 state. Write records with `scripts/decide.py` (below): it is the only writer,
 and it refuses the shapes the census would reject.
 
+Every `noni/` path these commands read or write resolves from `--repo`, the one
+flag that names the state root: the attached project's own repository by
+default, or a separate directory carrying the same `noni/` layout when a team
+keeps its direction in a private state repository. The script's own location
+never decides where state is read from or written to, and a `--repo` naming no
+directory is refused before anything is written.
+
 ## Writing a record
 
 ```
@@ -132,11 +139,15 @@ the anti-fabrication rule (the agent never answers for the operator) are in
 
 ## Census
 
-`scripts/census.sh` is read-only, jq-based, and exits with an honest code:
+`scripts/census.sh <state-root>/noni/decisions` is read-only, jq-based, and
+exits with an honest code. Its one argument is the ledger directory of the
+state root (`--repo` plus `noni/decisions`): there is no current-directory
+default, so a run with no argument is the usage error `2`.
 
 | code | meaning |
 |---|---|
 | `0` | clean — every record valid, chain intact |
+| `2` | usage: no ledger directory was given (the state root is named by the caller, never by the cwd) |
 | `3` | jq not found on the reading machine |
 | `10` | a record is missing or malformed, or the ledger is unusable (missing/empty dir, bad filename, unreadable git tree) |
 | `12` | a record was edited after commit (supersede instead) |
@@ -154,8 +165,8 @@ The table above is `census.sh`. The unified census reports a recordless
 The exit-code contract and how to read the report are in `references/census.md`.
 
 The census also dispatches the sessions check (E2): `census.sh --sessions
-[SESSIONS_DIR]` reaches into the sibling `sessions-claims` skill via the
-relative path `../../sessions-claims/scripts/census-sessions.sh`. That is a
+<state-root>/noni/sessions` reaches into the sibling `sessions-claims` skill via
+the relative path `../../sessions-claims/scripts/census-sessions.sh`. That is a
 documented dependency: with no override, `sessions-claims` must be installed at
 the expected relative path. Set `NONI_SESSIONS_CENSUS` to an absolute path to
 point the dispatch at a separately installed copy or an adapter.

@@ -30,7 +30,8 @@ Exit codes:
     2  invalid input: an argparse failure, a subcommand outside add/move/remove/confirm,
        an issue that is not a positive integer, a missing --decision on add, an --at or
        --to that is not a 1-based position of the resulting list, a flag passed to the
-       verb that does not own it, or --now that is not a valid ISO-8601 timestamp
+       verb that does not own it, --now that is not a valid ISO-8601 timestamp, or a
+       --repo that is not a directory
     3  a path this writer needs could not be read or written, or a git call failed or
        timed out: the order file is not a regular file at its path (a symlink, a
        directory, an unreadable file), the decision ledger could not be looked in, a
@@ -174,6 +175,15 @@ def main(argv: list[str] | None = None) -> int:
                                       "to stamp this run's time")
 
     repo = Path(args.repo)
+    # The state root is checked before the artifact is read or the decision
+    # looked up: --repo naming no directory is a usage error (the code every
+    # other flag mistake takes), not a missing order or an absent decision, and
+    # the message names the argument the caller passed. Same shape as
+    # register.py, close.py, release.py and claim.py, which all refuse here too.
+    if not repo.is_dir():
+        return _fail(EXIT_USAGE, f"--repo {args.repo} is not a directory",
+                     "pass the repository root that holds (or will hold) "
+                     "noni/direction/order.json")
     order_path = repo / orderschema.ORDER_REL
 
     # --- reads: the artifact, then the decision it must cite -----------------

@@ -50,6 +50,13 @@ rewrite.
 An absent file is not an error. Nothing ordered yet is a state, and the first
 `add` creates the file.
 
+The path is resolved from `--repo` — the one flag that names the state root: the
+attached project's own repository by default, or a separate directory carrying
+the same `noni/` layout when a team keeps its direction in a private state
+repository. The script's own location never decides where the artifact is read
+from or written to, and a `--repo` naming no directory is refused before
+anything is written.
+
 ## Writing the order
 
 ```
@@ -92,7 +99,7 @@ unchanged, and commits nothing.
 | code | meaning |
 |---|---|
 | `0` | the order was written (and committed unless `--no-commit`), or no byte of it needed changing |
-| `2` | invalid input: an argparse failure, a subcommand outside `add`/`move`/`remove`/`confirm`, an issue that is not a positive integer, a missing `--decision` on `add`, a `--to`/`--at` that is not a 1-based position of the resulting list, a flag passed to the verb that does not own it, or a `--now` that is not a valid UTC timestamp |
+| `2` | invalid input: an argparse failure, a subcommand outside `add`/`move`/`remove`/`confirm`, an issue that is not a positive integer, a missing `--decision` on `add`, a `--to`/`--at` that is not a 1-based position of the resulting list, a flag passed to the verb that does not own it, a `--now` that is not a valid UTC timestamp, or a `--repo` that is not a directory |
 | `3` | a path this writer needs could not be read or written, or a git call failed or timed out: the order file is not a regular file at its path, a decision record it must read is unreadable, the artifact could not be written, or the commit step failed (the file is left written and named, never claimed as committed) |
 | `4` | what the order itself refuses: the issue is already listed (`add`), absent from the order (`move`, `remove`, `confirm`), no file under `noni/decisions/` carries the given `--decision` id, that record is superseded (the hint names its successor), or the existing file is not the artifact this writer writes |
 

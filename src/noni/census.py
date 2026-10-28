@@ -49,7 +49,6 @@ import re
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -996,14 +995,15 @@ def _repo_sha1(path: Path) -> str | None:
         return None
 
 
-# --- Ledger and hygiene splits -------------------------------------------------
-# The ledger probe and the hygiene class, with the checker hygiene imports, live
-# in census_ledger.py and census_hygiene.py beside this file. All are ordinary
-# package imports: inside an installed wheel there is no sibling file to load by
-# path, and the census's trust in its checker is module identity (see
-# census_hygiene._trusted_public_safety), not a resolved filesystem path. The row
-# mechanics each one uses are handed in at the call, so the row shape keeps its
-# one owner here. The ledger alias is `_ledger` in the house style of the sibling
+# --- Ledger, sessions-probe and hygiene splits ---------------------------------
+# The ledger probe, the sessions register's probe and the hygiene class, with the
+# checker hygiene imports, live in census_ledger.py, census_sessions_probe.py and
+# census_hygiene.py beside this file. All are ordinary package imports: inside an
+# installed wheel there is no sibling file to load by path, and the census's trust
+# in its checker is module identity (see census_hygiene._trusted_public_safety),
+# not a resolved filesystem path. The row mechanics each one uses are handed in
+# at the call, so the row shape keeps its one owner here. The aliases are
+# `_ledger`, `_sessions_probe` and so on in the house style of the sibling
 # split-outs (`_helpers`, `_ordering`, `_ordering_readers`): the `_` prefix marks
 # the module and the group's own Path argument, `ledger`, stays a name no alias
 # takes.
@@ -1015,6 +1015,42 @@ from . import census_text as _text  # noqa: E402
 # one object rather than a copy, so a caller (and the census's own tests) still
 # names it through the module it already imports.
 LedgerProbe = _ledger.LedgerProbe
+
+# The sessions probe lives in census_sessions_probe.py beside this file, with the
+# same split census_ledger made: the module owns the register's one readdir and
+# the one row a faulted listing earns, and the row mechanics it uses are handed
+# in at the call so the row shape keeps its one owner here. The census's
+# `_sessions_listing` below is the sibling's `sessions_listing` one call site, so
+# the run's gate and its rows are the answer of one readdir.
+from . import census_sessions_probe as _sessions_probe  # noqa: E402
+
+# Re-exported as the one object, not a copy, so a caller (and the census's own
+# tests) still names the probe's type through the module it already imports.
+SessionsProbe = _sessions_probe.SessionsProbe
+
+
+def _sessions_listing(sessions: Path) -> SessionsProbe:
+    """The register's one listing, taken by the census exactly once per run.
+
+    The census's own `_ledger_probe` twin: the body is the sibling's, this is the
+    seam the census's tests patch and the one place `main` asks for the register.
+    """
+    return _sessions_probe.sessions_listing(sessions)
+
+
+def _append_sessions_listing_fault(
+    sessions: Path, root: Path, strict: bool, findings: list[dict], fault: str
+) -> None:
+    """The register's one faulted-listing row, composed in ``census_sessions_probe``.
+
+    The row mechanics are the census's own and are handed in at the call, so the
+    row shape keeps its single owner here (see the sibling's docstring for the
+    row itself and ``census_ledger.append_listing_fault`` for its composition).
+    """
+    _sessions_probe.append_sessions_listing_fault(
+        sessions, root, strict, findings, fault,
+        row=_row, rel_to_root=_rel_to_root, bounded=_bounded, clipped=_clipped)
+
 
 # The hygiene class's own parts stay reachable as members of the census: they are
 # re-exports of one object, not copies, so the census keeps its single owner of
@@ -1086,89 +1122,6 @@ def _parse_session(body: str) -> tuple[dict[str, str], list[str], list[str]]:
         if field not in fields:
             problems.append(f"missing field: {field}")
     return fields, claims, problems
-
-
-# The probe and its one listing are declared above the reporter that annotates
-# them, the way ``census_ledger`` declares ``LedgerProbe`` above its reporters:
-# a reader meeting ``probe: SessionsProbe`` should not have to scroll to learn
-# what the type promises.
-@dataclass(frozen=True)
-class SessionsProbe:
-    """The register directory's listing, answered once by :func:`_sessions_listing`.
-
-    Exactly one field is set, and that one field is the answer of one readdir:
-    ``names`` is the ``*.md`` listing this run took (the empty tuple for a
-    directory it listed and found no register file in, a read that answered
-    "nothing"), or ``fault`` is the text of the ``OSError`` a directory that
-    exists, stats as a directory and cannot be listed raised. "Listed" and "did
-    not list" are therefore distinguishable by construction rather than by a
-    convention the reporter has to remember: a probe that could mean both would
-    let the group ask the deletion question about a register it never opened,
-    which is the silent clean this ticket exists to close.
-
-    It is the ledger probe's shape (see ``census_ledger.LedgerProbe``) minus its
-    ``state`` field: the sessions group words no states, so there is no state
-    word here for a fault to be mistaken for.
-
-    ``fault`` is built by ``census_text.fault_text``, which reads the
-    exception's class and its ``strerror`` and never its ``filename``: the path a
-    read failed on is the one part of an ``OSError`` no row may carry. It is
-    ``None`` or a non-empty string, never the empty string, and it is the one
-    field both ``main``'s gate and :func:`_check_sessions` read (see
-    :func:`_sessions_listing` for where a blank errno text is replaced).
-
-    The one read is also the one answer: a register that starts faulting *after*
-    this listing succeeded reports the listing it got and earns no fault row,
-    because there is no second readdir left to change its mind (the same
-    trade-off ``census_ledger.LedgerProbe`` documents).
-    """
-
-    names: tuple[Path, ...] | None = None
-    fault: str | None = None
-
-    def __post_init__(self) -> None:
-        if (self.names is None) == (self.fault is None):
-            raise ValueError(
-                "SessionsProbe answers one readdir: set names (the listing, "
-                "() for a directory listed and found empty) or fault (the text "
-                "of the OSError that stopped the listing), never both and neither")
-        if self.names is not None and (
-                not isinstance(self.names, tuple)
-                or not all(isinstance(n, Path) for n in self.names)):
-            raise TypeError(
-                "SessionsProbe.names is the listing: a tuple of Path, not a "
-                f"{type(self.names).__name__} of whatever it was handed")
-        if self.fault is not None and not isinstance(self.fault, str):
-            raise TypeError(
-                "SessionsProbe.fault is the text of the OSError that stopped "
-                f"the listing, not a {type(self.fault).__name__}")
-
-
-def _sessions_listing(sessions: Path) -> SessionsProbe:
-    """List the register once; the whole census performs no other readdir of it.
-
-    The read is an explicit ``Path.iterdir`` and never ``Path.glob``: ``glob``
-    swallows the ``OSError`` a faulted readdir raises and yields nothing, so a
-    register the run could not read would earn the same clean verdict as a
-    project that never opened a session. Here the ``OSError`` propagates and the
-    probe carries its text instead.
-
-    Both answers come from this call, so the group's file loop and ``main``'s
-    gate are the same read: ``_check_sessions`` reports from the names and
-    ``main`` opens the group on the fault. The tuple is sorted because the
-    register's reporters print sorted, and one order per run is what keeps two
-    of them naming one file the same way.
-
-    The fault field is never empty: an ``OSError`` whose ``strerror`` came back
-    blank or whitespace answers with the exception's class name, so a probe that
-    says a read faulted always carries a diagnosis, and the gate's test and the
-    reporter's cannot diverge over an empty string.
-    """
-    try:
-        return SessionsProbe(names=tuple(sorted(
-            p for p in sessions.iterdir() if p.suffix == ".md")))
-    except OSError as e:
-        return SessionsProbe(fault=_text.fault_text(e) or type(e).__name__)
 
 
 def _check_sessions(
@@ -1328,32 +1281,6 @@ def _check_sessions(
             )
 
     _check_sessions_deleted(sessions, git, root, strict, findings)
-
-
-def _append_sessions_listing_fault(
-    sessions: Path, root: Path, strict: bool, findings: list[dict], fault: str
-) -> None:
-    """The row for a sessions register this run could not list.
-
-    The sessions call of ``census_ledger.append_listing_fault``, which owns this
-    row's shape: one row naming the register in ``subject`` and ``artifact``,
-    foreign text through ``bounded``, the finished sentence through ``clipped``,
-    ``severity="warn"`` with the ``--strict`` promotion, and the whole-artifact
-    marker that keeps it visible under a filter that named no session class.
-    Read that function for why the row is built that way. What differs here is
-    only the two things it takes as arguments: the class, ``session-deleted``
-    (what the deletion check already uses for its cannot-tells, so a run filtered
-    to that class reports the fault instead of the silent clean of a group that
-    read nothing), and the question the faulted read took away. No ``probe`` row
-    accompanies it: one fault earning rows of two classes reads as two problems
-    found where there was one read.
-    """
-    _ledger.append_listing_fault(
-        sessions, root, findings, strict, fault,
-        check="session-deleted", noun="the sessions register",
-        unknown="so which session files are registered, and whether a committed "
-                "register file was deleted, cannot be answered",
-        row=_row, rel_to_root=_rel_to_root, bounded=_bounded, clipped=_clipped)
 
 
 def _check_sessions_deleted(

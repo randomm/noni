@@ -125,7 +125,7 @@ def test_package_files_present():
     for module in (
         "census.py", "census_hygiene.py", "census_json.py", "census_ledger.py",
         "census_ordering.py", "census_ordering_readers.py", "census_sessions.py",
-        "census_text.py",
+        "census_sessions_probe.py", "census_text.py",
         "claim.py", "cli.py",
         "decide.py", "gitwrite.py", "labels.py", "order.py", "order_gitwrite.py",
         "orderschema.py", "orderstate.py", "public_safety.py", "register.py",

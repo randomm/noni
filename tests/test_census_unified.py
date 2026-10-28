@@ -35,6 +35,12 @@ from _harness import (  # noqa: E402
 # source it lives in (``_harness_source`` follows the wrapper to the package
 # module that holds the logic).
 CENSUS_PY = REPO / "skills" / "census" / "scripts" / "census.py"
+# The sessions register's probe, split out of the census for the file-size
+# ratchet. ``_harness_source`` follows a wrapper only to the one package module
+# it imports, so a check of a split-out module names the package file directly
+# (the same route ``tests/test_ledger_listing_ownership.py`` takes for the other
+# census splits).
+SESSIONS_PROBE_PY = REPO / "src" / "noni" / "census_sessions_probe.py"
 
 DENYLIST_ENV_VAR = "NONI_SCRUB_DENYLIST"
 
@@ -941,18 +947,42 @@ class TestSessionsListingFault:
         that swallows the readdir ``OSError``, and a pin written against one
         spelling of it (``sessions.glob("*.md")``) is satisfied by every other --
         ``sessions.glob(pattern)``, ``Path.glob(sessions, ...)`` -- while the
-        silent clean is back. So the pin asks two AST questions of the census
-        module: the register's own listing function calls ``iterdir`` and holds no
-        ``glob`` call, and neither does anywhere else in the census.
+        silent clean is back. So the pin asks two AST questions of the source the
+        register's listing lives in: the register's own listing function calls
+        ``iterdir`` and holds no ``glob`` call, and no ``glob`` call is anywhere
+        else in the census's own modules either. The listing's body sits in
+        ``census_sessions_probe`` (the file-size ratchet moved the probe out of
+        ``census.py``, which keeps the one call site of it); the ban covers every
+        module of the census, the split-outs included, so a listing cannot reach
+        for ``glob`` by moving house.
         """
-        source = _harness_source(CENSUS_PY)
-        tree = ast.parse(source)
-        listings = [node for node in ast.walk(tree)
-                    if isinstance(node, ast.FunctionDef)
-                    and node.name == "_sessions_listing"]
+        # The census's tree holds the census, the probe's tree the split-out
+        # probe; the ban below reads both, so a listing cannot reach for `glob`
+        # by moving house.
+        census_trees = [(CENSUS_PY, ast.parse(_harness_source(CENSUS_PY))),
+                        (SESSIONS_PROBE_PY, ast.parse(_harness_source(SESSIONS_PROBE_PY)))]
+        # Two names, one listing: the sibling defines the readdir as
+        # `sessions_listing` and the census wraps it as `_sessions_listing`, the
+        # name `main` calls. One definition of each (a second of either is a
+        # second reader of the register), and the `iterdir` assertion below is
+        # asked of the one that actually lists -- the wrapper holds no readdir of
+        # its own, by the same rule that keeps the run to one read.
+        for name in ("_sessions_listing", "sessions_listing"):
+            defs = [node for _, tree in census_trees for node in ast.walk(tree)
+                    if isinstance(node, ast.FunctionDef) and node.name == name]
+            assert len(defs) == 1, \
+                f"the register's listing is no longer defined once under {name}, " \
+                "so this pin has nothing to scope to"
+        listings = [node for node in (
+            n for _, tree in census_trees for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef)
+            and n.name in ("_sessions_listing", "sessions_listing"))
+            if {c.func.attr for c in ast.walk(node)
+                if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)}
+            & {"iterdir", "glob"}]
         assert len(listings) == 1, \
-            "the register's one reader is no longer the one function named " \
-            "_sessions_listing, so this pin has nothing to scope to"
+            "the register's reader is no longer the one function that performs a " \
+            "readdir, so this pin has nothing to scope to"
         listing_calls = {node.func.attr for node in ast.walk(listings[0])
                          if isinstance(node, ast.Call)
                          and isinstance(node.func, ast.Attribute)}
@@ -962,9 +992,11 @@ class TestSessionsListingFault:
             "the register's listing reached for glob, which swallows the fault and " \
             "reads an unreadable directory as an empty one"
         # The wider ban is a separate claim from the register's own rule, and it
-        # is a claim about the module: no listing primitive anywhere in the
-        # census may swallow an OSError the census then has to answer for.
-        module_calls = {node.func.attr for node in ast.walk(tree)
+        # is a claim about the census's modules: no listing primitive in any of
+        # them may swallow an OSError the census then has to answer for.
+        module_calls = {node.func.attr
+                        for _, tree in census_trees
+                        for node in ast.walk(tree)
                         if isinstance(node, ast.Call)
                         and isinstance(node.func, ast.Attribute)}
         assert "glob" not in module_calls, \

@@ -155,7 +155,72 @@ traceback; the success lines go to stdout. What git printed is echoed
 sanitised (control characters stripped) and bounded to `GIT_OUTPUT_LIMIT`
 characters, because that text can originate with the remote. The codes are
 published as `EXIT_*` module constants in
-`scripts/claim.py`, and a test asserts that docstring table against the code.
+`src/noni/claim.py`, and a test asserts that docstring table against the code.
+
+## Releasing a claim
+
+`release.py --repo REPO --session-id SID --task TASK [--no-commit] [--push]`
+removes one `- claim: <task>` row from the session's own file and commits it.
+The row is matched on the **stripped line**, so the indented row under
+`- claims:` that `register.py` writes and the bare row at EOF that `claim.py`
+appends are both released, and neither shape is privileged. Every other row,
+and every field line, stays byte-identical.
+
+Two shapes are refused rather than guessed, both exit 2:
+
+- **the session holds no such row** — the message names both the task and the
+  session, so the operator can see which of the two was wrong;
+- **the session holds two identical rows** — `claim.py` refuses a duplicate, so
+  a pair means the file was edited outside the writers, and removing one of them
+  silently would report a release the census does not agree with.
+
+A file that carries no `- claims:` marker is refused the same way: without it
+the writer cannot tell a claim row from a field line, and guessing which lines
+are rows is exactly what this writer does not do.
+
+The register file itself is never deleted, even when the released row was the
+last one: the file is the session's record, and the census reads history for its
+deleted-file check. A session that has finished its work is `close.py`'s
+business, not this command's.
+
+Releasing is not a lock either. The row is a record this session wrote; the
+census is what reports a double-claim, and removing the row is what makes that
+report for the task go away.
+
+| code | meaning |
+|---|---|
+| `0` | the row is removed and committed (and pushed with `--push`), or removed and left uncommitted with `--no-commit` |
+| `1` | the register file for `--session-id` does not exist (register first) |
+| `2` | the session does not hold that task, or the file is unreadable, not UTF-8, carries no `- claims:` marker, holds the row twice, or `--repo` names no directory |
+| `3` | git could not commit the change, or `--push` failed after 3 fetch-rebase-push attempts (also a fetch failure, a detached HEAD, or an unresolvable branch) |
+| `4` | `--task` or `--session-id` is not a single token, or `--no-commit` was combined with `--push` |
+
+`--no-commit` runs no git at all and prints `release.py: <path> left
+uncommitted`; a working copy with no git directory answers the same line, since
+there is nothing to commit into. The census reads the working tree, so the
+removal is visible in this clone and invisible to every other one until it is
+committed and pushed.
+
+## Closing a session
+
+`close.py --repo REPO --session-id SID [--no-commit] [--push]` sets the
+session's own `- status:` line to `closed` and commits that one file. That is
+the whole of it, and it is how a session stops counting toward the double-claim
+check: the census ignores a terminal status.
+
+Only the status line moves — the identity, the claims, the timestamps and every
+other byte stay as they were. The file is never deleted. Closing is idempotent:
+a session already in a terminal state (`closed`, `done`, `superseded`, `ended`)
+needs no commit, so a second close exits 0, leaves HEAD unmoved, and prints
+`<id>.md was already closed (status=X); nothing to do`.
+
+| code | meaning |
+|---|---|
+| `0` | the status line was written and committed (and pushed with `--push`), or the session was already closed, or the change was left uncommitted with `--no-commit` |
+| `1` | the register file for `--session-id` does not exist (register first) |
+| `2` | the file is unreadable, not UTF-8, carries no `- status:` field line, or `--repo` names no directory |
+| `3` | git could not commit the change, or `--push` failed after 3 fetch-rebase-push attempts |
+| `4` | `--session-id` is not a single token, or `--no-commit` was combined with `--push` |
 
 ## What "claim" does not mean
 

@@ -176,3 +176,21 @@ def test_census_script_is_executable():
     for name in ("census.sh", "decide.py"):
         script = REPO / "skills" / "steering-ledger" / "scripts" / name
         assert script.stat().st_mode & 0o111, f"{name} is not executable"
+
+
+# The four sessions writers, each documented in SKILL.md as
+# ``scripts/<name>.py --repo ...`` -- the form that fails with "Permission
+# denied" on a fresh clone when the bit is missing.
+SESSIONS_WRAPPERS = ("register.py", "claim.py", "close.py", "release.py")
+
+
+def test_sessions_writers_are_executable():
+    """All four session writers are executable, as the skill invokes them.
+
+    The wrapper form is the one SKILL.md documents, so a writer that landed in
+    the tree at 0644 is broken product surface rather than a cosmetic detail:
+    the reader's first ``scripts/close.py --repo .`` would not run.
+    """
+    for name in SESSIONS_WRAPPERS:
+        script = REPO / "skills" / "sessions-claims" / "scripts" / name
+        assert script.stat().st_mode & 0o111, f"{name} is not executable"

@@ -1,11 +1,11 @@
 """The ``noni`` console command: dispatch only.
 
 One command, one subcommand per shipped tool: ``census``, ``register``,
-``claim``, ``decide`` (a supersede is ``decide``'s ``--supersedes`` flag) and
-``order``. The argv after the subcommand is handed to that tool's own ``main``
-verbatim, so flags, output, exit codes and ``--help`` bytes are exactly what the
-in-place script produces — which is what the paired wrapper-vs-console test
-asserts.
+``claim``, ``close``, ``release``, ``decide`` (a supersede is ``decide``'s
+``--supersedes`` flag) and ``order``. The argv after the subcommand is handed to
+that tool's own ``main`` verbatim, so flags, output, exit codes and ``--help``
+bytes are exactly what the in-place script produces — which is what the paired
+wrapper-vs-console test asserts.
 
 This module holds no behaviour of its own: adding a tool means a row in
 ``TOOLS`` and nothing else.
@@ -23,6 +23,8 @@ TOOLS: dict[str, tuple[str, str]] = {
     "census": ("noni.census", "main"),
     "register": ("noni.register", "main"),
     "claim": ("noni.claim", "main"),
+    "close": ("noni.close", "main"),
+    "release": ("noni.release", "main"),
     "decide": ("noni.decide", "main"),
     "order": ("noni.order", "main"),
 }
@@ -33,6 +35,8 @@ SUMMARIES: dict[str, str] = {
     "census": "read-only checks over the ledger, register and ordering artifact",
     "register": "allocate a session-id and write its register file",
     "claim": "append a claim row to a session's register file",
+    "close": "set a session's status to closed",
+    "release": "remove one claim row from a session's register file",
     "decide": "write one dated steering decision record (supersede with --supersedes)",
     "order": "write the ordered list of issues to work next",
 }

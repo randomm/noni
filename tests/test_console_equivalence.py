@@ -78,6 +78,17 @@ def _repo(tmp_path: Path) -> Path:
     return repo
 
 
+def _sid_of_uncommitted(stdout: str) -> str:
+    """The session id in a ``--no-commit`` register line.
+
+    The line names the file it left in the work tree
+    (``register.py: <path>/<id>.md left uncommitted``); the id is that path's
+    stem, which is the session id.
+    """
+    tail = stdout.strip().split(" -> ")[-1].rsplit(" left uncommitted", 1)[0]
+    return tail.rsplit("/", 1)[-1].removesuffix(".md")
+
+
 def _identity_repo(tmp_path: Path) -> Path:
     """The baseline repo with a real git identity in its own config.
 
@@ -151,14 +162,23 @@ def test_census_wrapper_matches_noni_census_help():
 
 
 def test_register_wrapper_matches_noni_register(tmp_path):
-    """A registration writes a file and prints one line; both routes agree."""
-    repo = _identity_repo(tmp_path)
+    """A registration writes a file and prints one line; both routes agree.
+
+    The two routes run in two separate working copies: register.py marks the
+    working copy that allocated a session, so a second registration in the same
+    tree is a reuse of the first (or a refusal of it), not a second allocation —
+    and this test wants to compare two allocation lines. One clone per route
+    keeps the comparison byte-exact and leaves the marker semantics to
+    test_register_defaults, where they are the subject.
+    """
+    left_repo = _identity_repo(tmp_path / "route-wrapper")
+    right_repo = _identity_repo(tmp_path / "route-console")
     # The allocator picks a random 6-hex id per run, so each route registers a
     # distinct file and the comparison is on the line's label and sentence (the
     # id is the one part of the line the product cannot fix).
-    left = run_wrapper(REGISTER, "--repo", str(repo), "--identity", "dev-a",
+    left = run_wrapper(REGISTER, "--repo", str(left_repo), "--identity", "dev-a",
                        env=_identity_env())
-    right = run_noni("register", "--repo", str(repo), "--identity", "dev-b",
+    right = run_noni("register", "--repo", str(right_repo), "--identity", "dev-b",
                      env=_identity_env())
     assert left.returncode == 0, left.stderr
     assert right.returncode == 0, right.stderr
@@ -194,12 +214,14 @@ def test_claim_wrapper_matches_noni_claim(tmp_path):
     repo = _identity_repo(tmp_path)
     # Register through the package, then read the id the allocator picked: the
     # --file guard only admits a path the run itself allocated, so the session is
-    # named from what the product wrote rather than a fixed name.
+    # named from what the product wrote rather than a fixed name. --no-commit
+    # because this fixture makes the register commit itself below (a committed
+    # baseline is what the two claim routes then argue over), and register.py
+    # commits its own file by default.
     registered = run_wrapper(REGISTER, "--repo", str(repo), "--identity", "dev-a",
-                             env=_identity_env())
+                             "--no-commit", env=_identity_env())
     assert registered.returncode == 0, registered.stderr
-    session_id = registered.stdout.split(" -> ")[1].strip().removesuffix(".md")
-    session_id = session_id.rsplit("/", 1)[-1]
+    session_id = _sid_of_uncommitted(registered.stdout)
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "register")
 
@@ -368,15 +390,23 @@ def test_noni_without_a_subcommand_is_a_usage_error():
     assert (proc.stdout + proc.stderr).startswith("usage: noni "), proc.stdout[:60]
 
 
-def test_noni_names_exactly_the_five_subcommands():
-    """The subcommand set is the settled one: census, register, claim, decide,
-    order — no session/release/close placeholders from #27."""
+def test_noni_names_exactly_the_seven_subcommands():
+    """The subcommand set is the settled one: census, register, claim, close,
+    release, decide, order.
+
+    close and release are #27's session-lifecycle verbs, not placeholders: each
+    names a module under ``src/noni/`` and a wrapper under the skill, and both
+    are asserted dispatchable below. ``session`` remains refused — it is a noun
+    for the state, not a tool, and a subcommand that vague would let a typo look
+    like a real command.
+    """
     proc = run_noni("--help")
     assert proc.returncode == 0
     listed = proc.stdout + proc.stderr
-    for name in ("census", "register", "claim", "decide", "order"):
+    for name in ("census", "register", "claim", "close", "release",
+                 "decide", "order"):
         assert f"{name}  " in listed, f"noni --help omits {name}: {listed}"
-    for absent in ("session", "release", "close"):
+    for absent in ("session",):
         assert f"{absent}  " not in listed, f"noni grew a {absent} placeholder: {listed}"
 
 

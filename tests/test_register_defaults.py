@@ -19,8 +19,50 @@ import subprocess
 import sys
 from pathlib import Path
 
-from _harness import SRC, subprocess_env
+from _harness import SRC, _git_ok, subprocess_env
 from conftest import run_register
+
+
+def _git_repo(tmp_path: Path) -> Path:
+    """A throwaway git repo with one commit, in tmp_path.
+
+    The marker lives under the tree's own ``.git``, and the committing path
+    needs a branch to commit on, so the idempotency tests need a real repo and
+    not a bare directory.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git_ok(repo, "init", "-q", "-b", "main")
+    (repo / "README.md").write_text("test repo\n", encoding="utf-8")
+    _git_ok(repo, "add", "README.md")
+    _git_ok(repo, "-c", "user.name=Replay", "-c", "user.email=replay@fixture.invalid",
+            "commit", "-q", "-m", "initial commit")
+    return repo
+
+
+def _head(repo: Path) -> str:
+    """The commit HEAD names, for the assertion that a reuse adds none."""
+    return _git_ok(repo, "rev-parse", "HEAD").stdout.strip()
+
+
+def _sid_of(stdout: str) -> str:
+    """The session id from register.py's committing success line."""
+    return stdout.strip().split("registered session ")[1].split(" ->")[0].strip()
+
+
+def _mark_status(path: Path, status: str) -> None:
+    """Rewrite a session file's own ``- status:`` field to ``status``.
+
+    The fixture reaches a terminal state without close.py, so the marker test
+    exercises register's reading of the field and nothing else.
+    """
+    lines = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip().startswith("- status:"):
+            lines.append(f"- status: {status}")
+        else:
+            lines.append(line)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 # The product is the noni package; _harness puts src/ on sys.path, so the
 # register helpers are reachable here as `from noni import register`. No skill
@@ -165,55 +207,98 @@ def test_relative_file_path_is_resolved_against_the_repo(tmp_path):
     assert not (repo / "noni" / "sessions" / "not-mine.md").exists()
 
 
-def test_re_registering_the_allocated_file_and_identity_is_a_noop(tmp_path):
-    """The idempotency branch: re-registering the file this run allocated,
-    under the identity it already carries, exits 0, prints the no-op line and
-    leaves the bytes alone."""
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    sessions = repo / "noni" / "sessions"
-    sessions.mkdir(parents=True)
-    target = sessions / "2026-01-01-aaaaaa.md"
-    original = "# session 2026-01-01-aaaaaa\n\n- identity: synth\n- status: active\n"
-    target.write_text(original, encoding="utf-8")
+def test_re_registering_the_marked_active_session_is_a_noop(tmp_path):
+    """The idempotency branch: a second register in a working copy marked for
+    an active session exits 0, prints the no-op line, and leaves the bytes and
+    HEAD alone — no second file, no second commit.
 
-    proc = _run_patched_allocation(tmp_path, repo, "synth", "2026-01-01-aaaaaa")
-    assert proc.returncode == 0, f"expected exit 0, got {proc.returncode}\n{proc.stderr}"
-    assert "already registered" in proc.stdout, proc.stdout
-    assert "identity=synth" in proc.stdout, proc.stdout
+    The marker, not ``--file``, is what makes this reachable from the CLI as
+    shipped: the allocator mints a fresh id every run, so the only way a run
+    names a file it did not allocate is the marker an earlier run left.
+    """
+    repo = _git_repo(tmp_path)
+    first = run_register(repo, "synth")
+    assert first.returncode == 0, first.stderr
+    sid = _sid_of(first.stdout)
+    target = repo / "noni" / "sessions" / f"{sid}.md"
+    original = target.read_text(encoding="utf-8")
+    head_before = _head(repo)
+
+    second = run_register(repo, "synth")
+    assert second.returncode == 0, f"expected exit 0, got {second.returncode}\n{second.stdout}\n{second.stderr}"
+    assert "already registered" in second.stdout, second.stdout
+    assert "identity=synth" in second.stdout, second.stdout
+    assert target.read_text(encoding="utf-8") == original
+    assert _head(repo) == head_before, "a reuse must not add a commit"
+    assert [p.name for p in target.parent.glob("*.md")] == [f"{sid}.md"]
+
+
+def test_second_register_after_a_terminal_status_allocates_a_new_session(tmp_path):
+    """The other side of the marker: a marked session that has ended is no
+    session to continue, so the next register allocates a new file and re-marks
+    the working copy for it."""
+    repo = _git_repo(tmp_path)
+    first = run_register(repo, "synth")
+    assert first.returncode == 0, first.stderr
+    sid = _sid_of(first.stdout)
+    _mark_status(repo / "noni" / "sessions" / f"{sid}.md", "closed")
+
+    second = run_register(repo, "synth")
+    assert second.returncode == 0, second.stderr
+    new_sid = _sid_of(second.stdout)
+    assert new_sid != sid
+    assert "allocating a new session" in second.stdout or "allocating a new session" in second.stderr
+    assert (repo / "noni" / "sessions" / f"{new_sid}.md").is_file()
+
+
+def test_marked_session_with_another_identity_is_refused(tmp_path):
+    """The working copy is marked for an active session carrying a different
+    identity: exit 1, both identities named, and the other session's bytes left
+    alone — this is the only path on which a run can name a file it did not
+    allocate, and it is refused."""
+    repo = _git_repo(tmp_path)
+    first = run_register(repo, "other-person")
+    assert first.returncode == 0, first.stderr
+    sid = _sid_of(first.stdout)
+    target = repo / "noni" / "sessions" / f"{sid}.md"
+    original = target.read_text(encoding="utf-8")
+
+    second = run_register(repo, "synth")
+    assert second.returncode == 1, f"expected exit 1, got {second.returncode}\n{second.stdout}\n{second.stderr}"
+    assert "other-person" in second.stderr and "synth" in second.stderr, second.stderr
     assert target.read_text(encoding="utf-8") == original
 
 
-def test_existing_allocated_file_with_another_identity_is_refused(tmp_path):
-    """The allocated path already held by a different identity exits 1, names
-    both identities, and leaves the other session's bytes alone."""
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    sessions = repo / "noni" / "sessions"
-    sessions.mkdir(parents=True)
-    target = sessions / "2026-01-01-bbbbbb.md"
-    original = "- identity: other-person\n- status: active\n"
-    target.write_text(original, encoding="utf-8")
+def test_unreadable_marked_file_is_refused_not_overwritten(tmp_path):
+    """A marked file that cannot be read is a refusal (exit 2), never a fresh
+    write over bytes this run could not read: fail closed."""
+    repo = _git_repo(tmp_path)
+    first = run_register(repo, "synth")
+    assert first.returncode == 0, first.stderr
+    sid = _sid_of(first.stdout)
+    target = repo / "noni" / "sessions" / f"{sid}.md"
+    # Bytes no field parser can read, and no valid text at all.
+    target.write_bytes(b"\xff\xfe\x00\x01 not text")
 
-    proc = _run_patched_allocation(tmp_path, repo, "synth", "2026-01-01-bbbbbb")
-    assert proc.returncode == 1, f"expected exit 1, got {proc.returncode}\n{proc.stdout}\n{proc.stderr}"
-    assert "other-person" in proc.stderr and "synth" in proc.stderr, proc.stderr
-    assert target.read_text(encoding="utf-8") == original
+    second = run_register(repo, "synth")
+    assert second.returncode == 2, f"expected exit 2, got {second.returncode}\n{second.stdout}\n{second.stderr}"
+    assert "refusing to overwrite" in second.stderr, second.stderr
+    assert target.read_bytes() == b"\xff\xfe\x00\x01 not text"
 
 
-def test_allocated_file_without_an_identity_field_is_not_overwritten(tmp_path):
+def test_a_session_with_no_identity_field_is_not_overwritten(tmp_path):
     """A pre-existing file that carries no identity is treated as someone
     else's (an empty identity differs from the requested one): exit 1, never a
     write. This is the fail-closed side of the idempotency check."""
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    sessions = repo / "noni" / "sessions"
-    sessions.mkdir(parents=True)
-    target = sessions / "2026-01-01-cccccc.md"
+    repo = _git_repo(tmp_path)
+    first = run_register(repo, "synth")
+    assert first.returncode == 0, first.stderr
+    sid = _sid_of(first.stdout)
+    target = repo / "noni" / "sessions" / f"{sid}.md"
     target.write_text("- status: active\n", encoding="utf-8")
 
-    proc = _run_patched_allocation(tmp_path, repo, "synth", "2026-01-01-cccccc")
-    assert proc.returncode == 1, f"a file with no identity must not be overwritten, got {proc.returncode}"
+    second = run_register(repo, "synth")
+    assert second.returncode == 1, f"a file with no identity must not be overwritten, got {second.returncode}"
     assert target.read_text(encoding="utf-8") == "- status: active\n"
 
 

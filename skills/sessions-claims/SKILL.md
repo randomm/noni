@@ -36,7 +36,7 @@ Each register file records five fields:
 | `identity` | permanent | stable role name (e.g. `developer`, `reviewer`) |
 | `host/worktree` | ephemeral | host name and worktree path of this working copy (defaults never include an absolute path or hostname) |
 | `started` | ephemeral | UTC ISO-8601 timestamp of registration |
-| `status` | permanent | `active`, `closed`, or another terminal state |
+| `status` | permanent | `active`, or a terminal state (`closed`, `done`, `superseded`, `ended`) — see `close.py` |
 | `claims` | ephemeral | list of `- claim: <task>` rows |
 
 The identity is permanent: it survives across commits, pulls, and clones. The
@@ -44,27 +44,104 @@ host/worktree, started, and claims are ephemeral: they describe this working
 copy and this session's current work.
 
 Read `references/register.md` before writing a register file. Read
-`references/claim.md` before making a claim. Read `references/census.md`
-before reporting on the session state.
+`references/claim.md` before making a claim or releasing one. Read
+`references/census.md` before reporting on the session state.
 
 ## Registering a session
 
 ```
 scripts/register.py --repo REPO --identity IDENTITY [--status STATUS]
-                    [--host HOST] [--worktree WORKTREE]
+                    [--host HOST] [--worktree WORKTREE] [--file PATH]
+                    [--no-commit] [--push]
 ```
 
 The register writer allocates a session-id, creates the file at
-`noni/sessions/<session-id>.md`, and refuses to write a path it did not
-allocate (exit 2). A re-registration with the same identity on the same file
-is an idempotent no-op (exit 0). A registration that would overwrite another
-session's file is refused (exit 1).
+`noni/sessions/<session-id>.md`, commits that one file, and refuses to write a
+path it did not allocate (exit 2). It marks the working copy with the id it
+allocated, under that tree's own `.git/`, and the next run in the same working
+copy reads that marker:
+
+| the marked session | what the next register does |
+|---|---|
+| active, same identity | continues it: exit 0, nothing written, no commit (`<id>.md already registered (identity=X)`) |
+| active, different identity | refused: exit 1, both identities named, the other session's bytes untouched |
+| terminal (`closed`, `done`, `superseded`, `ended`), or its file gone | allocates a new session and re-marks the working copy for it |
+
+A marker this run cannot read is no evidence of a session, and a marked file it
+cannot read is a refusal (exit 2) rather than an overwrite: the writer never
+replaces bytes it has not seen. `--no-commit` opts out of both the commit and
+the marker, which is how a caller that plants more than one session file in one
+working copy (or commits them itself) asks for a fresh allocation.
 
 The `--host` and `--worktree` defaults never publish machine-local values:
 `--host` defaults to the allocated session-id and `--worktree` to the repo
 directory's basename. Neither default includes an absolute path or a
 hostname, because the register file is committed to a public repo. Explicit
 `--host` / `--worktree` values are written as given.
+
+Exit codes: `0` registered, or the marked active session continued; `1` the
+marked file belongs to another identity; `2` a path this run did not allocate,
+or a marked file that cannot be read, or `--repo` naming no directory; `3` git
+could not commit; `4` a `--identity`/`--status` that is not one token, or
+`--no-commit` with `--push`.
+
+## Releasing a claim
+
+```
+scripts/release.py --repo REPO --session-id SID --task TASK [--no-commit] [--push]
+```
+
+Removes exactly one `- claim: <task>` row from the session's own file and
+commits that file. The row is matched on the stripped line, so an indented row
+under `- claims:` and a bare row at EOF (where `claim.py` appends) are both
+released. When the session holds no such row, or holds two identical ones, the
+run is refused (exit 2) rather than guessing: two identical rows mean the file
+was edited outside the writers, and removing one would report a release the
+census does not agree with. The register file itself is never deleted.
+
+Releasing is not a lock either: the row is a record this session wrote, and
+removing it is what makes the census's double-claim report for that task go
+away.
+
+Exit codes: `0` the row is gone and committed (and pushed with `--push`, or
+left uncommitted with `--no-commit`); `1` no such session file; `2` the session
+does not hold the task, or the file is unreadable or carries no `- claims:`
+marker, or `--repo` names no directory; `3` git could not commit, or `--push`
+failed; `4` a `--task`/`--session-id` that is not one token, or `--no-commit`
+with `--push`; `5` the `--push` rebase started and stopped on a session-file
+conflict (this run aborts it); `6` the rebase never started (the hint names
+committing or stashing) or its state could not be read. `5` and `6` are
+`claim.py`'s codes, and mean the same thing here.
+
+## Closing a session
+
+```
+scripts/close.py --repo REPO --session-id SID [--no-commit] [--push]
+```
+
+Sets the session's own `- status:` line to `closed` and commits that one file.
+This is how a session stops counting toward the double-claim check. The file is
+never deleted — it is the session's record, and the census reads history for
+its deleted-file check — and no line but the status line moves.
+
+Closing is idempotent: a session already in a terminal state needs no commit,
+so a second close exits 0, moves no HEAD, and says the session `was already
+closed (status=X)`.
+
+Exit codes: `0` closed and committed (and pushed with `--push`, or left
+uncommitted with `--no-commit`), or already closed; `1` no such session file;
+`2` the file is unreadable or carries no `- status:` line, or `--repo` names no
+directory; `3` git could not commit, or `--push` failed; `4` a `--session-id`
+that is not one token, or `--no-commit` with `--push`; `5` the `--push` rebase
+started and stopped on a session-file conflict (this run aborts it); `6` the
+rebase never started (the hint names committing or stashing) or its state could
+not be read. `5` and `6` are `claim.py`'s codes, and mean the same thing here.
+
+`--no-commit` on the three writers above (and on `claim.py`) writes through the
+same validation chain, runs no git at all, and prints `<tool>.py: <path> left
+uncommitted`. Committing the change is then the caller's obligation: the census
+reads the working tree, so an uncommitted change is visible in that clone and
+invisible to every other one.
 
 ## Claiming a task
 
@@ -152,7 +229,9 @@ One golden fixture per code lives under `tests/fixtures/sessions-exit-<code>.jso
 
 - **One writer per file.** The session-id is allocated by the register writer
   and is collision-free by construction. A session that tries to write to a
-  file it did not allocate is refused (exit 2).
+  file it did not allocate is refused (exit 2). Each of the four writers commits
+  exactly its own session file: a change somebody else had staged is neither
+  swept into that commit nor unstaged by it.
 - **Claims are signals, not locks.** The census is the arbiter, not the
   write path. An unregistered claim is reported (exit 31), not blocked.
 - **Identity, not hostname, is the key.** The census keys the double-claim

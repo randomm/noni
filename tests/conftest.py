@@ -36,7 +36,9 @@ import pytest
 # import them without pulling in this file's module-level pytest import.
 from _harness import (
     CENSUS_SESSIONS,
+    CLOSE,
     DECIDE,
+    RELEASE,
     REPO,
     _git_ok,
     advance_origin_with_claim,
@@ -44,14 +46,18 @@ from _harness import (
     git_pin_date,
     push_with_retry,
     run_claim,
+    run_close,
     run_decide,
     run_register,
+    run_release,
     subprocess_env,
 )
 
 __all__ = [
     "CENSUS_SESSIONS",
+    "CLOSE",
     "DECIDE",
+    "RELEASE",
     "REPO",
     "_git_ok",
     "advance_origin_with_claim",
@@ -59,8 +65,10 @@ __all__ = [
     "git_pin_date",
     "push_with_retry",
     "run_claim",
+    "run_close",
     "run_decide",
     "run_register",
+    "run_release",
     "subprocess_env",
 ]
 

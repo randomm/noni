@@ -79,6 +79,9 @@ skip_empty = true
 include = [
     "integrations/adapter_protocol.py",
     "integrations/github-issues/github_issues_adapter.py",
+    "src/noni/_session_git.py",
+    "src/noni/close.py",
+    "src/noni/release.py",
     "src/noni/census.py",
     "src/noni/census_hygiene.py",
     "src/noni/census_json.py",

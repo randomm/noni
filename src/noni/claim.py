@@ -54,19 +54,20 @@ tracked files: clear any leftover rebase before a --push run.
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import subprocess
 import sys
-import tempfile
-import unicodedata
 from pathlib import Path
 
-from . import labels
+from . import _session_git, labels
 
 CLAIM_PREFIX = "- claim: "
-MAX_PUSH_ATTEMPTS = 3
-GIT_TIMEOUT = 60
+# The push loop's bound and attempt count are the session writers' shared
+# mechanics (``_session_git``): the loop, the probe and the tests all read the
+# one pair of numbers, so a rebase cannot be bounded one way here and another
+# way there.
+MAX_PUSH_ATTEMPTS = _session_git.MAX_PUSH_ATTEMPTS
+GIT_TIMEOUT = _session_git.GIT_TIMEOUT
 
 # subprocess.run(timeout=) reports a killed call with this return code (the
 # TimeoutExpired sentinel). Named once so the push loop, the probe and the
@@ -112,22 +113,14 @@ BRANCH_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 def _safe(text: str, limit: int = GIT_OUTPUT_LIMIT) -> str:
     """Render git's own output for the terminal: bounded, no control bytes.
 
-    The push loop and the classifier echo what git said, and that text can
+    The mechanic is the session writers' shared one (``_session_git``): the
+    push loop and the classifier echo what git said, and that text can
     originate outside this process (remote-side error text, credential-helper
-    output for the configured origin). Control characters other than newline
-    and space are dropped, so an ANSI or OSC sequence cannot reach the
-    terminal, and the tail past ``limit`` is dropped so one huge blob cannot
-    crowd out everything else. The census prints fixed wording for the same
+    output for the configured origin), so it is sanitised and bounded rather
+    than printed raw. The census prints fixed wording for the same
     class of bytes; here the wording is the point, so it is sanitised.
     """
-    kept = []
-    for ch in text:
-        if ch == "\n" or ch == " " or unicodedata.category(ch)[0] != "C":
-            kept.append(ch)
-    cleaned = "".join(kept)
-    if len(cleaned) > limit:
-        return cleaned[:limit] + "... [truncated]"
-    return cleaned
+    return _session_git.safe_text(text, limit)
 
 
 def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -166,18 +159,9 @@ def _append_claim(path: Path, task: str, body: str) -> int:
     if not body.endswith("\n"):
         body += "\n"
     body += CLAIM_PREFIX + task + "\n"
-    # Atomic replace: a mid-write crash cannot leave a truncated register.
-    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(body)
-        os.replace(tmp_name, path)
-    except BaseException:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
+    # Atomic replace (the session writers' shared helper): a mid-write crash
+    # cannot leave a truncated register.
+    _session_git.atomic_write(path, body)
     return EXIT_OK
 
 
@@ -459,24 +443,20 @@ def main(argv: list[str] | None = None) -> int:
             )
         return EXIT_OK
 
-    # Commit the claim under the caller's configured identity (see _git).
-    # A git refusal here is not a malformed session (exit 2 means the file is
-    # malformed or already claims the task, and this file passed both checks),
-    # so it is reported as the failure-to-advance class it is: exit 3, with the
-    # row's staged state named so the caller knows what to clean up.
-    add = _git(["add", str(session_file.relative_to(repo))], repo)
-    if add.returncode != 0:
+    # Commit the claim under the caller's configured identity, and only this
+    # session's own file: the three-step primitive in ``_session_git`` resets
+    # this path's index entry, adds it, and commits it with --only, so a path
+    # somebody else had staged is neither swept in nor unstaged. A git refusal
+    # here is not a malformed session (exit 2 means the file is malformed or
+    # already claims the task, and this file passed both checks), so it is
+    # reported as the failure-to-advance class it is: exit 3, with the row's
+    # staged state named so the caller knows what to clean up.
+    rel = session_file.relative_to(repo).as_posix()
+    ok, why = _session_git.stage_and_commit(repo, session_file, "claim: " + task)
+    if not ok:
         print(
-            f"{labels.CLAIM}: git add failed (the claim row is in the worktree, unstaged): "
-            + _safe(add.stderr.strip()),
-            file=sys.stderr,
-        )
-        return EXIT_PUSH_FAILED
-    commit = _git(["commit", "-q", "-m", "claim: " + task], repo)
-    if commit.returncode != 0:
-        print(
-            f"{labels.CLAIM}: git commit failed (the claim row is left staged in the "
-            "index, uncommitted): " + _safe(commit.stderr.strip()),
+            f"{labels.CLAIM}: git could not commit the claim row "
+            f"({rel}, which this run staged): {why}",
             file=sys.stderr,
         )
         return EXIT_PUSH_FAILED

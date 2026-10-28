@@ -420,6 +420,36 @@ def test_readme_names_what_the_committed_check_does_not_cover() -> None:
     assert "docs/PUBLISHING.md" in section, "the checklist itself is not linked"
 
 
+# Spelled-out counts the page may use for the subcommand sentence, so a reader
+# gets prose and the pin still has a number to compare against.
+_NUMBER_WORDS: dict[str, int] = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+    "eight": 8, "nine": 9, "ten": 10,
+}
+
+
+def test_readme_counts_the_subcommands_the_console_names() -> None:
+    """Every 'noni --help names the N subcommands' sentence states the real
+    size of ``cli.TOOLS``.
+
+    The count is prose, so nothing but this check ties it to the dispatch
+    table: when a verb is added the page can say 'seven' in one paragraph and
+    leave 'five' in another, and both sentences describe the same command.
+    """
+    from noni import cli
+
+    expected = len(cli.TOOLS)
+    # spelled-out or digit, so a page that moves to "7" is pinned the same way.
+    stated = re.findall(r"`noni --help` names the (\w+) subcommands", _readme_text())
+    assert stated, "the README no longer states the subcommand count at all"
+    for word in stated:
+        number = _NUMBER_WORDS.get(word.lower(), word)
+        assert str(number) == str(expected), (
+            f"README says 'noni --help names the {word} subcommands' but "
+            f"noni --help names {expected} ({', '.join(cli.TOOLS)})"
+        )
+
+
 def test_readme_links_the_contributing_page() -> None:
     """The dev commands moved to CONTRIBUTING.md and the link stayed behind:
     no test of the old page would notice a silent drop of either."""

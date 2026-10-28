@@ -199,13 +199,31 @@ def _run_order(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return proc
 
 
-def _register(repo: Path, identity: str, clone_name: str) -> str:
-    """Register a session via the real register.py; return the session id."""
+def _register(repo: Path, identity: str, clone_name: str, *,
+              no_commit: bool = False) -> str:
+    """Register a session via the real register.py; return the session id.
+
+    ``no_commit`` asks the writer to leave the file in the work tree (the
+    documented form for a caller that commits it itself, and the only way to
+    plant a second session in a working copy already marked for another);
+    the id then comes from the path in the "left uncommitted" line rather than
+    the "registered session" one.
+    """
     from _harness import run_register
 
-    proc = run_register(repo, identity, host=clone_name, worktree=str(repo))
+    # The clone's own absolute path, passed explicitly: the builder runs with
+    # the suite's cwd inside the repository, so a path derived from the repo's
+    # basename would name the *real* repository and the session would be
+    # written (and committed) there instead of in the fixture clone.
+    kwargs = {"no-commit": None} if no_commit else {}
+    proc = run_register(repo, identity, host=clone_name, worktree=str(repo.resolve()),
+                        **kwargs)
     assert proc.returncode == 0, f"register {identity} failed: {proc.stderr}"
-    return proc.stdout.strip().split("->")[0].split("registered session ")[1].strip()
+    line = proc.stdout.strip()
+    if no_commit:
+        tail = line.split(" -> ")[-1].rsplit(" left uncommitted", 1)[0]
+        return tail.rsplit("/", 1)[-1].removesuffix(".md")
+    return line.split("->")[0].split("registered session ")[1].strip()
 
 
 def _claim(repo: Path, session_id: str, task: str) -> None:
@@ -279,17 +297,19 @@ def build_scenario(base: Path, faulted: bool = False) -> Scenario:
 
     # Build clone_a from scratch.
     clone_a.mkdir(parents=True, exist_ok=True)
-    _git_ok(clone_a, "init", "-q")
-    _git_ok(clone_a, "checkout", "-q", "-b", "main")
+    _git_ok(clone_a, "init", "-q", "-b", "main")
     (clone_a / "README.md").write_text("test repo\n")
     _git_ok(clone_a, "add", "README.md")
     _git_ok(clone_a, "commit", "-q", "-m", "initial commit")
     _git_ok(clone_a, "remote", "add", "origin", str(origin))
     _git_ok(clone_a, "push", "-q", "-u", "origin", "main")
 
-    # Build clone_b as a clone of origin.
+    # Build clone_b as a clone of origin, on main by name: the suite's
+    # sandboxed HOME carries no init.defaultbranch, so a plain clone would
+    # check out git's own default (master) and register.py's own commit would
+    # land there, leaving nothing on main to push.
     clone_b.mkdir(parents=True, exist_ok=True)
-    _git_ok(base, "clone", "-q", str(origin), str(clone_b))
+    _git_ok(base, "clone", "-q", "-b", "main", str(origin), str(clone_b))
     _ensure_branch(clone_b, "main")
 
     t_task = _ts(0)
@@ -302,14 +322,16 @@ def build_scenario(base: Path, faulted: bool = False) -> Scenario:
     _commit(clone_a, "tasks/1.md", "# task 1\n", "task: #1", t_task)
     _push(clone_a, t_task)
 
-    # Both agents register (real register.py); pin the register commits.
+    # Both agents register through the real register.py, which commits its own
+    # session file under the caller's identity. The fixture cannot pin that
+    # commit's date (the writer makes it), so the census clock sits after every
+    # commit in the scenario: NOW is day 3 and the writer runs on the host's
+    # clock today. The writer owns these commits, so this fixture never
+    # restages what it wrote; each clone pushes its own file and the two paths
+    # never collide.
     sid_a = _register(clone_a, "agent-a", "clone-a")
     sid_b = _register(clone_b, "agent-b", "clone-b")
-    _git_pinned(clone_a, "add", "noni/sessions/", when=t_reg)
-    _git_pinned(clone_a, "commit", "-q", "-m", "register A", when=t_reg)
     _push(clone_a, t_reg)
-    _git_pinned(clone_b, "add", "noni/sessions/", when=t_reg)
-    _git_pinned(clone_b, "commit", "-q", "-m", "register B", when=t_reg)
     _push(clone_b, t_reg)
 
     # Distinct-task claims via the real claim.py --push (fetch-rebase-push).
@@ -350,10 +372,12 @@ def _plant_faults(scenario: Scenario, t_c: str) -> None:
         committed to origin;
     20  a separate decision chain with a dangling supersedes, disjoint from
         the healthy chain, committed to origin;
-    40  a third session (identity "agent-c", no claims) whose only commit
-        carries a pinned date older than --stale-after relative to --now.
+    40  a third session (identity "agent-c", no claims) whose last commit is
+        older than --stale-after relative to --now: register.py commits the file
+        itself, and the commit that leaves this session stale is this fixture's
+        own commit with the date pinned, which leaves no commit a healthy build
+        would not have.
     """
-    from _harness import git_pin_date, run_register
 
     # 30: the double claim on #1 (real claim.py --push, fetch-rebase-push).
     _claim(scenario.clone_b, scenario.sid_b, "#1")
@@ -385,12 +409,23 @@ def _plant_faults(scenario: Scenario, t_c: str) -> None:
 
     # 40: a third session (identity "agent-c", no claims) whose only commit
     # is pinned older than --stale-after relative to --now.
-    reg_c = run_register(scenario.clone_a, "agent-c", host="clone-a",
-                         worktree=str(scenario.clone_a))
-    assert reg_c.returncode == 0, reg_c.stderr
-    scenario.sid_c = reg_c.stdout.strip().split("->")[0].split("registered session ")[1].strip()
-    git_pin_date(scenario.clone_a, t_c, "add", "noni/sessions/")
-    git_pin_date(scenario.clone_a, t_c, "commit", "-q", "-m", "register C (stale)")
+    #
+    # clone_a is already marked as agent-a's working copy, and that session is
+    # still active, so a plain register there would be a reuse of agent-a's
+    # session rather than an allocation for agent-c — which is the writer being
+    # honest about one working copy having one live session. This row wants a
+    # second session file in the same tree, so the fixture asks for the file
+    # without a commit and makes the (re-dated) commit itself below.
+    scenario.sid_c = _register(scenario.clone_a, "agent-c", "clone-a", no_commit=True)
+    session_rel = f"noni/sessions/{scenario.sid_c}.md"
+    # The stale clock IS the fault this row plants, and only the commit that
+    # touched this file can carry it: --strict fails the census on an active
+    # session whose last commit is older than --stale-after, so the file is
+    # committed once, here, with the date pinned -- one commit, no content
+    # change after it, and no second commit a healthy build would not have.
+    _commit(scenario.clone_a, session_rel,
+            (scenario.clone_a / session_rel).read_text(encoding="utf-8"),
+            f"register: {scenario.sid_c}", t_c)
     _push(scenario.clone_a, t_c)
     scenario.faults.append("40")
 

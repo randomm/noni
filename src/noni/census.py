@@ -240,7 +240,7 @@ SESSION_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[0-9a-f]{6}\.md$")
 # decisions/ directory, or a decisions/ directory that holds no *.json record.
 # The words and their wording are pinned by LEDGER_EMPTY_MESSAGES below and the
 # tests iterate that table, so renaming a state without updating its wording
-# (and tests/test_census_unified.py) is a contract change.
+# (and tests/test_census_ledger_empty.py) is a contract change.
 LEDGER_EMPTY_STATES = ("absent", "empty", "not a directory", "symlink", "ok")
 
 # state word -> the detail the row carries, or None for the state that reports
@@ -614,7 +614,7 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
     single readdir (see ``LedgerProbe.names``). ledger-empty only ADDS rows:
     the states where the record pass has nothing to say. The git-backed
     integrity checks run whatever the empty probe found — see the
-    deleted-sole-record regression tests in tests/test_census_unified.py.
+    deleted-sole-record regression tests in tests/test_census_exit_codes.py.
 
     The two rows the composition adds itself, both probe honesty:
 

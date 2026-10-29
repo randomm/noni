@@ -187,7 +187,7 @@ def check_ordering(
     run to a single readdir of the ledger. It defaults to None, which asks the
     readers to list: that is the seam a test faults to plant a fault in this
     group's read alone (see ``_listing_faults`` in
-    ``tests/test_census_ordering.py``), and a direct caller that has no probe
+    ``tests/ordering_fixtures.py``), and a direct caller that has no probe
     gets a listing of its own rather than nothing.
     """
     # The readers take the census's own path and message primitives as

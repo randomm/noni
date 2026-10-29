@@ -321,7 +321,7 @@ def run_decide(repo: Path, *args: str, env: Mapping[str, str] | None = None,
     so no host gitconfig, plus GIT_AUTHOR_*/GIT_COMMITTER_*), because decide.py
     commits under the tree's configured identity and ``by`` comes from that
     same config: a test that wants a real author name pins it in the repo's
-    own git config (see ``tests/test_decide.py``'s ``_decide`` helper), and a
+    own git config (see ``tests/decide_fixtures.py``'s ``_decide`` helper), and a
     test that wants the missing-identity refusal passes its own ``env``, which
     replaces that identity rather than extending it.
     """

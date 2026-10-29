@@ -74,7 +74,7 @@ def test_the_order_writer_keeps_its_own_ledger_read_and_its_honest_refusal():
     ``_successor`` lists the ledger with ``glob`` and answers None when the
     listing faults, which is the writer's documented behaviour: a ledger it
     cannot list answers nothing about which record supersedes which, and the
-    writer refuses the citation (``test_order_writer`` pins that refusal). The
+    writer refuses the citation (``test_order_writer_add`` pins that refusal). The
     census must not acquire that read, and the writer must not be pulled into
     the census's probe for the sake of one shared call — it would give the
     writer's refusal path a dependency on the arbiter's probe.

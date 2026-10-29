@@ -465,7 +465,7 @@ def run_census_json(clone: Path, now: str, stale_after: str) -> tuple[int, list[
     deny-list, so hygiene would report its inactive class on every build and
     --strict would turn that always-report into an exit 50 that masks the
     planted codes. The hygiene class has its own tests in
-    tests/test_census_unified.py::TestHygiene; this fixture measures the
+    tests/test_census_hygiene.py; this fixture measures the
     ledger/session/ordering arbiter. ``--ordering`` and ``--issue-state`` are
     passed explicitly rather than left to the defaults: the closed check is not
     evaluated at all without a state file, so an implicit run would silently

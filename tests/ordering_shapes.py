@@ -9,7 +9,7 @@ touch it and the census says nothing.
 
 So the table lives here and both suites read it:
 ``tests/test_order_writer.py`` drives every shape through the writer and the
-census, and ``tests/test_census_ordering.py`` drives every shape through the
+census, and the ordering group's census suites drive every shape through the
 census. Adding a rule to one side without the other fails here, not in the
 field.
 

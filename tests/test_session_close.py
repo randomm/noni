@@ -10,9 +10,17 @@ module rather than copied.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
-from _harness import _git_ok, build_bare_origin, run_close, run_register
+from _harness import (
+    CLOSE,
+    _git_ok,
+    build_bare_origin,
+    run_close,
+    run_from,
+    run_register,
+)
 
 from noni import close as close_mod
 
@@ -325,3 +333,87 @@ def test_close_never_deletes_the_register_file(tmp_path):
     proc = run_close(clone, "2026-10-01-aaaaaa")
     assert proc.returncode == close_mod.EXIT_OK, proc.stderr
     assert session.is_file()
+
+
+# --- State root: --repo names it, the cwd does not ----------------------------
+#
+# close.py moves one line of one file, so the contract is narrow: the file it
+# moves that line in is the one under the state root --repo named. Three trees:
+# the state repository holding the session, a decoy session beside the cwd with
+# the same id and an active status (so a cwd-driven run would have had a status
+# line to move), and an empty cwd a stray write would show up in.
+
+CLOSE_STATE_DIR = "close-state-root"
+CLOSE_CWD_DIR = "close-cwd"
+CLOSE_DECOY_DIR = "close-decoy"
+
+
+def _close_state_root(tmp_path, sid="2026-10-01-aaaaaa"):
+    """The state repository: a git repo whose only state is one active session."""
+    origin = tmp_path / f"{CLOSE_STATE_DIR}.origin.git"
+    root = tmp_path / CLOSE_STATE_DIR
+    build_bare_origin(origin, [root])
+    session = root / "noni" / "sessions" / f"{sid}.md"
+    session.parent.mkdir(parents=True, exist_ok=True)
+    session.write_text(BODY.format(sid=sid), encoding="utf-8")
+    _git_ok(root, "add", f"noni/sessions/{sid}.md")
+    _git_ok(root, "-c", "user.name=Replay", "-c", "user.email=replay@fixture.invalid",
+            "commit", "-q", "-m", f"register: {sid}")
+    _git_ok(root, "push", "-q", "origin", "main")
+    return root, session
+
+
+def _close_case(tmp_path, sid="2026-10-01-aaaaaa"):
+    """The three trees of one close state-root run: (state root, decoy, cwd)."""
+    root, session = _close_state_root(tmp_path, sid)
+    decoy = tmp_path / CLOSE_DECOY_DIR
+    decoy_session = decoy / "noni" / "sessions" / f"{sid}.md"
+    decoy_session.parent.mkdir(parents=True, exist_ok=True)
+    decoy_session.write_text(BODY.format(sid=sid), encoding="utf-8")
+    cwd = tmp_path / CLOSE_CWD_DIR
+    cwd.mkdir(parents=True, exist_ok=True)
+    return root, session, decoy_session, cwd
+
+
+def _close_from(cwd: Path, repo: Path, sid: str) -> subprocess.CompletedProcess[str]:
+    """close.py launched from ``cwd``, with ``--repo`` naming the state root."""
+    return run_from(cwd, CLOSE, "--repo", str(repo), "--session-id", sid)
+
+
+def test_close_writes_the_state_root_and_nothing_beside_the_cwd(tmp_path):
+    """The status line moves in the state repository and the decoy session
+    beside the cwd stays active, byte for byte."""
+    sid = "2026-10-01-aaaaaa"
+    root, session, decoy_session, cwd = _close_case(tmp_path, sid)
+    decoy_bytes = decoy_session.read_bytes()
+
+    proc = _close_from(cwd, root, sid)
+    assert proc.returncode == close_mod.EXIT_OK, f"{proc.returncode}: {proc.stderr}"
+
+    assert "- status: closed" in session.read_text(encoding="utf-8"), (
+        "the state root's session was not closed"
+    )
+    assert _git_ok(root, "log", "-1", "--format=%s").stdout.strip().startswith("close:"), \
+        "the close was not committed in the state repository"
+    assert decoy_session.read_bytes() == decoy_bytes, (
+        "the run closed the decoy session beside its cwd, so the register path "
+        "resolved from somewhere other than --repo"
+    )
+    assert not (cwd / "noni").exists(), "the run created noni/ under the cwd"
+
+
+def test_close_refuses_a_repo_that_is_not_a_directory(tmp_path):
+    """A --repo naming no directory is refused (exit 4) naming the argument, and
+    the decoy session beside the cwd stays active."""
+    sid = "2026-10-01-aaaaaa"
+    _root, _session, decoy_session, cwd = _close_case(tmp_path, sid)
+    decoy_bytes = decoy_session.read_bytes()
+
+    proc = _close_from(cwd, tmp_path / "no-such-state-root", sid)
+    assert proc.returncode == close_mod.EXIT_USAGE, proc.returncode
+    assert "--repo" in proc.stderr.lower(), proc.stderr
+    assert "is not a directory" in proc.stderr, proc.stderr
+    assert decoy_session.read_bytes() == decoy_bytes, (
+        "a refused run wrote the decoy session beside its cwd"
+    )
+    assert not (cwd / "noni").exists()

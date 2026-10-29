@@ -95,6 +95,7 @@ include = [
     "src/noni/claim.py",
     "src/noni/cli.py",
     "src/noni/decide.py",
+    "src/noni/gitenv.py",
     "src/noni/gitwrite.py",
     "src/noni/labels.py",
     "src/noni/order.py",

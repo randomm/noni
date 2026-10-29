@@ -43,6 +43,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable
@@ -57,6 +58,7 @@ from _harness import (
     _script_ast,
     git_pin_date,
     run_decide,
+    run_from,
     subprocess_env,
 )
 from _harness import _git_env_with_identity as _harness_identity_env
@@ -587,6 +589,164 @@ def test_a_non_repository_exits_three(tmp_path):
                       *QUESTION, *OPTIONS, *ANSWERED)
     assert proc.returncode == 3, proc.stderr
     assert "git" in proc.stderr.lower()
+
+
+# --- State root: --repo is the only thing that names where state lives --------
+#
+# decide.py is the ledger's only writer, so a run that resolved its ledger from
+# the cwd rather than --repo would silently steer a different project. The three
+# trees: a separate state repository (a git repo holding only the ledger), a
+# decoy ledger under the cwd with a record of its own, and an empty cwd a stray
+# write would show up in. The decoy's record is committed, so the census's
+# edited-after-commit and chain checks pass on it either way: a run that read it
+# would not be stopped, only caught.
+
+DECIDE_STATE_DIR = "decide-state-root"
+DECIDE_CWD_DIR = "decide-cwd"
+DECIDE_DECOY_DIR = "decide-decoy"
+DECIDE_DECOY_ID = "2026-10-05-decoy-stands"
+
+
+def _decide_state_root(tmp_path: Path) -> Path:
+    """The state repository: a git repo with an identity and one committed
+    record, and nothing else — so it is not the cwd and cannot be reached by
+    anything but ``--repo``."""
+    root = _baseline_repo(tmp_path, DECIDE_STATE_DIR)
+    _pin_identity(root, "Replay")
+    return root
+
+
+def _decide_decoy(tmp_path: Path) -> Path:
+    """A decoy state root beside the cwd: a ``noni/decisions/`` with one live
+    record, planted so a run that resolved its ledger from the cwd would find a
+    ledger worth writing into.
+
+    It is a git repository (``_init_repo``) because a decoy is only a decoy if
+    the tool under test could have worked in it: a plain directory would make
+    decide.py's own ``--is-inside-work-tree`` probe answer first, so a cwd-driven
+    run would be stopped for the wrong reason and the assertion would measure
+    nothing. Its one record is committed under a pinned date, the same rule the
+    state root's baseline follows.
+    """
+    decoy = _init_repo(tmp_path / DECIDE_DECOY_DIR)
+    _commit_tree(decoy, f"noni/decisions/{DECIDE_DECOY_ID}.json",
+                 _record_json(DECIDE_DECOY_ID, "decided", "yes", None),
+                 f"steering: {DECIDE_DECOY_ID}", "2026-10-05T00:00:00Z")
+    return decoy
+
+
+def _decide_case(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """The three trees of one decide state-root run: (state root, decoy, cwd)."""
+    root = _decide_state_root(tmp_path)
+    decoy = _decide_decoy(tmp_path)
+    cwd = tmp_path / DECIDE_CWD_DIR
+    cwd.mkdir(parents=True, exist_ok=True)
+    return root, decoy, cwd
+
+
+def _decide_snapshot(tree: Path) -> dict[str, str]:
+    """Every file under ``tree`` as path -> bytes, so a comparison can name what
+    moved rather than only that something did."""
+    return {str(p.relative_to(tree)): p.read_bytes()
+            for p in sorted(tree.rglob("*")) if p.is_file()}
+
+
+def _decide_from(cwd: Path, repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """decide.py launched from ``cwd``, with ``--repo`` naming the state root."""
+    return run_from(cwd, DECIDE, "--repo", str(repo), *args)
+
+
+def test_decide_writes_the_state_root_and_nothing_beside_the_cwd(tmp_path):
+    """One steering act lands in the state repository and leaves the decoy and
+    the cwd exactly as they were."""
+    root, decoy, cwd = _decide_case(tmp_path)
+    before = _decide_snapshot(decoy)
+
+    proc = _decide_from(
+        cwd, root, "--slug", "scheduler", "--date", NEW_DATE, *BASE,
+        *QUESTION, *OPTIONS, *ANSWERED,
+    )
+    assert proc.returncode == 0, f"{proc.returncode}: {proc.stderr}"
+
+    written = _record_path(root, NEW_ID)
+    assert written.is_file(), "the record did not land in the state root"
+    assert _read(root, NEW_ID)["id"] == NEW_ID
+    assert NEW_ID in _git_e2(root, "log", "--format=%s").stdout, \
+        "the record was not committed in the state repository"
+    assert _decide_snapshot(decoy) == before, (
+        "the run touched the decoy ledger beside its cwd, so the ledger resolved "
+        "from somewhere other than --repo"
+    )
+    assert not (cwd / "noni").exists(), "the run created noni/ under the cwd"
+    # The state root's own ledger still censuses clean: the run wrote one record
+    # and moved nobody else's bytes.
+    code, out = _census_py(root)
+    assert code == 0, f"census not clean after the isolated run ({code}):\n{out}"
+
+
+def test_decide_supersede_writes_only_the_state_roots_two_paths(tmp_path):
+    """A supersede flips the state root's own target and leaves the decoy's live
+    record live: the two ledgers never meet.
+
+    The decoy record shares no id with the state root's, so a writer that read
+    the wrong ledger would fail to find its target — and a writer that wrote to
+    both would flip a decoy byte."""
+    root, decoy, cwd = _decide_case(tmp_path)
+    before = _decide_snapshot(decoy)
+    superseding_id = f"{BASELINE_ID[:10]}-scheduler"
+
+    proc = _decide_from(
+        cwd, root, "--slug", "scheduler", "--date", BASELINE_ID[:10], *BASE,
+        *QUESTION, *OPTIONS, *ANSWERED, "--supersedes", BASELINE_ID,
+    )
+    assert proc.returncode == 0, f"{proc.returncode}: {proc.stderr}"
+    assert _read(root, BASELINE_ID)["status"] == "superseded", (
+        "the state root's own target was not flipped"
+    )
+    assert _read(root, superseding_id)["supersedes"] == BASELINE_ID
+    decoy_record = json.loads(
+        (decoy / "noni" / "decisions" / f"{DECIDE_DECOY_ID}.json").read_text(
+            encoding="utf-8"))
+    assert decoy_record["status"] == "decided", (
+        "the supersede flipped a record in the decoy ledger, not the state root's"
+    )
+    assert _decide_snapshot(decoy) == before
+    assert not (cwd / "noni").exists()
+
+
+def test_decide_refuses_a_repo_that_is_not_a_directory(tmp_path):
+    """A --repo naming no directory is refused as a state-root problem (exit 3,
+    with the path named), before the ledger's directory probe and before any
+    git write, from a cwd that holds a complete decoy ledger.
+
+    The decoy is the tempting target: it is a whole ledger a run driven by the
+    cwd could have written into. The refusal must name the path the caller
+    passed and leave both the decoy's bytes and the cwd untouched. Exit 3 is
+    decide.py's existing code for a --repo that is not a work tree — the state
+    root is not a git problem for the other writers and is not one for this one
+    either, and the existing exit-3 contract is the test above.
+    """
+    _root, decoy, cwd = _decide_case(tmp_path)
+    before = _decide_snapshot(decoy)
+    missing = tmp_path / "no-such-state-root"
+
+    proc = _decide_from(
+        cwd, missing, "--slug", "scheduler", "--date", NEW_DATE, *BASE,
+        *QUESTION, *OPTIONS, *ANSWERED,
+    )
+    assert proc.returncode == 3, (
+        f"a missing state root must be the not-a-work-tree refusal, not "
+        f"{proc.returncode}: {proc.stderr}"
+    )
+    assert "no-such-state-root" in proc.stderr, (
+        f"the refusal must name the state root it was given: {proc.stderr}"
+    )
+    assert _decide_snapshot(decoy) == before, (
+        "a refused run wrote the decoy ledger beside its cwd"
+    )
+    assert not (cwd / "noni").exists(), (
+        "a refused run created noni/ under the cwd"
+    )
 
 
 def test_an_empty_slug_exits_two(tmp_path):
@@ -2881,3 +3041,247 @@ def test_the_decline_rule_matches_the_writers_open_chain_root():
     ).read_text(encoding="utf-8")
     assert "chain-root record" in text, "modes.md must name the open chain-root form"
     assert "null" in text, "modes.md must state the null answer form"
+
+
+# --- census.sh: the ledger is named by the caller, never by the cwd ------------
+#
+# decide.py takes --repo; its per-epic census shim takes the ledger directory
+# directly. The two entry points must agree on one rule: the state root is the
+# path the caller named, and no path is ever resolved from the directory the
+# run happens to sit in. census.sh used to default LEDGER_DIR to "." — a run
+# with no argument audited the caller's cwd and, if a decoy ledger sat there,
+# reported it as though it were the state root's. The shim's own exit table is
+# the contract here (10 for an unusable ledger, 0 for a clean one), so these
+# tests assert against that table rather than the unified census's codes.
+
+CENSUS_SH_STATE_DIR = "census-sh-state-root"
+CENSUS_SH_CWD_DIR = "census-sh-cwd"
+CENSUS_SH_DECOY_DIR = "census-sh-decoy"
+
+
+def _census_sh_from(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """census.sh launched from ``cwd`` with the arguments given verbatim.
+
+    Verbatim, because the point of these tests is the absence of an argument:
+    a helper that always passed a ledger could not express the run that gives
+    the shim nothing.
+    """
+    return subprocess.run(
+        ["bash", str(CENSUS_SH), *args],
+        capture_output=True, text=True, env=subprocess_env(),
+        cwd=str(cwd), timeout=120,
+    )
+
+
+def _census_sh_snapshot(tree: Path) -> dict[str, str]:
+    """Every file under ``tree`` as path -> bytes, so a claim of 'untouched'
+    names what moved rather than only that something did."""
+    return {str(p.relative_to(tree)): p.read_bytes()
+            for p in sorted(tree.rglob("*")) if p.is_file()}
+
+
+def _census_sh_case(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """The three trees of one census-sh state-root run: (state root, decoy, cwd).
+
+    Both ledgers hold one committed decided record, so both are censusable: a
+    run that resolved its ledger from the cwd would answer on the decoy's
+    bytes, and the assertion can tell that from a run that read the state
+    root's. The decoy is a real git repo for the same reason the decide decoy
+    is one — a decoy the tool could not have worked in is not a decoy.
+    """
+    root = _baseline_repo(tmp_path, CENSUS_SH_STATE_DIR)
+    decoy = _baseline_repo(tmp_path, CENSUS_SH_DECOY_DIR)
+    cwd = tmp_path / CENSUS_SH_CWD_DIR
+    cwd.mkdir(parents=True, exist_ok=True)
+    return root, decoy, cwd
+
+
+def test_census_sh_censuses_the_ledger_it_was_given_from_a_foreign_cwd(tmp_path):
+    """The shim reports the state root's record while the cwd holds a decoy
+    ledger with a record of its own beside it.
+
+    Both ledgers are clean, so the assertion is on identity rather than code:
+    the rows that come out are the state root's, and the decoy's never appear.
+    """
+    root, _decoy, cwd = _census_sh_case(tmp_path)
+    proc = _census_sh_from(cwd, str(root / "noni" / "decisions"))
+    assert proc.returncode == 0, f"{proc.returncode}\n{proc.stderr}"
+    assert BASELINE_ID in proc.stdout, proc.stdout
+
+
+def test_census_sh_reports_the_state_roots_own_violation_not_the_decoys(tmp_path):
+    """The half that makes the test above mean something: the state root's ledger
+    is broken and the decoy beside the cwd is clean, so only a run that read
+    the path it was given can report 10.
+
+    A shim still driven by the cwd would have found the decoy's valid record
+    and exited 0, calling a broken ledger clean.
+    """
+    root, _decoy, cwd = _census_sh_case(tmp_path)
+    broken = root / "noni" / "decisions" / "2026-10-02-broken.json"
+    broken.write_text("{ not json\n", encoding="utf-8")
+    proc = _census_sh_from(cwd, str(root / "noni" / "decisions"))
+    assert proc.returncode == 10, f"{proc.returncode}\n{proc.stdout}\n{proc.stderr}"
+    assert "10:unparseable" in proc.stderr, proc.stderr
+
+
+def test_census_sh_refuses_a_missing_ledger_dir_with_its_own_code(tmp_path):
+    """--repo-style fail closed, in the shim's own exit-code shape: a ledger
+    directory that does not exist is exit 10 (10:missing-dir) naming the path,
+    with no report rows, from a cwd beside a decoy ledger.
+
+    The unified census has its own codes for the same state; this is the shim's
+    contract (references/census.md), which the legacy table documents and no
+    other entry point shares.
+    """
+    _root, decoy, cwd = _census_sh_case(tmp_path)
+    before = _census_sh_snapshot(decoy)
+    missing = tmp_path / "no-such-state-root" / "noni" / "decisions"
+    proc = _census_sh_from(cwd, str(missing))
+    assert proc.returncode == 10, f"{proc.returncode}\n{proc.stderr}"
+    assert "10:missing-dir" in proc.stderr, proc.stderr
+    assert "no-such-state-root" in proc.stderr, (
+        f"the refusal must name the state root it was given: {proc.stderr}"
+    )
+    assert proc.stdout.strip() == "", (
+        f"a census that could not read its ledger printed a report: {proc.stdout}"
+    )
+    assert _census_sh_snapshot(decoy) == before, (
+        "a refused run read the decoy ledger beside its cwd"
+    )
+
+
+def test_census_sh_refuses_a_ledger_path_that_is_not_a_directory(tmp_path):
+    """The second state of the pair: the path exists and is not a directory.
+
+    A plain file passes a bare existence test, so a shim that checked only for
+    a path would go on to enumerate it and report an empty ledger. It refuses
+    with the same code and names the path instead.
+    """
+    _root, decoy, cwd = _census_sh_case(tmp_path)
+    before = _census_sh_snapshot(decoy)
+    not_a_dir = tmp_path / "state-root-is-a-file"
+    not_a_dir.write_text("i am a file, not a state root\n", encoding="utf-8")
+    proc = _census_sh_from(cwd, str(not_a_dir))
+    assert proc.returncode == 10, f"{proc.returncode}\n{proc.stderr}"
+    assert "10:missing-dir" in proc.stderr, proc.stderr
+    assert "state-root-is-a-file" in proc.stderr, proc.stderr
+    assert proc.stdout.strip() == "", proc.stdout
+    assert _census_sh_snapshot(decoy) == before
+
+
+def test_census_sh_refuses_a_ledger_dir_it_cannot_read(tmp_path):
+    """A ledger directory that cannot be enumerated is 10:empty-ledger, not a
+    silent clean.
+
+    This is the state the enumeration guard already owned and this pins: the
+    directory exists (``-d`` answers yes — read permission is not what the
+    test removes) but ``find`` cannot list it, and the script has to tell that
+    apart from a genuinely empty ledger. An empty directory and a blind census
+    share the code; only the message separates them, and the message is what
+    says "the ledger is unusable here" rather than "nothing to report".
+    """
+    _root, _decoy, cwd = _census_sh_case(tmp_path)
+    unreadable = tmp_path / "unreadable-ledger"
+    unreadable.mkdir()
+    (unreadable / "2026-10-01-hidden.json").write_text("{}\n", encoding="utf-8")
+    unreadable.chmod(0o000)
+    try:
+        proc = _census_sh_from(cwd, str(unreadable))
+    finally:
+        unreadable.chmod(0o755)
+    assert proc.returncode == 10, f"{proc.returncode}\n{proc.stderr}"
+    assert "find failed to enumerate" in proc.stderr, proc.stderr
+    assert "unreadable-ledger" in proc.stderr, proc.stderr
+    assert "empty-ledger" in proc.stderr, proc.stderr
+    # The header row still goes to stdout (that print is the shim's long-standing
+    # shape for every path through the report, and this test is about the
+    # ledger's state, not about it). What matters is that no record rows follow:
+    # a census that could not list the directory has no records to name.
+    assert proc.stdout.strip() == "id\tdate\tby\tstatus\tlive\tsupersedes", proc.stdout
+
+
+def test_census_sh_refuses_a_broken_symlink_ledger_dir(tmp_path):
+    """A ledger path that is a symlink to nothing is the same refusal.
+
+    ``-d`` answers no for it and ``-e`` answers no as well, so a shim with one
+    existence test cannot tell this from a plain missing path; both are
+    refused, and the message names the path the caller passed.
+    """
+    _root, _decoy, cwd = _census_sh_case(tmp_path)
+    dangling = tmp_path / "dangling-ledger"
+    dangling.symlink_to(tmp_path / "nowhere" / "noni" / "decisions")
+    proc = _census_sh_from(cwd, str(dangling))
+    assert proc.returncode == 10, f"{proc.returncode}\n{proc.stderr}"
+    assert "10:missing-dir" in proc.stderr, proc.stderr
+    assert "dangling-ledger" in proc.stderr, proc.stderr
+
+
+def test_census_sh_takes_no_ledger_from_the_cwd_when_given_none(tmp_path):
+    """No argument, from a cwd holding a complete decoy ledger: exit 2, no rows.
+
+    The regression this pins is the shim's old ``LEDGER_DIR="."`` default: with
+    it, a bare ``census.sh`` audited the caller's cwd, so a script that forgot
+    the argument got a report about whatever directory it happened to run in
+    and an exit code that looked like a verdict on its own state root. The run
+    refuses instead, and the decoy stays unread.
+    """
+    _root, decoy, cwd = _census_sh_case(tmp_path)
+    shutil.copytree(decoy / "noni" / "decisions", cwd / "noni" / "decisions")
+    before = _census_sh_snapshot(decoy)
+    proc = _census_sh_from(cwd)
+    assert proc.returncode == 2, f"{proc.returncode}\n{proc.stdout}\n{proc.stderr}"
+    assert proc.stdout.strip() == "", f"the shim censused its cwd: {proc.stdout}"
+    assert "noni/decisions" in proc.stderr, (
+        f"the refusal must name the argument it needs: {proc.stderr}"
+    )
+    assert _census_sh_snapshot(decoy) == before
+
+
+def test_census_sh_help_advertises_the_state_root_it_requires(tmp_path):
+    """The help text names the state directory as an argument, not as an
+    optional one: a reader who runs the shim with no argument reads the help
+    first, and the help must be the rule the script enforces.
+    """
+    proc = _census_sh_from(tmp_path, "--help")
+    assert proc.returncode == 0, proc.stderr
+    assert "census.sh <state-root>/noni/decisions" in proc.stdout, proc.stdout
+
+
+def test_census_sh_refuses_an_unknown_option_before_any_probe(tmp_path):
+    """A flag the shim does not implement is a usage error (2), not an ignored word.
+
+    The loop used to swallow every ``-*`` argument, so ``census.sh --json <dir>``
+    printed the human report and exited 0: the caller believed it had machine
+    output and a clean ledger. The refusal fires before jq or git is consulted,
+    so a typo is answered by the same exit code a missing argument gets and the
+    decoy ledger beside the cwd is never opened.
+    """
+    _root, decoy, cwd = _census_sh_case(tmp_path)
+    before = _census_sh_snapshot(decoy)
+    proc = _census_sh_from(cwd, "--json", str(decoy / "noni" / "decisions"))
+    assert proc.returncode == 2, f"{proc.returncode}\n{proc.stdout}\n{proc.stderr}"
+    assert proc.stdout.strip() == "", f"a refused run printed a report: {proc.stdout}"
+    assert "--json" in proc.stderr, f"the refusal must name the word it refused: {proc.stderr}"
+    assert "usage:" in proc.stderr, f"the refusal must give the correct shape: {proc.stderr}"
+    assert _census_sh_snapshot(decoy) == before, (
+        "a refused run read the ledger it was handed after refusing the option"
+    )
+
+
+def test_census_sh_refuses_two_ledger_arguments(tmp_path):
+    """Two positionals are a usage error (2), not a census of whichever came last.
+
+    The loop kept the final positional, so ``census.sh A B`` reported on B and
+    exited 0: a caller whose command line was built by hand, or by a script that
+    appended the path twice, got a clean verdict about one tree and silence
+    about the other. Naming both is refused instead, and neither is read.
+    """
+    root, decoy, cwd = _census_sh_case(tmp_path)
+    before = (_census_sh_snapshot(decoy), _census_sh_snapshot(root))
+    proc = _census_sh_from(cwd, str(root / "noni" / "decisions"),
+                           str(decoy / "noni" / "decisions"))
+    assert proc.returncode == 2, f"{proc.returncode}\n{proc.stdout}\n{proc.stderr}"
+    assert proc.stdout.strip() == "", f"a refused run printed a report: {proc.stdout}"
+    assert "usage:" in proc.stderr, f"the refusal must give the correct shape: {proc.stderr}"
+    assert (_census_sh_snapshot(decoy), _census_sh_snapshot(root)) == before

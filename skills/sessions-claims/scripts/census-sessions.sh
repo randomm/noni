@@ -3,11 +3,13 @@
 # files under noni/sessions/. Read-only — never writes, never mutates a
 # session file. Output goes to stdout only (no writes under noni/census/).
 #
-#   census-sessions.sh [SESSIONS_DIR]
+#   census-sessions.sh <state-root>/noni/sessions
 #
-# SESSIONS_DIR defaults to noni/sessions relative to the current working
-# directory. Pass the sessions directory of the clone you want to audit
-# (e.g. <clone>/noni/sessions).
+# The one argument is the sessions directory of the state root — the directory
+# --repo names for the writers, with noni/sessions under it. There is no
+# current-directory default: a run with no argument is a usage error (2),
+# because a relative default would census whatever noni/sessions happened to
+# sit next to the caller and report a clean the caller never pointed at.
 #
 # The census is the deterministic arbiter for the claim protocol. Two active
 # claims on the same task from different identities are a double-claim: git
@@ -23,6 +25,9 @@
 # findings are always in the NDJSON output:
 #   0   clean — every session file valid (five required fields each), no
 #       double-claims, all claims have a register file
+#   2   usage: no sessions directory was given, more than one was given, or
+#       the one given is not a directory (the state root is named by the
+#       caller, never by the cwd)
 #   3   the interpreter it would run is missing (see NONI_PYTHON below)
 #   30  double-claim: two active claims on the same task from different
 #       identities (the arbiter check)
@@ -66,16 +71,6 @@ if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
   exit 0
 fi
 
-SESSIONS_DIR=""
-for arg in "$@"; do
-  case "$arg" in
-    --help|-h) ;;
-    -*) ;;
-    *) SESSIONS_DIR="${arg%/}" ;;
-  esac
-done
-[ -z "$SESSIONS_DIR" ] && SESSIONS_DIR="noni/sessions"
-
 # The Python core lives in the same directory as this script. The sessions
 # census is also reachable as `census.sh --sessions` from the steering-ledger
 # skill (skills/steering-ledger/scripts/census.sh dispatches here); this file
@@ -88,4 +83,8 @@ command -v "$NONI_PYTHON" >/dev/null 2>&1 || {
   exit 3
 }
 
-exec "$NONI_PYTHON" "$SCRIPT_DIR/census-sessions.py" "$SESSIONS_DIR"
+# The directory argument is passed through verbatim (quoted, so a path with
+# spaces stays one argv entry, and an absent one stays absent so the core
+# refuses it): the core is the single owner of the usage and not-a-directory
+# refusals, and the wrapper must not pre-empt either with its own copy.
+exec "$NONI_PYTHON" "$SCRIPT_DIR/census-sessions.py" "$@"

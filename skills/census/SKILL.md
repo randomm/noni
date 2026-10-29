@@ -16,6 +16,11 @@ anything — running it leaves `git status --porcelain` empty.
 python3 skills/census/scripts/census.py [options]
 ```
 
+Every noni path the census reads resolves from `--repo` — the one flag that
+names the state root — and never from the script's own location or the current
+directory beyond `--repo`'s default. A `--repo` that is missing, or is not a
+directory, is a usage error (exit 2) before any check runs.
+
 | option | default | meaning |
 |---|---|---|
 | `--repo PATH` | `.` | the repository or directory to audit |

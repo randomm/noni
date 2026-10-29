@@ -146,7 +146,7 @@ tables are in `references/census.md`.
 | `1` | the register file for `--session-id` does not exist (register first) |
 | `2` | the session file is malformed (no `- claims:` marker, not readable as UTF-8) or the session already claims the same task |
 | `3` | push failed after 3 fetch-rebase-push attempts; also a failed fetch, a detached HEAD, an unresolvable branch, a git call that timed out, or a `git add`/`git commit` that git refused (the row is left in the worktree or the index, unstaged or staged as the failure says) |
-| `4` | usage error: bad `--task` or `--branch` value, or `--no-commit` with `--push` |
+| `4` | usage error: bad `--task` or `--branch` value, `--no-commit` with `--push`, or a `--repo` that is not a directory |
 | `5` | rebase conflict; see the abort post-condition above |
 | `6` | rebase refused, or its state could not be read; see the hints above |
 

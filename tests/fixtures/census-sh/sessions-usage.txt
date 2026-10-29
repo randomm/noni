@@ -1,2 +1,2 @@
-census-sessions.sh [SESSIONS_DIR]
+census-sessions.sh <state-root>/noni/sessions
 five required fields each

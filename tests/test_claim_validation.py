@@ -32,6 +32,7 @@ from _harness import (
     advance_origin_with_claim,
     build_bare_origin,
     run_claim,
+    run_from,
     run_register,
 )
 
@@ -99,6 +100,78 @@ def _git_text(repo: Path, *args: str) -> str:
     return _git_e2(repo, *args).stdout.strip()
 
 
+# --- State-root (--repo) isolation fixtures -----------------------------------
+#
+# claim.py takes no positional path: the state root is --repo and nothing else,
+# so the isolation fixture separates that root from the process cwd as far as
+# the filesystem allows. One scratch root holds all three trees, so the decoy is
+# neither a parent of nor a sibling of the state root by accident.
+
+CLAIM_STATE_ARG = "claim-state"
+CLAIM_CWD_ARG = "claim-cwd"
+CLAIM_DECOY_ARG = "claim-decoy"
+CLAIM_DECOY_TASK = "#999"
+
+
+def _state_root(tmp_path: Path) -> Path:
+    """A separate state repository: a git repo whose only content is the state.
+
+    It is a git repository (claim.py commits), it carries no README, and its
+    name is not the caller's cwd, so a run that resolved state from something
+    other than --repo cannot land here by accident.
+    """
+    root = _init_repo(tmp_path / CLAIM_STATE_ARG)
+    sessions = root / "noni" / "sessions"
+    sessions.mkdir(parents=True, exist_ok=True)
+    (sessions / f"{SESSION_ID}.md").write_text(_session_body("dev"), encoding="utf-8")
+    _git(root, "add", f"noni/sessions/{SESSION_ID}.md")
+    _git(root, "commit", "-q", "-m", "session")
+    return root
+
+
+def _decoy_tree(tmp_path: Path) -> Path:
+    """A tree holding a ``noni/`` the run under test must never read or write.
+
+    The register carries a claim row no claim.py run of this test makes: a tool
+    that resolved state from its own location or the cwd would append to this
+    file, and the assertion on these exact bytes is what catches it. Not a git
+    repository: a run driven by cwd would also fail to commit, so the row alone
+    is the signal.
+    """
+    decoy = tmp_path / CLAIM_DECOY_ARG
+    sessions = decoy / "noni" / "sessions"
+    sessions.mkdir(parents=True, exist_ok=True)
+    (sessions / f"{SESSION_ID}.md").write_text(
+        _session_body("decoy", [CLAIM_DECOY_TASK]), encoding="utf-8")
+    return decoy
+
+
+def _claim_cwd(tmp_path: Path) -> Path:
+    """The directory the isolated run launches from: empty, so a ``noni/`` it
+    could read has to have been created by the run under test."""
+    cwd = tmp_path / CLAIM_CWD_ARG
+    cwd.mkdir(parents=True, exist_ok=True)
+    return cwd
+
+
+def _claim_state_root_case(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """The three trees of one state-root run: (state root, decoy, cwd)."""
+    root = _state_root(tmp_path)
+    decoy = _decoy_tree(tmp_path)
+    return root, decoy, _claim_cwd(tmp_path)
+
+
+def _claim_from(cwd: Path, root: Path, task: str) -> subprocess.CompletedProcess[str]:
+    """claim.py launched from ``cwd`` with ``--repo`` naming the state root.
+
+    The wrapper path, not the package module: this is the entry point the skill
+    documents and the one a reader copies, so it is the one whose cwd behaviour
+    the contract covers.
+    """
+    return run_from(cwd, CLAIM, "--repo", str(root), "--session-id", SESSION_ID,
+                    "--task", task)
+
+
 def _claim_tree() -> ast.Module:
     """Parse claim.py once so the parity readers below share one tree and one
     read of the file instead of each paying for both."""
@@ -160,6 +233,79 @@ def test_task_single_token_is_accepted(tmp_path):
     proc = run_claim(repo, SESSION_ID, "#42")
     assert proc.returncode == 0, f"expected exit 0, got {proc.returncode}: {proc.stderr}"
     assert "- claim: #42" in _session_path(repo).read_text()
+
+
+def test_claim_reads_and_writes_only_the_state_root_named_by_repo(tmp_path):
+    """--repo is the state root, and the only one: a claim run from an unrelated
+    directory lands in the state repository and touches nothing beside its cwd.
+
+    The three trees are the whole point. The state root is a separate git
+    repository holding the register; the decoy sits under the cwd and carries a
+    register file of its own with a claim no run of this test makes; the cwd
+    itself starts empty. So a tool that resolved ``noni/sessions/`` from the cwd
+    or from its own location would either append to the decoy, create a
+    ``noni/`` under the cwd, or fail to find the register at all — and each of
+    the four assertions below names one of those.
+    """
+    root, decoy, cwd = _claim_state_root_case(tmp_path)
+    decoy_bytes = (decoy / "noni" / "sessions" / f"{SESSION_ID}.md").read_bytes()
+
+    proc = _claim_from(cwd, root, "#42")
+    assert proc.returncode == 0, f"{proc.returncode}: {proc.stderr}"
+
+    # The claim landed in the state root, and was committed there.
+    assert "- claim: #42" in _session_path(root).read_text(encoding="utf-8")
+    assert "claim: #42" in _git_text(root, "log", "--format=%s"), \
+        "the claim was not committed in the state repository"
+    # Nothing was read from or written beside the cwd: the decoy is byte for
+    # byte the fixture, and no ``noni/`` appeared under the cwd at all.
+    assert (decoy / "noni" / "sessions" / f"{SESSION_ID}.md").read_bytes() == decoy_bytes, (
+        "the run wrote the decoy register under the cwd, so state resolved "
+        "from somewhere other than --repo"
+    )
+    assert not (cwd / "noni").exists(), "the run created noni/ under the cwd"
+
+
+def test_claim_refuses_a_repo_that_is_not_a_directory(tmp_path):
+    """A --repo naming no directory is a usage error (exit 4) with the argument
+    named, and not a missing-session report (exit 1).
+
+    The two refusals are different work for the caller — pass the right path
+    versus register the session first — so the code and the wording both matter,
+    and the guard must run before the register is looked for. Same message shape
+    as register.py, close.py and release.py already use.
+    """
+    missing = tmp_path / "no-such-state-root"
+    decoy = _decoy_tree(tmp_path)
+    cwd = _claim_cwd(tmp_path)
+    decoy_bytes = (decoy / "noni" / "sessions" / f"{SESSION_ID}.md").read_bytes()
+
+    proc = _claim_from(cwd, missing, "#42")
+    assert proc.returncode == 4, f"expected exit 4, got {proc.returncode}: {proc.stderr}"
+    lowered = proc.stderr.lower()
+    assert "--repo" in lowered, f"the refusal must name the argument: {proc.stderr}"
+    assert "directory" in lowered, f"the refusal must name the state it found: {proc.stderr}"
+    assert "register" not in lowered, (
+        f"a missing state root is not a missing session: {proc.stderr}"
+    )
+    assert (decoy / "noni" / "sessions" / f"{SESSION_ID}.md").read_bytes() == decoy_bytes
+    assert not (cwd / "noni").exists()
+
+
+def test_claim_refuses_a_repo_that_is_a_file(tmp_path):
+    """A --repo that exists but is not a directory is refused the same way,
+    from a cwd that is not the state root."""
+    root, decoy, cwd = _claim_state_root_case(tmp_path)
+    not_a_dir = tmp_path / "claim-state-is-a-file"
+    not_a_dir.write_text("i am a file, not a state root\n", encoding="utf-8")
+
+    proc = _claim_from(cwd, not_a_dir, "#42")
+    assert proc.returncode == 4, f"expected exit 4, got {proc.returncode}: {proc.stderr}"
+    assert "--repo" in proc.stderr.lower()
+    assert not (cwd / "noni").exists()
+    assert _session_path(root).read_text(encoding="utf-8").count("- claim:") == 0, (
+        "a refused run must not have claimed anything in the real state root"
+    )
 
 
 def test_branch_with_slash_or_dots_is_refused(tmp_path):

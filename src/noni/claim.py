@@ -29,8 +29,8 @@ Exit codes:
        failure, a detached HEAD, an unresolvable branch, or a git call that
        timed out)
     4  the task reference is not a non-empty token (empty, whitespace-only,
-       or with embedded whitespace), --branch is not a safe ref name, or
-       --no-commit was combined with --push
+       or with embedded whitespace), --branch is not a safe ref name,
+       --no-commit was combined with --push, or --repo is not a directory
     5  the rebase hit a conflict: the rebase started and stopped mid-flight,
        so claim.py ran git rebase --abort, which leaves HEAD on the branch it
        was invoked on, at the claim commit this run made (the abort resets
@@ -132,15 +132,15 @@ def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     forced off (a signing requirement in a throwaway or CI tree must not
     wedge the claim). Every call is bounded by GIT_TIMEOUT so a hung fetch or
     push fails cleanly instead of hanging.
+
+    The call is the session writers' shared hardened one (``_session_git``), so
+    this push loop runs with no repository hooks, no external transports and no
+    file-system monitor helper, and under the environment ``gitenv.child_env()``
+    gives: every ``GIT_*`` variable but the identity, config and transport names
+    on the allowlist is removed, so an inherited ``GIT_DIR``, ``GIT_INDEX_FILE``
+    or ``GIT_OBJECT_DIRECTORY`` cannot retarget the push or the rebase.
     """
-    cmd = ["git", "-C", str(cwd), "-c", "commit.gpgsign=false", *args]
-    try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=GIT_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        return subprocess.CompletedProcess(
-            cmd, returncode=GIT_TIMEOUT_RC, stdout="",
-            stderr="git " + args[0] + " timed out after " + str(GIT_TIMEOUT) + "s",
-        )
+    return _session_git.git(cwd, "-c", "commit.gpgsign=false", *args)
 
 
 def _append_claim(path: Path, task: str, body: str) -> int:
@@ -364,6 +364,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     repo = Path(args.repo)
+    # The state root is checked before the register file is looked for: a
+    # --repo naming no directory is a usage error, not a missing session, and
+    # the message names the argument the caller got wrong (the shape
+    # register.py, close.py and release.py already use).
+    if not repo.is_dir():
+        return _report(
+            EXIT_USAGE,
+            f"{labels.CLAIM}: --repo {args.repo} is not a directory",
+            "pass the repository root that holds noni/sessions/",
+        )
     task = args.task.strip()
     if not task or not TASK_RE.fullmatch(task):
         print(

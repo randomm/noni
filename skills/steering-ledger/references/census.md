@@ -10,20 +10,24 @@ census does not check and does not claim to (see
 ## Usage
 
 ```
-scripts/census.sh [LEDGER_DIR]        the decisions census (E1)
-scripts/census.sh --sessions [SESSIONS_DIR]  the sessions census (E2)
+scripts/census.sh <state-root>/noni/decisions   the decisions census (E1)
+scripts/census.sh --sessions <state-root>/noni/sessions  the sessions census (E2)
 scripts/census.sh --help         the usage and exit-code table
 ```
 
-`LEDGER_DIR` defaults to the current directory; pass the ledger directory of the clone you want to audit (e.g. `noni/decisions/`).
-Pass the absolute path of a clone's ledger to census a tree other than the
-one you are in.
+The one argument each check takes is the state directory of the state root —
+the directory `--repo` names for the writers — and neither check has a
+current-directory default. Pass the absolute path of a clone's ledger to census
+a tree other than the one you are in; run with no argument, either path is a
+usage error (2) rather than a census of whatever `noni/` happened to sit next
+to the caller.
 
 ## Exit codes
 
 | code | meaning |
 |---|---|
 | `0` | clean — every record valid, chain intact |
+| `2` | usage: no ledger directory was given (the state root is named by the caller, never by the cwd) |
 | `3` | `jq` not found on the reading machine (missing dependency) |
 | `10` | a record is missing or malformed (schema violation), or the ledger is unusable: the directory does not exist, contains no `*.json` records, a filename is not a plain `<name>.json` path segment, or the git tree is unreadable on a real repo |
 | `12` | a record was edited after commit (the committed bytes differ from the working tree) |
@@ -59,6 +63,9 @@ so.
   is only schema-checked (non-empty string): the report takes `by` from git
   when available, so a body value that disagrees with the commit is reported
   as the git author, not flagged.
+- **`2` (no ledger named):** the run was given no ledger directory. The census
+  has no current-directory default, so it refuses rather than auditing the
+  caller's cwd.
 - **`3` (jq missing):** `command -v jq` fails. The script cannot validate
   without jq and exits honestly rather than reporting a false clean.
 - **`10` (schema violation):** a record is missing one of the eight fields, a

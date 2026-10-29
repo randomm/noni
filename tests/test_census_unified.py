@@ -1371,6 +1371,166 @@ class TestSessionsListingFault:
         )
 
 
+def _run_census_from(cwd: Path, repo: Path, *args: str) -> tuple[int, str, str]:
+    """``_run_census`` with the process started in a directory that is not the
+    state root.
+
+    The census's default ``--repo`` is ``.``, which is the one place its cwd may
+    decide anything; a run that names ``--repo`` must not consult the cwd at all.
+    So the caller passes ``--repo`` itself and this launches the census with
+    ``cwd`` set somewhere else: an in-process launcher cannot move the real
+    process without taking every other test with it, and a ``monkeypatch.chdir``
+    would not survive the census's own ``Path`` reads being shared with pytest.
+    """
+    import io
+    import os
+    from contextlib import redirect_stderr, redirect_stdout
+
+    out_buf = io.StringIO()
+    err_buf = io.StringIO()
+    previous = os.getcwd()
+    os.chdir(cwd)
+    try:
+        with redirect_stdout(out_buf), redirect_stderr(err_buf):
+            rc = _census_main(["--repo", str(repo), *args])
+    finally:
+        os.chdir(previous)
+    return rc, out_buf.getvalue(), err_buf.getvalue()
+
+
+class TestStateRoot:
+    """--repo is the state root: every noni path resolves from it, and the cwd
+    of the run decides nothing except the default nobody uses here.
+
+    The three trees of each case: a separate state repository holding the
+    ``noni/`` layout, a decoy ``noni/`` planted under the cwd carrying findings
+    the census must never report, and an empty cwd a stray write would show up
+    in. A census that resolved any group from the cwd would report the decoy's
+    double-claim or grow a ``noni/`` directory, and both are asserted against."""
+
+    def test_census_reads_only_the_state_root_named_by_repo(self, tmp_path):
+        """A clean state root censuses clean while a double-claim sits in a
+        decoy register beside the cwd."""
+        root = _init_repo(tmp_path / "state-root")
+        _commit_file(root, "noni/decisions/2026-10-01-alpha.json",
+                     json.dumps(_valid_record(), indent=2))
+        _commit_file(root, "noni/sessions/2026-10-01-aaaaaa.md",
+                     _session_body("dev", claims=["#42"]))
+        cwd = tmp_path / "elsewhere"
+        cwd.mkdir()
+        decoy = cwd / "noni" / "sessions"
+        decoy.mkdir(parents=True)
+        # Two active claims on one task from two identities: exit 30 whenever
+        # the sessions group reads this directory.
+        (decoy / "2026-10-01-bbbbbb.md").write_text(
+            _session_body("one", claims=["#7"]), encoding="utf-8")
+        (decoy / "2026-10-01-cccccc.md").write_text(
+            _session_body("two", claims=["#7"]), encoding="utf-8")
+
+        rc, out, err = _run_census_from(cwd, root, "--json", "--skip", "hygiene",
+                                        "--now", "2026-10-02T00:00:00Z")
+        assert rc == 0, f"the state root is clean, got {rc}\n{out}\n{err}"
+        rows = _ndjson_rows(out)
+        assert not [r for r in rows if r.get("kind") == "finding"
+                    and r.get("check") == "session-double"], (
+            f"the census reported the decoy's double-claim, so the sessions "
+            f"group resolved from the cwd and not --repo: {rows}"
+        )
+        assert not [r for r in rows if r.get("kind") == "finding"
+                    and "bbbbbb" in json.dumps(r)], (
+            f"a row named a file that exists only in the decoy: {rows}"
+        )
+        assert not (cwd / "noni" / "direction" / "order.json").exists(), (
+            "the census is read-only: it wrote an ordering artifact under the cwd"
+        )
+
+    def test_census_reports_the_state_roots_own_findings_from_a_foreign_cwd(
+        self, tmp_path,
+    ):
+        """The other half of the same pair: the state root's own violation is
+        reported even though the cwd holds nothing but a decoy.
+
+        Without this, a first test that asserts the decoy is silent could be
+        satisfied by a census that read nothing at all."""
+        root = _init_repo(tmp_path / "state-root")
+        _commit_file(root, "noni/decisions/2026-10-01-alpha.json",
+                     json.dumps(_valid_record(), indent=2))
+        _commit_file(root, "noni/sessions/2026-10-01-bbbbbb.md",
+                     _session_body("one", claims=["#7"]))
+        _commit_file(root, "noni/sessions/2026-10-01-cccccc.md",
+                     _session_body("two", claims=["#7"]))
+        cwd = tmp_path / "elsewhere"
+        cwd.mkdir()
+
+        rc, out, err = _run_census_from(cwd, root, "--json", "--skip", "hygiene",
+                                        "--now", "2026-10-02T00:00:00Z")
+        assert rc == 30, f"the state root's double-claim must fire, got {rc}\n{out}\n{err}"
+        rows = _ndjson_rows(out)
+        assert any(r.get("check") == "session-double" and r.get("subject") == "#7"
+                   for r in rows), rows
+
+    def test_census_refuses_a_repo_that_is_not_a_directory(self, tmp_path):
+        """A --repo naming no directory is a usage error (exit 2) naming the
+        path, whatever the cwd holds."""
+        cwd = tmp_path / "elsewhere"
+        cwd.mkdir()
+        rc, _out, err = _run_census_from(cwd, tmp_path / "no-such-state-root",
+                                         "--skip", "hygiene")
+        assert rc == 2, f"expected 2, got {rc}: {err}"
+        assert "repo path does not exist" in err, err
+
+    def test_census_reads_nothing_under_home_when_the_caller_names_no_home_path(
+        self, tmp_path,
+    ):
+        """HOME holds a decoy register with a double-claim; a census of an empty
+        state root reports nothing from it.
+
+        HOME is the one directory a tool reaches without being told (git reads
+        it for config, and a leading ~ resolves through it), so it is the
+        sharpest test of "every path resolves from --repo": the caller named
+        none of it. The state root is deliberately empty, because a census of
+        an empty tree is the run most easily satisfied by reading the wrong
+        directory and still exiting clean.
+        """
+        root = _init_repo(tmp_path / "state-root")
+        _commit_file(root, "README.md", "# state\n")
+        import os
+
+        home = tmp_path / "hostile-home"
+        decoy = home / "noni" / "sessions"
+        decoy.mkdir(parents=True)
+        (decoy / "2026-10-01-aaaaaa.md").write_text(
+            _session_body("one", claims=["#7"]), encoding="utf-8")
+        (decoy / "2026-10-01-bbbbbb.md").write_text(
+            _session_body("two", claims=["#7"]), encoding="utf-8")
+        cwd = tmp_path / "elsewhere"
+        cwd.mkdir()
+
+        previous_home = os.environ.get("HOME")
+        previous_userprofile = os.environ.get("USERPROFILE")
+        os.environ["HOME"] = str(home)
+        os.environ["USERPROFILE"] = str(home)
+        try:
+            rc, out, err = _run_census_from(cwd, root, "--json", "--skip", "hygiene",
+                                            "--now", "2026-10-02T00:00:00Z")
+        finally:
+            _restore = {"HOME": previous_home, "USERPROFILE": previous_userprofile}
+            for name, value in _restore.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+        rows = _ndjson_rows(out)
+        assert rc == 0, f"an empty state root is clean, got {rc}\n{err}"
+        assert not [r for r in rows if r.get("check") == "session-double"], (
+            f"the census reported a double-claim that exists only under HOME: {rows}"
+        )
+        assert "aaaaaa" not in json.dumps(rows) and "bbbbbb" not in json.dumps(rows), rows
+        assert not (home / "noni" / "direction").exists(), (
+            "the census is read-only and never writes under HOME either"
+        )
+
+
 class TestHygiene:
     """The hygiene class (warn 50): the in-process public_safety scan over the
     census's own git tree, which always reports — a clean tree included."""

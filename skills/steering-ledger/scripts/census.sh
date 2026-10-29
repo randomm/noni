@@ -2,14 +2,15 @@
 # The census entry point. Two checks live under this name, each with its own
 # exit-code table and its own golden fixtures under tests/fixtures/:
 #
-#   census.sh [LEDGER_DIR]                  the decisions census (E1)
+#   census.sh <state-root>/noni/decisions   the decisions census (E1)
 #       columns: id date by status live supersedes
-#       codes:   0 clean | 3 jq missing | 10 record/ledger unusable
-#                | 12 edited after commit | 20 supersede chain broken
+#       codes:   0 clean | 2 no ledger dir given | 3 jq missing
+#                | 10 record/ledger unusable | 12 edited after commit
+#                | 20 supersede chain broken
 #       a record is valid when it carries the eight top-level required
 #       fields (plus the optional source field) and the chain resolves
 #
-#   census.sh --sessions [SESSIONS_DIR]     the sessions census (E2)
+#   census.sh --sessions <state-root>/noni/sessions   the sessions census (E2)
 #       one NDJSON row per finding; read-only, output to stdout only
 #       codes:   0 clean | 3 python3 missing | 30 double-claim
 #                | 31 claim without a register file | 32 malformed session file
@@ -40,12 +41,15 @@ fi
 # Census of the steering ledger: one line per dated decision record under
 # noni/decisions/. Read-only — never writes, never mutates a record.
 #
-#   census.sh [LEDGER_DIR]
+#   census.sh <state-root>/noni/decisions
 #
-# LEDGER_DIR defaults to the current directory; pass the ledger directory of
-# the clone you want to audit (e.g. noni/decisions/). The script reads the
-# records and, when LEDGER_DIR lives inside a git worktree, the git history to
-# attribute authors and detect post-commit edits.
+# The one argument is the ledger directory of the state root — the directory
+# --repo names for the writers, with noni/decisions under it. There is no
+# current-directory default: a run with no argument is a usage error (2),
+# because a default of "." would audit whatever directory the caller happened
+# to stand in, and a census of the wrong tree is worse than no census. The
+# script reads the records and, when the ledger directory lives inside a git
+# worktree, the git history to attribute authors and detect post-commit edits.
 #
 # Columns: id  date  by  status  live  supersedes
 # A CHAIN block follows on stderr when the supersede chain is broken.
@@ -56,6 +60,8 @@ fi
 # been evaluated — the stderr message says so.
 #   0   clean — every record valid (the eight top-level required fields
 #       plus the optional source field), chain intact
+#   2   usage: no ledger directory was given (the state root is named by the
+#       caller, never by the cwd)
 #   3   jq not found on the reading machine
 #   10  a record is missing or malformed, or the ledger is unusable —
 #       five distinct sub-classes, all named on the stderr line:
@@ -104,23 +110,51 @@ if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
   exit 0
 fi
 
+usage_error() {   # one line naming the fault and the correct shape, then exit 2
+  echo "census.sh: $1 (usage: census.sh [--help] <state-root>/noni/decisions)" >&2
+  exit 2
+}
 LEDGER_DIR=""
+POSITIONS=0
 for arg in "$@"; do
+  # One run, one ledger, named once: an unknown option or a second positional is
+  # a usage error (2) refused before any probe. Either accepted would audit a
+  # tree the caller never named: worse than no census.
   case "$arg" in
     --help|-h) ;;
-    -*) ;;
-    *) LEDGER_DIR="${arg%/}" ;;
+    -*) usage_error "unknown argument: $arg" ;;
+    *) POSITIONS=$((POSITIONS + 1))
+      LEDGER_DIR="${arg%/}" ;;
   esac
 done
-[ -z "$LEDGER_DIR" ] && LEDGER_DIR="."
+if [ "$POSITIONS" -gt 1 ]; then
+  usage_error "one ledger directory at most (got $POSITIONS)"
+fi
+# An empty LEDGER_DIR means no ledger was named at all: a usage error (2), never
+# a census of the cwd (a default of "." audits whatever directory the caller
+# happened to stand in).
+if [ -z "$LEDGER_DIR" ]; then
+  usage_error "no ledger directory given"
+fi
 
 command -v jq >/dev/null 2>&1 || { echo "census.sh: jq not found on $(hostname 2>/dev/null || echo unknown)" >&2; exit 3; }
-[ -d "$LEDGER_DIR" ] || { echo "census.sh: ledger dir not found: $LEDGER_DIR (10:missing-dir)" >&2; exit 10; }
+
+# Refuse every non-directory here rather than at the (10:empty-ledger) branch
+# below: a dangling symlink and a plain file both fail -d, and a fallback that
+# cannot stat the path must not answer "no records" for it. A directory that
+# exists but cannot be listed stays on the find branch, which reports that state
+# as its own. The refusal names the path, not which state it was.
+if [ ! -d "$LEDGER_DIR" ]; then
+  echo "census.sh: ledger dir not found: $LEDGER_DIR (10:missing-dir)" >&2
+  exit 10
+fi
 
 # Resolve the git top-level so attribution and the post-commit-edit check can
-# address paths relative to it. Empty when the ledger is not in a git tree
-# (a tarball or non-git directory): those checks then skip rather than fail,
-# and a record with no reachable history is reported on its own terms.
+# address paths relative to it. Empty when the ledger is not in a git tree (a
+# tarball, a non-git directory): those checks skip rather than fail, and a record
+# with no reachable history is reported on its own terms. A failure to cd here
+# means the directory became unusable mid-run (absent or unreadable was refused
+# above), so it fails closed rather than resolving git against the caller's cwd.
 GIT_TOP=""
 if GIT_T="$(cd "$LEDGER_DIR" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)" \
    && [ -n "$GIT_T" ] && [ -d "$GIT_T" ]; then
@@ -170,8 +204,8 @@ fi
 
 # --- Schema -----------------------------------------------------------------
 # One jq program per record validates the declared shape (eight top-level
-# required fields plus the one optional source field) and emits "ok"; a non-"ok" result is the (fixed, jq-generated)
-# violation message. jq stderr is discarded: an unparseable record is
+# required fields plus the one optional source field) and emits "ok"; a non-"ok"
+# result is the (fixed, jq-generated) violation message. jq stderr is discarded: an unparseable record is
 # distinguished from a schema failure by the follow-up `jq empty` probe, and raw
 # record bytes are never echoed back into the diagnostic line.
 SCHEMA_JQ='
@@ -334,8 +368,8 @@ while IFS= read -r rec; do
   # Attribution + history: one git call per record returns both the commit
   # author (%an, the legitimacy check) and the commit hash (%H, for the
   # edited-after-commit check). The pathspec is the validated, plain-basename
-  # $rec prefixed with "./" so a leading dash can never be read as a git
-  # option. The NUL separator keeps fields with embedded spaces safe.
+  # $rec prefixed with "./" so a leading dash can never be read as a git option.
+  # An empty %an (no author to report) leaves the record's own $by standing.
   by_report="$by_body"
   lastc=""
   if [ -n "$GIT_TOP" ] && [ -n "$REL_LEDGER" ]; then
@@ -347,9 +381,7 @@ while IFS= read -r rec; do
     fi
     by_git="${attr%%$'\x1f'*}"
     lastc="${attr##*$'\x1f'}"
-    if [ -n "${by_git:-}" ]; then
-      by_report="$by_git"
-    fi
+    [ -n "$by_git" ] && by_report="$by_git"
   fi
 
   # Edited-after-commit check (exit 12): working-tree bytes vs the last commit
@@ -375,26 +407,23 @@ $RECORDS
 REOF
 
 # --- Supersede chain resolution (exit 20) -------------------------------------
-# Runs only when no schema violation (exit 10) was found: the chain walk
-# needs schema-valid records, and it reads PAIRS, which was accumulated from
-# the validated pass-1 records above (a malformed record never contributes a
-# pair). When a higher-priority code (12) already fired, the chain walk
-# is skipped and the report says so: the documented precedence is
-# 10 < 12 < 20.
+# Runs only when no schema violation (10) was found: the walk needs schema-valid
+# records and reads PAIRS, accumulated from the validated pass-1 records above (a
+# malformed record never contributes a pair). When 12 already fired the walk is
+# skipped and the report says so: precedence is 10 < 12 < 20.
 if [ "$STATUS" -ne 10 ]; then
   if [ "$STATUS" -ne 0 ]; then
     echo "census.sh: exit $STATUS already reported; the supersede chain check was not evaluated (priority 10 < 12 < 20)" >&2
   else
-    # status map (id -> status) from the validated report rows ($ROWS field 4);
-    # $ROWS holds only data lines (the header is printed to stdout, not $ROWS).
+    # The status map (id -> status) comes from the validated report rows ($ROWS
+    # field 4); $ROWS holds only data lines (the header goes to stdout).
     status_file="$(mktemp)" || { rm -f "$ROWS" "$PAIRS"; echo "census.sh: cannot allocate a temp file (mktemp failed)" >&2; exit 3; }
     awk -F'\t' 'NF >= 6 && $1 != "ERR" { print $1 "\t" $4 }' "$ROWS" > "$status_file"
 
-    # id/sup are indexed by row number; the walk follows row -> supersedes id
-    # -> row via the id_to_row map, so a walk by id string never works.
-    # Chain aggregation only applies to roots that are real records (in files):
-    # a record whose supersedes target does not exist (dangling) gets no
-    # chain/livecount entry, so the dangling diagnostic stands alone.
+    # id/sup are indexed by row number: the walk follows row -> supersedes id ->
+    # row via id_to_row, so a walk by id string never works. Chain aggregation
+    # applies only to roots that are real records (in files): a dangling target
+    # gets no chain/livecount entry, so the dangling diagnostic stands alone.
     awk_rc=0
     broken="$(awk -F'\t' '
       FILENAME == ARGV[1] { status_of[$1] = $2; next }
@@ -454,16 +483,12 @@ if [ "$STATUS" -ne 10 ]; then
     ' "$status_file" "$PAIRS" 2>&1)"
     awk_rc=$?
     rm -f "$status_file"
-
     if [ "$awk_rc" -ne 0 ]; then
       echo "census.sh: chain walk failed (awk exited with status $awk_rc): $broken (20)" >&2
       STATUS=20
     elif [ "$broken" != "OK" ]; then
       STATUS=20
-      {
-        echo "CHAIN:"
-        printf '%s\n' "$broken" | sed '/^$/d' | sed '$d'
-      } >&2
+      { echo "CHAIN:"; printf '%s\n' "$broken" | sed '/^$/d' | sed '$d'; } >&2
     fi
   fi
 fi
@@ -471,5 +496,4 @@ fi
 # --- Report -------------------------------------------------------------------
 printf 'id\tdate\tby\tstatus\tlive\tsupersedes\n'
 [ -f "$ROWS" ] && cat "$ROWS"
-
 exit "$STATUS"

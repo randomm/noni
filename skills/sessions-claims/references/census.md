@@ -7,20 +7,25 @@ honest exit code. Output goes to stdout only (no writes under `noni/census/`).
 ## Usage
 
 ```
-scripts/census-sessions.sh [SESSIONS_DIR]
+scripts/census-sessions.sh <state-root>/noni/sessions
 
 # equivalent entry point (the steering-ledger census dispatches here)
-census.sh --sessions [SESSIONS_DIR]
+census.sh --sessions <state-root>/noni/sessions
 ```
 
-`SESSIONS_DIR` defaults to `noni/sessions` relative to the current working
-directory. Pass the sessions directory of the clone you want to audit.
+The one argument is the sessions directory of the state root — the directory
+`--repo` names for the writers, with `noni/sessions` under it. Pass the sessions
+directory of the clone you want to audit. There is no current-directory default:
+a run with no argument is a usage error (`2`), so the census never reads whatever
+`noni/sessions` happened to sit next to the caller. One run audits one register,
+so a second directory is a usage error (`2`) too, naming every path given.
 
 ## Exit codes
 
 | code | meaning |
 |---|---|
 | `0` | clean — every session file valid, no double-claims, all claims have a register file |
+| `2` | usage: no sessions directory was given, more than one was given, or the one given is not a directory (the state root is named by the caller, never by the cwd) |
 | `3` | python3 not found on the reading machine (missing dependency) |
 | `30` | double-claim: two active claims on the same task from different identities |
 | `31` | a claim row was committed without a register file (work is not blocked — report only) |

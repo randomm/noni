@@ -55,6 +55,7 @@ PRODUCT_MODULES = (
     "src/noni/claim.py",
     "src/noni/cli.py",
     "src/noni/decide.py",
+    "src/noni/gitenv.py",
     "src/noni/gitwrite.py",
     "src/noni/labels.py",
     "src/noni/order.py",
@@ -150,6 +151,7 @@ for _alias, _pkg_name in (
     ("census_text", "census_text"),
     ("claim", "claim"),
     ("decide", "decide"),
+    ("gitenv", "gitenv"),
     ("gitwrite", "gitwrite"),
     ("order", "order"),
     ("order_gitwrite", "order_gitwrite"),
@@ -329,6 +331,136 @@ def _init_repo(path: Path) -> Path:
     _git(path, "init", "-q")
     _git(path, "commit", "-q", "--allow-empty", "-m", "initial")
     return path
+
+
+# --- The git-location decoys ---------------------------------------------------
+#
+# Every writer resolves its repository from ``--repo`` and passes that path to
+# ``git -C``. Four variables in the caller's environment override that answer
+# before the path is ever consulted: GIT_DIR and GIT_COMMON_DIR name a different
+# repository directory, GIT_WORK_TREE a different working tree, and GIT_INDEX_FILE
+# a different index to stage and commit through. A writer that hands its child the
+# ambient environment therefore commits somewhere other than the state root while
+# still reporting success for the tree it was pointed at.
+#
+# The two helpers below build those two states, and ``assert_writers_clear_git_env``
+# is the one assertion every committing writer is run against: the record lands
+# committed in the state root, the decoy repository and the decoy index keep the
+# bytes they had before, and the state root reports a clean ``git status
+# --porcelain`` (the commit is real, not merely written to the file).
+
+
+def decoy_git_repo(tmp_path: Path, name: str = "decoy-git") -> tuple[Path, Path]:
+    """A throwaway git repo to point ``GIT_DIR`` / ``GIT_WORK_TREE`` at.
+
+    It carries one committed file of its own, so a writer that resolved the
+    repository from the environment would have a real tree to commit into: a
+    decoy git could not have worked in proves nothing about where the commit went.
+    Returns ``(work_tree, git_dir)``.
+    """
+    repo = tmp_path / name
+    _init_repo(repo)
+    (repo / "decoy-tracked.txt").write_text("decoy content, never touched by a writer\n",
+                                            encoding="utf-8")
+    _git(repo, "add", "decoy-tracked.txt")
+    _git(repo, "commit", "-q", "-m", "decoy tracked file")
+    return repo, repo / ".git"
+
+
+def decoy_git_index(repo: Path, tmp_path: Path,
+                    name: str = "decoy-index") -> Path:
+    """An index file for ``repo`` to point ``GIT_INDEX_FILE`` at, as a copy.
+
+    The copy is of the repository's own committed index, so the decoy starts out
+    agreeing with HEAD: a writer that staged and committed through it still
+    reaches HEAD (git commits the index it was given), which is why this decoy
+    needs the porcelain and before/after assertions rather than an exit code
+    alone. Returns the decoy index path.
+    """
+    index = Path(_git_porcelain_git_dir(repo)) / "index"
+    if not index.is_file():
+        _git(repo, "update-index", "--refresh", "-q")
+    decoy = tmp_path / name
+    decoy.write_bytes(index.read_bytes())
+    return decoy
+
+
+def _git_porcelain_git_dir(repo: Path) -> str:
+    """The git directory ``repo`` resolves to, as git itself answers it.
+
+    ``--absolute-git-dir`` rather than a hand-built ``<repo>/.git``: a linked
+    worktree keeps its index elsewhere, and the decoy has to copy the index the
+    writer would have used.
+    """
+    return subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--absolute-git-dir"],
+        capture_output=True, text=True, check=True).stdout.strip()
+
+
+def assert_writers_clear_git_env(
+    proc: subprocess.CompletedProcess[str], root: Path, rel: str,
+    decoy_repo: Path | None, decoy_before: dict[str, bytes],
+    decoy_index: Path | None, index_before: bytes | None,
+    expect: str,
+) -> None:
+    """The four assertions every writer's decoy-git run has to satisfy.
+
+    ``proc`` is the writer's completed run, ``root``/``rel`` the state root and
+    the path its record must have been committed under, ``decoy_repo``/
+    ``decoy_before`` the decoy tree and its file snapshot (``None``/``{}`` when
+    the case set no ``GIT_DIR``), ``decoy_index``/``index_before`` the decoy
+    index and its bytes (``None`` when the case set no ``GIT_INDEX_FILE``), and
+    ``expect`` a fragment of the record's committed bytes that proves which
+    writer ran.
+    """
+    assert proc.returncode == 0, f"writer failed under the decoy env: {proc.stderr}"
+    shown = _git_show(root, f"HEAD:{rel}")
+    assert shown.returncode == 0, (
+        f"the record is not committed in the state root "
+        f"(git status --porcelain: {_git_porcelain(root)!r}): {shown.stderr}"
+    )
+    assert expect in shown.stdout, f"the committed record is not this writer's: {shown.stdout!r}"
+    assert _git_porcelain(root) == "", (
+        "the run left the state root dirty, so its record was written and never "
+        f"committed: {_git_porcelain(root)!r}"
+    )
+    if decoy_repo is not None:
+        after = _tree_bytes(decoy_repo)
+        assert after == decoy_before, (
+            f"the run wrote the decoy repository named by GIT_DIR/GIT_WORK_TREE: "
+            f"{sorted(set(after) ^ set(decoy_before)) or 'content changed'}"
+        )
+    if decoy_index is not None:
+        assert decoy_index.read_bytes() == index_before, (
+            "the run staged or committed through the decoy index named by "
+            "GIT_INDEX_FILE, so the index it used was not the state root's own"
+        )
+
+
+def _tree_bytes(root: Path) -> dict[str, bytes]:
+    """Every file under ``root`` as relative path -> bytes (the snapshot form)."""
+    return {p.relative_to(root).as_posix(): p.read_bytes()
+            for p in sorted(root.rglob("*")) if p.is_file()}
+
+
+def _git_show(repo: Path, rev: str) -> subprocess.CompletedProcess[str]:
+    """Read a committed path back without the harness identity pin.
+
+    ``rev`` is a ``<revision>:<path>`` pair. ``cat-file`` rather than ``show``:
+    show runs the tree's clean/smudge filters over the blob it prints and can
+    hand back an empty string for a file that is plainly there, which would make
+    "not committed" indistinguishable from "filtered to nothing". The process is
+    handed back so the caller decides whether a non-zero exit (no such path at
+    that revision) is the finding; the harness's own ``_git`` checks instead.
+    """
+    return subprocess.run(["git", "-C", str(repo), "cat-file", "-p", rev],
+                          capture_output=True, text=True, check=False)
+
+
+def _git_porcelain(repo: Path) -> str:
+    """The state root's own ``git status --porcelain``, as one string."""
+    return subprocess.run(["git", "-C", str(repo), "status", "--porcelain"],
+                          capture_output=True, text=True, check=True).stdout
 
 
 def _commit_file(repo: Path, rel: str, content: str) -> None:
@@ -704,6 +836,7 @@ TOOL_WRAPPERS: tuple[tuple[str, Path], ...] = (
 
 
 def run_noni(*args: str, env: Mapping[str, str] | None = None,
+             cwd: Path | None = None,
              timeout: int = 120) -> subprocess.CompletedProcess[str]:
     """The installed console command over ``noni.cli:main``, as a subprocess.
 
@@ -720,7 +853,7 @@ def run_noni(*args: str, env: Mapping[str, str] | None = None,
     full = subprocess_env() if env is None else dict(env)
     full["COLUMNS"] = HELP_COLUMNS
     return subprocess.run(cmd, capture_output=True, text=True, env=full,
-                          timeout=timeout)
+                          timeout=timeout, **_cwd_kwarg(cwd))
 
 
 def run_wrapper(script: Path, *args: str, env: Mapping[str, str] | None = None,
@@ -755,6 +888,7 @@ def _order_module() -> object:
 
 
 def run_order(repo: Path, *args: str, env: Mapping[str, str] | None = None,
+              cwd: Path | None = None,
               ) -> subprocess.CompletedProcess[str]:
     """Run order.py with ``--repo repo`` plus the arguments given as plain strings.
 
@@ -770,10 +904,12 @@ def run_order(repo: Path, *args: str, env: Mapping[str, str] | None = None,
         full_env.update(_git_env_with_identity())
     else:
         full_env.update(env)
-    return subprocess.run(cmd, capture_output=True, text=True, env=full_env, timeout=120)
+    return subprocess.run(cmd, capture_output=True, text=True, env=full_env,
+                          timeout=120, **_cwd_kwarg(cwd))
 
 
-def run_register(repo: Path, identity: str, **kwargs) -> subprocess.CompletedProcess[str]:
+def run_register(repo: Path, identity: str, cwd: Path | None = None,
+                 **kwargs) -> subprocess.CompletedProcess[str]:
     """Run register.py with --repo repo --identity identity and extra kwargs.
 
     Launched under the deterministic identity env, like the other writers that
@@ -798,11 +934,13 @@ def run_register(repo: Path, identity: str, **kwargs) -> subprocess.CompletedPro
         text=True,
         env=full_env,
         timeout=120,
+        **_cwd_kwarg(cwd),
     )
 
 
 def run_claim(
-    repo: Path, session_id: str, task: str, push: bool = False, **kwargs
+    repo: Path, session_id: str, task: str, push: bool = False,
+    cwd: Path | None = None, **kwargs
 ) -> subprocess.CompletedProcess[str]:
     """Run claim.py with the standard arguments and optional --push.
 
@@ -829,11 +967,13 @@ def run_claim(
         cmd.append("--push")
     full_env = subprocess_env()
     full_env.update(_git_env_with_identity())
-    return subprocess.run(cmd, capture_output=True, text=True, env=full_env, timeout=120)
+    return subprocess.run(cmd, capture_output=True, text=True, env=full_env,
+                          timeout=120, **_cwd_kwarg(cwd))
 
 
 def run_close(
-    repo: Path, session_id: str, push: bool = False, **kwargs
+    repo: Path, session_id: str, push: bool = False, cwd: Path | None = None,
+    **kwargs
 ) -> subprocess.CompletedProcess[str]:
     """Run close.py with ``--repo repo --session-id SID`` and optional --push.
 
@@ -842,11 +982,12 @@ def run_close(
     influenced by a host gitconfig either), and the same
     ``**{"no-commit": None}`` form for a valueless flag.
     """
-    return _run_session_writer(CLOSE, repo, session_id, push=push, **kwargs)
+    return _run_session_writer(CLOSE, repo, session_id, push=push, cwd=cwd, **kwargs)
 
 
 def run_release(
-    repo: Path, session_id: str, task: str, push: bool = False, **kwargs
+    repo: Path, session_id: str, task: str, push: bool = False,
+    cwd: Path | None = None, **kwargs
 ) -> subprocess.CompletedProcess[str]:
     """Run release.py with the standard arguments and optional --push.
 
@@ -854,12 +995,25 @@ def run_release(
     ``**{"no-commit": None}`` for a valueless flag): the two writers that name
     a task commit under the tree's identity, so both are launched the same way.
     """
-    return _run_session_writer(RELEASE, repo, session_id, task=task, push=push, **kwargs)
+    return _run_session_writer(RELEASE, repo, session_id, task=task, push=push,
+                               cwd=cwd, **kwargs)
+
+
+def _cwd_kwarg(cwd: Path | None) -> dict[str, str]:
+    """The ``cwd=`` keyword for a launcher's ``subprocess.run``, or none.
+
+    Every launcher takes an optional ``cwd`` so its isolation test can run the
+    tool from a directory that is not the state root; passing ``cwd=None``
+    would mean something different to ``subprocess.run`` in older releases
+    than omitting it, so the keyword is simply absent when the caller did not
+    name a directory (the historical behaviour: inherit pytest's own).
+    """
+    return {} if cwd is None else {"cwd": str(cwd)}
 
 
 def _run_session_writer(
     script: Path, repo: Path, session_id: str, *, task: str | None = None,
-    push: bool = False, **kwargs,
+    push: bool = False, cwd: Path | None = None, **kwargs,
 ) -> subprocess.CompletedProcess[str]:
     """One sessions writer under the running interpreter, argv built the same way.
 
@@ -881,11 +1035,52 @@ def _run_session_writer(
         cmd.append("--push")
     full_env = subprocess_env()
     full_env.update(_git_env_with_identity())
-    return subprocess.run(cmd, capture_output=True, text=True, env=full_env, timeout=120)
+    return subprocess.run(cmd, capture_output=True, text=True, env=full_env,
+                          timeout=120, **_cwd_kwarg(cwd))
+
+
+def run_from(cwd: Path, script: Path, *args: str,
+             identity: bool = True,
+             env: Mapping[str, str] | None = None,
+             ) -> subprocess.CompletedProcess[str]:
+    """One product entry point launched from a directory that is not the state root.
+
+    The state-root contract every shipped tool makes is that ``--repo`` alone
+    decides where noni state is read and written. A launcher that always ran in
+    the test's own directory could not tell that promise from the same tool
+    quietly reading a ``noni/`` tree next to its cwd, because the two trees were
+    never separated. This launches under an explicit ``cwd`` and leaves the argv
+    verbatim, so a test plants a decoy ``noni/`` under ``cwd``, points ``--repo``
+    at the state root elsewhere, and the assertion measures the difference.
+
+    ``script`` is either a wrapper under ``skills/*/scripts/`` or a package
+    module file under ``src/noni/``: both are launched by path, which is the
+    form the skills and the README document. ``identity`` applies the same
+    deterministic git identity the committing launchers use (``run_claim``,
+    ``run_order``, ``run_decide``): a writer launched from a foreign cwd still
+    commits under the harness identity, so a failure is the tool's and not the
+    absence of an author. A caller that wants the bare environment (a refusal
+    with no identity, say) passes ``identity=False`` and its own ``env``.
+
+    A relative ``script`` is the one case the cwd must not decide, so it is
+    rooted at this repository before the launch: otherwise a relative wrapper
+    path would resolve against the foreign cwd and name no file at all.
+    """
+    full_env = subprocess_env()
+    if env is None:
+        if identity:
+            full_env.update(_git_env_with_identity())
+    else:
+        full_env.update(env)
+    script_path = script if script.is_absolute() else REPO / script
+    return subprocess.run([sys.executable, str(script_path), *args],
+                          capture_output=True, text=True, env=full_env,
+                          cwd=str(cwd), timeout=120)
 
 
 def run_decide(repo: Path, *args: str, env: Mapping[str, str] | None = None,
-               extra: list[str] | None = None) -> subprocess.CompletedProcess[str]:
+               extra: list[str] | None = None,
+               cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     """Run decide.py with ``--repo repo`` plus the flags given as plain strings.
 
     The flags are passed as plain strings (``"--slug", "scheduler"``) rather
@@ -909,4 +1104,5 @@ def run_decide(repo: Path, *args: str, env: Mapping[str, str] | None = None,
         full_env.update(_git_env_with_identity())
     else:
         full_env.update(env)
-    return subprocess.run(cmd, capture_output=True, text=True, env=full_env, timeout=120)
+    return subprocess.run(cmd, capture_output=True, text=True, env=full_env,
+                          timeout=120, **_cwd_kwarg(cwd))

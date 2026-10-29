@@ -29,6 +29,12 @@ Four artifacts, all committed files under `noni/`, all read by the census:
 Claims are signals, not locks. A claim tells everyone else what you intend to
 work on; the census is what flags two active claims on one task.
 
+Every path above resolves from `--repo`, the one flag that names the state
+root. By default it is the repository you run in, so the state sits at
+`<project>/noni/`; pass a separate directory holding the same `noni/` layout to
+keep the direction in a private state repository instead. A `--repo` that is
+missing or is not a directory stops the command with a clear message.
+
 ## Try it in five minutes
 
 Clone noni next to your project, go to the root of your own repository, and
@@ -115,8 +121,9 @@ standing direction). The epic map (E1-E5) lives in `docs/PRODUCT.md` §8, which
 is the product document and the deep reference for record shapes, the claim
 protocol and the census exit codes.
 
-noni's own `noni/decisions/` is still empty: this repository does not yet run
-the ledger it ships.
+noni's own direction lives in a private state repository, so `git ls-files
+noni` here is empty and the state root of a noni run is never this checkout:
+pass `--repo` at the tree that holds the `noni/` layout.
 
 ## Purity
 

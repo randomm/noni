@@ -4,7 +4,9 @@
 directory, and ``_census_main`` is the fresh-import call both build on. All three are
 kept together so the run helpers have one owner: a test file that imported
 ``_census_main`` from one module and ``_run_census`` from another would be reading a
-fixture through a fixture. Copied verbatim from ``tests/test_census_unified.py``.
+fixture through a fixture. Copied verbatim from ``tests/test_census_unified.py``,
+whose census-level exit-code and clean-tree tests now live in
+``tests/test_census_exit_codes.py`` and ``tests/test_census_reporting.py``.
 """
 
 from __future__ import annotations

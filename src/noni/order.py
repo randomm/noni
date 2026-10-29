@@ -78,7 +78,7 @@ from . import order_gitwrite as gitwrite
 _fail = orderstate._fail
 
 # Every return path names one of these, and the 'Exit codes:' block above
-# carries exactly this set (tests/test_order_writer.py pins the two together).
+# carries exactly this set (tests/test_order_writer_docs.py pins the two together).
 EXIT_OK: int = 0
 EXIT_USAGE: int = 2
 EXIT_IO: int = 3

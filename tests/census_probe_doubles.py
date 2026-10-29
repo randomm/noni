@@ -2,7 +2,9 @@
 
 ``_UnreadableGit`` stands in for a Git object whose history read failed, which is how
 a test reaches the cannot-tell paths without a fixture repo that is broken in some
-other way. Copied verbatim from ``tests/test_census_unified.py``.
+other way. Copied verbatim from ``tests/test_census_unified.py``, whose sessions
+probe-contract tests now live in ``tests/test_census_sessions_probe_contract.py``
+and whose listing tests live in ``tests/test_census_sessions_listing_fault.py``.
 """
 
 from __future__ import annotations

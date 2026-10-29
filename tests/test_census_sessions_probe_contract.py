@@ -28,7 +28,7 @@ class TestSessionsProbeContract:
     is handed -- the only place the field meanings ("listed and empty" versus
     "did not read") can be pinned, since every end-to-end test reaches the
     reporter through a fault the listing function produced. The ledger side pins
-    its probe the same way in ``test_census_ledger_probe``.
+    its probe the same way in ``tests/test_census_ledger_probe_states.py``.
     """
 
     def test_the_probe_admits_only_listed_or_faulted(self):

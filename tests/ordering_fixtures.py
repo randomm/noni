@@ -4,7 +4,8 @@ A fixture repo with a ledger and an ordering artifact, the runners that drive th
 census for it, and the fault injectors that break one group's read of the ledger
 alone. Held in a non-test module so the six ordering test files build the same repo
 and pytest never collects the builders as tests. Copied verbatim from
-``tests/test_census_ordering.py``.
+``tests/test_census_ordering.py``, whose tests now live in the six
+``tests/test_census_ordering_*.py`` files.
 
 The shape tables are deliberately not here: ``tests/ordering_shapes.py`` is read by
 the writer's suite too, so it stays where both sides can see it.
@@ -168,12 +169,17 @@ def _listing_faults(ledger: Path, text: str = "input/output error"):
     group's read alone is what lets each test here pin this group's rows
     exactly. The ledger group's own half of the same fault is pinned by
     ``test_an_unlistable_ledger_is_reported_by_the_ledger_group_too``, which
-    patches ``Path.iterdir`` instead, and by ``tests/test_census_ledger_probe_states.py``
-    and ``tests/test_census_exit_codes.py``.
+    patches ``Path.iterdir`` instead (same file, below), and by
+    ``test_probe_reads_the_ledger_through_the_helper_not_glob`` in
+    ``tests/test_census_ledger_probe_states.py`` and
+    ``test_the_run_lists_the_ledger_once`` in
+    ``tests/test_census_ledger_reads_once.py``.
 
     The fault is raised as a bare ``OSError(text)``: that is the shape whose
     text the census must render without leaking a path, and the probe carries
-    whatever the fault's ``str()`` holds (see ``test_census_ledger_probe_states``).
+    whatever the fault's ``str()`` holds (see
+    ``test_probe_records_listing_fault_text_on_the_probe`` in
+    ``tests/test_census_ledger_probe_states.py``).
 
     Used with ``_run_in_process``, not with ``_run``: the census runs as a
     subprocess there, and a patch of this interpreter cannot reach it.

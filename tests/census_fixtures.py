@@ -4,7 +4,14 @@ Held in a non-test module so every census test file builds its fixture repo the
 same way and pytest never collects the builders as tests of their own. The runners
 that call the census live in ``census_run.py``, not here: these only put state on
 disk. Copied verbatim from ``tests/test_census_unified.py``, which held the whole
-unified suite before the issue #52 split.
+unified suite before the issue #52 split: its ledger-empty, sessions-register,
+sessions-listing, sessions-probe, hygiene and ledger-state-vocabulary tests now
+live in ``tests/test_census_ledger_empty.py``,
+``tests/test_census_sessions_register.py``,
+``tests/test_census_sessions_listing_once.py``,
+``tests/test_census_sessions_listing_fault.py``,
+``tests/test_census_sessions_probe_contract.py``, ``tests/test_census_hygiene.py``
+and ``tests/test_census_ledger_state_vocabulary.py``.
 """
 
 from __future__ import annotations

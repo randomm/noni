@@ -3,7 +3,8 @@
 ``_with_denylist`` writes an env-named deny-list holding the entries a test wants
 active; ``_clear_denylist`` undoes it. Out of the hygiene test files themselves
 because both the class file and the row-contract file plant it. Copied verbatim from
-``tests/test_census_unified.py``.
+``tests/test_census_unified.py``, whose hygiene class now lives in
+``tests/test_census_hygiene.py`` and ``tests/test_census_hygiene_row_contract.py``.
 """
 
 from __future__ import annotations

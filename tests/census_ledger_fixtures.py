@@ -1,13 +1,18 @@
 """Shared builders for the ledger probe's tests.
 
 The kind functions answer ``file_kind``-shaped questions about a path the test
-planted, ``_fault_iterdir`` makes a readdir raise, ``_is_census_written_path`` is the
+planted, ``_fault_iterdir`` makes a readdir raise (the probe's own read, pinned by
+``test_probe_reads_the_ledger_through_the_helper_not_glob`` in
+``tests/test_census_ledger_probe_states.py`` and the whole-run version by
+``test_the_run_lists_the_ledger_once`` in
+``tests/test_census_ledger_reads_once.py``), ``_is_census_written_path`` is the
 reduction the scrub rule is stated as, and ``_rows``/``_code`` drive the census for a
 fixture repo.
 
 Held in a non-test module so the five probe test files share one definition and
 pytest never collects the builders as tests. Copied verbatim from
-``tests/test_census_ledger_probe.py``.
+``tests/test_census_ledger_probe.py``, whose probe-state tests now live in
+``tests/test_census_ledger_probe_states.py``.
 """
 
 from __future__ import annotations

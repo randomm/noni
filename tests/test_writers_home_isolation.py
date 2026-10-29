@@ -91,8 +91,11 @@ def test_no_writer_reads_or_writes_under_home(tmp_path, monkeypatch):
     root: the decoy's bytes are unchanged and no noni/ appears under the cwd.
 
     This is the HOME half of the isolation pair. The cwd half lives in each
-    tool's own state-root test (tests/test_claim_validation_guards.py and the modules
-    named there); this one covers the directory a caller never names, which is
+    tool's own state-root test (``tests/test_claim_validation_guards.py``,
+    ``tests/test_decide_state_root.py``,
+    ``tests/test_order_writer_state_root.py``, ``tests/test_session_close.py``
+    and ``tests/test_session_release.py``); this one covers the directory a
+    caller never names, which is
     the one a tool reaches by accident rather than by argument.
     """
     home, before, results, cwd = _writers_under_a_hostile_home(tmp_path, monkeypatch)

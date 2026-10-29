@@ -2,8 +2,8 @@
 
 Split out of ``tests/test_census_unified.py``; the builders are in
 ``tests/census_fixtures.py`` and the runners in ``tests/census_run.py``. The probe's
-own reads are pinned in ``tests/test_census_ledger_probe_states.py`` and its
-siblings.
+own reads are pinned in ``tests/test_census_ledger_probe_states.py``, the whole-run
+version of the same fault in ``tests/test_census_ordering_faults.py``.
 """
 
 from __future__ import annotations

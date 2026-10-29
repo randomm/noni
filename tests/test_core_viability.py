@@ -16,7 +16,9 @@ Two halves:
    every core test module (the ones that exist without integrations/) for
    imports of the adapter modules proves the core's test suite does not
    depend on the adapter being installed. (The adapter's own test modules —
-   test_adapter_interface.py, test_github_issues_adapter.py — *do* import
+   test_adapter_interface.py, test_github_issues_adapter.py and the two
+   modules split out of it, test_gh_adapter_allowlist.py and
+   test_gh_adapter_labels.py — *do* import
    the adapter; they are the integration tests and are excluded here. They
    would be the ones that need integrations/ present.)
 """
@@ -37,8 +39,16 @@ REPO = Path(__file__).resolve().parent.parent
 # Core test modules: every test module that does not import the adapter
 # (i.e. the ones the core's test suite runs without integrations/ present).
 # The adapter's own test modules are the integration tests; they are the ones
-# that need integrations/ and are excluded from this viability scan.
-ADAPTER_TEST_MODULES = {"test_adapter_interface.py", "test_github_issues_adapter.py"}
+# that need integrations/ and are excluded from this viability scan. The list is
+# the complete set: a new adapter suite has to be named here, and one that was
+# renamed into the list (test_gh_adapter_allowlist.py, test_gh_adapter_labels.py)
+# stays in it, so the scan's scope cannot narrow by accident.
+ADAPTER_TEST_MODULES = {
+    "test_adapter_interface.py",
+    "test_github_issues_adapter.py",
+    "test_gh_adapter_allowlist.py",
+    "test_gh_adapter_labels.py",
+}
 CORE_TEST_MODULES = sorted(
     p for p in (REPO / "tests").glob("test_*.py") if p.name not in ADAPTER_TEST_MODULES
 )

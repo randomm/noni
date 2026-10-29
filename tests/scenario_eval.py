@@ -38,520 +38,79 @@ directory before exiting 0. ``python tests/scenario_eval.py <path>`` refuses
 an explicit path that exists and is non-empty (exit 2, clear message, no
 deletion); an explicit path that does not exist or is an empty directory is
 used as-is and left behind for the operator.
+
+The bodies live in the ``scenario_*`` helper modules (issue #52, the file-size
+ratchet) and are re-exported here: the four modules split the work one-way
+(``scenario_core`` <- ``scenario_faults`` <- ``scenario_build`` <-
+``scenario_report``: each imports only from the ones to its left), and this
+file is the only module of the set with a ``__main__`` guard, so
+``from scenario_eval import ...`` and ``python tests/scenario_eval.py`` both
+keep working on the re-exported names. The standalone entry point itself is
+``main`` in ``scenario_report``, which is what the paragraph above documents. A
+helper module is never named ``test_*``; this file is the one import surface
+its tests use.
 """
 
 from __future__ import annotations
 
-import json
-import re
-import shutil
-import subprocess
 import sys
-import tempfile
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-_CENSUS = REPO / "skills" / "census" / "scripts" / "census.py"
-
-# Fixed scenario timeline. Every commit and the census clock live on this
-# scale, so the scenario is identical across builds and hosts.
-BASE = datetime(2026, 10, 1, 0, 0, 0, tzinfo=timezone.utc)
-NOW = (BASE + timedelta(days=3)).isoformat().replace("+00:00", "Z")
-STALE_AFTER = "2"  # days: agent-c's commit (day 0) is 3 days old at --now
-
-# The committed ordering, one entry per claimed task: issue 1 holds position 1
-# and issue 2 position 2, each citing the decision record that set its position.
-# Both cite d2, the one live record of the healthy chain (d1 stands superseded,
-# so citing it would be an ``ordering-malformed`` row, not a healthy entry). One
-# whole-file ``order.py confirm`` run then stamps every entry with the writer's
-# own clock, which is the healthy state the census must read as clean.
-ORDER_PLANS = ((1, "2026-10-02-d2"), (2, "2026-10-02-d2"))
-ORDER_ISSUES = tuple(issue for issue, _decision in ORDER_PLANS)
-ISSUE_STATE_REL = "issue-state.json"
-
-
-def _issue_state() -> str:
-    """The --issue-state map the census is handed: every ordered issue open.
-
-    The census never contacts a tracker, so the scenario plays the adapter: a
-    map that names each ordered issue and says it is open, which is the only
-    way the closed check can answer at all (an issue the map omits is a
-    cannot-tell row, not a clean entry).
-    """
-    return json.dumps({str(issue): "open" for issue in ORDER_ISSUES}, indent=2) + "\n"
-
-
-def _order_healthier(clone: Path) -> None:
-    """The healthy ordering, produced by the real writer, plus its state map.
-
-    Two positions written by ``order.py add`` (each citing d2, the live record
-    of the healthy chain), then one whole-file ``order.py confirm``. The writer
-    stamps each entry's ``confirmed`` with this run's UTC time and commits the
-    one artifact path itself, so the entry reads healthy against the census
-    clock (--now NOW, three days after every other commit on the scenario
-    timeline) and the ordering layer is exercised through its real entry point
-    on both sides. The writer owns those commits: this fixture never restages
-    what it wrote.
-    """
-    for issue, decision in ORDER_PLANS:
-        _run_order(clone, "add", str(issue), "--decision", decision)
-    _run_order(clone, "confirm")
-    _push(clone, NOW)
-    # The adapter's side of the closed question, committed so a fresh clone
-    # carries it and the census can be pointed at it explicitly.
-    _commit(clone, ISSUE_STATE_REL, _issue_state(), "issue state", NOW)
-    _push(clone, NOW)
-
-
-SESSION_ID_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}-[0-9a-f]{6}(?:\.md)?")
-
-
-def _ts(day: int, hour: int = 0) -> str:
-    """A pinned ISO-8601 UTC timestamp on the scenario timeline."""
-    return (BASE + timedelta(days=day, hours=hour)).isoformat().replace("+00:00", "Z")
-
-
-@dataclass
-class Scenario:
-    """One built scenario: a bare origin plus its agent clones and session ids."""
-
-    base: Path
-    origin: Path
-    clone_a: Path
-    clone_b: Path
-    sid_a: str = ""
-    sid_b: str = ""
-    sid_c: str = ""
-    faults: list[str] = field(default_factory=list)
-
-    @property
-    def now(self) -> str:
-        return NOW
-
-    @property
-    def stale_after(self) -> str:
-        return STALE_AFTER
-
-
-def _git_pinned(repo: Path, *args: str, when: str) -> subprocess.CompletedProcess:
-    """git in repo with the identity and both commit timestamps pinned."""
-    from _harness import git_pin_date
-
-    return git_pin_date(repo, when, *args)
-
-
-def _commit(repo: Path, rel: str, content: str, msg: str, when: str) -> None:
-    """Write rel in repo and commit it under the pinned identity and date."""
-    target = repo / rel
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
-    _git_pinned(repo, "add", rel, when=when)
-    _git_pinned(repo, "commit", "-q", "-m", msg, when=when)
-
-
-def _push(repo: Path, when: str) -> None:
-    """Push with fetch-rebase-push (at most 3 attempts)."""
-    from _harness import push_with_retry
-    push_with_retry(repo, "main")
-
-
-def _record(rec_id: str, when: str, status: str, supersedes, scope: str, question: str) -> str:
-    """A steering-ledger decision record (the eight-field schema)."""
-    return json.dumps(
-        {
-            "id": rec_id,
-            "date": when,
-            "asked_by": "operator",
-            "questions": [
-                {
-                    "id": "q1",
-                    "text": question,
-                    "options": ["yes", "no"],
-                    "answer": "yes" if status == "decided" else None,
-                }
-            ],
-            "by": "operator",
-            "scope": scope,
-            "status": status,
-            "supersedes": supersedes,
-        },
-        indent=2,
-    )
-
-
-def _run_order(repo: Path, *args: str) -> subprocess.CompletedProcess:
-    """Run the real order.py writer in repo; returns the completed process.
-
-    Goes through the harness launcher (deterministic git identity, coverage
-    hook). The writer stamps ``confirmed`` from its own UTC clock and commits
-    the one artifact path itself, which is what makes the fixture's ordering a
-    writer product rather than something this file rendered by hand.
-    """
-    from _harness import run_order
-
-    proc = run_order(repo, *args)
-    assert proc.returncode == 0, (
-        f"order.py {' '.join(args)} failed ({proc.returncode}):\n"
-        f"{proc.stdout}\n{proc.stderr}"
-    )
-    return proc
-
-
-def _register(repo: Path, identity: str, clone_name: str, *,
-              no_commit: bool = False) -> str:
-    """Register a session via the real register.py; return the session id.
-
-    ``no_commit`` asks the writer to leave the file in the work tree (the
-    documented form for a caller that commits it itself, and the only way to
-    plant a second session in a working copy already marked for another);
-    the id then comes from the path in the "left uncommitted" line rather than
-    the "registered session" one.
-    """
-    from _harness import run_register
-
-    # The clone's own absolute path, passed explicitly: the builder runs with
-    # the suite's cwd inside the repository, so a path derived from the repo's
-    # basename would name the *real* repository and the session would be
-    # written (and committed) there instead of in the fixture clone.
-    kwargs = {"no-commit": None} if no_commit else {}
-    proc = run_register(repo, identity, host=clone_name, worktree=str(repo.resolve()),
-                        **kwargs)
-    assert proc.returncode == 0, f"register {identity} failed: {proc.stderr}"
-    line = proc.stdout.strip()
-    if no_commit:
-        tail = line.split(" -> ")[-1].rsplit(" left uncommitted", 1)[0]
-        return tail.rsplit("/", 1)[-1].removesuffix(".md")
-    return line.split("->")[0].split("registered session ")[1].strip()
-
-
-def _claim(repo: Path, session_id: str, task: str) -> None:
-    """Claim a task via the real claim.py --push (fetch-rebase-push)."""
-    from _harness import run_claim
-
-    proc = run_claim(repo, session_id, task, push=True)
-    assert proc.returncode == 0, f"claim {task} by {session_id} failed: {proc.stderr}"
-
-
-def _ensure_branch(repo: Path, branch: str) -> None:
-    """Ensure the repo is on `branch`, creating it if needed."""
-    from _harness import _git_ok
-
-    # Check if we're already on the branch
-    proc = subprocess.run(
-        ["git", "-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"],
-        capture_output=True, text=True,
-    )
-    if proc.returncode == 0 and proc.stdout.strip() == branch:
-        return
-    # Try to create and switch to the branch
-    proc = _git_ok(repo, "checkout", "-q", "-b", branch)
-    if proc.returncode != 0:
-        # Branch might already exist, just switch to it
-        proc = _git_ok(repo, "checkout", "-q", branch)
-        if proc.returncode != 0:
-            raise RuntimeError(f"cannot switch to branch {branch}: {proc.stderr}")
-
-
-def build_scenario(base: Path, faulted: bool = False) -> Scenario:
-    """Build the healthy baseline (optionally plus the planted faults) under
-    base, returning the scenario handle.
-
-    base must not exist, or must exist as an empty directory: the builder
-    never deletes anything. It creates only its own entries (``origin.git``,
-    ``clone-a``, ``clone-b``) directly under base — a path outside the
-    given base is never touched. Callers that need a rebuild at a
-    pre-existing, non-empty base must clean it up themselves, and only if
-    they know the contents are their own.
-
-    Healthy baseline: a bare origin plus two clones; session A (identity
-    "agent-a") in clone 1 and session B (identity "agent-b") in clone 2
-    register via the real register.py; A claims task #1 and B claims task #2
-    via the real claim.py --push (fetch-rebase-push; both commits land
-    linearly on origin); a healthy steering decision chain (d1 superseded by
-    d2) sets the ordering between the two tasks; the ordering artifact itself is
-    written by the real order.py writer and stamped healthy by one confirm run;
-    every commit uses a pinned recent date.
-    """
-    from _harness import _git_ok
-
-    if base.exists():
-        if not base.is_dir():
-            raise RuntimeError(f"refusing to build at {base}: path exists and is not a directory")
-        if any(base.iterdir()):
-            raise RuntimeError(
-                f"refusing to build at {base}: directory is not empty; "
-                "it must not exist or be an empty directory"
-            )
-    else:
-        base.mkdir(parents=True, exist_ok=True)
-
-    origin = base / "origin.git"
-    clone_a = base / "clone-a"
-    clone_b = base / "clone-b"
-
-    # Build the bare origin.
-    origin.mkdir(parents=True, exist_ok=True)
-    _git_ok(origin, "init", "-q", "--bare")
-
-    # Build clone_a from scratch.
-    clone_a.mkdir(parents=True, exist_ok=True)
-    _git_ok(clone_a, "init", "-q", "-b", "main")
-    (clone_a / "README.md").write_text("test repo\n")
-    _git_ok(clone_a, "add", "README.md")
-    _git_ok(clone_a, "commit", "-q", "-m", "initial commit")
-    _git_ok(clone_a, "remote", "add", "origin", str(origin))
-    _git_ok(clone_a, "push", "-q", "-u", "origin", "main")
-
-    # Build clone_b as a clone of origin, on main by name: the suite's
-    # sandboxed HOME carries no init.defaultbranch, so a plain clone would
-    # check out git's own default (master) and register.py's own commit would
-    # land there, leaving nothing on main to push.
-    clone_b.mkdir(parents=True, exist_ok=True)
-    _git_ok(base, "clone", "-q", "-b", "main", str(origin), str(clone_b))
-    _ensure_branch(clone_b, "main")
-
-    t_task = _ts(0)
-    t_reg = _ts(0, 1)
-    t_d1 = _ts(0, 6)
-    t_d2 = _ts(0, 8)
-    t_c = _ts(0, 4)
-
-    # Baseline commit on origin (pinned date): the shared starting point.
-    _commit(clone_a, "tasks/1.md", "# task 1\n", "task: #1", t_task)
-    _push(clone_a, t_task)
-
-    # Both agents register through the real register.py, which commits its own
-    # session file under the caller's identity. The fixture cannot pin that
-    # commit's date (the writer makes it), so the census clock sits after every
-    # commit in the scenario: NOW is day 3 and the writer runs on the host's
-    # clock today. The writer owns these commits, so this fixture never
-    # restages what it wrote; each clone pushes its own file and the two paths
-    # never collide.
-    sid_a = _register(clone_a, "agent-a", "clone-a")
-    sid_b = _register(clone_b, "agent-b", "clone-b")
-    _push(clone_a, t_reg)
-    _push(clone_b, t_reg)
-
-    # Distinct-task claims via the real claim.py --push (fetch-rebase-push).
-    _claim(clone_a, sid_a, "#1")
-    _claim(clone_b, sid_b, "#2")
-
-    # Healthy steering decision chain: d1 superseded by d2; d2 sets the
-    # ordering (task #1 before task #2).
-    _commit(clone_a, "noni/decisions/2026-10-01-d1.json",
-            _record("2026-10-01-d1", t_d1, "superseded", None,
-                    "release ordering", "Order task #1 against task #2?"),
-            "decision d1", t_d1)
-    _push(clone_a, t_d1)
-    _commit(clone_a, "noni/decisions/2026-10-02-d2.json",
-            _record("2026-10-02-d2", t_d2, "decided", "2026-10-01-d1",
-                    "release ordering", "Confirm task #1 before task #2?"),
-            "decision d2", t_d2)
-    _push(clone_a, t_d2)
-
-    # The ordering artifact, written by the real writer and stamped healthy by
-    # one confirm run, then the issue-state map the census is handed.
-    _order_healthier(clone_a)
-    scenario = Scenario(base=base, origin=origin, clone_a=clone_a, clone_b=clone_b,
-                        sid_a=sid_a, sid_b=sid_b)
-
-    if faulted:
-        _plant_faults(scenario, t_c)
-    return scenario
-
-
-def _plant_faults(scenario: Scenario, t_c: str) -> None:
-    """The planted faults, each in its own disjoint artifact (30, 31, 20, 40
-    committed to origin; 12 is planted in the fresh clone at test time).
-
-    30  session B additionally claims task #1 via the real claim.py --push —
-        both claims on #1 sit in origin's linear history;
-    31  a separate session file with a claim row but no identity field,
-        committed to origin;
-    20  a separate decision chain with a dangling supersedes, disjoint from
-        the healthy chain, committed to origin;
-    40  a third session (identity "agent-c", no claims) whose last commit is
-        older than --stale-after relative to --now: register.py commits the file
-        itself, and the commit that leaves this session stale is this fixture's
-        own commit with the date pinned, which leaves no commit a healthy build
-        would not have.
-    """
-
-    # 30: the double claim on #1 (real claim.py --push, fetch-rebase-push).
-    _claim(scenario.clone_b, scenario.sid_b, "#1")
-    scenario.faults.append("30")
-
-    # 31: a separate session file with a claim row but no identity field.
-    orphan_body = (
-        "- host/worktree: orphan (plant-31)\n"
-        f"- started: {t_c}\n"
-        "- status: active\n"
-        "- claims:\n"
-        "  - claim: #7\n"
-    )
-    _commit(scenario.clone_a, "noni/sessions/2026-10-01-cccccc.md",
-            orphan_body, "plant: claim without identity", t_c)
-    _push(scenario.clone_a, t_c)
-    scenario.faults.append("31")
-
-    # 20: a separate decision chain with a dangling supersedes, disjoint from
-    # the healthy chain.
-    t_d3 = _ts(0, 7)
-    dangling = _record("2026-10-03-d3", t_d3, "decided",
-                       "2026-10-99-nonexistent", "release ordering",
-                       "Order task #3 against task #4?")
-    _commit(scenario.clone_a, "noni/decisions/2026-10-03-d3.json",
-            dangling, "plant: dangling supersedes chain", t_d3)
-    _push(scenario.clone_a, t_d3)
-    scenario.faults.append("20")
-
-    # 40: a third session (identity "agent-c", no claims) whose only commit
-    # is pinned older than --stale-after relative to --now.
-    #
-    # clone_a is already marked as agent-a's working copy, and that session is
-    # still active, so a plain register there would be a reuse of agent-a's
-    # session rather than an allocation for agent-c — which is the writer being
-    # honest about one working copy having one live session. This row wants a
-    # second session file in the same tree, so the fixture asks for the file
-    # without a commit and makes the (re-dated) commit itself below.
-    scenario.sid_c = _register(scenario.clone_a, "agent-c", "clone-a", no_commit=True)
-    session_rel = f"noni/sessions/{scenario.sid_c}.md"
-    # The stale clock IS the fault this row plants, and only the commit that
-    # touched this file can carry it: --strict fails the census on an active
-    # session whose last commit is older than --stale-after, so the file is
-    # committed once, here, with the date pinned -- one commit, no content
-    # change after it, and no second commit a healthy build would not have.
-    _commit(scenario.clone_a, session_rel,
-            (scenario.clone_a / session_rel).read_text(encoding="utf-8"),
-            f"register: {scenario.sid_c}", t_c)
-    _push(scenario.clone_a, t_c)
-    scenario.faults.append("40")
-
-
-def fresh_clone(scenario: Scenario, name: str = "fresh") -> Path:
-    """A fresh clone of the scenario's bare origin (local directory clone).
-
-    The destination must sit directly under the scenario base and must be
-    the builder's own ``fresh`` clone for anything to be removed: a
-    pre-existing, non-empty, foreign destination is refused, never deleted.
-    """
-    dest = scenario.base / name
-    if dest.exists():
-        if name != "fresh" or not dest.is_dir():
-            raise RuntimeError(f"refusing to remove {dest}: not this run's own clone directory")
-        shutil.rmtree(dest)
-    subprocess.run(["git", "clone", "-q", "--branch", "main", str(scenario.origin), str(dest)],
-                   check=True, capture_output=True, timeout=60)
-    return dest
-
-
-def _plant_fault_12(fresh: Path) -> None:
-    """12: edit the committed decision record d1 in the fresh clone's working
-    tree after cloning (never committed) — the ledger-edited finding."""
-    path = fresh / "noni" / "decisions" / "2026-10-01-d1.json"
-    obj = json.loads(path.read_text(encoding="utf-8"))
-    obj["date"] = _ts(0, 12)  # any committed-vs-disk byte change triggers 12
-    path.write_text(json.dumps(obj, indent=2), encoding="utf-8")
-
-
-def run_census_json(clone: Path, now: str, stale_after: str) -> tuple[int, list[dict]]:
-    """Run the unified census --json --strict on clone; return (exit, rows).
-
-    The hygiene class (50) is skipped for this fixture. The scenario is
-    self-contained on purpose — it asserts on the planted protocol faults, not
-    on public-repo hygiene — and a throwaway clone of a bare origin has no
-    deny-list, so hygiene would report its inactive class on every build and
-    --strict would turn that always-report into an exit 50 that masks the
-    planted codes. The hygiene class has its own tests in
-    tests/test_census_unified.py::TestHygiene; this fixture measures the
-    ledger/session/ordering arbiter. ``--ordering`` and ``--issue-state`` are
-    passed explicitly rather than left to the defaults: the closed check is not
-    evaluated at all without a state file, so an implicit run would silently
-    leave one of the three ordering classes unasked.
-    """
-    from _harness import subprocess_env as _harness_subprocess_env
-
-    proc = subprocess.run(
-        [sys.executable, str(_CENSUS), "--repo", str(clone), "--json", "--strict",
-         "--skip", "hygiene", "--now", now, "--stale-after", stale_after,
-         "--ordering", str(clone / "noni" / "direction" / "order.json"),
-         "--issue-state", str(clone / ISSUE_STATE_REL)],
-        capture_output=True, text=True, timeout=120,
-        env=_harness_subprocess_env(),
-    )
-    rows = [json.loads(line) for line in proc.stdout.strip().splitlines() if line.strip()]
-    return proc.returncode, rows
-
-
-def _mask(value: str) -> str:
-    """Mask the random session-id suffix so two builds normalize identically."""
-    return SESSION_ID_RE.sub("<session>", value)
-
-
-def normalize_findings(rows: list[dict]) -> list[tuple[str, int, str, str]]:
-    """The normalized finding multiset: (check, code, severity, subject).
-
-    The subject is the census row's subject with the random 6-hex session-id
-    suffix masked; a session finding is identified by its build-time-known
-    identity (the register file's identity field names it), never by the
-    random id.
-    """
-    return [
-        (row["check"], row["code"], row["severity"], _mask(row["subject"]))
-        for row in rows
-        if row.get("kind") == "finding"
-    ]
-
-
-def main(argv: list[str]) -> int:
-    """Standalone entry point.
-
-    No argument: build the faulted variant in a fresh
-    ``tempfile.mkdtemp(prefix="noni-scenario-")`` directory and remove
-    exactly that directory before returning 0 — the only deletion this
-    path performs is of the directory this run created.
-    ``<path>``: refuse to build when the path exists and is non-empty (exit
-    2, clear message, nothing deleted, nothing created); build into a path
-    that does not exist or is an empty directory, and leave it in place
-    afterwards. Returns 0 on success, 2 on usage or refusal errors.
-    """
-    if len(argv) > 1:
-        print("usage: python tests/scenario_eval.py [path]")
-        return 2
-    if len(argv) == 1:
-        base = Path(argv[0])
-        if base.exists() and not base.is_dir():
-            print(f"refusing to build at {base}: path exists and is not a directory")
-            return 2
-        if base.is_dir() and any(base.iterdir()):
-            print(
-                f"refusing to build at {base}: directory is not empty; "
-                "delete its contents first or pass a fresh path"
-            )
-            return 2
-        scenario = build_scenario(base, faulted=True)
-        clone = fresh_clone(scenario)
-        _plant_fault_12(clone)
-        code, rows = run_census_json(clone, scenario.now, scenario.stale_after)
-        print(f"faulted variant built at {base}; census exit {code}")
-        for finding in normalize_findings(rows):
-            print(finding)
-        return 0
-    base = Path(tempfile.mkdtemp(prefix="noni-scenario-"))
-    try:
-        scenario = build_scenario(base, faulted=True)
-        clone = fresh_clone(scenario)
-        _plant_fault_12(clone)
-        code, rows = run_census_json(clone, scenario.now, scenario.stale_after)
-        print(f"faulted variant built at {base}; census exit {code}")
-        for finding in normalize_findings(rows):
-            print(finding)
-        return 0
-    finally:
-        # Only the directory this run created is ever removed.
-        shutil.rmtree(base, ignore_errors=True)
+from scenario_build import build_scenario, fresh_clone
+from scenario_core import (
+    _CENSUS,
+    BASE,
+    ISSUE_STATE_REL,
+    NOW,
+    ORDER_ISSUES,
+    ORDER_PLANS,
+    SESSION_ID_RE,
+    STALE_AFTER,
+    Scenario,
+    _claim,
+    _commit,
+    _ensure_branch,
+    _git_pinned,
+    _issue_state,
+    _order_healthier,
+    _push,
+    _record,
+    _register,
+    _run_order,
+    _ts,
+)
+from scenario_faults import _plant_fault_12, _plant_faults
+from scenario_report import _mask, main, normalize_findings, run_census_json
+
+__all__ = [
+    "BASE",
+    "ISSUE_STATE_REL",
+    "NOW",
+    "ORDER_ISSUES",
+    "ORDER_PLANS",
+    "SESSION_ID_RE",
+    "STALE_AFTER",
+    "Scenario",
+    "_CENSUS",
+    "_claim",
+    "_commit",
+    "_ensure_branch",
+    "_git_pinned",
+    "_issue_state",
+    "_mask",
+    "_order_healthier",
+    "_plant_fault_12",
+    "_plant_faults",
+    "_push",
+    "_record",
+    "_register",
+    "_run_order",
+    "_ts",
+    "build_scenario",
+    "fresh_clone",
+    "main",
+    "normalize_findings",
+    "run_census_json",
+]
 
 
 if __name__ == "__main__":

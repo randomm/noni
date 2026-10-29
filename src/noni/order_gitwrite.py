@@ -15,6 +15,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from . import gitenv
+
 GIT_TIMEOUT = 60
 # What a killed git call reports. No caller may read a git answer from it.
 GIT_TIMEOUT_RC = 124
@@ -34,13 +36,18 @@ def git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     into ``GIT_TIMEOUT_RC`` so every caller classifies it the same way (exit 3,
     the file named, never claimed as committed) instead of the run ending in a
     traceback.
+
+    The environment is ``gitenv.child_env()``: the four git location variables
+    (``GIT_DIR``, ``GIT_WORK_TREE``, ``GIT_INDEX_FILE``, ``GIT_COMMON_DIR``) are
+    removed, so a caller's exported value cannot retarget this commit or make it
+    stage through a stray index. ``repo`` alone decides the repository.
     """
     cmd = ["git", "-C", str(repo), "-c", "commit.gpgsign=false",
            "-c", f"core.hooksPath={os.devnull}", "-c", "protocol.ext.allow=never",
            "-c", "core.fsmonitor=false", *args]
     try:
         return subprocess.run(cmd, capture_output=True, text=True, errors="replace",
-                              timeout=GIT_TIMEOUT)
+                              timeout=GIT_TIMEOUT, env=gitenv.child_env())
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(
             cmd, returncode=GIT_TIMEOUT_RC, stdout="",

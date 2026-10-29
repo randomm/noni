@@ -3246,3 +3246,42 @@ def test_census_sh_help_advertises_the_state_root_it_requires(tmp_path):
     proc = _census_sh_from(tmp_path, "--help")
     assert proc.returncode == 0, proc.stderr
     assert "census.sh <state-root>/noni/decisions" in proc.stdout, proc.stdout
+
+
+def test_census_sh_refuses_an_unknown_option_before_any_probe(tmp_path):
+    """A flag the shim does not implement is a usage error (2), not an ignored word.
+
+    The loop used to swallow every ``-*`` argument, so ``census.sh --json <dir>``
+    printed the human report and exited 0: the caller believed it had machine
+    output and a clean ledger. The refusal fires before jq or git is consulted,
+    so a typo is answered by the same exit code a missing argument gets and the
+    decoy ledger beside the cwd is never opened.
+    """
+    _root, decoy, cwd = _census_sh_case(tmp_path)
+    before = _census_sh_snapshot(decoy)
+    proc = _census_sh_from(cwd, "--json", str(decoy / "noni" / "decisions"))
+    assert proc.returncode == 2, f"{proc.returncode}\n{proc.stdout}\n{proc.stderr}"
+    assert proc.stdout.strip() == "", f"a refused run printed a report: {proc.stdout}"
+    assert "--json" in proc.stderr, f"the refusal must name the word it refused: {proc.stderr}"
+    assert "usage:" in proc.stderr, f"the refusal must give the correct shape: {proc.stderr}"
+    assert _census_sh_snapshot(decoy) == before, (
+        "a refused run read the ledger it was handed after refusing the option"
+    )
+
+
+def test_census_sh_refuses_two_ledger_arguments(tmp_path):
+    """Two positionals are a usage error (2), not a census of whichever came last.
+
+    The loop kept the final positional, so ``census.sh A B`` reported on B and
+    exited 0: a caller whose command line was built by hand, or by a script that
+    appended the path twice, got a clean verdict about one tree and silence
+    about the other. Naming both is refused instead, and neither is read.
+    """
+    root, decoy, cwd = _census_sh_case(tmp_path)
+    before = (_census_sh_snapshot(decoy), _census_sh_snapshot(root))
+    proc = _census_sh_from(cwd, str(root / "noni" / "decisions"),
+                           str(decoy / "noni" / "decisions"))
+    assert proc.returncode == 2, f"{proc.returncode}\n{proc.stdout}\n{proc.stderr}"
+    assert proc.stdout.strip() == "", f"a refused run printed a report: {proc.stdout}"
+    assert "usage:" in proc.stderr, f"the refusal must give the correct shape: {proc.stderr}"
+    assert (_census_sh_snapshot(decoy), _census_sh_snapshot(root)) == before

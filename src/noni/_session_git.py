@@ -46,6 +46,8 @@ import tempfile
 import unicodedata
 from pathlib import Path
 
+from . import gitenv
+
 # Statuses that end a session. A claim from a session in one of these states
 # no longer counts toward the double-claim check, and close.py calls a session
 # already in one of them terminal: it has nothing left to do. The status is
@@ -125,13 +127,18 @@ def git(repo: Path, *args: str, _run=subprocess.run) -> subprocess.CompletedProc
     A hang is answered, not propagated: the call that cannot finish comes back
     as ``GIT_TIMEOUT_RC`` so every caller classifies it the same way instead of
     the run ending in a traceback.
+
+    The environment is ``gitenv.child_env()``: ``GIT_DIR``, ``GIT_WORK_TREE``,
+    ``GIT_INDEX_FILE`` and ``GIT_COMMON_DIR`` are removed, so an inherited one
+    cannot send this commit to another repository or stage it through a stray
+    index. ``--repo`` alone decides the tree, which is the state-root contract.
     """
     cmd = ["git", "-C", os.path.abspath(str(repo)), "-c", "commit.gpgsign=false",
            "-c", f"core.hooksPath={os.devnull}", "-c", "protocol.ext.allow=never",
            "-c", "core.fsmonitor=false", *args]
     try:
         return _run(cmd, capture_output=True, text=True, errors="replace",
-                    timeout=GIT_TIMEOUT)
+                    timeout=GIT_TIMEOUT, env=gitenv.child_env())
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(
             cmd, returncode=GIT_TIMEOUT_RC, stdout="",

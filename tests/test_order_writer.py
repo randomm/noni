@@ -1856,16 +1856,23 @@ def test_order_reads_the_state_roots_own_order_from_a_foreign_cwd(tmp_path):
 
 
 def test_order_refuses_a_repo_that_is_not_a_directory(tmp_path):
-    """A --repo naming no directory is refused with a non-zero code that names
-    the state root, and the decoy order beside the cwd is untouched."""
+    """A --repo naming no directory is refused with the state-root refusal code
+    (2) that names the state root, and the decoy order beside the cwd is
+    untouched.
+
+    2 and not merely non-zero: order.py's other refusals are 3 (an environment
+    fault) and 4 (a refusal of the order), and a test that accepted any non-zero
+    code would pass on a run that crashed or faulted for an unrelated reason.
+    """
     _root, decoy, cwd = _order_case(tmp_path)
     decoy_bytes = _order_path(decoy).read_bytes()
     missing = tmp_path / "no-such-state-root"
 
     proc = _order_from(cwd, missing, "add", "7", "--decision", BASELINE_ID,
                        "--now", NOW)
-    assert proc.returncode != 0, (
-        f"a missing state root must not succeed: {proc.stdout}"
+    assert proc.returncode == 2, (
+        f"a missing state root is the writer's usage refusal (2), got "
+        f"{proc.returncode}: {proc.stderr}"
     )
     assert "no-such-state-root" in (proc.stderr + proc.stdout), (
         f"the refusal must name the state root it was given: {proc.stderr}"

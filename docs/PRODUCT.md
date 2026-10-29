@@ -119,12 +119,22 @@ The state root is a directory holding (or about to hold) that `noni/` tree, and
   or when a team keeps the direction of several repositories in one private
   place. Same layout, same writers, same census: only the path changes.
 
-There is no third mechanism: no environment variable and no config file
-selects the state root. Every shipped tool resolves every `noni/` path from
-`--repo` — never from the tool's own location, and never from the current
-directory beyond `--repo`'s default. A `--repo` that is missing, or is not a
-directory, stops the command with a clear message and a non-zero code (the
-fail-closed rule, §6).
+There is no third mechanism that *selects* the state root: no environment
+variable and no config file names it. The unified census's `--ledger`,
+`--sessions`, `--ordering` and `--issue-state` overrides do not select it
+either; they replace the path under it, and a leading `~` given by the caller
+is expanded in those four values. Every shipped tool resolves every other
+`noni/` path from `--repo` — never from the tool's own location, and never from
+the current directory beyond `--repo`'s default.
+
+A `--repo` that is missing, or is not a directory, stops the command with a
+clear message and a non-zero code (the fail-closed rule, §6). The code is the
+one that command already uses for a mistake in its own arguments: 2 for
+`order`, `register` and the unified census, 4 for `claim`, `close` and
+`release`, 3 for `decide` (the same refusal `decide` gives a `--repo` that is
+not a git work tree). The codes are not interchangeable — each is that tool's
+existing refusal, and a caller tells a wrong path from a fault of the tree by
+which one it gets.
 
 Results are recomputed on demand by the census (no `census/` directory). The
 census is read-only: running it leaves `git status --porcelain` empty. Trends,

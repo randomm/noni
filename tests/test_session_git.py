@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 from _harness import _git_env_with_identity, _git_ok, build_bare_origin
 
-from noni import _session_git
+from noni import _session_git, gitenv
 from noni import census as census_mod
 from noni import census_sessions as census_sessions_mod
 
@@ -240,6 +240,37 @@ def test_the_git_helper_is_bounded_hardened_and_makes_no_signing_promise():
         assert hardening in joined, f"{hardening} missing from {joined}"
     assert cmd[-2:] == ["status", "--porcelain"], cmd
     assert bounds[0].get("timeout") == _session_git.GIT_TIMEOUT, bounds[0]
+
+
+def test_the_git_helper_hands_its_child_no_git_location_variables(monkeypatch):
+    """The environment the helper passes, tested where the call is made.
+
+    The behavioural proof is in ``tests/test_writer_git_env.py``; this pins the
+    same property one level down, so a helper that dropped its ``env=`` fails
+    here even before a writer is run. The four location variables are the ones
+    that relocate the child away from the ``-C`` path; the identity variables
+    are not touched, because a commit made without them is a commit that fails.
+    """
+    seen: list[dict] = []
+
+    def spy(cmd, *args, **kwargs):
+        seen.append(dict(kwargs.get("env") or {}))
+        return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+
+    for name in gitenv.GIT_LOCATION_VARS:
+        monkeypatch.setenv(name, "/hostile/" + name.lower())
+    monkeypatch.setenv("GIT_AUTHOR_NAME", "Replay")
+
+    _session_git.git(Path("/nonexistent-repo"), "status", "--porcelain", _run=spy)
+
+    assert len(seen) == 1, seen
+    env = seen[0]
+    for name in gitenv.GIT_LOCATION_VARS:
+        assert name not in env, f"{name} reached the child: {env.get(name)!r}"
+    assert env.get("GIT_AUTHOR_NAME") == "Replay", (
+        "child_env removed a variable the commit needed: "
+        "the identity must travel to the child"
+    )
 
 
 def test_a_hung_git_call_reports_the_timeout_code(tmp_path):

@@ -132,15 +132,14 @@ def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     forced off (a signing requirement in a throwaway or CI tree must not
     wedge the claim). Every call is bounded by GIT_TIMEOUT so a hung fetch or
     push fails cleanly instead of hanging.
+
+    The call is the session writers' shared hardened one (``_session_git``), so
+    this push loop runs with no repository hooks, no external transports and no
+    file-system monitor helper, and under the environment ``gitenv.child_env()``
+    gives: the four git location variables are removed, so an inherited
+    ``GIT_DIR`` or ``GIT_INDEX_FILE`` cannot retarget the push or the rebase.
     """
-    cmd = ["git", "-C", str(cwd), "-c", "commit.gpgsign=false", *args]
-    try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=GIT_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        return subprocess.CompletedProcess(
-            cmd, returncode=GIT_TIMEOUT_RC, stdout="",
-            stderr="git " + args[0] + " timed out after " + str(GIT_TIMEOUT) + "s",
-        )
+    return _session_git.git(cwd, "-c", "commit.gpgsign=false", *args)
 
 
 def _append_claim(path: Path, task: str, body: str) -> int:

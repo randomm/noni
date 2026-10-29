@@ -19,7 +19,7 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-from . import targetschema
+from . import gitenv, targetschema
 
 # The target's field types live beside this file in the package and are an
 # ordinary package import: inside an installed wheel there is no sibling file to
@@ -79,6 +79,11 @@ def run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     None neutralises global config: ``by`` still comes from the tree's
     ``user.name``. A hang is ``GIT_TIMEOUT_RC``, never an answer; errors="replace"
     keeps a clobbered blob from raising inside subprocess.
+
+    The environment is ``gitenv.child_env()``: the four git location variables
+    (``GIT_DIR``, ``GIT_WORK_TREE``, ``GIT_INDEX_FILE``, ``GIT_COMMON_DIR``) are
+    removed, so a caller's exported value cannot retarget this commit or make it
+    stage through a stray index. ``repo`` alone decides the repository.
     """
     cmd = ["git", "-C", str(repo), "-c", "commit.gpgsign=false",
            "-c", f"core.hooksPath={os.devnull}", "-c", "protocol.ext.allow=never",
@@ -88,7 +93,7 @@ def run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
         return answered
     try:
         return subprocess.run(cmd, capture_output=True, text=True, errors="replace",
-                              timeout=GIT_TIMEOUT)
+                              timeout=GIT_TIMEOUT, env=gitenv.child_env())
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(
             cmd, returncode=GIT_TIMEOUT_RC, stdout="",

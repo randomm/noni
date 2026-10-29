@@ -1,0 +1,151 @@
+"""Building the E5 scenario: the healthy baseline and its fresh clone.
+
+Moved out of ``scenario_eval.py`` for the file-size ratchet (issue #52).
+A helper module: never named ``test_*``. The helpers it needs come from
+``scenario_core``, which is what loads the harness first.
+
+"""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+from pathlib import Path
+
+from scenario_core import (
+    Scenario,
+    _claim,
+    _commit,
+    _ensure_branch,
+    _order_healthier,
+    _push,
+    _record,
+    _register,
+    _ts,
+)
+from scenario_faults import _plant_faults
+
+
+def build_scenario(base: Path, faulted: bool = False) -> Scenario:
+    """Build the healthy baseline (optionally plus the planted faults) under
+    base, returning the scenario handle.
+
+    base must not exist, or must exist as an empty directory: the builder
+    never deletes anything. It creates only its own entries (``origin.git``,
+    ``clone-a``, ``clone-b``) directly under base — a path outside the
+    given base is never touched. Callers that need a rebuild at a
+    pre-existing, non-empty base must clean it up themselves, and only if
+    they know the contents are their own.
+
+    Healthy baseline: a bare origin plus two clones; session A (identity
+    "agent-a") in clone 1 and session B (identity "agent-b") in clone 2
+    register via the real register.py; A claims task #1 and B claims task #2
+    via the real claim.py --push (fetch-rebase-push; both commits land
+    linearly on origin); a healthy steering decision chain (d1 superseded by
+    d2) sets the ordering between the two tasks; the ordering artifact itself is
+    written by the real order.py writer and stamped healthy by one confirm run;
+    every commit uses a pinned recent date.
+    """
+    from _harness import _git_ok
+
+    if base.exists():
+        if not base.is_dir():
+            raise RuntimeError(f"refusing to build at {base}: path exists and is not a directory")
+        if any(base.iterdir()):
+            raise RuntimeError(
+                f"refusing to build at {base}: directory is not empty; "
+                "it must not exist or be an empty directory"
+            )
+    else:
+        base.mkdir(parents=True, exist_ok=True)
+
+    origin = base / "origin.git"
+    clone_a = base / "clone-a"
+    clone_b = base / "clone-b"
+
+    # Build the bare origin.
+    origin.mkdir(parents=True, exist_ok=True)
+    _git_ok(origin, "init", "-q", "--bare")
+
+    # Build clone_a from scratch.
+    clone_a.mkdir(parents=True, exist_ok=True)
+    _git_ok(clone_a, "init", "-q", "-b", "main")
+    (clone_a / "README.md").write_text("test repo\n")
+    _git_ok(clone_a, "add", "README.md")
+    _git_ok(clone_a, "commit", "-q", "-m", "initial commit")
+    _git_ok(clone_a, "remote", "add", "origin", str(origin))
+    _git_ok(clone_a, "push", "-q", "-u", "origin", "main")
+
+    # Build clone_b as a clone of origin, on main by name: the suite's
+    # sandboxed HOME carries no init.defaultbranch, so a plain clone would
+    # check out git's own default (master) and register.py's own commit would
+    # land there, leaving nothing on main to push.
+    clone_b.mkdir(parents=True, exist_ok=True)
+    _git_ok(base, "clone", "-q", "-b", "main", str(origin), str(clone_b))
+    _ensure_branch(clone_b, "main")
+
+    t_task = _ts(0)
+    t_reg = _ts(0, 1)
+    t_d1 = _ts(0, 6)
+    t_d2 = _ts(0, 8)
+    t_c = _ts(0, 4)
+
+    # Baseline commit on origin (pinned date): the shared starting point.
+    _commit(clone_a, "tasks/1.md", "# task 1\n", "task: #1", t_task)
+    _push(clone_a, t_task)
+
+    # Both agents register through the real register.py, which commits its own
+    # session file under the caller's identity. The fixture cannot pin that
+    # commit's date (the writer makes it), so the census clock sits after every
+    # commit in the scenario: NOW is day 3 and the writer runs on the host's
+    # clock today. The writer owns these commits, so this fixture never
+    # restages what it wrote; each clone pushes its own file and the two paths
+    # never collide.
+    sid_a = _register(clone_a, "agent-a", "clone-a")
+    sid_b = _register(clone_b, "agent-b", "clone-b")
+    _push(clone_a, t_reg)
+    _push(clone_b, t_reg)
+
+    # Distinct-task claims via the real claim.py --push (fetch-rebase-push).
+    _claim(clone_a, sid_a, "#1")
+    _claim(clone_b, sid_b, "#2")
+
+    # Healthy steering decision chain: d1 superseded by d2; d2 sets the
+    # ordering (task #1 before task #2).
+    _commit(clone_a, "noni/decisions/2026-10-01-d1.json",
+            _record("2026-10-01-d1", t_d1, "superseded", None,
+                    "release ordering", "Order task #1 against task #2?"),
+            "decision d1", t_d1)
+    _push(clone_a, t_d1)
+    _commit(clone_a, "noni/decisions/2026-10-02-d2.json",
+            _record("2026-10-02-d2", t_d2, "decided", "2026-10-01-d1",
+                    "release ordering", "Confirm task #1 before task #2?"),
+            "decision d2", t_d2)
+    _push(clone_a, t_d2)
+
+    # The ordering artifact, written by the real writer and stamped healthy by
+    # one confirm run, then the issue-state map the census is handed.
+    _order_healthier(clone_a)
+    scenario = Scenario(base=base, origin=origin, clone_a=clone_a, clone_b=clone_b,
+                        sid_a=sid_a, sid_b=sid_b)
+
+    if faulted:
+        _plant_faults(scenario, t_c)
+    return scenario
+
+
+def fresh_clone(scenario: Scenario, name: str = "fresh") -> Path:
+    """A fresh clone of the scenario's bare origin (local directory clone).
+
+    The destination must sit directly under the scenario base and must be
+    the builder's own ``fresh`` clone for anything to be removed: a
+    pre-existing, non-empty, foreign destination is refused, never deleted.
+    """
+    dest = scenario.base / name
+    if dest.exists():
+        if name != "fresh" or not dest.is_dir():
+            raise RuntimeError(f"refusing to remove {dest}: not this run's own clone directory")
+        shutil.rmtree(dest)
+    subprocess.run(["git", "clone", "-q", "--branch", "main", str(scenario.origin), str(dest)],
+                   check=True, capture_output=True, timeout=60)
+    return dest

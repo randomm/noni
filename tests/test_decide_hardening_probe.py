@@ -28,10 +28,10 @@ from decide_fixtures import (
 from decide_hardening_fixtures import (
     _assert_wrote_nothing,
     _canonical_body,
-    _gitwrite_module,
     _refused_path_repo,
     _supersede_in_process,
 )
+from decide_inprocess_fixtures import _gitwrite_module
 
 
 def test_hardening_a_target_read_that_fails_refuses_with_four(tmp_path, monkeypatch):

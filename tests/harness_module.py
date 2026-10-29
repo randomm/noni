@@ -6,10 +6,9 @@ Importing this module is what puts ``src/`` on ``sys.path``, registers the
 bare package aliases the flat-layout tests import, and hands out a fresh
 copy of a package module. The two pattern tables it re-exports from
 ``noni.public_safety`` feed the synthetic fixtures in ``harness_faults``.
-The ``harness_module`` import below is a self-import: by the time this line runs
-the module is already in ``sys.modules``, so the line is the declaration that
-this file's product imports run after the bootstrap above, not the bootstrap
-itself. A helper module: never named ``test_*``.
+The bootstrap itself is not declared here: ``tests/_harness.py`` carries the
+single ``harness_module`` import, and it runs before any helper body. A helper
+module: never named ``test_*``.
 
 """
 
@@ -19,10 +18,6 @@ import importlib
 import importlib.util
 import sys
 
-# The line does no work: this module is already in sys.modules when it runs. It
-# is the declaration that this file's product imports below run after the
-# bootstrap (the src/ sys.path insert and the bare package aliases) has run.
-import harness_module  # noqa: E402, F401, I001  # bootstrap order declaration: src/ on sys.path + bare package aliases, before any product import
 from harness_paths import SRC
 from harness_sources import _product_source
 

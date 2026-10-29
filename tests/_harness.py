@@ -12,15 +12,15 @@ surface the test modules use. The bootstrap is the first import below:
 and registers the bare package aliases (``census``, ``public_safety``, ...) in
 ``sys.modules``, both as import side effects. It runs on its own line, ahead
 of every helper that imports a product name, so no helper can reach a product
-import before that bootstrap has run. ``harness_module`` and ``harness_sources``
-carry the same self-import line: it is a declaration of that order in the
-helpers that import a product name themselves (``noni.public_safety``, the bare
-package aliases), not the mechanism that enforces it.
+import before that bootstrap has run. It is bound to a private name: the
+bootstrap is a side effect, not part of the surface this facade exports, and
+the helpers import the bootstrap module themselves through their own imports,
+so none of them re-imports it.
 """
 
 from __future__ import annotations
 
-import harness_module  # noqa: E402, F401, I001  # bootstrap (imported for its side effects): src/ on sys.path + bare package aliases, before any product import
+import harness_module as _bootstrap  # noqa: F401  # bootstrap side effects only: src/ on sys.path + bare package aliases, before any product import
 from harness_faults import (
     _HOME_PATH_KNOWN_IDENTITY,
     _SECRET_TOKEN_PREFIX,

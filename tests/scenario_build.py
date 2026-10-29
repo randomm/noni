@@ -34,10 +34,14 @@ def build_scenario(base: Path, faulted: bool = False) -> Scenario:
     under base, returning the scenario handle.
 
     ``faulted`` is a keyword the callers pass, so it stays in the signature;
-    the planters themselves live in ``scenario_faults`` and are imported inside
+    the planters themselves live in ``scenario_faults`` and stay imported inside
     this function, never at module level, which is what keeps the scenario
     layering one-way (``scenario_core`` <- ``scenario_faults`` <- this file <-
     ``scenario_report``).
+
+    The planter import is the first statement of the body, before any tree is
+    built, so a broken ``scenario_faults`` fails here rather than after the
+    origin and clones exist.
 
     base must not exist, or must exist as an empty directory: the builder
     never deletes anything. It creates only its own entries (``origin.git``,
@@ -56,6 +60,10 @@ def build_scenario(base: Path, faulted: bool = False) -> Scenario:
     every commit uses a pinned recent date.
     """
     from _harness import _git_ok
+
+    # Function-local on purpose: a module-level scenario_faults import here is
+    # what would close the cycle with scenario_report's import of this file.
+    from scenario_faults import _plant_faults
 
     if base.exists():
         if not base.is_dir():
@@ -139,11 +147,6 @@ def build_scenario(base: Path, faulted: bool = False) -> Scenario:
                         sid_a=sid_a, sid_b=sid_b)
 
     if faulted:
-        # Imported here rather than at module level: a module-level import of
-        # scenario_faults from this file, next to scenario_report's own, is what
-        # made the scenario modules a cycle.
-        from scenario_faults import _plant_faults
-
         _plant_faults(scenario, t_c)
     return scenario
 

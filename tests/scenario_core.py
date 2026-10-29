@@ -2,9 +2,10 @@
 
 Moved out of ``scenario_eval.py`` for the file-size ratchet (issue #52)
 and re-exported from there, so ``from scenario_eval import ...`` keeps
-resolving. A helper module: never named ``test_*``. It reaches the harness
-through ``harness_paths``, which is what makes the harness modules
-importable; the launcher helpers keep their own in-body ``_harness``
+resolving. A helper module: never named ``test_*``. The ``harness_module``
+import below is the real bootstrap (``src/`` on ``sys.path`` plus the bare
+package aliases), so this layer never depends on a caller having imported
+something else first; the launcher helpers keep their own in-body ``_harness``
 imports, which is why this file stays importable without ``conftest.py``.
 
 """
@@ -18,6 +19,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import harness_module  # noqa: F401  # bootstrap first: src/ on sys.path + bare package aliases, so no caller's import order matters
 from harness_paths import REPO
 
 _CENSUS = REPO / "skills" / "census" / "scripts" / "census.py"
@@ -210,7 +212,7 @@ def _claim(repo: Path, session_id: str, task: str) -> None:
 
 def _ensure_branch(repo: Path, branch: str) -> None:
     """Ensure the repo is on `branch`, creating it if needed."""
-    from _harness import _git_ok
+    from _harness import _git_e2
 
     # Check if we're already on the branch
     proc = subprocess.run(
@@ -219,10 +221,12 @@ def _ensure_branch(repo: Path, branch: str) -> None:
     )
     if proc.returncode == 0 and proc.stdout.strip() == branch:
         return
-    # Try to create and switch to the branch
-    proc = _git_ok(repo, "checkout", "-q", "-b", branch)
+    # Try to create and switch to the branch. _git_e2 does not raise on a
+    # non-zero exit, so the fall-back below is reachable when the branch
+    # already exists.
+    proc = _git_e2(repo, "checkout", "-q", "-b", branch)
     if proc.returncode != 0:
         # Branch might already exist, just switch to it
-        proc = _git_ok(repo, "checkout", "-q", branch)
+        proc = _git_e2(repo, "checkout", "-q", branch)
         if proc.returncode != 0:
             raise RuntimeError(f"cannot switch to branch {branch}: {proc.stderr}")

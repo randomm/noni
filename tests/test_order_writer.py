@@ -1451,7 +1451,7 @@ def test_the_ordering_census_reports_what_the_writer_refused(tmp_path):
     The list is the shared table, plus the one shape the table cannot carry:
     a citation whose record is absent from the ledger is well-formed JSON and
     refused for a reason only the ledger can answer (the census's own
-    ``ordering-malformed`` row for it lives in tests/test_census_ordering_malformed.py).
+    ``ordering-malformed`` row for it lives in tests/test_census_ordering.py).
     """
     extra = {
         "a decision that matches no record": '{"schema": "noni.order/1", "entries": '

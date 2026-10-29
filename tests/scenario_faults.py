@@ -1,7 +1,11 @@
 """The planted faults of the E5 scenario eval.
 
 Moved out of ``scenario_eval.py`` for the file-size ratchet (issue #52).
-A helper module: never named ``test_*``.
+A helper module: never named ``test_*``. It sits one layer above
+``scenario_core`` (which owns the timeline, the handle and the fixture-side
+git/writer helpers) and below ``scenario_build``, so the scenario layering
+stays one-way: ``scenario_core`` <- ``scenario_faults`` <- ``scenario_build``
+<- ``scenario_report``.
 
 """
 

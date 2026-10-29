@@ -1,8 +1,10 @@
 """Running the census over a built scenario and normalizing its findings.
 
 Moved out of ``scenario_eval.py`` for the file-size ratchet (issue #52).
-A helper module: never named ``test_*``. Also carries the standalone entry
-point the module docstring of ``scenario_eval`` documents.
+A helper module: never named ``test_*``. It sits at the top of the one-way
+scenario layering (``scenario_core`` <- ``scenario_faults`` <-
+``scenario_build`` <- this file) and also carries the standalone entry point
+``main`` that ``scenario_eval`` re-exports and its ``__main__`` guard calls.
 
 """
 

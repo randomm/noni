@@ -2,7 +2,10 @@
 
 Moved out of ``_harness.py`` for the file-size ratchet (issue #52) and
 re-exported from there, so every ``from _harness import`` keeps resolving.
-A helper module: never named ``test_*``.
+A helper module: never named ``test_*``. Its product imports are function-local
+(``import census`` inside the guard and its three installers): a module-level
+product import here would be a cycle back through the ``_harness`` facade into
+this file, which is loaded before ``harness_module`` finishes.
 
 """
 
@@ -25,6 +28,10 @@ from harness_module import HOME_PATH_PATTERNS, SECRET_PATTERNS
 def _permission_fault_guard(target: Path, *, text: str = "input/output error",
                             filename: str | None = None):
     """The ``Path.iterdir`` replacement that faults one directory's readdir.
+
+    The census is imported only inside this function and the three installers
+    below, never at module level: a module-level product import here would be a
+    cycle through the facade back into this file.
 
     The guard on the receiver keeps every other listing of the run honest, so
     only the named directory's readdir faults. The exception is built inside the

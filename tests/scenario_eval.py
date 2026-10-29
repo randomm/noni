@@ -40,9 +40,15 @@ deletion); an explicit path that does not exist or is an empty directory is
 used as-is and left behind for the operator.
 
 The bodies live in the ``scenario_*`` helper modules (issue #52, the file-size
-ratchet) and are re-exported here, so ``from scenario_eval import ...`` and
-``python tests/scenario_eval.py`` both keep working. A helper module is never
-named ``test_*``; this file is the one import surface its tests use.
+ratchet) and are re-exported here: the four modules split the work one-way
+(``scenario_core`` <- ``scenario_faults`` <- ``scenario_build`` <-
+``scenario_report``: each imports only from the ones to its left), and this
+file is the only module of the set with a ``__main__`` guard, so
+``from scenario_eval import ...`` and ``python tests/scenario_eval.py`` both
+keep working on the re-exported names. The standalone entry point itself is
+``main`` in ``scenario_report``, which is what the paragraph above documents. A
+helper module is never named ``test_*``; this file is the one import surface
+its tests use.
 """
 
 from __future__ import annotations

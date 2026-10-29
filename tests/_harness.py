@@ -7,13 +7,20 @@ without pulling in ``conftest.py`` and its module-level ``import pytest``.
 
 The bodies live in the ``harness_*`` helper modules (issue #52, the file-size
 ratchet) and are re-exported here, so ``_harness`` stays the one import
-surface the test modules use. Importing this module is what puts ``src/`` on
-``sys.path`` and registers the bare package aliases: ``harness_module`` is
-imported first, before any helper whose body imports a product name.
+surface the test modules use. The bootstrap is the first import below:
+``harness_module`` inserts this tree's ``src/`` at the head of ``sys.path``
+and registers the bare package aliases (``census``, ``public_safety``, ...) in
+``sys.modules``, both as import side effects. It runs on its own line, ahead
+of every helper that imports a product name, so no helper can reach a product
+import before that bootstrap has run. ``harness_module`` and ``harness_sources``
+carry the same self-import line: it is a declaration of that order in the
+helpers that import a product name themselves (``noni.public_safety``, the bare
+package aliases), not the mechanism that enforces it.
 """
 
 from __future__ import annotations
 
+import harness_module  # noqa: E402, F401, I001  # bootstrap (imported for its side effects): src/ on sys.path + bare package aliases, before any product import
 from harness_faults import (
     _HOME_PATH_KNOWN_IDENTITY,
     _SECRET_TOKEN_PREFIX,
@@ -90,6 +97,8 @@ from harness_runners import (
 )
 from harness_sources import _harness_source, _product_source, _script_ast, _script_constant
 
+# Exactly the top-level names the pre-split ``_harness.py`` defined: the facade
+# re-exports the helpers, it does not widen the surface tests may reach for.
 __all__ = [
     "CENSUS",
     "CENSUS_SESSIONS",

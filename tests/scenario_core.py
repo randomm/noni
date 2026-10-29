@@ -80,6 +80,13 @@ def _ts(day: int, hour: int = 0) -> str:
     return (BASE + timedelta(days=day, hours=hour)).isoformat().replace("+00:00", "Z")
 
 
+# The commit date every planted fault carries: day 0, hour 4 of the scenario
+# timeline, which is the clock agent-c's session is stale against at --now.
+# Named here, beside the timeline it sits on, so the builder and the planters
+# cannot drift apart on it.
+FAULT_CLOCK = _ts(0, 4)
+
+
 @dataclass
 class Scenario:
     """One built scenario: a bare origin plus its agent clones and session ids."""

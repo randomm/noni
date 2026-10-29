@@ -1,8 +1,11 @@
 """Building the E5 scenario: the healthy baseline and its fresh clone.
 
 Moved out of ``scenario_eval.py`` for the file-size ratchet (issue #52).
-A helper module: never named ``test_*``. The helpers it needs come from
-``scenario_core``, which is what loads the harness first.
+A helper module: never named ``test_*``. It sits in the middle of the one-way
+scenario layering (``scenario_core`` <- ``scenario_faults`` <- this file <-
+``scenario_report``): the healthy baseline is built here, and the planters it
+deleges to for the faulted variant are imported inside the function rather
+than at module level, so no module of the set imports back up the stack.
 
 """
 
@@ -13,6 +16,7 @@ import subprocess
 from pathlib import Path
 
 from scenario_core import (
+    FAULT_CLOCK,
     Scenario,
     _claim,
     _commit,
@@ -23,12 +27,17 @@ from scenario_core import (
     _register,
     _ts,
 )
-from scenario_faults import _plant_faults
 
 
 def build_scenario(base: Path, faulted: bool = False) -> Scenario:
-    """Build the healthy baseline (optionally plus the planted faults) under
-    base, returning the scenario handle.
+    """Build the healthy baseline (and, with ``faulted``, its planted faults too)
+    under base, returning the scenario handle.
+
+    ``faulted`` is a keyword the callers pass, so it stays in the signature;
+    the planters themselves live in ``scenario_faults`` and are imported inside
+    this function, never at module level, which is what keeps the scenario
+    layering one-way (``scenario_core`` <- ``scenario_faults`` <- this file <-
+    ``scenario_report``).
 
     base must not exist, or must exist as an empty directory: the builder
     never deletes anything. It creates only its own entries (``origin.git``,
@@ -88,7 +97,7 @@ def build_scenario(base: Path, faulted: bool = False) -> Scenario:
     t_reg = _ts(0, 1)
     t_d1 = _ts(0, 6)
     t_d2 = _ts(0, 8)
-    t_c = _ts(0, 4)
+    t_c = FAULT_CLOCK
 
     # Baseline commit on origin (pinned date): the shared starting point.
     _commit(clone_a, "tasks/1.md", "# task 1\n", "task: #1", t_task)
@@ -130,6 +139,11 @@ def build_scenario(base: Path, faulted: bool = False) -> Scenario:
                         sid_a=sid_a, sid_b=sid_b)
 
     if faulted:
+        # Imported here rather than at module level: a module-level import of
+        # scenario_faults from this file, next to scenario_report's own, is what
+        # made the scenario modules a cycle.
+        from scenario_faults import _plant_faults
+
         _plant_faults(scenario, t_c)
     return scenario
 

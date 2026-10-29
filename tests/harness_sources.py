@@ -1,7 +1,11 @@
 """Reading the product source behind a wrapper for the test harness.
 
 Moved out of ``_harness.py`` for the file-size ratchet (issue #52) and
-re-exported from there. A helper module: never named ``test_*``.
+re-exported from there. It is loaded through ``harness_module``, whose own
+self-named import line is the bootstrap declaration: that module puts ``src/``
+on ``sys.path`` and registers the bare package aliases as import side effects,
+and it has finished by the time this file's body runs, so the product source
+this file reads is this tree's. A helper module: never named ``test_*``.
 
 """
 
@@ -11,6 +15,10 @@ import ast
 import re
 from pathlib import Path
 
+# The line does no work: this module is already in sys.modules when it runs. It
+# is the declaration that this file's product imports below run after the
+# bootstrap (the src/ sys.path insert and the bare package aliases) has run.
+import harness_module  # noqa: E402, F401, I001  # bootstrap order declaration: src/ on sys.path + bare package aliases, before any product import
 from harness_paths import SRC
 
 

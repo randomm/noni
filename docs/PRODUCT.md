@@ -122,10 +122,11 @@ The state root is a directory holding (or about to hold) that `noni/` tree, and
 There is no third mechanism that *selects* the state root: no environment
 variable and no config file names it. The unified census's `--ledger`,
 `--sessions`, `--ordering` and `--issue-state` overrides do not select it
-either; they replace the path under it, and a leading `~` given by the caller
-is expanded in those four values. Every shipped tool resolves every other
-`noni/` path from `--repo` — never from the tool's own location, and never from
-the current directory beyond `--repo`'s default.
+either; they replace the path under it, and a leading `~` given by the caller is
+expanded in those four values and nowhere else — the sessions census takes one
+plain path argument and does no expansion of it. Every shipped tool resolves
+every other `noni/` path from `--repo` — never from the tool's own location, and
+never from the current directory beyond `--repo`'s default.
 
 A `--repo` that is missing, or is not a directory, stops the command with a
 clear message and a non-zero code (the fail-closed rule, §6). The code is the

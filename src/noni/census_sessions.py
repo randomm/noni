@@ -15,13 +15,15 @@ The one argument is the sessions directory of the state root — the directory
 ``--repo`` names for the writers, with ``noni/sessions`` under it. It is never
 resolved from the current directory: a run with no argument is a usage error
 (2), not a census of whatever ``noni/sessions`` happened to sit next to the
-caller.
+caller. Two directories are a usage error too: one run audits one register, and
+a census that read the first and stayed silent about the second would report a
+verdict on a path the caller thinks it checked.
 
 Exit codes (lowest wins when several fire, 30 < 31 < 32):
     0   clean — every session file valid, no double-claims
-    2   usage: no sessions directory was given, or the one given is not a
-        directory (fail closed — the census never reports a clean it did not
-        read)
+    2   usage: no sessions directory was given, more than one was given, or the
+        one given is not a directory (fail closed — the census never reports a
+        clean it did not read)
     3   a required tool is missing (checked by the bash wrapper)
     30  double-claim: two active claims on the same task from different identities
     31  a claim row was committed without a register file (work not blocked)
@@ -203,6 +205,17 @@ def main(argv: list[str] | None = None) -> int:
             "census-sessions.py <state-root>/noni/sessions "
             "(pass the sessions directory of the state root; there is no "
             "current-directory default)",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+    if len(argv) > 1:
+        # The decisions census refuses a second positional the same way
+        # (`census.sh`: one ledger directory at most). Silently censusing the
+        # first of two would report a clean register while the path the caller
+        # mistyped goes unread, so every path given is named on the refusal.
+        print(
+            f"{labels.CENSUS_SESSIONS}: usage: one sessions directory at most "
+            f"(got {len(argv)}: {' '.join(argv)})",
             file=sys.stderr,
         )
         return EXIT_USAGE

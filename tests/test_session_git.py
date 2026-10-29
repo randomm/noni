@@ -247,9 +247,9 @@ def test_the_git_helper_hands_its_child_no_git_location_variables(monkeypatch):
 
     The behavioural proof is in ``tests/test_writer_git_env.py``; this pins the
     same property one level down, so a helper that dropped its ``env=`` fails
-    here even before a writer is run. The four location variables are the ones
-    that relocate the child away from the ``-C`` path; the identity variables
-    are not touched, because a commit made without them is a commit that fails.
+    here even before a writer is run. The location variables are the ones that
+    relocate the child away from the ``-C`` path; the identity variables are not
+    touched, because a commit made without them is a commit that fails.
     """
     seen: list[dict] = []
 

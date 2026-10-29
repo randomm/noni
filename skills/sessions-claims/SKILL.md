@@ -206,14 +206,15 @@ census.sh --sessions <state-root>/noni/sessions
 
 The one argument is the sessions directory of the state root (`--repo` plus
 `noni/sessions`); there is no current-directory default, so a run with no
-argument is the usage error `2`.
+argument is the usage error `2`, and a second directory is that error too — one
+run audits one register.
 
 Read-only, NDJSON on stdout, honest exit code:
 
 | code | meaning |
 |---|---|
 | `0` | clean — every session file valid, no double-claims |
-| `2` | usage: no sessions directory was given, or the one given is not a directory |
+| `2` | usage: no sessions directory was given, more than one was given, or the one given is not a directory |
 | `3` | the interpreter the wrapper runs is not found on the reading machine |
 | `30` | double-claim: two active claims on the same task from different identities |
 | `31` | a claim row was committed without a register file (work is not blocked — report only) |

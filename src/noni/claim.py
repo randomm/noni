@@ -136,8 +136,9 @@ def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     The call is the session writers' shared hardened one (``_session_git``), so
     this push loop runs with no repository hooks, no external transports and no
     file-system monitor helper, and under the environment ``gitenv.child_env()``
-    gives: the four git location variables are removed, so an inherited
-    ``GIT_DIR`` or ``GIT_INDEX_FILE`` cannot retarget the push or the rebase.
+    gives: every ``GIT_*`` variable but the identity, config and transport names
+    on the allowlist is removed, so an inherited ``GIT_DIR``, ``GIT_INDEX_FILE``
+    or ``GIT_OBJECT_DIRECTORY`` cannot retarget the push or the rebase.
     """
     return _session_git.git(cwd, "-c", "commit.gpgsign=false", *args)
 

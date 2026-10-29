@@ -575,3 +575,23 @@ def test_no_route_invents_a_state_root_when_given_no_argument(tmp_path):
         proc = _run_argv(cwd, argv)
         assert proc.returncode == 2, f"{argv[:3]}: {proc.returncode}\n{proc.stdout}\n{proc.stderr}"
         assert proc.stdout.strip() == "", f"{argv[:3]} censused the decoy: {proc.stdout}"
+
+
+def test_every_route_refuses_a_second_positional(tmp_path):
+    """Two directories named is a usage error (2) on every route, with no row.
+
+    One run censuses one register. The decisions census already refuses a second
+    positional (`census.sh`: "one ledger directory at most"), and a sessions
+    route that took two silently censused only the first: the caller who typed
+    two paths got a verdict on one of them and no signal that the other was
+    never read. The refusal is one line on stderr naming both paths given, and
+    the second path is the one the caller mistyped, so naming it is what makes
+    the refusal actionable.
+    """
+    root, decoy, cwd = _sessions_census_case(tmp_path)
+    for argv in _routes(cwd, root):
+        proc = _run_argv(cwd, argv + [str(decoy)])
+        assert proc.returncode == 2, f"{argv[:3]}: {proc.returncode}\n{proc.stdout}\n{proc.stderr}"
+        assert proc.stdout.strip() == "", f"{argv[:3]} censused one of two: {proc.stdout}"
+        assert "at most" in proc.stderr, f"{argv[:3]}: {proc.stderr}"
+        assert str(decoy) in proc.stderr, f"{argv[:3]} must name the extra path: {proc.stderr}"

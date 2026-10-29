@@ -25,8 +25,9 @@
 # findings are always in the NDJSON output:
 #   0   clean — every session file valid (five required fields each), no
 #       double-claims, all claims have a register file
-#   2   usage: no sessions directory was given, or the one given is not a
-#       directory (the state root is named by the caller, never by the cwd)
+#   2   usage: no sessions directory was given, more than one was given, or
+#       the one given is not a directory (the state root is named by the
+#       caller, never by the cwd)
 #   3   the interpreter it would run is missing (see NONI_PYTHON below)
 #   30  double-claim: two active claims on the same task from different
 #       identities (the arbiter check)

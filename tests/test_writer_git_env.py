@@ -1,15 +1,24 @@
-"""Every shipped writer clears the four git location variables (issue #39).
+"""Every shipped writer clears the inherited git variables (issue #39).
 
-``--repo`` is the only thing that names the state root, but git reads four
+``--repo`` is the only thing that names the state root, but git reads a body of
 variables from the environment before it ever consults the ``-C`` path its
-caller passed: ``GIT_DIR`` and ``GIT_COMMON_DIR`` name a different repository
-directory, ``GIT_WORK_TREE`` a different working tree, and ``GIT_INDEX_FILE`` a
-different index to stage and commit through. A writer that handed its child the
-ambient environment therefore committed somewhere other than the state root — or
-staged and committed through a stray index — while still printing the success
-line for the tree ``--repo`` named. ``noni.gitenv.child_env`` is the fix, and
-this file is the proof for each writer that commits: decide, order, register,
-claim, close and release.
+caller passed. Four of them relocate the repository outright — ``GIT_DIR`` and
+``GIT_COMMON_DIR`` name a different repository directory, ``GIT_WORK_TREE`` a
+different working tree, ``GIT_INDEX_FILE`` a different index to stage and commit
+through — and they are not the whole hazard. ``GIT_OBJECT_DIRECTORY`` and
+``GIT_ALTERNATE_OBJECT_DIRECTORIES`` move the object store itself, so a commit
+is written into (or read from) a tree the caller never named while the state
+root's own refs look untouched; ``GIT_TRACE``, ``GIT_TRACE2`` and
+``GIT_TRACE2_EVENT`` make the child write its trace to any file the caller
+picks; ``GIT_NAMESPACE`` silently redirects every ref name. A writer that handed
+its child the ambient environment therefore wrote somewhere other than the state
+root while still printing the success line for the tree it was pointed at.
+
+``noni.gitenv.child_env`` is the fix, and it is fail-closed: the child gets
+every variable the process has except the ones whose name starts with ``GIT_``
+and that are not in the allowlist the writers need (identity, and the config and
+transport pins a caller legitimately sets). This file is the proof for each
+writer that commits: decide, order, register, claim, close and release.
 
 Each writer runs in two cases. The first sets ``GIT_DIR`` and ``GIT_WORK_TREE``
 to a decoy repository under ``tmp_path``; the second sets only
@@ -17,12 +26,14 @@ to a decoy repository under ``tmp_path``; the second sets only
 ``_harness.assert_writers_clear_git_env``: the record is committed in the state
 root, the decoy is byte-for-byte what it was, and the state root's own
 ``git status --porcelain`` is empty (so the record was committed and not merely
-written).
+written). A third case sets the object-store and trace variables to paths under
+``tmp_path`` and asks the same questions of those (see
+``test_writers_ignore_a_hostile_object_store_and_trace_environment``).
 
 The variables are set explicitly in the subprocess environment rather than
-inherited: ``tests/conftest.py`` clears all four for every test, so a launcher
-that relied on inheritance would have set nothing and passed no matter what the
-writer did.
+inherited: ``tests/conftest.py`` clears the location ones for every test, so a
+launcher that relied on inheritance would have set nothing and passed no matter
+what the writer did.
 """
 
 from __future__ import annotations
@@ -385,37 +396,146 @@ def test_order_commits_in_the_state_root_with_a_decoy_git_index_file(tmp_path):
                                  f'"issue": {ORDER_ISSUE}')
 
 
+# --- the object store and the trace sink ------------------------------------------
+#
+# The four location variables name a repository. These do not, so the earlier
+# clearing left them alone, and clearing only those four is how a writer keeps
+# committing somewhere the caller never pointed at: GIT_OBJECT_DIRECTORY and
+# GIT_ALTERNATE_OBJECT_DIRECTORIES relocate the object store, so the objects a
+# commit needs land in a decoy directory while the state root's refs still look
+# fine (a staged-but-uncommitted writer, which is the failure the assertion
+# below catches), and GIT_TRACE2_EVENT makes the child append its trace to any
+# file the caller names. One writer from each helper runs the same three.
+
+
+def _object_store_case(tmp_path: Path, name: str) -> tuple[dict[str, str], Path, Path]:
+    """The object-store and trace case: (env entries, decoy objects dir, trace file).
+
+    Both object variables point at the same decoy directory so the case cannot
+    pass by reading an alternate while writing to the real store, and
+    GIT_TRACE2_EVENT names a file that must not exist afterwards: git creates a
+    trace file the moment the child runs with it set, so its absence is the
+    evidence that the variable never reached the child.
+    """
+    objects = tmp_path / name
+    objects.mkdir(parents=True, exist_ok=True)
+    trace = tmp_path / f"{name}-trace.jsonl"
+    return ({"GIT_OBJECT_DIRECTORY": str(objects),
+             "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(objects),
+             "GIT_TRACE": str(trace),
+             "GIT_TRACE2": str(trace),
+             "GIT_TRACE2_EVENT": str(trace),
+             "GIT_NAMESPACE": "refs/noni-hostile",
+             "GIT_CEILING_DIRECTORIES": str(tmp_path),
+             # A lower-case lookalike is not one of git's: the filter is
+             # case-sensitive because git reads these names in upper case, and a
+             # non-git variable must not be dropped along with them.
+             "git_config_global": "not-a-git-config"},
+            objects, trace)
+
+
+def _assert_object_store_untouched(vars_: dict[str, str], objects: Path,
+                                   trace: Path) -> None:
+    """The decoy object store holds nothing and no trace file was written."""
+    strays = sorted(p.name for p in objects.iterdir())
+    assert strays == [], f"objects were written to the GIT_OBJECT_DIRECTORY decoy: {strays}"
+    assert not trace.exists(), (
+        "a trace variable reached the child, which wrote its trace to "
+        f"{trace}"
+    )
+    # The writer resolves its identity from the allowlisted GIT_AUTHOR_* pair
+    # the harness supplies, so a run that committed proved the filter kept
+    # those; a run that dropped them could not have committed at all.
+    assert vars_["git_config_global"] == "not-a-git-config"
+
+
+def test_session_writer_commits_with_a_hostile_object_store_and_trace(tmp_path):
+    """claim.py commits into the state root while the object store is pointed away."""
+    repo = _sessions_repo(tmp_path, "claim-objstore")
+    vars_, objects, trace = _object_store_case(tmp_path, "claim-decoy-objects")
+    proc = _claim_run(repo, _decoy_env(vars_))
+    assert_writers_clear_git_env(proc, repo, SESSION_REL, None, {}, None, None,
+                                 f"- claim: {TASK}")
+    _assert_object_store_untouched(vars_, objects, trace)
+
+
+def test_decide_commits_with_a_hostile_object_store_and_trace(tmp_path):
+    """decide.py's record is committed in the state root, not the decoy store."""
+    repo = _ledger_repo(tmp_path, "decide-objstore")
+    vars_, objects, trace = _object_store_case(tmp_path, "decide-decoy-objects")
+    proc = _decide_run(repo, _decoy_env(vars_))
+    assert_writers_clear_git_env(proc, repo, RECORD_REL, None, {}, None, None,
+                                 '"status": "decided"')
+    _assert_object_store_untouched(vars_, objects, trace)
+
+
+def test_order_commits_with_a_hostile_object_store_and_trace(tmp_path):
+    """order.py's artifact is committed in the state root, not the decoy store."""
+    repo = _ledger_repo(tmp_path, "order-objstore")
+    vars_, objects, trace = _object_store_case(tmp_path, "order-decoy-objects")
+    proc = _order_run(repo, _decoy_env(vars_))
+    assert_writers_clear_git_env(proc, repo, ORDER_REL, None, {}, None, None,
+                                 f'"issue": {ORDER_ISSUE}')
+    _assert_object_store_untouched(vars_, objects, trace)
+
+
 # --- the helper itself -------------------------------------------------------------
 
 
-def test_child_env_drops_exactly_the_four_location_variables(monkeypatch):
-    """The helper removes the four and nothing else.
+def test_child_env_drops_every_git_variable_but_the_allowlist(monkeypatch):
+    """Everything GIT_* goes; the allowlist and the rest of the environment stay.
 
-    Removing too much would be the worse bug: the identity variables and the
-    harness's config pin reach every committing writer through the environment,
-    and a writer that lost them could not commit at all.
+    Fail-closed is the point: an unknown variable that changes what a writer's
+    git does (an object store, a trace sink, a namespace) is refused without
+    having to be named here. Removing too much would be the worse bug, so the
+    same run pins what must survive: the identity variables, the config pins and
+    the transport variables the allowlist names, plus a non-git variable.
     """
     for name in gitenv.GIT_LOCATION_VARS:
         monkeypatch.setenv(name, "/hostile/" + name.lower())
+    for name in ("GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+                 "GIT_TRACE", "GIT_TRACE2", "GIT_TRACE2_EVENT", "GIT_TRACE2_PERF",
+                 "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES", "GIT_INDEX_VERSION",
+                 "GIT_DIR_HOLDER", "GIT_PUSH_OPTION_COUNT"):
+        monkeypatch.setenv(name, "/hostile/" + name.lower())
+    for name in gitenv.CHILD_ENV_GIT_ALLOWLIST:
+        monkeypatch.setenv(name, "pinned-by-test")
     monkeypatch.setenv("GIT_AUTHOR_NAME", "Replay")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("PATH", os.environ["PATH"])
 
     env = gitenv.child_env()
 
     for name in gitenv.GIT_LOCATION_VARS:
         assert name not in env, f"{name} survived child_env()"
+    for name in env:
+        if name.startswith("GIT_"):
+            assert name in gitenv.CHILD_ENV_GIT_ALLOWLIST, (
+                f"{name} reached the child without being on the allowlist"
+            )
+    for name in ("GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+                 "GIT_TRACE", "GIT_TRACE2", "GIT_TRACE2_EVENT", "GIT_NAMESPACE",
+                 "GIT_CEILING_DIRECTORIES"):
+        assert name not in env, f"{name} survived child_env()"
     assert env["GIT_AUTHOR_NAME"] == "Replay"
     assert env["GIT_CONFIG_GLOBAL"] == os.devnull
+    assert env["GIT_SSH_COMMAND"] == "pinned-by-test"
     assert env["PATH"] == os.environ["PATH"]
     assert env is not os.environ, "child_env handed out the live environment"
 
 
-def test_the_four_variables_are_the_documented_set():
-    """The set is the one the issue names, in neither direction.
+def test_the_allowlist_is_the_documented_set():
+    """The set the writers are built on, pinned in neither direction.
 
-    A variable added here silently widens what the writers ignore; one dropped
-    reopens the hole. Pinning the tuple is cheaper than trusting a reader.
+    A name added here silently widens what an inherited environment may still
+    steer (an object store, a hooks path, a fsmonitor helper all begin GIT_ and
+    none of them is identity or transport); a name dropped reopens the hole the
+    allowlist exists to leave open, and the writers would fail for want of an
+    author. Pinning the tuple is cheaper than trusting a reader.
     """
-    assert gitenv.GIT_LOCATION_VARS == (
-        "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+    assert gitenv.CHILD_ENV_GIT_ALLOWLIST == (
+        "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
+        "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
+        "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM",
+        "GIT_SSH", "GIT_SSH_COMMAND", "GIT_ASKPASS", "GIT_TERMINAL_PROMPT",
     )

@@ -80,10 +80,12 @@ def run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     ``user.name``. A hang is ``GIT_TIMEOUT_RC``, never an answer; errors="replace"
     keeps a clobbered blob from raising inside subprocess.
 
-    The environment is ``gitenv.child_env()``: the four git location variables
-    (``GIT_DIR``, ``GIT_WORK_TREE``, ``GIT_INDEX_FILE``, ``GIT_COMMON_DIR``) are
-    removed, so a caller's exported value cannot retarget this commit or make it
-    stage through a stray index. ``repo`` alone decides the repository.
+    The environment is ``gitenv.child_env()``: every variable whose name begins
+    with ``GIT_`` is removed except the identity, config and transport names on
+    ``gitenv.CHILD_ENV_GIT_ALLOWLIST``, so a caller's exported value cannot
+    retarget this commit, make it stage through a stray index, write its objects
+    to another object store or trace itself into a file the caller names.
+    ``repo`` alone decides the repository.
     """
     cmd = ["git", "-C", str(repo), "-c", "commit.gpgsign=false",
            "-c", f"core.hooksPath={os.devnull}", "-c", "protocol.ext.allow=never",

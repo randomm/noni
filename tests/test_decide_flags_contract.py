@@ -9,6 +9,8 @@ publishes. These checks pin the shared surface to the writer's own.
 
 from __future__ import annotations
 
+import re
+
 from _harness import REPO
 
 from noni import _decide_flags, decide
@@ -79,6 +81,48 @@ def test_the_helper_refuses_through_the_callers_printer_and_code():
                                          [("q1", "text")], [("q1", "a")], fail=fail,
                                          exit_usage=decide.EXIT_USAGE) is None
     assert calls == []
+
+
+def test_the_helper_takes_every_rule_from_its_arguments_and_keeps_none():
+    """The usage contract is split across the two files, so one gate owns the seam.
+
+    Three of decide's flag rules live in ``_decide_flags`` and the rest live next
+    to the renderer they feed (the slug, the scope, the 2-4-options-per-question
+    check, and the rule that only a ``--supersedes`` run carries). That split is
+    exactly the arrangement that lets the two halves disagree in silence: a caller
+    that stopped handing in its printer, a rule moved without the other side
+    noticing, or a fourth rule quietly added to the helper would each leave every
+    behavioural test green. These are the assertions that make the split visible:
+    every helper call in ``decide.py`` passes the printer and the code, the helper
+    imports nothing of decide's, and the rules each side owns are named.
+    """
+    import ast
+
+    helper = ast.parse((REPO / "src" / "noni" / "_decide_flags.py").read_text(encoding="utf-8"))
+    # The helper must not reach back into its caller: decide imports the helper,
+    # and a reverse edge is a cycle the next reader has to untangle by hand.
+    imported = {alias.name for node in ast.walk(helper) if isinstance(node, ast.Import)
+                for alias in node.names}
+    imported |= {node.module for node in ast.walk(helper)
+                 if isinstance(node, ast.ImportFrom) and node.module}
+    assert not any(part == "decide" for name in imported for part in name.split(".")), \
+        f"the helper imports its caller: {imported}"
+    reached = [node for node in ast.walk(helper) if isinstance(node, ast.Attribute)
+               and node.attr != "parse" and isinstance(node.value, ast.Name)
+               and node.value.id == "decide"]
+    assert not reached, "the helper reads an attribute off a decide namespace"
+
+    # Every call the caller makes hands in the printer and the exit code: a rule
+    # that started refusing through a printer of the helper's own, or with a
+    # number of its own, is the drift the rest of this module guards.
+    source = (REPO / "src" / "noni" / "decide.py").read_text(encoding="utf-8")
+    calls = re.findall(r"_decide_flags\.(\w+)\(([^)]*)\)", source, re.S)
+    assert len(calls) >= 3, calls
+    for name, arguments in calls:
+        assert name in {"parse_date", "parse_questions", "check_supersede"}, name
+        assert "fail=_fail" in arguments, f"{name} is called without the caller's printer"
+        assert "exit_usage=EXIT_USAGE" in arguments, \
+            f"{name} is called without the caller's usage code"
 
 
 def test_the_supersede_rule_takes_its_two_flags_as_arguments():

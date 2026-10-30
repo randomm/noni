@@ -39,7 +39,18 @@ _HEADS_PREFIX = "refs/heads/"
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    """One bounded, hardened git call, through the writers' own helper."""
+    """One bounded, hardened git call, through the writers' own helper.
+
+    This is the module's single git seam: every probe goes through it, and a test
+    that must drive one class of call (a transport call that cannot finish, a verb
+    that always refuses) replaces this one name. The indirection is not a cycle --
+    :func:`noni._session_git.stage_and_commit` reaches the classifier at the other
+    end of this edge only when a commit is refused, and it imports it there rather
+    than at module scope, so the two modules never hold a compile-time reference to
+    each other. Making this a direct call to :func:`git` would be behaviourally
+    identical and would take the seam away from every probe test in the suite, so
+    it stays.
+    """
     return git(repo, *args)
 
 
@@ -48,6 +59,12 @@ def _answered(result: subprocess.CompletedProcess[str] | None) -> bool:
 
     None is the shape a helper uses for 'this probe could not run'; it is the
     same non-answer as the timeout sentinel and reads the same way everywhere.
+
+    Every probe in this module asks the question through this predicate, and no
+    caller may read a returncode -- a non-zero one especially -- before it has
+    asked: ``GIT_TIMEOUT_RC`` is a non-zero exit that reports a kill, not a
+    verdict, and a probe that reads it as 'no', 'does not resolve' or 'differs'
+    turns a hang into a state nobody measured.
     """
     return result is not None and result.returncode != GIT_TIMEOUT_RC
 
@@ -82,29 +99,33 @@ def commit_failure_cause(repo: Path,
         return None
     no_upstream, verdict = _upstream_ref(repo, name)
     if verdict == "probe-failed":
+        # A probe died, so this tree has not been measured: naming a state here
+        # would be a guess.
         return None
-    if not no_upstream:
-        # Every 'none' state answers with an empty ref: there is nothing here to
-        # compare against. That one clause is worth printing whatever git
-        # quoted, because it is a fact about the tree's own config and not a
-        # reading of the refusal. Everything else needs something to have been
-        # said: a quiet failure on a tree whose every other probe answered
-        # healthy is left unclassified rather than given the generic clause.
+    if verdict == "none":
+        # Nothing to compare against -- no remote, this clone as the remote, or a
+        # remote that fetches nothing. Every one of those answers with an empty
+        # ref (see :func:`_no_upstream`), so there is no upstream to have gone
+        # and no bytes to have changed. That one clause is worth printing
+        # whatever git quoted, because it is a fact about the tree's own config
+        # and not a reading of the refusal. Everything else needs something to
+        # have been said: a quiet failure on a tree whose every other probe
+        # answered healthy is left unclassified rather than given the generic
+        # clause.
         return NO_UPSTREAM
     if not _said(result):
         return None
-    upstream = no_upstream
-    resolves = _resolves(repo, upstream)
+    resolves = _resolves(repo, no_upstream)
     if resolves is None:
         return None
     if resolves.returncode != 0:
         return UPSTREAM_GONE
-    abbreviated = _abbreviates_to_head(repo, upstream)
+    abbreviated = _abbreviates_to_head(repo, no_upstream)
     if abbreviated is None:
         return None
     if abbreviated:
         return UPSTREAM_GONE
-    matches = _index_matches_head(repo, upstream, rel)
+    matches = _index_matches_head(repo, no_upstream, rel)
     if matches is None:
         return None
     if matches:
@@ -155,7 +176,16 @@ def _configured_upstream(repo: Path, branch: str) -> tuple[str | None, str | Non
 
 
 def _no_upstream() -> tuple[str, str]:
-    """The one answer for 'this branch has no upstream to compare against'."""
+    """The one answer for 'this branch has no upstream to compare against'.
+
+    Every such state -- no remote named and none resolved, the remote being this
+    clone itself, a remote that fetches nothing, or a fetch list that names no
+    refspec for the remote -- leaves the same ``(ref, verdict)``: there is
+    nothing here to compare HEAD against, and which of the four it is does not
+    change what the operator does or what any later probe could measure. The
+    docstring of :func:`_upstream_ref` lists them; this is the one place the
+    answer itself is written.
+    """
     return "", "none"
 
 

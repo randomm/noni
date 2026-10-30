@@ -16,6 +16,8 @@ the same fault differently.
 
 from __future__ import annotations
 
+import collections.abc
+
 import pytest
 from _harness import _git_env_with_identity, _git_ok, build_bare_origin
 from session_git_support import _pushable_clone, _seed_ahead
@@ -160,6 +162,38 @@ def test_fetch_rebase_push_reports_the_callers_own_code_when_attempts_run_out(tm
     assert "register.py:" in err, err
     # Bounded, not endless: one line per attempt plus the final report.
     assert err.count("push attempt") <= _session_git.MAX_PUSH_ATTEMPTS, err
+
+
+def test_the_git_seams_are_annotated_so_a_caller_can_match_one():
+    """The injectable git parameters carry a type, not a bare default.
+
+    ``stopped_state_dir`` and ``classify_rebase_failure`` each take a callable a
+    caller supplies so the verdict's probes and its abort go through the git this
+    command actually runs -- ``claim.py``'s adapter is one. An unannotated
+    parameter there is an implicit ``Any``: a caller handing in a callable with the
+    wrong arity (``claim.py``'s own git helper takes the argv first, which is the
+    whole reason the adapter exists) fails at runtime inside a failure path, the
+    worst place to discover it. The annotation is what makes that mismatch a
+    static one, so the parameter's own annotation has to name a callable.
+    """
+    import inspect
+    import typing
+
+    for name in ("stopped_state_dir", "classify_rebase_failure"):
+        function = getattr(_session_push, name)
+        parameter = inspect.signature(function).parameters["run_git"]
+        annotation = typing.get_type_hints(function)["run_git"]
+        assert annotation is not inspect.Parameter.empty, (name, parameter)
+        assert getattr(annotation, "__origin__", None) is collections.abc.Callable, \
+            (name, annotation)
+        # The seam is the whole call shape (repo plus argv), so it takes a
+        # variadic positional list rather than a fixed one-argument function.
+        shapes = _session_push.GitRunner.__args__
+        assert shapes[0] is Ellipsis, (name, shapes)
+        assert str(shapes[-1]) == "subprocess.CompletedProcess[str]", \
+            (name, shapes, _session_push.GitRunner)
+        assert parameter.default is _session_push._run_git, \
+            (name, "the seam must keep the module's own git as its default")
 
 
 def test_current_branch_refuses_a_detached_head(tmp_path):

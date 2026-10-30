@@ -21,6 +21,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from typing import Callable
 
 from ._session_git import (
     GIT_TIMEOUT,
@@ -32,6 +33,12 @@ from ._session_git import (
     git,
     stopped_state,
 )
+
+# The shape every git seam in this module has: the repo first, then the git
+# argv, and a bounded CompletedProcess back. The two injectable parameters below
+# take a callable of this shape (``claim.py``'s adapter is one), so a caller that
+# drives its own git hands in a callable and the type says what it must accept.
+GitRunner = Callable[..., subprocess.CompletedProcess[str]]
 
 
 def _run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -122,7 +129,7 @@ def _report(label: str, code: int, *lines: str) -> int:
     return code
 
 
-def stopped_state_dir(repo: Path, run_git=_run_git) -> tuple[Path | None, bool]:
+def stopped_state_dir(repo: Path, run_git: GitRunner = _run_git) -> tuple[Path | None, bool]:
     """Locate a rebase this clone is actually stopped in.
 
     Returns ``(dir, indeterminate)``. ``dir`` is set only when the state
@@ -190,7 +197,7 @@ def classify_rebase_failure(
     repo: Path, rebase: subprocess.CompletedProcess[str], *, label: str,
     exit_push_failed: int, exit_rebase_conflict: int, exit_rebase_refused: int,
     timed_out: bool = False, messages: dict[str, tuple[str, ...]],
-    run_git=_run_git,
+    run_git: GitRunner = _run_git,
 ) -> int:
     """Turn a failed ``git rebase origin/<branch>`` into the caller's exit code.
 

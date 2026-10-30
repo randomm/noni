@@ -97,8 +97,8 @@ def test_read_marker_raw_keeps_bytes_the_reader_reports_nothing_for(tmp_path, mo
     empty = tmp_path / "empty"
     empty.mkdir()
     empty_marker = empty / _marker.MARKER_NAME
-    empty_marker.write_text("", encoding="utf-8")
-    assert _marker.read_marker_raw(empty_marker) == ""
+    empty_marker.write_bytes(b"")
+    assert _marker.read_marker_raw(empty_marker) == b""
 
     unreadable = tmp_path / "unreadable"
     unreadable.mkdir()
@@ -108,11 +108,82 @@ def test_read_marker_raw_keeps_bytes_the_reader_reports_nothing_for(tmp_path, mo
     def refusing_read(self, *args, **kwargs):
         raise OSError(13, "Permission denied")
 
-    monkeypatch.setattr(Path, "read_text", refusing_read)
-    assert _marker.read_marker_raw(stuck) == ""
+    monkeypatch.setattr(Path, "read_bytes", refusing_read)
+    assert _marker.read_marker_raw(stuck) == b""
     # The parsed reader answers nothing for the same file, which is the point of
-    # the two being different functions.
+    # the two being different functions. It reads through ``Path.open`` rather
+    # than ``Path.read_text``, so the seam is driven twice: this call's read
+    # fails the way the raw one's just did, and the file whose bytes are not
+    # UTF-8 fails the way only a decoder can.
+    monkeypatch.setattr(Path, "open", refusing_read)
     assert _marker.read_marker(stuck) is None
+    monkeypatch.undo()
+    not_utf8 = tmp_path / "not-utf8"
+    not_utf8.mkdir()
+    (not_utf8 / _marker.MARKER_NAME).write_bytes(b"2026-10-01-ab\xff\n")
+    assert _marker.read_marker(not_utf8 / _marker.MARKER_NAME) is None
+    # ...and the raw reader still reports those bytes, which is what the restore
+    # writes back (see the byte-exact restore test).
+    assert _marker.read_marker_raw(not_utf8 / _marker.MARKER_NAME) == \
+        b"2026-10-01-ab\xff\n"
+
+
+def test_the_bytes_that_came_from_a_non_utf8_marker_come_back_as_they_were(tmp_path):
+    """A marker whose previous bytes were not UTF-8 is restored byte for byte.
+
+    The marker is a git-internal file: git itself writes non-UTF-8 into its own
+    directory (an unquoted ``core.editor``, a commit subject read back through
+    ``i18n.logOutputEncoding``), so an earlier run can leave one holding bytes no
+    decoder agrees on. Restoring it must not depend on those bytes being text:
+    the earlier run's bytes come back exactly, because this run has no reading of
+    them to substitute. This is the state the non-restorable case in
+    :func:`restore_marker` documents as something it cannot do, so the test asks
+    the primitive directly: hand the restore the bytes as the raw reader read them
+    and compare what lands against what was there first.
+    """
+    marked = tmp_path / "byte-exact"
+    marked.mkdir()
+    marker = marked / _marker.MARKER_NAME
+    previous = b"2026-10-01-keepme\n\xff\xfe\n"
+    marker.write_bytes(previous)
+
+    # The parsed reader answers nothing for these bytes (so this run allocates
+    # afresh and marks the tree through them), which is what makes the restore
+    # the only thing standing between this run and a rewritten marker.
+    assert _marker.read_marker(marker) is None
+    raw = _marker.read_marker_raw(marker)
+    assert raw is not None
+
+    assert _marker.restore_marker(marker, raw) is True
+    assert marker.read_bytes() == previous
+
+
+def test_the_restores_write_leaves_no_temp_file_and_no_half_written_marker(tmp_path,
+                                                                           monkeypatch):
+    """The undo is atomic in the same way the writer's own write is.
+
+    A restore that half-wrote would be worse than one that did not run: the
+    operator is told the tree is back where it was, and a marker carrying the
+    first half of the previous bytes would read as a session id that never
+    existed. So the replace is refused mid-flight and two things are asserted --
+    the old bytes are still the marker's, and no temp file was left beside it.
+    """
+    marked = tmp_path / "half"
+    marked.mkdir()
+    marker = marked / _marker.MARKER_NAME
+    marker.write_bytes(b"2026-10-01-old\n")
+
+    def exploding_replace(src, dst, *args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(_marker.os, "replace", exploding_replace)
+    assert _marker.restore_marker(marker, b"2026-10-01-new\n") is False
+    monkeypatch.undo()
+
+    assert marker.read_bytes() == b"2026-10-01-old\n"
+    assert [p.name for p in marked.iterdir()
+            if p.name.startswith(f".{_marker.MARKER_NAME}.")] == [], \
+        list(marked.iterdir())
 
 
 def test_restore_marker_reports_a_restore_that_could_not_land(tmp_path, monkeypatch):
@@ -121,9 +192,10 @@ def test_restore_marker_reports_a_restore_that_could_not_land(tmp_path, monkeypa
     The commit refusal is still the headline the operator reads, so a failed
     restore never raises out of the failure path -- but it comes back False,
     which is what lets the writer name the marker that may still be standing.
-    The two shapes here are the ones the real writer can hit: a parent directory
-    that refuses the write, and a marker whose previous bytes were not UTF-8
-    (read with surrogateescape, so the UTF-8 write cannot encode them).
+    The shape here is the one the real writer can hit: a parent directory that
+    refuses the write. (A marker whose previous bytes are not UTF-8 is no longer
+    one -- the restore writes bytes and has no codec to fail at; the byte-exact
+    test above covers that case.)
     """
     marked = tmp_path / "marked"
     marked.mkdir()
@@ -136,24 +208,19 @@ def test_restore_marker_reports_a_restore_that_could_not_land(tmp_path, monkeypa
     assert _marker.restore_marker(target, None) is True
     assert not target.exists()
 
-    assert _marker.restore_marker(target, "2026-10-01-111111\n") is True
+    assert _marker.restore_marker(target, b"2026-10-01-111111\n") is True
     assert target.read_text(encoding="utf-8") == "2026-10-01-111111\n"
 
     # A byte-exact restore: the odd bytes an earlier run left come back as they
     # were, not as the one value read_marker would have reported.
     target.write_text("2026-10-01-222222\nsecond line\n", encoding="utf-8")
-    assert _marker.restore_marker(target, "2026-10-01-222222\nsecond line\n") is True
+    assert _marker.restore_marker(target,
+                                  b"2026-10-01-222222\nsecond line\n") is True
     assert target.read_text(encoding="utf-8") == "2026-10-01-222222\nsecond line\n"
 
-    # Not UTF-8: read_marker_raw hands back lone surrogates, and the UTF-8 write
-    # cannot encode them. That is a restore that cannot land, not a traceback.
-    weird = tmp_path / "weird"
-    weird.mkdir()
-    weird_marker = weird / _marker.MARKER_NAME
-    assert _marker.restore_marker(weird_marker, "abc\udcffdef\n") is False
-
-    # A parent directory that cannot be written into, driven by making the write
-    # itself fail (a suite running as root would write into a 0500 directory).
+    # The write itself failing is what a restore cannot answer. Driven by making
+    # the replace fail, because a suite running as root would write straight into
+    # a 0500 directory and the test would pin nothing.
     blocked = tmp_path / "blocked"
     blocked.mkdir()
     blocked_marker = blocked / _marker.MARKER_NAME
@@ -163,6 +230,6 @@ def test_restore_marker_reports_a_restore_that_could_not_land(tmp_path, monkeypa
         raise OSError(13, "Permission denied")
 
     monkeypatch.setattr(os, "replace", refusing_replace)
-    assert _marker.restore_marker(blocked_marker, "y\n") is False
+    assert _marker.restore_marker(blocked_marker, b"y\n") is False
     monkeypatch.undo()
     assert blocked_marker.read_text(encoding="utf-8") == "x\n"

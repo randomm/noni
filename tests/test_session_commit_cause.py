@@ -14,6 +14,12 @@ import subprocess
 
 import pytest
 from _harness import _git_env_with_identity, _git_ok, build_bare_origin
+from session_commit_cause_support import (
+    _HARDENED_GIT,
+    _git_refusing,
+    _git_via,
+    _hung_probe_git,
+)
 from session_git_support import (
     _pushable_clone,
     _repo,
@@ -35,87 +41,6 @@ def _git_identity(monkeypatch):
     """
     for name, value in _git_env_with_identity().items():
         monkeypatch.setenv(name, value)
-
-
-def _verb_of(argv):
-    """The git verb of an argv the hardened helper built, or "" when it has none.
-
-    ``git.git`` puts a ``-C``/``-c`` preamble in front of the verb, so the verb
-    is the first word after that preamble which does not start with a dash.
-    """
-    skip_next = False
-    for part in argv[1:]:
-        if skip_next:
-            skip_next = False
-            continue
-        if part in ("-C", "-c"):
-            skip_next = True
-            continue
-        if part.startswith("-"):
-            continue
-        return part
-    return ""
-
-
-def _hung_probe_git(hung_verbs):
-    """A ``subprocess.run`` replacement that times out the named git verbs only.
-
-    ``git.git`` passes the argv it built (with the ``-C``/``-c`` preamble in
-    front), so :func:`_verb_of` is how a test drives the timeout sentinel for one
-    class of call (a transport call that cannot finish, or one plumbing verb)
-    while every other call keeps answering for real. Every call is recorded, so
-    a test can say which probes this run actually asked.
-    """
-    real_run = subprocess.run
-
-    def _run(cmd, *args, **kwargs):
-        argv = [str(part) for part in cmd]
-        verb = _verb_of(argv)
-        _run.asked.append(verb)
-        if verb in hung_verbs:
-            raise subprocess.TimeoutExpired(list(cmd), _session_git.GIT_TIMEOUT)
-        return real_run(cmd, *args, **kwargs)
-    _run.asked = []
-    return _run
-
-
-_HARDENED_GIT = _session_git.git
-
-
-def _git_refusing(verb, said):
-    """Adapt a refusal of one git verb to ``git``'s own signature.
-
-    The refusal has the shape git's own rejection has (non-zero exit, text on
-    stderr) and only the named verb is refused: every other call runs for real
-    through the hardened helper, so the classifier still has to measure the
-    upstream, the index and the work tree of this tree before it can name the
-    fault. Forcing it at this seam, rather than by arranging a state git happens
-    to refuse, is what makes it independent of whatever identity the checkout's
-    ambient config supplies (see the test that uses it). Same seam
-    :func:`_git_via` uses, for the reason that docstring gives.
-    """
-    refused = subprocess.CompletedProcess(["git", verb], 128, "", said)
-
-    def _call(repo, *args, _run=subprocess.run, **kwargs):
-        if args and str(args[0]) == verb:
-            return refused
-        return _HARDENED_GIT(repo, *args, _run=_run, **kwargs)
-    return _call
-
-
-def _git_via(run):
-    """Adapt a ``subprocess.run`` double to ``git``'s own signature.
-
-    Replacing the seam (rather than ``subprocess.run`` itself, which the hardened
-    helper reaches through its own module) is what lets a test hang one class of
-    git call and leave the rest answering for real. The helper is captured before
-    the monkeypatch, so the wrapper cannot recurse into itself. (The helper
-    resolves ``subprocess.run`` once, at its own definition, so patching
-    ``subprocess.run`` would reach neither the hung call nor the others.)
-    """
-    def _call(repo, *args, _run=run, **kwargs):
-        return _HARDENED_GIT(repo, *args, _run=_run, **kwargs)
-    return _call
 
 
 def _pushable_clone_with_change(tmp_path):
@@ -285,76 +210,61 @@ def test_a_detached_tree_is_left_to_gits_own_words(tmp_path):
     assert origin.is_dir()
 
 
-def test_a_killed_branch_probe_is_not_read_as_the_no_upstream_clause(tmp_path,
-                                                                    monkeypatch):
-    """A killed config call is not evidence that the branch has no upstream.
+def test_the_index_probes_ask_about_this_writers_own_path_only(tmp_path, monkeypatch):
+    """The nothing-to-commit question is asked of one path, never of the tree.
 
-    The no-upstream clause is the one this classifier prints whatever git said, so
-    the probe that reaches it has to have answered: a config call killed by the
-    timeout on a branch that *is* configured against origin must give the clause
-    up rather than send the operator to configure an upstream already there.
+    Two reasons the probes carry a pathspec, both measured here: a whole-tree
+    diff re-stats every file to answer a question about one, and it would report
+    somebody else's dirty file as a reason this run's own write had something to
+    commit. The writer passes the one path it owns down through
+    :func:`commit_failed`, so the argv of each of the three probes is asserted to
+    name that path -- not just the verdict they lead to.
     """
-    origin, clone = _pushable_clone(tmp_path, name="killed-config")
-    _tracked_session(clone)
-    run = _hung_probe_git({"config"})
-    monkeypatch.setattr(_session_git, "git", _git_via(run))
-    monkeypatch.setattr(_commit_cause, "_git", _git_via(run))
-    refused = subprocess.CompletedProcess([], 1, "", "fatal: nothing was answered")
+    origin, clone = _pushable_clone(tmp_path, name="pathspec")
+    _tracked_session(clone)  # the one path this writer owns, committed baseline
+    rel = "noni/sessions/2026-10-01-dddddd.md"
+    silent = subprocess.CompletedProcess([], 1, "", "fatal: rejected")
+    asked: list[tuple[str, ...]] = []
 
-    assert _commit_cause.commit_failure_cause(clone, refused) is None
-    assert "config" in run.asked, run.asked
+    def recording_git(repo, *args):
+        asked.append(tuple(str(part) for part in args))
+        return _HARDENED_GIT(repo, *args)
+
+    monkeypatch.setattr(_commit_cause, "_git", recording_git)
+    # The path is handed in, which is the whole of the difference between this
+    # call and the one a caller that named no path makes.
+    assert _commit_cause.commit_failure_cause(clone, silent, rel) == \
+        _commit_cause.NOTHING_TO_COMMIT
+
+    diffs = [argv for argv in asked if argv[0] == "diff"]
+    assert len(diffs) == 2, asked
+    for argv in diffs:
+        assert "--" in argv, argv
+        assert argv[argv.index("--") + 1:] == (rel,), argv
+    listing = [argv for argv in asked if argv[0] == "ls-files"]
+    assert len(listing) == 1, asked
+    assert listing[0][listing[0].index("--") + 1:] == (rel,), asked
+
+    # The other half of the guarantee: a file this run does not own is dirty and
+    # still does not make this run's own write look like a change. The index
+    # probe would answer differently if it were asked of the whole tree.
+    (clone / "elsewhere.md").write_text("not mine\n", encoding="utf-8")
+    asked.clear()
+    assert _commit_cause.commit_failure_cause(clone, silent, rel) == \
+        _commit_cause.NOTHING_TO_COMMIT
+    assert [argv for argv in asked if argv[0] == "diff"], asked
     assert origin.is_dir()
 
-
-def test_a_killed_resolve_probe_never_becomes_the_gone_clause(tmp_path, monkeypatch):
-    """The ref-verification probe, killed, gives the gone clause up.
-
-    ``rev-parse --verify --quiet`` returning non-zero is how the classifier learns
-    an upstream ref is gone; the same non-zero exit from a call the timeout killed
-    means nobody measured anything, so the line must not tell the operator to fix
-    a remote-tracking ref that may be perfectly present.
-    """
-    origin, clone = _pushable_clone(tmp_path, name="killed-verify")
-    _tracked_session(clone)
-    monkeypatch.setattr(_commit_cause, "_resolves", lambda repo, ref: None)
-    refused = subprocess.CompletedProcess([], 1, "", "fatal: rejected")
-    assert _commit_cause.commit_failure_cause(clone, refused) is None
-    assert origin.is_dir()
-
-
-def test_a_killed_abbreviation_probe_never_becomes_the_gone_clause(tmp_path,
-                                                                  monkeypatch):
-    """The unambiguous-name probe, killed, gives the gone clause up too.
-
-    Two probes answer the same question (``--verify --quiet`` and ``--no-abbrev
-    --verify``) and hanging only the second is the only way to show the second is
-    honoured on its own rather than riding along with the first.
-    """
-    origin, clone = _pushable_clone(tmp_path, name="killed-noabbrev")
-    _tracked_session(clone)
-    monkeypatch.setattr(_commit_cause, "_abbreviates_to_head",
-                        lambda repo, upstream: None)
-    refused = subprocess.CompletedProcess([], 1, "", "fatal: rejected")
-    assert _commit_cause.commit_failure_cause(clone, refused) is None
-    assert origin.is_dir()
-
-
-def test_a_killed_index_probe_is_never_read_as_nothing_to_commit(tmp_path,
-                                                                monkeypatch):
-    """A killed work-tree probe does not become 'this run wrote nothing new'.
-
-    The nothing-to-commit clause tells the operator their file already holds these
-    bytes. That claim rests on two diff probes and an untracked listing; if any of
-    the three died, the classifier has not measured the tree and the clause is
-    withheld.
-    """
-    origin, clone = _pushable_clone(tmp_path, name="killed-index")
-    _tracked_session(clone)
-    monkeypatch.setattr(_commit_cause, "_index_matches_head",
-                        lambda repo, upstream, rel: None)
-    refused = subprocess.CompletedProcess([], 1, "", "fatal: rejected")
-    assert _commit_cause.commit_failure_cause(clone, refused) is None
-    assert origin.is_dir()
+    # And the whole-tree form is still the whole-tree form: a caller that named
+    # no path gets the question asked of everything, which is what it asked for.
+    # Here that answer differs, because somebody else's file is the dirty one.
+    asked.clear()
+    assert _commit_cause.commit_failure_cause(clone, silent) == \
+        _commit_cause.GIT_REFUSED
+    whole = [argv for argv in asked if argv[0] == "diff"]
+    assert len(whole) == 2, asked
+    for argv in whole:
+        assert argv[argv.index("--") + 1:] == (".",), argv
 
 
 def test_a_branch_configured_against_a_local_remote_names_no_gone_state(tmp_path):

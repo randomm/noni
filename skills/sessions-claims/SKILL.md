@@ -92,12 +92,15 @@ or a marked file that cannot be read, or `--repo` naming no directory; `3` git
 could not commit; `4` a `--identity`/`--status` that is not one token, or
 `--no-commit` with `--push`.
 
-A commit that git refuses (exit 3) leaves the session file on disk and puts the
+A commit that git refuses (exit 3) is the same shape for all four writers: the
+file stays on disk with the bytes this run wrote, the one line on stderr names
+the cause in noni's words and quotes git after it, and the writer's headline
+names the path it left uncommitted. The four causes are written out once, under
+"Committing a session file" in `references/register.md`; nothing here restates
+them. `register.py` adds one promise the other three do not: it puts the
 working-copy marker back to the bytes it held before this run, including no
-marker at all when this run created one: a working copy is never left marked
-for a session git never received. The one line on stderr names the cause in
-noni's words and quotes git after it — see the four states under "Committing a
-session file" in `references/register.md`.
+marker at all when this run created one, so a working copy is never left marked
+for a session git never received.
 
 ## Releasing a claim
 
@@ -119,9 +122,9 @@ away.
 
 A refusal (exit 1, 2 or 4) writes nothing: the register file keeps the bytes it
 had and `git status --porcelain` stays empty for it. A commit git refuses (exit
-3) leaves the row removed in the work tree and names the cause in noni's words —
-see "Committing a session file" in `references/register.md` for the four
-states — with the path it left written but uncommitted.
+3) leaves the row removed in the work tree, with the cause named in noni's words
+and the path named as written but uncommitted (see the commit-refusal paragraph
+under "Registering a session").
 
 Exit codes: `0` the row is gone and committed (and pushed with `--push`, or
 left uncommitted with `--no-commit`); `1` no such session file; `2` the session
@@ -150,9 +153,9 @@ closed (status=X)`. That no-op is not a refusal: it writes nothing, exits 0, and
 leaves the tree byte-identical.
 
 A refusal (exit 1, 2 or 4) writes nothing. A commit git refuses (exit 3) leaves
-the status line written in the work tree and names the cause in noni's words —
-see "Committing a session file" in `references/register.md` for the four states
-— with the path it left written but uncommitted.
+the status line written in the work tree, with the cause named in noni's words
+and the path named as written but uncommitted (see the commit-refusal paragraph
+under "Registering a session").
 
 Exit codes: `0` closed and committed (and pushed with `--push`, or left
 uncommitted with `--no-commit`), or already closed; `1` no such session file;

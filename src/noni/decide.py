@@ -82,7 +82,7 @@ _rollback = gitwrite.rollback
 _undone = gitwrite.undo_wording
 
 # Every return path names one of these; the 'Exit codes:' block above carries
-# exactly this set (tests/test_decide.py pins them together).
+# exactly this set (tests/test_decide_docs.py pins them together).
 EXIT_OK: int = 0
 EXIT_USAGE: int = 2
 EXIT_GIT: int = 3

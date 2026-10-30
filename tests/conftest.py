@@ -113,7 +113,7 @@ NONI_ENV_VARS = (
 # NONI_PYTHON (defaulting to python3); exporting sys.executable here makes the
 # wrapper run the same interpreter pytest itself runs under, which is the one
 # coverage's subprocess hook can measure. setdefault, not set: a caller that
-# exports its own NONI_PYTHON keeps it, and tests/test_sessions_census.py::
+# exports its own NONI_PYTHON keeps it, and tests/test_sessions_census_exits.py::
 # test_exit_3_python_missing builds its own PATH-less env to prove exit 3.
 os.environ.setdefault("NONI_PYTHON", sys.executable)
 
@@ -128,7 +128,7 @@ for _var in NONI_ENV_VARS:
 def _git(repo: Path, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
     """Run git in a repo with a deterministic identity and no GPG signing.
 
-    Mirrors the reference driver's _git helper (test_file_size_ratchet.py): passes
+    Mirrors the _git helper of the driver-side suite it was taken from: passes
     -c user.name / -c user.email / -c commit.gpgsign=false so a throwaway
     repo never inherits the host's git identity or a GPG requirement.
     """

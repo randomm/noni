@@ -104,8 +104,8 @@ def _claim_module() -> object:
 
     Defined here, next to the wrapper path the subprocess tests launch. It is
     the package module, imported under its real name, so a seam a test puts on
-    it is visible to the console route too. ``test_claim_validation``
-    re-exports it so the name resolves inside that file's globals.
+    it is visible to the console route too. ``claim_fixtures``
+    re-exports it so the name resolves inside those files' globals.
     """
     from noni import claim
 

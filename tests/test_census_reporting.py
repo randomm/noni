@@ -1,0 +1,311 @@
+"""How the census reports: the state root, a clean tree, ``--json`` and the filters.
+
+``--repo`` is the state root and the cwd is never consulted; a clean tree exits 0;
+``--json`` emits one NDJSON row per finding; ``--only`` and ``--skip`` filter classes
+and nothing else.
+
+Split out of ``tests/test_census_unified.py``; the builders are in
+``tests/census_fixtures.py`` and the runners in ``tests/census_run.py``.
+"""
+
+from __future__ import annotations
+
+import json
+
+from _harness import _commit_file, _git, _init_repo
+from census_fixtures import _ndjson_rows, _session_body, _valid_record
+from census_run import _run_census, _run_census_from
+
+
+class TestStateRoot:
+    """--repo is the state root: every noni path resolves from it, and the cwd
+    of the run decides nothing except the default nobody uses here.
+
+    The three trees of each case: a separate state repository holding the
+    ``noni/`` layout, a decoy ``noni/`` planted under the cwd carrying findings
+    the census must never report, and an empty cwd a stray write would show up
+    in. A census that resolved any group from the cwd would report the decoy's
+    double-claim or grow a ``noni/`` directory, and both are asserted against."""
+
+    def test_census_reads_only_the_state_root_named_by_repo(self, tmp_path):
+        """A clean state root censuses clean while a double-claim sits in a
+        decoy register beside the cwd."""
+        root = _init_repo(tmp_path / "state-root")
+        _commit_file(root, "noni/decisions/2026-10-01-alpha.json",
+                     json.dumps(_valid_record(), indent=2))
+        _commit_file(root, "noni/sessions/2026-10-01-aaaaaa.md",
+                     _session_body("dev", claims=["#42"]))
+        cwd = tmp_path / "elsewhere"
+        cwd.mkdir()
+        decoy = cwd / "noni" / "sessions"
+        decoy.mkdir(parents=True)
+        # Two active claims on one task from two identities: exit 30 whenever
+        # the sessions group reads this directory.
+        (decoy / "2026-10-01-bbbbbb.md").write_text(
+            _session_body("one", claims=["#7"]), encoding="utf-8")
+        (decoy / "2026-10-01-cccccc.md").write_text(
+            _session_body("two", claims=["#7"]), encoding="utf-8")
+
+        rc, out, err = _run_census_from(cwd, root, "--json", "--skip", "hygiene",
+                                        "--now", "2026-10-02T00:00:00Z")
+        assert rc == 0, f"the state root is clean, got {rc}\n{out}\n{err}"
+        rows = _ndjson_rows(out)
+        assert not [r for r in rows if r.get("kind") == "finding"
+                    and r.get("check") == "session-double"], (
+            f"the census reported the decoy's double-claim, so the sessions "
+            f"group resolved from the cwd and not --repo: {rows}"
+        )
+        assert not [r for r in rows if r.get("kind") == "finding"
+                    and "bbbbbb" in json.dumps(r)], (
+            f"a row named a file that exists only in the decoy: {rows}"
+        )
+        assert not (cwd / "noni" / "direction" / "order.json").exists(), (
+            "the census is read-only: it wrote an ordering artifact under the cwd"
+        )
+
+    def test_census_reports_the_state_roots_own_findings_from_a_foreign_cwd(
+        self, tmp_path,
+    ):
+        """The other half of the same pair: the state root's own violation is
+        reported even though the cwd holds nothing but a decoy.
+
+        Without this, a first test that asserts the decoy is silent could be
+        satisfied by a census that read nothing at all."""
+        root = _init_repo(tmp_path / "state-root")
+        _commit_file(root, "noni/decisions/2026-10-01-alpha.json",
+                     json.dumps(_valid_record(), indent=2))
+        _commit_file(root, "noni/sessions/2026-10-01-bbbbbb.md",
+                     _session_body("one", claims=["#7"]))
+        _commit_file(root, "noni/sessions/2026-10-01-cccccc.md",
+                     _session_body("two", claims=["#7"]))
+        cwd = tmp_path / "elsewhere"
+        cwd.mkdir()
+
+        rc, out, err = _run_census_from(cwd, root, "--json", "--skip", "hygiene",
+                                        "--now", "2026-10-02T00:00:00Z")
+        assert rc == 30, f"the state root's double-claim must fire, got {rc}\n{out}\n{err}"
+        rows = _ndjson_rows(out)
+        assert any(r.get("check") == "session-double" and r.get("subject") == "#7"
+                   for r in rows), rows
+
+    def test_census_refuses_a_repo_that_is_not_a_directory(self, tmp_path):
+        """A --repo naming no directory is a usage error (exit 2) naming the
+        path, whatever the cwd holds."""
+        cwd = tmp_path / "elsewhere"
+        cwd.mkdir()
+        rc, _out, err = _run_census_from(cwd, tmp_path / "no-such-state-root",
+                                         "--skip", "hygiene")
+        assert rc == 2, f"expected 2, got {rc}: {err}"
+        assert "repo path does not exist" in err, err
+
+    def test_census_reads_nothing_under_home_when_the_caller_names_no_home_path(
+        self, tmp_path,
+    ):
+        """HOME holds a decoy register with a double-claim; a census of an empty
+        state root reports nothing from it.
+
+        HOME is the one directory a tool reaches without being told (git reads
+        it for config, and a leading ~ resolves through it), so it is the
+        sharpest test of "every path resolves from --repo": the caller named
+        none of it. The state root is deliberately empty, because a census of
+        an empty tree is the run most easily satisfied by reading the wrong
+        directory and still exiting clean.
+        """
+        root = _init_repo(tmp_path / "state-root")
+        _commit_file(root, "README.md", "# state\n")
+        import os
+
+        home = tmp_path / "hostile-home"
+        decoy = home / "noni" / "sessions"
+        decoy.mkdir(parents=True)
+        (decoy / "2026-10-01-aaaaaa.md").write_text(
+            _session_body("one", claims=["#7"]), encoding="utf-8")
+        (decoy / "2026-10-01-bbbbbb.md").write_text(
+            _session_body("two", claims=["#7"]), encoding="utf-8")
+        cwd = tmp_path / "elsewhere"
+        cwd.mkdir()
+
+        previous_home = os.environ.get("HOME")
+        previous_userprofile = os.environ.get("USERPROFILE")
+        os.environ["HOME"] = str(home)
+        os.environ["USERPROFILE"] = str(home)
+        try:
+            rc, out, err = _run_census_from(cwd, root, "--json", "--skip", "hygiene",
+                                            "--now", "2026-10-02T00:00:00Z")
+        finally:
+            _restore = {"HOME": previous_home, "USERPROFILE": previous_userprofile}
+            for name, value in _restore.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+        rows = _ndjson_rows(out)
+        assert rc == 0, f"an empty state root is clean, got {rc}\n{err}"
+        assert not [r for r in rows if r.get("check") == "session-double"], (
+            f"the census reported a double-claim that exists only under HOME: {rows}"
+        )
+        assert "aaaaaa" not in json.dumps(rows) and "bbbbbb" not in json.dumps(rows), rows
+        assert not (home / "noni" / "direction").exists(), (
+            "the census is read-only and never writes under HOME either"
+        )
+
+class TestClean:
+    def test_clean_repo_exits_zero(self, tmp_path):
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                      json.dumps(_valid_record(), indent=2))
+        rc, out, err = _run_census(repo)
+        assert rc == 0, f"expected exit 0, got {rc}\nstderr: {err}\nstdout: {out}"
+
+    def test_no_noni_dir_exits_zero(self, tmp_path):
+        """A repo with no noni/ directory at all exits 0 (ledger-empty is a
+        warn), but it is never silent: exactly one ledger-empty row carries the
+        state word "absent", and --strict promotes it to exit 42."""
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "README.md", "# empty\n")
+        rc, out, err = _run_census(repo, json_out=True)
+        assert rc == 0, f"expected exit 0 on repo with no noni/, got {rc}\nstderr: {err}\nstdout: {out}"
+
+        rows = [r for r in _ndjson_rows(out) if r.get("kind") == "finding"]
+        # hygiene is a separate class with its own report; the ledger side of
+        # the run must be exactly one ledger-empty row and nothing else.
+        ledger_rows = [r for r in rows if r["check"].startswith("ledger-")]
+        assert len(ledger_rows) == 1, f"expected exactly one ledger row: {ledger_rows}"
+        assert ledger_rows[0]["check"] == "ledger-empty"
+        assert ledger_rows[0]["code"] == 42
+        assert ledger_rows[0]["severity"] == "warn"
+        assert "absent" in ledger_rows[0]["message"], (
+            f"expected the 'absent' state word in the message: {ledger_rows[0]['message']}"
+        )
+
+        rc_strict, _out, err = _run_census(repo, "--only", "ledger-empty", "--strict")
+        assert rc_strict == 42, (
+            f"expected exit 42 for ledger-empty under --strict, got {rc_strict}\nstderr: {err}"
+        )
+
+    def test_recordless_ledger_dir_is_a_ledger_empty_warn(self, tmp_path):
+        """A decisions/ directory that exists but holds no record is a warn, not
+        a violation: the census exits 0 (issue #33 — a freshly attached project
+        with no decisions yet must not sit permanently red)."""
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/.gitkeep", "")
+        rc, out, err = _run_census(repo)
+        assert rc == 0, f"expected exit 0 for a recordless ledger, got {rc}\nstderr: {err}\nstdout: {out}"
+
+    def test_census_is_read_only(self, tmp_path):
+        """Running the census leaves git status --porcelain empty."""
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                      json.dumps(_valid_record(), indent=2))
+        _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md",
+                      _session_body("developer"))
+        before = _git(repo, "status", "--porcelain").stdout
+        _run_census(repo)
+        after = _git(repo, "status", "--porcelain").stdout
+        assert before == after, f"git status changed: {before!r} -> {after!r}"
+
+class TestJsonMode:
+    def test_json_emits_ndjson_to_stdout(self, tmp_path):
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md",
+                      _session_body("developer", claims=["#42"]))
+        _commit_file(repo, "noni/sessions/2026-10-01-bbbbbb.md",
+                      _session_body("reviewer", claims=["#42"]))
+        rc, out, err = _run_census(repo, json_out=True)
+        rows = _ndjson_rows(out)
+        assert rc == 30
+        finding_rows = [r for r in rows if r.get("kind") == "finding"]
+        summary_rows = [r for r in rows if r.get("kind") == "summary"]
+        assert len(finding_rows) >= 1
+        assert len(summary_rows) == 1, "exactly one summary record"
+        summary = summary_rows[0]
+        assert summary["exit"] == 30
+        assert summary["ok"] is False
+        for row in finding_rows:
+            assert row["schema"] == "noni.census/1"
+            assert row["kind"] == "finding"
+            assert "check" in row
+            assert "code" in row
+            assert "subject" in row
+            assert "artifact" in row
+            assert "message" in row
+            assert "fix" in row
+            assert "severity" in row
+
+    def test_every_finding_names_an_artifact_path(self, tmp_path):
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md",
+                      _session_body("developer", claims=["#42"]))
+        _commit_file(repo, "noni/sessions/2026-10-01-bbbbbb.md",
+                      _session_body("reviewer", claims=["#42"]))
+        rc, out, err = _run_census(repo, json_out=True)
+        rows = _ndjson_rows(out)
+        for row in rows:
+            if row.get("kind") == "finding":
+                assert row["artifact"], f"finding row has empty artifact: {row}"
+
+    def test_json_summary_ok_true_on_clean(self, tmp_path):
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                      json.dumps(_valid_record(), indent=2))
+        rc, out, err = _run_census(repo, json_out=True)
+        rows = _ndjson_rows(out)
+        summary = [r for r in rows if r.get("kind") == "summary"][0]
+        assert summary["ok"] is True
+        assert summary["exit"] == 0
+
+    def test_json_reproducible_two_runs(self, tmp_path):
+        """Two runs with the same --now produce byte-identical stdout."""
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md",
+                      _session_body("developer", claims=["#42"]))
+        _commit_file(repo, "noni/sessions/2026-10-01-bbbbbb.md",
+                      _session_body("reviewer", claims=["#42"]))
+        args = ["--now", "2026-10-02T00:00:00Z"]
+        rc1, out1, _ = _run_census(repo, *args, json_out=True)
+        rc2, out2, _ = _run_census(repo, *args, json_out=True)
+        assert rc1 == rc2 == 30
+        assert out1 == out2, f"two runs produced different output:\n---\n{out1}\n---\n{out2}"
+
+class TestCheckFilters:
+    def test_list_prints_all_checks(self):
+        import io
+        from contextlib import redirect_stdout
+        out = io.StringIO()
+        with redirect_stdout(out):
+            import importlib
+            census_mod = importlib.import_module("census")
+            rc = census_mod.main(["--list"])
+        assert rc == 0
+        lines = out.getvalue().strip().splitlines()
+        expected = {"ledger-record", "ledger-edited", "ledger-chain",
+                     "session-double", "session-claim", "session-malformed",
+                     "session-stalled", "probe",
+                     "ledger-empty", "session-same-identity", "session-deleted",
+                     "hygiene",
+                     "ordering-malformed", "ordering-stale", "ordering-closed"}
+        assert set(lines) == expected, f"got {lines}"
+
+    def test_only_session_double(self, tmp_path):
+        """--only session-double skips ledger checks."""
+        repo = _init_repo(tmp_path / "repo")
+        # Plant both a ledger violation and a double-claim
+        bad = _valid_record()
+        del bad["id"]
+        _commit_file(repo, "noni/decisions/2026-10-01-bad.json", json.dumps(bad, indent=2))
+        _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md",
+                      _session_body("developer", claims=["#42"]))
+        _commit_file(repo, "noni/sessions/2026-10-01-bbbbbb.md",
+                      _session_body("reviewer", claims=["#42"]))
+        rc, out, err = _run_census(repo, "--only", "session-double")
+        assert rc == 30, f"expected 30 (session-double only), got {rc}\nstderr: {err}\nstdout: {out}"
+
+    def test_skip_session_double(self, tmp_path):
+        """--skip session-double skips the double-claim check."""
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md",
+                      _session_body("developer", claims=["#42"]))
+        _commit_file(repo, "noni/sessions/2026-10-01-bbbbbb.md",
+                      _session_body("reviewer", claims=["#42"]))
+        rc, out, err = _run_census(repo, "--skip", "session-double")
+        assert rc == 0, f"expected 0 (double-claim skipped), got {rc}\nstderr: {err}\nstdout: {out}"

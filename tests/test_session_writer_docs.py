@@ -9,11 +9,11 @@ the rebase codes into exit 3 while their tables omitted 5 and 6 was invisible to
 the suite.
 
 The readers parse the source with ``ast`` rather than importing it, mirroring
-``tests/test_claim_validation.py``: these are scripts the suite otherwise drives
+``tests/test_claim_validation_parity.py``: these are scripts the suite otherwise drives
 as subprocesses, and an import would let a module-level side effect run inside
 the test process.
 
-Claim's own parity test is ``test_claim_validation.py``'s; the ``{0..6}`` set
+Claim's own parity test is ``test_claim_validation_parity.py``'s; the ``{0..6}`` set
 asserted here is that same PM-settled table, restated for the two verbs that
 now share it.
 """

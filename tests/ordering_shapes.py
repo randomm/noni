@@ -8,8 +8,8 @@ other refuses is a file nobody notices has rotted, because the writer will not
 touch it and the census says nothing.
 
 So the table lives here and both suites read it:
-``tests/test_order_writer.py`` drives every shape through the writer and the
-census, and ``tests/test_census_ordering.py`` drives every shape through the
+``tests/test_order_writer_artifact.py`` drives every shape through the writer and the
+census, and ``tests/test_census_ordering_malformed.py`` drives every shape through the
 census. Adding a rule to one side without the other fails here, not in the
 field.
 
@@ -198,3 +198,37 @@ def run_writer(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
 def writer_text(proc: subprocess.CompletedProcess[str]) -> str:
     """Everything a writer run said, for an assertion message."""
     return proc.stdout + proc.stderr
+
+
+# The depth that overflows the standard reader. How deep a JSON document the
+# interpreter will still parse depends on the interpreter: 3.11 gives up near
+# ``sys.getrecursionlimit()`` (default 1000: measured to break at about 990
+# levels under pytest), later builds go on to a few thousand before the C stack
+# itself gives out, so the RecursionError arms are reachable on 3.11 and not
+# merely theoretical. Before the bound, one such file at either path turned a
+# writer run into a traceback.
+DEEP = 100000
+
+
+def _deep(depth: int = DEEP) -> str:
+    """Legal JSON text nested ``depth`` levels: ``json.loads`` overflows on it.
+
+    Built as text: the value it describes is the one the standard reader cannot
+    build, so a fixture that parsed it first could not test the reader meant to
+    survive it.
+    """
+    return "[" * depth + "1" + "]" * depth
+
+
+def _deep_artifact(confirmed: str) -> str:
+    """An otherwise well-formed artifact whose entry carries one extra field
+    nested ``DEEP`` levels.
+
+    ``confirmed`` is required and not defaulted: the writer's suite plants this
+    artifact at its own ``STAMP`` and the census's suite at its own ``FRESH``,
+    and a default would silently pick one side's bytes for the other.
+    """
+    if not isinstance(confirmed, str):
+        raise TypeError("confirmed must be a timestamp string")
+    return ('{"schema": "noni.order/1", "entries": [{"issue": 7, "decision": null, '
+            '"confirmed": "' + confirmed + '", "x": ' + _deep() + "}]}")

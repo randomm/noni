@@ -12,7 +12,7 @@ malformed claim rows (exit 32).
 
 Every exit code below is published as a named EXIT_* constant; the 'Exit
 codes:' block and the 'Usage:' block below are kept in sync with that code by
-tests/test_claim_validation.py.
+tests/test_claim_validation_parity.py.
 
 Usage:
     claim.py --repo REPO --session-id SID --task TASK
@@ -76,7 +76,7 @@ GIT_TIMEOUT_RC: int = 124
 
 # Every return path in this module names one of these constants, and the
 # docstring's 'Exit codes:' block above carries exactly this set of codes
-# (asserted by tests/test_claim_validation.py, which reads both).
+# (asserted by tests/test_claim_validation_parity.py, which reads both).
 EXIT_OK: int = 0
 EXIT_REGISTER_MISSING: int = 1
 EXIT_SESSION_MALFORMED: int = 2

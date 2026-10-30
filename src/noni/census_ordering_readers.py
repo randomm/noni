@@ -296,7 +296,7 @@ def ledger_records(ledger: Path, file_kind, load_json: Callable[[bytes], object]
     names is asked nothing of the directory. The attribute, and not the function
     closed over, is what keeps a test of the ordering group able to fault this
     group's read alone (see ``_listing_faults`` in
-    ``tests/test_census_ordering.py``), rather than faulting the whole run's
+    ``tests/ordering_fixtures.py``), rather than faulting the whole run's
     read.
     """
     if names is None:

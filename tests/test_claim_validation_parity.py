@@ -3,7 +3,6 @@
 Extracted from the claim suite: the parity checks between the module's docstring
 and its argparse surface, its exit constants, and the harness that runs it."""
 
-import ast
 
 from _harness import (
     REPO,
@@ -15,46 +14,9 @@ from claim_fixtures import (
     _docstring_usage_flags,
     _markdown_exit_codes,
     _module_exit_codes,
+    _parser_dests,
     _parser_flags,
 )
-
-
-def _parser_dests(tree: ast.Module) -> dict[str, str]:
-    """Map each long option string to the attribute name its action writes.
-
-    The dash spelling alone is not the whole contract: claim.py reads
-    ``args.no_commit``, so the dest is the other half and is what an alias or a
-    renamed dest would silently break.
-    """
-    main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
-    dests: dict[str, str] = {}
-    for node in ast.walk(main):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "add_argument"
-        ):
-            opts = [
-                arg.value for arg in node.args
-                if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
-                and arg.value.startswith("--")
-            ]
-            dest = next(
-                (
-                    kw.value.value
-                    for kw in node.keywords
-                    if kw.arg == "dest" and isinstance(kw.value, ast.Constant)
-                ),
-                None,
-            )
-            if dest is None and opts:
-                # argparse's own rule: the first long option, dashes to
-                # underscores.
-                dest = opts[0].lstrip("-").replace("-", "_")
-            if dest:
-                for opt in opts:
-                    dests[opt] = dest
-    return dests
 
 
 def test_docstring_exit_codes_match_the_exit_constants():

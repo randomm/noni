@@ -13,13 +13,13 @@ from __future__ import annotations
 import json
 import sys
 
-from _harness import _commit_file, _home_path_violation, _init_repo, _secret_violation
+from _harness import _commit_file, _home_path_violation, _init_repo
 from census_denylist import _clear_denylist, _with_denylist
+from census_exit_codes_builders import _SECRET
 from census_fixtures import _ndjson_rows, _valid_record
 from census_hygiene_target import _hygiene_target
 from census_run import _run_census
 
-_SECRET = _secret_violation()
 
 class TestHygieneRowContract:
     """The hygiene class's four states are machine-distinguishable: subject, not

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from order_fixtures import (
     _gitwrite_module,
+    _schema_case,
     _schema_module,
 )
 
@@ -134,16 +135,6 @@ def test_the_schema_refuses_a_non_finite_number_in_any_position(tmp_path):
         pass
     else:
         raise AssertionError("refuse_constant accepted NaN")
-
-
-def _schema_case(**entry_fields):
-    """A well-formed document whose single entry has ``entry_fields`` overridden,
-    or gained when the name is not one of the entry's three fields."""
-    schema = _schema_module()
-    entry = {"issue": 1, "decision": None, "confirmed": "2026-10-27T12:00:00Z"}
-    for name, value in entry_fields.items():
-        entry[name] = value
-    return {"schema": schema.ORDER_SCHEMA, "entries": [entry]}
 
 
 def test_the_schema_reports_the_first_defect_it_finds(tmp_path):

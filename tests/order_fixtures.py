@@ -315,11 +315,17 @@ def _deep(depth: int = DEEP) -> str:
     return "[" * depth + "1" + "]" * depth
 
 
-def _deep_artifact() -> str:
+def _deep_artifact(confirmed: str = STAMP) -> str:
     """An otherwise well-formed artifact whose entry carries one extra field
-    nested ``DEEP`` levels."""
+    nested ``DEEP`` levels.
+
+    ``confirmed`` is a parameter because the census's ordering tests plant the
+    artifact at the census's own "fresh" timestamp while the writer's tests
+    plant it at this module's ``STAMP``; the default keeps the writer side's
+    bytes exactly as they were.
+    """
     return ('{"schema": "noni.order/1", "entries": [{"issue": 7, "decision": null, '
-            '"confirmed": "' + STAMP + '", "x": ' + _deep() + "}]}")
+            '"confirmed": "' + confirmed + '", "x": ' + _deep() + "}]}")
 
 
 def _order_ast() -> ast.Module:

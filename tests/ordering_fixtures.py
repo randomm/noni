@@ -22,7 +22,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import census
 from _harness import REPO, SRC, _git, _init_repo, git_pin_date, subprocess_env
 
 BASELINE_ID = "2026-10-01-baseline"
@@ -273,6 +272,8 @@ def _run_in_process(repo: Path, *extra: str) -> tuple[int, list[dict], str, str]
     is built exactly as ``_run`` builds it, so the two differ in one thing only:
     whether the census runs here or there.
     """
+    import census
+
     argv = ["--repo", str(repo), "--json", "--now", NOW]
     argv += _only_args(extra)
     buffer = io.StringIO()
@@ -296,6 +297,7 @@ def _ordering_host_faults() -> list[tuple[OSError, tuple[str, ...]]]:
         (OSError(13, "Permission denied", "~deploy"), ("deploy",)),
     ]
 
+@contextlib.contextmanager
 def _listing_fault(ledger: Path, fault: OSError):
     """Fault the ordering group's read of ``ledger`` with one given exception.
 

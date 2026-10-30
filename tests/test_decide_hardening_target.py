@@ -9,7 +9,6 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from typing import Callable
 
 from _harness import (
     _decide_module,
@@ -41,6 +40,7 @@ from decide_hardening_fixtures import (
     _decide_in_process,
     _non_canonical_target_repo,
 )
+from decide_inprocess_fixtures import _supersede_in_process
 
 
 def test_hardening_non_utf8_target_refuses_with_four_and_echoes_nothing(tmp_path):
@@ -243,35 +243,6 @@ def test_seam_value_that_is_not_one_is_inert_and_the_run_writes(tmp_path):
         assert _read(repo, NEW_ID)["id"] == NEW_ID
         assert _head_paths(repo) == [f"noni/decisions/{NEW_ID}.json"]
 
-
-def _supersede_in_process(repo: Path, write_fails_on: str | None, staged_target: bool = True,
-                          failures: dict[str, tuple[int, str]] | None = None,
-                          monkeypatch=None,
-                          env: dict | None = None,
-                          target_id: str | None = None,
-                          render_observer: Callable[[str], None] | None = None,
-                          call_observer: Callable[[str, tuple[str, ...]], None] | None = None,
-                          ) -> subprocess.CompletedProcess[str]:
-    """The in-process supersede, with this run's injections.
-
-    The flag set is ``_supersede``'s own (the baseline's ``--date``, every answer,
-    ``--supersedes``): a launched run cannot see a patch of this
-    process, so the write-failure and probe-failure tests drive the writer
-    in-process, and a second ``--date`` appended here would be overridden by the
-    one ``_decide_in_process`` already passed rather than selecting the baseline's
-    day. ``target_id`` names the record to supersede and defaults to the baseline:
-    a fixture that planted its own target must name it, or the run supersedes a
-    different record and proves nothing about the one under test. ``write_fails_on``,
-    ``failures``, ``render_observer`` and ``call_observer`` are the seams it passes
-    through.
-    """
-    return _decide_in_process(
-        repo, "--date", BASELINE_ID[:10], *ANSWERED,
-        "--supersedes", target_id or BASELINE_ID,
-        env={**_identity_env(), **(env or {})}, write_fails_on=write_fails_on,
-        failures=failures, staged_target=staged_target, monkeypatch=monkeypatch,
-        render_observer=render_observer, call_observer=call_observer,
-    )
 
 
 def test_hardening_a_failing_status_probe_refuses_with_three(tmp_path, monkeypatch):

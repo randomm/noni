@@ -13,15 +13,13 @@ from __future__ import annotations
 
 import json
 
-from _harness import _commit_file, _home_path_violation, _init_repo, _secret_violation
+from _harness import _commit_file, _init_repo
 from census_denylist import _clear_denylist, _with_denylist
+from census_exit_codes_builders import _HOME_PATH, _SECRET
 from census_fixtures import _ndjson_rows, _valid_record
 from census_hygiene_target import _hygiene_target
 from census_run import _run_census
 
-_HOME_PATH = _home_path_violation()
-
-_SECRET = _secret_violation()
 
 class TestHygiene:
     """The hygiene class (warn 50): the in-process public_safety scan over the

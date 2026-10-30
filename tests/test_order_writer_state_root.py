@@ -3,72 +3,23 @@
 Extracted from the order writer suite: the writer driven from a decoy cwd so a
 path leak into the working directory shows up as a refusal, never as a write."""
 
-import subprocess
-from pathlib import Path
-
-from _harness import (
-    ORDER,
-    _git,
-    _init_repo,
-    run_from,
-)
 from order_fixtures import (
     BASELINE_ID,
     NOW,
-    ORDER_CWD_DIR,
-    ORDER_DECOY_DIR,
     ORDER_DECOY_ISSUE,
     ORDER_REL,
-    ORDER_STATE_DIR,
     _assert_census_clean,
     _canonical,
     _entry,
     _head_paths,
     _issues,
+    _order_case,
+    _order_from,
     _order_path,
-    _repo,
 )
 from ordering_shapes import (
     commit_artifact,
 )
-
-
-def _order_state_root(tmp_path: Path) -> Path:
-    """The state repository: a git repo with an identity and the baseline
-    record ``add --decision`` cites, and no order file yet."""
-    root = _repo(tmp_path, ORDER_STATE_DIR)
-    _git(root, "config", "user.name", "Replay")
-    _git(root, "config", "user.email", "replay@fixture.invalid")
-    return root
-
-
-def _order_decoy(tmp_path: Path) -> Path:
-    """A decoy state root beside the cwd: a git repo holding one committed
-    ordering artifact, so a cwd-driven run would have had an order to overwrite.
-
-    A git repository for the same reason as decide.py's decoy: a plain directory
-    would make the writer's own path probes answer first, and the test would
-    measure the probe rather than the resolution.
-    """
-    decoy = _init_repo(tmp_path / ORDER_DECOY_DIR)
-    _git(decoy, "config", "user.name", "Replay")
-    _git(decoy, "config", "user.email", "replay@fixture.invalid")
-    commit_artifact(decoy, _canonical([_entry(ORDER_DECOY_ISSUE, BASELINE_ID)]))
-    return decoy
-
-
-def _order_case(tmp_path: Path) -> tuple[Path, Path, Path]:
-    """The three trees of one order state-root run: (state root, decoy, cwd)."""
-    root = _order_state_root(tmp_path)
-    decoy = _order_decoy(tmp_path)
-    cwd = tmp_path / ORDER_CWD_DIR
-    cwd.mkdir(parents=True, exist_ok=True)
-    return root, decoy, cwd
-
-
-def _order_from(cwd: Path, repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    """order.py launched from ``cwd``, with ``--repo`` naming the state root."""
-    return run_from(cwd, ORDER, "--repo", str(repo), *args)
 
 
 def test_order_writes_the_state_root_and_nothing_beside_the_cwd(tmp_path):

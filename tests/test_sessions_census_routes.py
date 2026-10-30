@@ -9,12 +9,13 @@ Split out of ``tests/test_sessions_census.py``; the builders are in
 
 from __future__ import annotations
 
-import subprocess
-import sys
 from pathlib import Path
 
-from _harness import subprocess_env
-from sessions_census_fixtures import _sessions_census_case
+from sessions_census_fixtures import (
+    _routes,
+    _run_argv,
+    _sessions_census_case,
+)
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -33,32 +34,6 @@ REPO = Path(__file__).resolve().parent.parent
 CENSUS_SH = REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"
 SHIM = REPO / "skills" / "sessions-claims" / "scripts" / "census-sessions.sh"
 WRAPPER = REPO / "skills" / "sessions-claims" / "scripts" / "census-sessions.py"
-
-
-def _run_argv(cwd: Path, argv: list[str]) -> subprocess.CompletedProcess[str]:
-    """One sessions-census route launched from ``cwd`` with argv given verbatim.
-
-    The list form is deliberate: the three routes differ only in the command
-    prefix (``python``, ``bash``, ``bash census.sh --sessions``), so one runner
-    keeps the cwd, the environment and the timeout identical across them and a
-    pass on one route means the same thing as a pass on another.
-    """
-    return subprocess.run(argv, capture_output=True, text=True,
-                          env=subprocess_env(), cwd=str(cwd), timeout=60)
-
-
-def _routes(cwd: Path, target: Path | None) -> list[list[str]]:
-    """Every entry point for one sessions census of ``target`` (None = no argument).
-
-    ``target`` is passed as one argv entry (or omitted entirely) so the routes
-    differ only in how they reach the same core.
-    """
-    arg = [str(target)] if target is not None else []
-    return [
-        [sys.executable, str(WRAPPER), *arg],
-        ["bash", str(SHIM), *arg],
-        ["bash", str(CENSUS_SH), "--sessions", *arg],
-    ]
 
 
 def test_no_shipped_entry_point_carries_a_cwd_relative_state_default():

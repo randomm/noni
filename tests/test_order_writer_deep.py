@@ -15,13 +15,15 @@ from _harness import (
 )
 from order_fixtures import (
     BASELINE_ID,
+    DEEP,
     FIXTURE,
     NOW,
     ORDER_REL,
-    STAMP,
     _assert_census_clean,
     _canonical,
     _census_ordering,
+    _deep,
+    _deep_artifact,
     _entry,
     _order,
     _order_path,
@@ -45,25 +47,8 @@ from ordering_shapes import (
 # levels under pytest), later builds go on to a few thousand before the C stack
 # itself gives out, so the RecursionError arms are reachable on 3.11 and not
 # merely theoretical. Before the bound, one such file at either path turned a
-# writer run into a traceback.
-DEEP = 100000
-
-
-def _deep(depth: int = DEEP) -> str:
-    """Legal JSON text nested ``depth`` levels: ``json.loads`` overflows on it.
-
-    Built as text: the value it describes is the one the standard reader cannot
-    build, so a fixture that parsed it first could not test the reader meant to
-    survive it.
-    """
-    return "[" * depth + "1" + "]" * depth
-
-
-def _deep_artifact() -> str:
-    """An otherwise well-formed artifact whose entry carries one extra field
-    nested ``DEEP`` levels."""
-    return ('{"schema": "noni.order/1", "entries": [{"issue": 7, "decision": null, '
-            '"confirmed": "' + STAMP + '", "x": ' + _deep() + "}]}")
+# writer run into a traceback. The ``DEEP`` / ``_deep`` / ``_deep_artifact``
+# shapes have one owner in ``tests/order_fixtures.py``.
 
 
 def test_a_deeply_nested_artifact_is_refused_at_four_and_not_a_traceback(tmp_path):

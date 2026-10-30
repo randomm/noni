@@ -16,28 +16,11 @@ the same fault differently.
 
 from __future__ import annotations
 
-import pytest
-from _harness import _git_env_with_identity, _git_ok, build_bare_origin
+from _harness import _git_ok, build_bare_origin
+from session_git_support import _git_identity as _git_identity  # noqa: F401
 from session_git_support import _pushable_clone, _seed_ahead
 
 from noni import _session_git
-
-
-@pytest.fixture(autouse=True)
-def _git_identity(monkeypatch):
-    """Pin a git identity for this file's real commits.
-
-    The suite's autouse conftest clears ``GIT_AUTHOR_*`` / ``GIT_COMMITTER_*``
-    so a host identity cannot reach a test — which also means the in-process
-    helper calls below would have git refuse every commit for want of one. The
-    subprocess launchers pin their own (``run_claim``, ``run_close``,
-    ``run_register``); these tests drive the helpers directly, so they pin it
-    the same way from the same table, and block the host gitconfig the same way
-    those launchers do.
-    """
-    for name, value in _git_env_with_identity().items():
-        monkeypatch.setenv(name, value)
-
 
 # --- the rebase classifier ---------------------------------------------------
 

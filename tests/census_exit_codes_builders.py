@@ -13,22 +13,17 @@ from pathlib import Path
 
 import census
 from _harness import _home_path_violation, _secret_violation
+from census_ledger_fixtures import _valid_record as _valid_record  # noqa: F401
+
+# ^ re-export: the exit-code suite imports `_valid_record` from this module and
+# the ledger suite from `census_ledger_fixtures`; the two copies were byte-
+# identical, so the ledger module is the single owner.
 
 # Synthetic violation shapes, built by tests/_harness.py from public_safety's
 # own pattern tables (see there for why they are not literals and why the
 # construction is not copy-pasted into this file).
 _HOME_PATH = _home_path_violation()
 _SECRET = _secret_violation()
-
-
-def _valid_record(rec_id="2026-10-01-alpha", status="decided", supersedes=None) -> dict:
-    return {
-        "id": rec_id, "date": "2026-10-01T10:00:00Z", "asked_by": "dev",
-        "questions": [{"id": "q1", "text": "Q?", "options": ["yes", "no"], "answer": "yes"}],
-        "by": "T", "scope": "s", "status": status, "supersedes": supersedes,
-    }
-
-
 
 
 def _session_body(identity: str, claims: list[str] | None = None) -> str:

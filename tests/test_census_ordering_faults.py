@@ -10,18 +10,16 @@ Split out of ``tests/test_census_ordering.py``; the builders are in
 
 from __future__ import annotations
 
-import contextlib
-import importlib
-import importlib.util
 import json
 import shutil
-from pathlib import Path
 
 import pytest
 from ordering_fixtures import (
     _entry,
+    _listing_fault,
     _listing_faults,
     _listing_faults_all_reads,
+    _ordering_host_faults,
     _ordering_record_read_faults,
     _repo,
     _run,
@@ -136,54 +134,6 @@ def test_an_unlistable_ledger_is_reported_by_the_ledger_group_too(tmp_path):
         # Both classes are fail classes here: the ordering row is a fail class
         # outright, and --strict promotes the ledger group's cannot-tell warn.
         assert code == 15, (code, out, err)
-
-
-def _ordering_host_faults() -> list[tuple[OSError, tuple[str, ...]]]:
-    """The faults whose filename the scrubber keeps losing, and their parts.
-
-    Built at runtime, never literals: a tracked file carrying one of these paths
-    would trip the census's own hygiene class. A non-ASCII component with a space
-    in it, and the bare home of a service account -- the two shapes the path arms
-    of ``census_text._stripped`` cannot be relied on to catch, which is why the
-    row is built without the filename rather than scrubbed after it.
-    """
-    return [
-        (OSError(13, "Permission denied", "/home/someone/\u00fcn\u00ef c\u00f6de/my dir/"),
-         ("someone", "\u00fcn\u00ef", "c\u00f6de", "my dir")),
-        (OSError(13, "Permission denied", "~deploy"), ("deploy",)),
-    ]
-
-
-@contextlib.contextmanager
-def _listing_fault(ledger: Path, fault: OSError):
-    """Fault the ordering group's read of ``ledger`` with one given exception.
-
-    ``_listing_faults`` raises a bare ``OSError(text)``, which is the shape every
-    other test here wants. This one takes the exception itself, for the test that
-    needs the filename a real fault carries.
-    """
-    ordering = importlib.import_module("noni.census_ordering")
-    readers = importlib.import_module("noni.census_ordering_readers")
-    real_check = ordering.check_ordering
-    real_helper = readers.listing_helper
-    target = Path(ledger)
-
-    def check_without_names(*args, **kwargs):
-        kwargs["names"] = None
-        return real_check(*args, **kwargs)
-
-    def boom(path):
-        if Path(path) == target:
-            raise fault
-        return real_helper(path)
-
-    ordering.check_ordering = check_without_names
-    readers.listing_helper = boom
-    try:
-        yield
-    finally:
-        ordering.check_ordering = real_check
-        readers.listing_helper = real_helper
 
 
 @pytest.mark.parametrize("case", range(2))

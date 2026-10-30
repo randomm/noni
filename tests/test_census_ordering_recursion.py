@@ -15,6 +15,7 @@ import json
 import sys
 
 from _harness import REPO, SRC, _harness_source
+from order_fixtures import DEEP, _deep, _deep_artifact
 from ordering_fixtures import (
     _entry,
     _order,
@@ -48,25 +49,9 @@ SCRIPTS = SRC / "noni"
 # this deep before this product's bound is consulted.
 # Before the bound, one such file ended the whole run with a traceback: an
 # arbiter that crashes answers nothing, and a report that never prints is the
-# same lie as one that prints "clean".
-DEEP = 100000
-
-
-def _deep(depth: int = DEEP) -> str:
-    """Legal JSON text nested ``depth`` levels: ``json.loads`` overflows on it.
-
-    Built as text and not by rendering a Python value -- the value is the one the
-    standard reader cannot build, so a fixture that had to parse it first could
-    not test the reader that is supposed to survive it.
-    """
-    return "[" * depth + "1" + "]" * depth
-
-
-def _deep_artifact() -> str:
-    """An otherwise well-formed artifact whose entry carries one extra field
-    nested ``DEEP`` levels."""
-    return ('{"schema": "noni.order/1", "entries": [{"issue": 7, "decision": null, '
-            '"confirmed": "' + FRESH + '", "x": ' + _deep() + "}]}")
+# same lie as one that prints "clean". The ``DEEP`` / ``_deep`` shapes have one
+# owner in ``tests/order_fixtures.py``, and ``_deep_artifact`` there takes the
+# timestamp as ``confirmed`` so this file can plant the census's own ``FRESH``.
 
 
 def test_a_deeply_nested_artifact_is_malformed_and_not_a_traceback(tmp_path):
@@ -74,7 +59,7 @@ def test_a_deeply_nested_artifact_is_malformed_and_not_a_traceback(tmp_path):
     artifact is there and is not the artifact, and the run exits at the class's
     own code with the class's own fixed wording."""
     repo = _repo(tmp_path, "deep-artifact")
-    _order(repo, _deep_artifact())
+    _order(repo, _deep_artifact(FRESH))
     code, rows, out, err = _run(repo)
     combined = out + err
     assert "RecursionError" not in combined, combined[-2000:]

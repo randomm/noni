@@ -13,7 +13,11 @@ import json
 from pathlib import Path
 
 from _harness import run_from
-from sessions_census_fixtures import _write_sessions_dir
+from sessions_census_fixtures import (
+    CENSUS_STATE_DIR,
+    _sessions_census_case,
+    _write_sessions_dir,
+)
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -26,50 +30,6 @@ REPO = Path(__file__).resolve().parent.parent
 # nothing. Three trees: the state root's register, a decoy register beside the
 # cwd carrying a double-claim of its own, and an empty cwd a stray write would
 # show up in.
-
-CENSUS_STATE_DIR = "sessions-census-state-root"
-CENSUS_CWD_DIR = "sessions-census-cwd"
-CENSUS_DECOY_DIR = "sessions-census-decoy"
-
-
-def _sessions_census_case(tmp_path: Path) -> tuple[Path, Path, Path]:
-    """The three trees of one sessions-census run: (state root, decoy, cwd).
-
-    The state root's register is clean and the decoy's is the double-claim, so
-    exit 0 is the answer that can only come from reading the right directory: a
-    run driven by the cwd would have reported the decoy's two active claims on
-    one task. The fixture shape is the one the golden fixtures use.
-    """
-    root = tmp_path / CENSUS_STATE_DIR / "noni" / "sessions"
-    _write_sessions_dir(root, {
-        "2026-10-01-aaaaaa.md": {
-            "identity": "developer", "host/worktree": "ws-1",
-            "started": "2026-10-01T10:00:00Z", "status": "active",
-            "claims": ["#1"],
-        },
-        "2026-10-01-bbbbbb.md": {
-            "identity": "reviewer", "host/worktree": "ws-2",
-            "started": "2026-10-01T11:00:00Z", "status": "active",
-            "claims": ["#2"],
-        },
-    })
-    decoy = tmp_path / CENSUS_DECOY_DIR / "noni" / "sessions"
-    _write_sessions_dir(decoy, {
-        "2026-10-01-cccccc.md": {
-            "identity": "one", "host/worktree": "ws-3",
-            "started": "2026-10-01T10:00:00Z", "status": "active",
-            "claims": ["#999"],
-        },
-        "2026-10-01-dddddd.md": {
-            "identity": "two", "host/worktree": "ws-4",
-            "started": "2026-10-01T10:00:00Z", "status": "active",
-            "claims": ["#999"],
-        },
-    })
-    cwd = tmp_path / CENSUS_CWD_DIR
-    cwd.mkdir(parents=True, exist_ok=True)
-    return root, decoy, cwd
-
 
 def test_the_state_root_named_by_the_caller_is_the_only_one_read(tmp_path):
     """A clean state root censuses clean while a decoy register beside the cwd

@@ -31,10 +31,6 @@ SESSION_ID = "2026-10-01-aaaaaa"
 # sys.path mutation and no collision with any other module named "claim").
 claim_mod = _claim_module()
 
-# The census scripts the parity tests run over the same sessions directory.
-CENSUS_PY = REPO / "skills" / "census" / "scripts" / "census.py"
-CENSUS_SH = REPO / "skills" / "sessions-claims" / "scripts" / "census.sh"
-
 
 def _session_body(identity: str, claims: list[str] | None = None) -> str:
     lines = [f"- identity: {identity}", "- host/worktree: ws",

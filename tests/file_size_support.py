@@ -31,15 +31,44 @@ def tracked_files(repo: Path) -> list[str]:
     repository, the index or the object store away from ``repo``, which is the
     one tree this gate answers for.
     """
+    hardening = ["-c", "core.fsmonitor=false", "-c", f"core.hooksPath={os.devnull}",
+                 "-c", "protocol.ext.allow=never"]
+    return _ls_files(repo, hardening, _hardened_env())
+
+
+def tracked_files_unhardened(repo: Path) -> list[str]:
+    """A plain ``git ls-files -z`` on ``repo``: no ``-c`` overrides at all.
+
+    The control for the fsmonitor test only. It shares the hardened environment
+    (so ambient ``GIT_*`` cannot relocate the tree and the two host config
+    files are still null), but nothing disables the repo's own
+    ``core.fsmonitor``, so a git that consults one execs the tree's helper here.
+    """
+    return _ls_files(repo, [], _hardened_env())
+
+
+def _hardened_env() -> dict[str, str]:
+    """The listing environment: the product's child env plus the null config files.
+
+    Shared by both listings so the fsmonitor control differs from the hardened
+    run only in its ``-c`` overrides, not in its environment.
+    """
     env = gitenv.child_env()
     env["GIT_CONFIG_GLOBAL"] = os.devnull
     env["GIT_CONFIG_SYSTEM"] = os.devnull
+    return env
+
+
+def _ls_files(repo: Path, extra_args: list[str], env: dict[str, str]) -> list[str]:
+    """``git ls-files -z`` on ``repo`` with ``extra_args`` before the subcommand.
+
+    The single place the gate shells out to git. Callers choose the hardening
+    (or none) so the control and the hardened run differ only in their ``-c``
+    overrides. A non-zero exit is raised, never swallowed: an empty listing
+    from a failed git must not read as a clean tree.
+    """
     proc = subprocess.run(
-        ["git", "-C", str(repo),
-         "-c", "core.fsmonitor=false",
-         "-c", f"core.hooksPath={os.devnull}",
-         "-c", "protocol.ext.allow=never",
-         "ls-files", "-z"],
+        ["git", "-C", str(repo), *extra_args, "ls-files", "-z"],
         capture_output=True,
         text=True,
         timeout=30,

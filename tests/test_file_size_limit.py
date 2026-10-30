@@ -18,11 +18,20 @@ hardened ``git ls-files`` listing it measures lives in ``file_size_support``.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
+import pytest
+
+# The helper modules live in tests/ alongside this one, on the same bare import
+# path as the harness facade, so they belong in the same block as it.
 from _harness import _git, _init_repo
-from file_size_hardening_support import _arm_fsmonitor, _repo_with_planted_violations
-from file_size_support import tracked_files
+from file_size_hardening_support import (
+    _arm_fsmonitor,
+    _repo_with_planted_violations,
+    _stale_index,
+)
+from file_size_support import tracked_files, tracked_files_unhardened
 
 SOURCE_LIMIT = 500
 SKILL_MD_LIMIT = 400
@@ -47,11 +56,15 @@ def _limit_for(rel: str, path: Path) -> int | None:
 
     Markdown (except SKILL.md), JSON and data files have no cap: the rule is
     about source files. Everything else named by the rule is decided by suffix,
-    case-insensitively (``.PY`` is Python), with the shebang as the catch-all
-    for an interpreter this list does not name, so a new kind of source file is
-    covered the day it is added.
+    case-insensitively (``.PY`` is Python, per AGENTS.md), and the skill file's
+    name is matched the same way: ``path.name.lower() == "skill.md"``. Matching
+    that name byte-for-byte instead exempts every skill file whose case differs
+    from the canonical spelling, silently and for no reason, which is why both
+    halves of the planted case pair are asserted in the proof test below. The
+    shebang is the catch-all for an interpreter this list does not name, so a
+    new kind of source file is covered the day it is added.
     """
-    if path.name == "SKILL.md":
+    if path.name.lower() == "skill.md":
         return SKILL_MD_LIMIT
     suffix = path.suffix.lower()
     if suffix in (".py", ".sh"):
@@ -70,12 +83,12 @@ def _violation(rel: str, path: Path) -> tuple[str, str, int] | None:
 
     A path git tracks but the working tree cannot offer is still a tracked
     source file the rule speaks for, so it is reported with its reason rather
-    than skipped: "tracked but missing" for a deleted file, and the error class
-    for anything else (an unreadable file, a dangling symlink). A tracked
-    symlink is skipped instead: its target, if tracked, is measured itself.
+    than skipped: "tracked but missing" for a deleted file or a dangling
+    symlink, and the error class for anything else (an unreadable file). A
+    tracked symlink is measured through the link, so a link onto an oversized
+    file counts against the link's own path: tracking is the act the rule
+    governs, and the target may not be tracked at all.
     """
-    if path.is_symlink():
-        return None
     try:
         if not path.is_file():
             return (rel, _MISSING, 0)
@@ -104,14 +117,26 @@ def oversized_files(repo: Path) -> list[tuple[str, str, int]]:
 
 def test_tracked_source_files_are_within_the_line_limits() -> None:
     """No tracked source file in this repository is over its cap, and every
-    tracked path can be measured."""
+    tracked path can be measured.
+
+    The listing itself is asserted non-empty first: a gate whose git call came
+    back with nothing would have no offenders to report and would pass green
+    while measuring nothing, so the emptiness check is what makes the green
+    run mean "measured and clean" rather than "asked and got nothing".
+    """
     repo = Path(__file__).resolve().parent.parent
+    listed = tracked_files(repo)
+    assert any(Path(rel).suffix.lower() == ".py" for rel in listed), (
+        f"the hardened listing found no tracked Python file in {repo}; the gate "
+        "is measuring nothing, so a green run here would prove nothing"
+    )
+    assert listed, f"the hardened listing returned no tracked paths at all for {repo}"
     offenders = oversized_files(repo)
-    listed = "\n".join(f"  {rel}: {reason} (limit {limit})" for rel, reason, limit in offenders)
+    detail = "\n".join(f"  {rel}: {reason} (limit {limit})" for rel, reason, limit in offenders)
     assert not offenders, (
         "these tracked source files exceed the line limits in AGENTS.md, or are "
         "tracked and not measurable; split each one along a natural seam (no "
-        f"exception list, no override):\n{listed}"
+        f"exception list, no override):\n{detail}"
     )
 
 
@@ -121,14 +146,22 @@ def test_the_checker_reports_planted_oversized_files(tmp_path) -> None:
     The proof that the green run above means something: without this, a
     checker that silently matched no file would pass forever. Each branch of
     ``_limit_for`` gets its own file just over its cap, the case-insensitive
-    suffix and the shebang catch-all included, plus a tracked file deleted
-    from the working tree. Two controls run alongside: a 900-line Markdown
-    note and a 900-line untracked note prove the exemptions and the
-    tracked-only listing. The throwaway repo is built under tmp_path with git
-    init, so the real tree is never written to.
+    suffix and the shebang catch-all included, the SKILL.md name in both case
+    spellings, and a symlink onto an oversized file plus a dangling one (both
+    measured through the link, so the link's own path is reported). Also
+    present: a tracked file deleted from the working tree. Two controls run
+    alongside: a 900-line Markdown note and a 900-line untracked note prove the
+    exemptions and the tracked-only listing. The throwaway repo is built under
+    tmp_path with git init, so the real tree is never written to.
     """
     repo = tmp_path / "planted"
     _init_repo(repo)  # creates the directory, inits, and makes one empty commit
+    # ``git init`` sets core.ignorecase from the platform, and on a case-
+    # insensitive filesystem it folds case and makes an upper/lower pair of
+    # names one file. This gate is run on Linux, where it is false, and the
+    # planted set below depends on that: pin it so the assertion is the same
+    # everywhere rather than silently dropping an offender on macOS.
+    _git(repo, "config", "core.ignorecase", "false")
     files = {
         # The .py, .sh and workflow files each carry one # comment line as
         # content, so every one of them is exactly 501 lines by splitlines.
@@ -140,6 +173,17 @@ def test_the_checker_reports_planted_oversized_files(tmp_path) -> None:
         # #! line so the interpreter line does not make it 502.
         "hook": "#!/bin/sh\n# x\n" + "# y\n" * 499,
         "skills/demo/SKILL.md": "# skill\n" * 401,
+        # The case-insensitive SKILL.md match, planted with the name in lower
+        # case and the extension in upper case, so a regression to an exact-name
+        # comparison (in either part) shows up here.
+        "skills/other/skill.MD": "# skill\n" * 401,
+        "skills/caps/SKILL.MD": "# skill\n" * 401,
+        # A symlink onto an oversized file: measured through the link, so the
+        # link's own path is the offender, not a skipped entry.
+        "link-to-long.py": ("symlink", "long.py"),
+        # A tracked symlink whose target does not exist: reported as missing,
+        # not skipped, and not an OSError from the failed stat.
+        "dangling.md": ("symlink", "nowhere.md"),
         "short.py": "print('ok')\n",
         "notes.md": "# heading\n" * 900,
         "gone.py": "# x\n" * 501,
@@ -147,7 +191,10 @@ def test_the_checker_reports_planted_oversized_files(tmp_path) -> None:
     for rel, content in files.items():
         target = repo / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        if isinstance(content, tuple):
+            os.symlink(content[1], target)
+        else:
+            target.write_text(content, encoding="utf-8")
     _git(repo, "add", "-A")
     # Tracked only, so the untracked scratch note proves the listing comes from
     # git and not from a walk of the working tree. The commit runs with the
@@ -171,6 +218,15 @@ def test_the_checker_reports_planted_oversized_files(tmp_path) -> None:
     assert reported[".github/workflows/x.yml"] == ("501 lines", SOURCE_LIMIT)
     assert reported["hook"] == ("501 lines", SOURCE_LIMIT)
     assert reported["skills/demo/SKILL.md"] == ("401 lines", SKILL_MD_LIMIT)
+    assert reported["skills/other/skill.MD"] == ("401 lines", SKILL_MD_LIMIT)
+    assert reported["skills/caps/SKILL.MD"] == ("401 lines", SKILL_MD_LIMIT)
+    # The symlink is reported against its own path, at the cap of its target's
+    # suffix: a regression to skipping symlinks drops this key and fails here.
+    assert reported["link-to-long.py"] == ("501 lines", SOURCE_LIMIT)
+    # Both unmeasurable paths carry the missing reason and a 0 limit, not a
+    # crash and not a silent drop: the dangling link is the same case as the
+    # deleted file, reached through a failed stat rather than an absent path.
+    assert reported["dangling.md"] == (_MISSING, 0)
     assert reported["gone.py"] == (_MISSING, 0)
 
 
@@ -183,11 +239,30 @@ def test_the_size_listing_does_not_run_a_repo_local_fsmonitor(tmp_path) -> None:
     0 and writes a marker, so the marker's absence is the assertion; the
     offenders the gate still reports for the same tree are the control that the
     listing itself happened.
+
+    The assertion needs a control of its own: on a git that never consults
+    ``core.fsmonitor`` for a listing, the marker would be absent no matter what
+    the gate passed. So the same armed repo is listed twice, first plain and
+    then hardened, in the same ambient-free environment (only the ``-c``
+    overrides differ), and the control must show the marker appearing. If it
+    does not on this git version, the test skips rather than passes vacuously.
     """
     repo = _repo_with_planted_violations(tmp_path, "fsmonitor")
     marker = repo / "FSMONITOR_RAN"
     _arm_fsmonitor(repo, marker)
 
+    _stale_index(repo)
+    tracked_files_unhardened(repo)
+    if not marker.exists():
+        # Not a vacuous pass: this git did not exec the monitor for a plain
+        # listing, so the hardened run below could not have been proved here.
+        pytest.skip(
+            "this git does not run core.fsmonitor for 'ls-files', so the "
+            "unhardened control never fires and the hardening is untestable here"
+        )
+    marker.unlink()
+
+    _stale_index(repo)
     offenders = oversized_files(repo)
 
     assert {rel for rel, _reason, _limit in offenders} == {"long.py", "gone.py"}

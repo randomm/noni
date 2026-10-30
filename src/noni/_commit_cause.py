@@ -64,9 +64,14 @@ def _answered(result: subprocess.CompletedProcess[str] | None) -> bool:
     caller may read a returncode -- a non-zero one especially -- before it has
     asked: ``GIT_TIMEOUT_RC`` is a non-zero exit that reports a kill, not a
     verdict, and a probe that reads it as 'no', 'does not resolve' or 'differs'
-    turns a hang into a state nobody measured.
+    turns a hang into a state nobody measured. A result whose ``returncode`` is
+    ``None`` answers nothing either: that is the shape of a call that was never
+    waited on, and reading it as a verdict would be reading a comparison against
+    ``None`` (``None != 0`` is true, so an unwaited call would otherwise be
+    reported as a refusal git never made).
     """
-    return result is not None and result.returncode != GIT_TIMEOUT_RC
+    return (result is not None and result.returncode is not None
+            and result.returncode != GIT_TIMEOUT_RC)
 
 
 def commit_failure_cause(repo: Path,
@@ -86,7 +91,9 @@ def commit_failure_cause(repo: Path,
     is read from this tree (``symbolic-ref --short HEAD``), not from the literal
     ``HEAD``, which an inherited ``GIT_DIR`` would resolve elsewhere.
     """
-    if result.returncode == 0:
+    if result.returncode is None or result.returncode == 0:
+        # No failure happened, or none was ever measured: a cause is a claim
+        # about a refusal this run observed, so neither shape gets one.
         return None
     branch = _git(repo, "symbolic-ref", "--short", "HEAD")
     if not _answered(branch):
@@ -125,7 +132,7 @@ def commit_failure_cause(repo: Path,
         return None
     if abbreviated:
         return UPSTREAM_GONE
-    matches = _index_matches_head(repo, no_upstream, rel)
+    matches = _index_matches_head(repo, rel)
     if matches is None:
         return None
     if matches:
@@ -256,8 +263,7 @@ def _abbreviates_to_head(repo: Path, upstream: str) -> bool | None:
     return result.returncode != 0
 
 
-def _index_matches_head(repo: Path, upstream: str,
-                        rel: str | None) -> bool | None:
+def _index_matches_head(repo: Path, rel: str | None) -> bool | None:
     """Whether the index carries no change against HEAD; None when a probe died.
 
     Asked of the index as well as the work tree, so a file the writer wrote and

@@ -8,16 +8,18 @@ the clone mid-rebase (anything run next would commit on top of a half-finished
 rebase), so it is aborted and reported as a conflict; a rebase git never started
 left nothing to clean up, so the refusal's hint names committing or stashing.
 
-The module owns the mechanics of the loop and a default wording for each
-verdict. It owns no exit-code contract: the caller hands in its ``label``, its
-four codes, and (for the rebase verdict) its own ``messages`` table, ``probe``
-and ``abort``, so an operator hears the command they ran and the git calls are
-the ones that command actually makes. The defaults exist for a caller with no
-wording of its own; every shipped writer passes its own.
+The module owns the mechanics of the loop and the verdicts, and no wording: each
+writer hands in its own ``label``, its four codes, its ``messages`` table for the
+rebase verdicts, and (for the classifier) its own ``probe`` and ``abort``, so an
+operator hears the command they ran and the git calls are the ones that command
+actually makes. ``claim.py`` is the shipped holder of the rebase wording and
+passes it to both entry points; a caller with no wording of its own gets a generic
+line per verdict rather than a second table nobody keeps in step.
 """
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -40,6 +42,24 @@ from ._session_git import (
 # drives its own git hands in a callable and the type says what it must accept.
 GitRunner = Callable[..., subprocess.CompletedProcess[str]]
 
+# The shape of a branch name this loop will hand to git. A leading dash is what
+# makes the check worth having: ``git push origin <name>`` reads a leading-dash
+# argument as a push option (``--force``, ``--receive-pack=...``) rather than as
+# a ref, so a name the loop did not choose for itself must never be passed bare.
+# The rest of the pattern refuses the ref-name shapes git itself refuses (a
+# component of only dots, a ``.lock`` suffix, a trailing slash), and
+# ``git check-ref-format`` accepts every name this one does. fullmatch, not
+# match: ``$`` also matches before a trailing newline, which would let ``main\n``
+# reach the command line as a name plus an argument.
+BRANCH_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+
+# The wording one writer's rebase reports carry, keyed by the verdict names in
+# :data:`REBASE_VERDICTS`. The type names what :func:`classify_rebase_failure`
+# reads out of it — a tuple of whole lines, never one string — so a writer that
+# publishes a bare string is a mistake a reader can see rather than a report that
+# prints one line where it meant three.
+RebaseMessages = dict[str, tuple[str, ...]]
+
 
 def _run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     """The one git seam the loop uses, so one injection covers every call it makes.
@@ -60,6 +80,13 @@ def current_branch(repo: Path) -> tuple[str | None, str]:
     branch literally named "HEAD" is not a push anyone asked for). A call that
     failed or printed nothing is refused the same way: the caller cannot push
     to a branch it cannot name.
+
+    A name that is not a safe ref name is refused too, for the reason
+    :data:`BRANCH_NAME_RE` states: this is the one place the loop learns the
+    name, so it is the one place that name can be stopped from becoming an
+    option of the push. A detached HEAD keeps its own message, which is the
+    fact the operator needs (check out a branch), and is not reported as a
+    malformed name.
     """
     result = git(repo, "rev-parse", "--abbrev-ref", "HEAD")
     if result.returncode != 0:
@@ -67,13 +94,25 @@ def current_branch(repo: Path) -> tuple[str | None, str]:
     branch = result.stdout.strip()
     if branch in ("", "HEAD"):
         return None, "cannot push from detached HEAD"
+    if not BRANCH_NAME_RE.fullmatch(branch):
+        # git can be coaxed into creating a ref this regex refuses (an
+        # ``update-ref`` of ``--force``, for one) and the tree's own history can
+        # arrive with one, so the loop must not be the place that name turns into
+        # an argument of its own git call. This is the shape claim.py's --branch
+        # check applies to its own argument, applied here to the name the tree
+        # reported (looser by design: this name may carry a slash).
+        return None, (f"the current branch {branch!r} is not a safe ref name "
+                      "(expected a letter or digit, then letters, digits, ., _, "
+                      "- or /)")
     return branch, ""
 
 
 def fetch_rebase_push(repo: Path, branch: str, attempts: int = MAX_PUSH_ATTEMPTS,
                       *, label: str, exit_push_failed: int,
                       exit_rebase_conflict: int,
-                      exit_rebase_refused: int) -> int:
+                      exit_rebase_refused: int,
+                      messages: RebaseMessages,
+                      run_git: GitRunner = _run_git) -> int:
     """Push ``branch`` to origin, retrying with fetch and rebase; return the caller's code.
 
     fetch-rebase-push, at most ``attempts`` attempts: the losing pusher ends
@@ -87,24 +126,43 @@ def fetch_rebase_push(repo: Path, branch: str, attempts: int = MAX_PUSH_ATTEMPTS
     entered and stopped, which this helper aborts; ``exit_rebase_refused`` when
     git never started the rebase or its state could not be read, which this
     helper leaves alone.
+
+    ``messages`` is the caller's wording for the rebase verdicts, passed straight
+    to :func:`classify_rebase_failure` (see :data:`REBASE_VERDICTS` for the keys).
+    There is no default here either: the hint that names the session file a
+    writer owns is that writer's prose, and the loop has nothing of its own to
+    say about it.
+
+    Every git call the loop makes -- the fetch, the rebase, the push, and the
+    verdict's probes and abort -- goes through ``run_git``, which defaults to this
+    module's own bounded :func:`git`. A caller that drives its own git hands in one
+    callable and keeps one seam, so the report can never disagree with the command
+    about what git answered.
     """
     for attempt in range(1, attempts + 1):
         if attempt > 1:
-            fetch = git(repo, "fetch", "origin")
+            fetch = run_git(repo, "fetch", "origin")
             if fetch.returncode != 0:
                 return _report(label, exit_push_failed,
                                _detail(fetch, "git fetch failed"),
                                "check the remote and the network, then re-run with --push")
-            rebase = git(repo, "rebase", f"origin/{branch}")
+            rebase = run_git(repo, "rebase", f"origin/{branch}")
             if rebase.returncode != 0:
                 return classify_rebase_failure(
                     repo, rebase, label=label, exit_push_failed=exit_push_failed,
                     exit_rebase_conflict=exit_rebase_conflict,
                     exit_rebase_refused=exit_rebase_refused,
                     timed_out=rebase.returncode == GIT_TIMEOUT_RC,
-                    messages=_REBASE_MESSAGES,
+                    messages=messages, run_git=run_git,
                 )
-        push = git(repo, "push", "origin", branch)
+        # An explicit refspec, so the name is read as a ref and never as an
+        # option: ``refs/heads/<name>`` is what a plain branch argument resolves
+        # to, so the push is the same operation with the leading-dash reading
+        # taken away. ``branch`` has already passed BRANCH_NAME_RE in
+        # :func:`current_branch` (or the caller's own check for an explicit
+        # ``--branch``).
+        push = run_git(repo, "push", "origin",
+                       f"refs/heads/{branch}:refs/heads/{branch}")
         if push.returncode == 0:
             return 0
         if push.returncode == GIT_TIMEOUT_RC:
@@ -156,48 +214,25 @@ def stopped_state_dir(repo: Path, run_git: GitRunner = _run_git) -> tuple[Path |
     return None, indeterminate
 
 
-# The default wording for each rebase verdict, in this helper's own voice, for a
-# caller with none of its own. ``claim.py`` (and any writer that wants its verb
-# in the hint) hands its own ``messages`` mapping to :func:`classify_rebase_failure`
-# instead; the keys are the verdict names and each value is the tuple of lines
-# that verdict prints, formatted from the slots the call fills in:
-# {quoted}, {name}, {seconds}, {abort}.
-_REBASE_MESSAGES: dict[str, tuple[str, ...]] = {
-    "state_unreadable": (
-        "rebase failed and its state cannot be read, so no abort was attempted: "
-        "{quoted}",
-        "run 'git status' and 'git rebase --abort' by hand in {name}, then "
-        "re-run this command",
-    ),
-    "abort_failed": (
-        "rebase conflict and git rebase --abort failed: {abort}",
-        "git said: {quoted}",
-        "the clone is still mid-rebase in {name}; run git rebase --abort by hand",
-    ),
-    "timeout_stopped": (
-        "rebase timed out after {seconds}s and was stopped in a conflict, so it "
-        "was aborted: {quoted}",
-    ),
-    "conflict": (
-        "rebase conflict: someone else changed the same session file, so the "
-        "rebase stopped: {quoted}",
-        "fix: fetch origin, resolve the conflict in the session file, then "
-        "re-run; the commit this run made is intact on {name}",
-    ),
-    "timeout": ("rebase timed out after {seconds}s: {quoted}",),
-    "refused": (
-        "rebase refused (it never started): {quoted}",
-        "fix: commit or stash the uncommitted changes in this clone, then re-run; "
-        "this run started no rebase, so the commit it made is intact",
-    ),
-}
+# The verdict names :func:`classify_rebase_failure` distinguishes. This module
+# holds no wording of its own: every writer hands its ``messages`` table to the
+# verdict, because the operator hears the command they ran (see the module
+# docstring) and a second table of wording here was a second copy to keep in
+# step. The keys are these names and each value is the tuple of lines that
+# verdict prints, formatted from the slots the call fills in: {quoted}, {name},
+# {seconds}, {abort}. ``tests/test_session_writer_docs.py`` pins the shipped
+# table's keys against this tuple, so a verdict added here without a key fails.
+REBASE_VERDICTS: tuple[str, ...] = (
+    "state_unreadable", "abort_failed", "timeout_stopped",
+    "conflict", "timeout", "refused",
+)
 
 
 def classify_rebase_failure(
     repo: Path, rebase: subprocess.CompletedProcess[str], *, label: str,
     exit_push_failed: int, exit_rebase_conflict: int, exit_rebase_refused: int,
-    timed_out: bool = False, messages: dict[str, tuple[str, ...]],
-    run_git: GitRunner = _run_git,
+    timed_out: bool = False, run_git: GitRunner = _run_git,
+    messages: RebaseMessages,
 ) -> int:
     """Turn a failed ``git rebase origin/<branch>`` into the caller's exit code.
 
@@ -208,6 +243,11 @@ def classify_rebase_failure(
     running an abort there would be noise: the refusal code's hint names
     committing or stashing.
 
+    ``messages`` is required and has no default: it is the caller's own wording,
+    keyed by the six names in :data:`REBASE_VERDICTS`. A verdict the table does
+    not carry prints a generic line naming that verdict rather than raising, so
+    an incomplete table cannot silence the report this function exists to make.
+
     ``run_git`` is the git seam every call this verdict makes goes through --
     the rebase-state probes and the abort alike. One seam, not two: a caller
     that drives its own git hands in one callable and the verdict cannot then
@@ -215,7 +255,7 @@ def classify_rebase_failure(
     the call that caller actually made.
     """
     quoted = _quote(rebase)
-    wording = messages
+    wording = _DefensiveMessages(messages, quoted)
     slots = {"quoted": quoted, "name": repo.name, "seconds": str(GIT_TIMEOUT)}
     state, indeterminate = stopped_state_dir(repo, run_git)
     if state is None and indeterminate:
@@ -241,9 +281,27 @@ def classify_rebase_failure(
     return _report_lines(label, exit_rebase_refused, wording["refused"], slots)
 
 
-# Back-compatible name for the one caller that reached this helper by its old
-# private name (claim.py) -- same function, same behaviour.
-_classify_rebase_failure = classify_rebase_failure
+class _DefensiveMessages:
+    """A caller's ``messages`` table that cannot raise on a missing verdict.
+
+    Indexing a plain dict is a ``KeyError`` on the failure path: the rebase has
+    already failed and the abort has already run, so an exception there ends the
+    run before the operator learns the clone's state. A missing (or empty) key
+    answers one generic line that names the verdict and quotes git, which is
+    honest about having no wording for it. The exit code is unaffected: it is the
+    caller's contract, not its prose.
+    """
+
+    def __init__(self, messages: RebaseMessages,
+                 quoted: str) -> None:
+        self._messages = messages
+        self._quoted = quoted
+
+    def __getitem__(self, verdict: str) -> tuple[str, ...]:
+        lines = self._messages.get(verdict)
+        if lines:
+            return lines
+        return (f"rebase failed ({verdict}): {self._quoted}",)
 
 
 def _quote(result: subprocess.CompletedProcess[str]) -> str:

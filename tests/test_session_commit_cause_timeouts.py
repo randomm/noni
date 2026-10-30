@@ -140,9 +140,31 @@ def test_a_killed_index_probe_is_never_read_as_nothing_to_commit(tmp_path,
     origin, clone = _pushable_clone(tmp_path, name="killed-index")
     _tracked_session(clone)
     monkeypatch.setattr(_commit_cause, "_index_matches_head",
-                        lambda repo, upstream, rel: None)
+                        lambda repo, rel: None)
     refused = subprocess.CompletedProcess([], 1, "", "fatal: rejected")
     assert _commit_cause.commit_failure_cause(clone, refused) is None
     assert origin.is_dir()
 
 
+
+
+def test_a_result_that_was_never_waited_on_names_no_cause(tmp_path):
+    """``returncode=None`` is not a refusal, so it gets no cause.
+
+    ``CompletedProcess`` allows a returncode of ``None`` -- it is the shape of a
+    call that was launched and never waited on -- and every guard in this module
+    reads that field. Read naively, ``None != 0`` is true, so an unwaited call
+    would be classified as a failure git made and printed as a cause the operator
+    could chase for an hour. Both halves of the guard are pinned here: the
+    classifier names no state, and the probe predicate calls the answer no answer
+    at all, so no probe downstream can read it either.
+    """
+    origin, clone = _pushable_clone(tmp_path, name="none-returncode")
+    _tracked_session(clone)
+    never_waited = subprocess.CompletedProcess(["git", "commit"], None, "", "")
+    assert _commit_cause.commit_failure_cause(clone, never_waited) is None
+    assert _commit_cause._answered(never_waited) is False
+    # The line a caller prints for it stays git's own words, not a state.
+    line = _commit_cause.commit_failed(clone, never_waited)
+    assert "no reason given" in line or "could not commit" in line, line
+    assert origin.is_dir()

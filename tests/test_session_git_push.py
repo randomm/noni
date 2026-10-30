@@ -17,12 +17,20 @@ the same fault differently.
 from __future__ import annotations
 
 import collections.abc
+import subprocess
+from pathlib import Path
 
 import pytest
 from _harness import _git_env_with_identity, _git_ok, build_bare_origin
 from session_git_support import _pushable_clone, _seed_ahead
 
 from noni import _session_git, _session_push
+from noni import claim as _claim_mod
+
+# The one shipped rebase-wording table, read from its owner rather than copied
+# here, so the tests below drive the loop with the wording a writer really passes
+# and the parity check compares live values with live ones.
+_CLAIM_MESSAGES: _session_push.RebaseMessages = _claim_mod._REBASE_MESSAGES
 
 
 @pytest.fixture(autouse=True)
@@ -64,7 +72,8 @@ def test_a_rebase_that_stops_is_aborted_and_reported_as_the_conflict_code(tmp_pa
 
     code = _session_push.fetch_rebase_push(
         clone, "main", attempts=2, label="close.py", exit_push_failed=3,
-        exit_rebase_conflict=5, exit_rebase_refused=6)
+        exit_rebase_conflict=5, exit_rebase_refused=6,
+        messages=dict(_CLAIM_MESSAGES))
     assert code == 5, (code, capsys.readouterr())
     err = capsys.readouterr().err
     assert "close.py:" in err, err
@@ -91,7 +100,8 @@ def test_a_rebase_git_never_started_is_reported_as_the_refusal_code_and_not_abor
 
     code = _session_push.fetch_rebase_push(
         clone, "main", attempts=2, label="release.py", exit_push_failed=3,
-        exit_rebase_conflict=5, exit_rebase_refused=6)
+        exit_rebase_conflict=5, exit_rebase_refused=6,
+        messages=dict(_CLAIM_MESSAGES))
     assert code in (5, 6), (code, capsys.readouterr().err)
     err = capsys.readouterr().err
     assert "release.py:" in err, err
@@ -156,7 +166,8 @@ def test_fetch_rebase_push_reports_the_callers_own_code_when_attempts_run_out(tm
 
     code = _session_push.fetch_rebase_push(
         clone, "main", label="register.py", exit_push_failed=7,
-        exit_rebase_conflict=8, exit_rebase_refused=9)
+        exit_rebase_conflict=8, exit_rebase_refused=9,
+        messages=dict(_CLAIM_MESSAGES))
     assert code == 7, code
     err = capsys.readouterr().err
     assert "register.py:" in err, err
@@ -207,3 +218,125 @@ def test_current_branch_refuses_a_detached_head(tmp_path):
     branch, why = _session_push.current_branch(clone)
     assert branch is None
     assert "detached HEAD" in why, why
+
+
+# --- the branch name the push is given ---------------------------------------
+
+
+def _recording_git(results: dict[tuple[str, ...], int]):
+    """A git seam that records every argv and answers from a verb-keyed table.
+
+    The push loop's argv is the thing under test here, so the double has to keep
+    it: a test that only asserts the exit code cannot tell a ref from an option.
+    """
+    calls: list[tuple[str, ...]] = []
+
+    def run_git(repo, *args):
+        calls.append(tuple(args))
+        returncode = results.get(tuple(args), results.get((args[0],), 0))
+        return subprocess.CompletedProcess(list(args), returncode,
+                                           "", "recorded refusal")
+
+    return calls, run_git
+
+
+def test_current_branch_refuses_a_name_that_git_would_read_as_an_option():
+    """A leading dash is the shape that matters, and the tree can hold one.
+
+    ``git push origin <name>`` sends a leading-dash argument as a push option
+    (``--force``, ``--receive-pack=...``) rather than as a ref, and a ref of that
+    shape is reachable: ``git update-ref refs/heads/--force <sha>`` creates one
+    that ``rev-parse --abbrev-ref HEAD`` then prints. The name is validated here,
+    at the one place the loop learns it, so no caller has to remember to.
+    """
+    for name in ("-receive-pack=evil", "--force", "-o", "-u"):
+        branch, why = _branch_as_head_names(name)
+        assert branch is None, name
+        assert "safe ref name" in why, (name, why)
+
+
+def test_current_branch_accepts_the_names_real_branches_use():
+    """The guard is a dash check, not a narrowing of legitimate names.
+
+    ``feature/x``, ``1.2.3`` and a tag-like name are all shapes real branches use
+    and git accepts, and a loop that refused them would refuse the ordinary push.
+    The leading character stays alphanumeric by contract, so ``_wip`` is not on
+    this list -- it is a name git will make and this loop will refuse, which is a
+    narrower set than git's and is the price of the dash rule.
+    """
+    for name in ("main", "feature/issue-57-fix", "1.2.3", "v1.0.0-rc1",
+                 "release/2026-10", "a-b_c.d/e"):
+        branch, why = _branch_as_head_names(name)
+        assert branch == name, (name, why)
+        assert why == "", (name, why)
+
+
+def _branch_as_head_names(name: str):
+    """``current_branch``'s answer for a tree whose HEAD names ``name``.
+
+    The name is supplied rather than created because git refuses to *make* a
+    leading-dash branch through ``git branch`` (``check-ref-format`` refuses it)
+    while ``update-ref`` will happily create one that ``rev-parse --abbrev-ref
+    HEAD`` then prints; the loop's job is to survive the name the tree already
+    has, so the double prints it and the guard is what is under test.
+    """
+    def fake_git(repo, *args):
+        return subprocess.CompletedProcess(list(args), 0, name + "\n", "")
+
+    original = _session_push.git
+    _session_push.git = fake_git
+    try:
+        return _session_push.current_branch(Path("/does-not-matter"))
+    finally:
+        _session_push.git = original
+
+
+def test_the_push_names_an_explicit_refspec_so_no_argument_reads_as_an_option(tmp_path):
+    """The argv handed to git is the contract, so the argv is what is asserted.
+
+    Two defences, both pinned: the name is checked on the way in, and the push
+    carries ``refs/heads/<name>:refs/heads/<name>`` -- an explicit refspec, which
+    is what a plain branch name resolves to anyway, so the same ref is written and
+    there is no bare argument left for git to read as a push option. A caller that
+    hands the loop an unchecked name (an explicit ``--branch`` from its own CLI)
+    still cannot turn this call into ``git push origin --force``.
+    """
+    calls, run_git = _recording_git({("push",): 1})
+    code = _session_push.fetch_rebase_push(
+        tmp_path, "main", attempts=1, label="close.py", exit_push_failed=3,
+        exit_rebase_conflict=5, exit_rebase_refused=6,
+        messages=dict(_CLAIM_MESSAGES), run_git=run_git)
+    assert code == 3, code
+    pushes = [args for args in calls if args[0] == "push"]
+    assert pushes, calls
+    for args in pushes:
+        assert args[:2] == ("push", "origin"), args
+        assert args[2] == "refs/heads/main:refs/heads/main", args
+        # Nothing else on the argv, so there is no third positional for git to
+        # mistake for an option, and no leading dash anywhere.
+        assert len(args) == 3, args
+        assert not any(arg.startswith("-") for arg in args[1:]), args
+
+
+def test_a_dash_prefixed_branch_never_reaches_git_as_a_push_option(tmp_path):
+    """The regression: a leading-dash branch name is refused, not pushed.
+
+    Driven through the argv the loop would have sent. With the guard, the run
+    refuses before the loop starts and no push call is made at all; without it,
+    the argv below is ``push origin --force``, which git would have applied as an
+    option to the push instead of reading it as a ref.
+    """
+    calls, run_git = _recording_git({("push",): 0})
+    branch, why = _branch_as_head_names("--force")
+    assert branch is None, why
+    # And a loop entered with that name anyway (a caller that skipped the check)
+    # still sends the refspec, never the bare name.
+    code = _session_push.fetch_rebase_push(
+        tmp_path, "--force", attempts=1, label="close.py", exit_push_failed=3,
+        exit_rebase_conflict=5, exit_rebase_refused=6,
+        messages=dict(_CLAIM_MESSAGES), run_git=run_git)
+    assert code == 0, code
+    pushes = [args for args in calls if args[0] == "push"]
+    assert pushes == [("push", "origin",
+                       "refs/heads/--force:refs/heads/--force")], pushes
+    assert "--force" not in [arg for args in pushes for arg in args[1:]], pushes

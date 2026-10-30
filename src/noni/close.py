@@ -49,7 +49,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import _session_git, _session_push, labels
+from . import _session_git, _session_push, claim, labels
 
 STATUS_PREFIX = _session_git.STATUS_FIELD
 CLOSED_STATUS = "closed"
@@ -206,6 +206,10 @@ def main(argv: list[str] | None = None) -> int:
         repo, branch, label=labels.CLOSE, exit_push_failed=EXIT_PUSH_FAILED,
         exit_rebase_conflict=EXIT_REBASE_CONFLICT,
         exit_rebase_refused=EXIT_REBASE_REFUSED,
+        # The rebase wording is claim's, published as the shared push contract
+        # (references/claim.md): the three writers that push must tell an agent
+        # scripting on rc 5 or 6 the same thing.
+        messages=claim._REBASE_MESSAGES,
     )
 
 

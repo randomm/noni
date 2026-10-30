@@ -128,6 +128,53 @@ def test_read_marker_raw_keeps_bytes_the_reader_reports_nothing_for(tmp_path, mo
         b"2026-10-01-ab\xff\n"
 
 
+def test_a_payload_that_is_not_bytes_is_a_failed_restore_not_a_crash(tmp_path):
+    """The advertised contract is a bool, so a TypeError is still answered False.
+
+    ``restore_marker`` says a restore that cannot land is reported, not raised --
+    it runs inside the commit's own failure path, where an exception would trace
+    back over the message the operator is meant to read. A non-bytes payload
+    reaches the write and faults there with a TypeError, not an OSError, so the
+    handler that swallows only OSError let it through and broke the promise the
+    docstring makes. The tree is also unchanged: the refusal is the answer, not a
+    half-written marker.
+    """
+    marked = tmp_path / "bad-payload"
+    marked.mkdir()
+    marker = marked / _marker.MARKER_NAME
+    marker.write_bytes(b"2026-10-01-old\n")
+
+    for bad in ("a str, not bytes", 42, ["a", "list"], {"a": "dict"}):
+        assert _marker.restore_marker(marker, bad) is False, type(bad)
+        assert marker.read_bytes() == b"2026-10-01-old\n", type(bad)
+
+    # No temp file left beside the marker by the faulting write.
+    assert [p.name for p in marked.iterdir()
+            if p.name.startswith(f".{_marker.MARKER_NAME}.")] == [], \
+        list(marked.iterdir())
+
+
+def test_a_payload_that_is_not_bytes_is_a_failed_write_not_a_crash(tmp_path):
+    """The same promise on the write half, for the same reason.
+
+    ``write_marker`` advertises a bool and its caller branches on it (a writer
+    that could not mark warns and continues). A TypeError escaping here would end
+    a run whose session file is already committed, which is a worse outcome than
+    the unmarked tree the bool already describes.
+    """
+    marked = tmp_path / "bad-write"
+    marked.mkdir()
+    marker = marked / _marker.MARKER_NAME
+
+    for bad in (b"bytes, not str", 42, None):
+        assert _marker.write_marker(marker, bad) is False, type(bad)  # type: ignore[arg-type]
+        assert not marker.exists(), type(bad)
+
+    assert [p.name for p in marked.iterdir()
+            if p.name.startswith(f".{_marker.MARKER_NAME}.")] == [], \
+        list(marked.iterdir())
+
+
 def test_the_bytes_that_came_from_a_non_utf8_marker_come_back_as_they_were(tmp_path):
     """A marker whose previous bytes were not UTF-8 is restored byte for byte.
 

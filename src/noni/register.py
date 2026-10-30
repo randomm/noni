@@ -64,7 +64,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import _marker, _session_git, _session_push, labels
+from . import _marker, _session_git, _session_push, claim, labels
 
 # The marker file that names the session this working copy owns lives with the
 # marker helpers in ``_marker``: it sits in the git directory, never in the work
@@ -405,6 +405,10 @@ def main(argv: list[str] | None = None) -> int:
     return _session_push.fetch_rebase_push(
         repo, branch, label=labels.REGISTER, exit_push_failed=EXIT_GIT,
         exit_rebase_conflict=EXIT_GIT, exit_rebase_refused=EXIT_GIT,
+        # The rebase wording is claim's, published as the shared push contract
+        # (references/claim.md): one wording for the same verdict, whichever
+        # writer ran it.
+        messages=claim._REBASE_MESSAGES,
     )
 
 

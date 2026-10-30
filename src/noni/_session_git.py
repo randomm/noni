@@ -24,9 +24,10 @@ The reason a commit failed is named in noni's own words rather than handed
 through as git's. That half lives in :mod:`noni._commit_cause`, which
 classifies the four states a writer can be left in (no upstream, the upstream
 gone, nothing to commit, or some other git fault) and assembles the one line a
-failure prints. :func:`stage_and_commit` takes that namer as a parameter and
-imports it only when a commit is refused, so this module holds no compile-time
-reference to the classifier and the classifier keeps calling git through here.
+failure prints. :func:`stage_and_commit` asks it for that line only when a
+commit is refused, importing it there rather than at module scope, so this
+module holds no compile-time reference to the classifier and the classifier keeps
+calling git through here.
 
 The set of statuses that end a session lives here too, as
 :data:`TERMINAL_STATUSES`, so the four writers agree on what "already closed"
@@ -52,7 +53,7 @@ import subprocess
 import tempfile
 import unicodedata
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Literal
 
 from . import gitenv
 
@@ -282,8 +283,6 @@ def _failure_line(repo: Path,
 
 def stage_and_commit(
     repo: Path, path: Path, message: str,
-    name_failure: Callable[[Path, subprocess.CompletedProcess[str], str],
-                           str] | None = None,
 ) -> tuple[bool, str]:
     """Commit exactly ``path`` under ``message``; ``(True, "")`` or ``(False, why)``.
 
@@ -316,8 +315,7 @@ def stage_and_commit(
         return False, _detail(added, f"git add failed for {rel}")
     committed = git(repo, "commit", "-q", "-m", message, "--only", "--", rel)
     if committed.returncode != 0:
-        name = name_failure or _failure_line
-        return False, name(repo, committed, rel)
+        return False, _failure_line(repo, committed, rel)
     return True, ""
 
 

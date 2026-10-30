@@ -123,8 +123,8 @@ away.
 A refusal (exit 1, 2 or 4) writes nothing: the register file keeps the bytes it
 had and `git status --porcelain` stays empty for it. A commit git refuses (exit
 3) leaves the row removed in the work tree, with the cause named in noni's words
-and the path named as written but uncommitted (see the commit-refusal paragraph
-under "Registering a session").
+and the path named as written but uncommitted (see "Commit refused by git"
+under "Committing a session file" in `references/register.md`).
 
 Exit codes: `0` the row is gone and committed (and pushed with `--push`, or
 left uncommitted with `--no-commit`); `1` no such session file; `2` the session
@@ -154,8 +154,8 @@ leaves the tree byte-identical.
 
 A refusal (exit 1, 2 or 4) writes nothing. A commit git refuses (exit 3) leaves
 the status line written in the work tree, with the cause named in noni's words
-and the path named as written but uncommitted (see the commit-refusal paragraph
-under "Registering a session").
+and the path named as written but uncommitted (see "Commit refused by git"
+under "Committing a session file" in `references/register.md`).
 
 Exit codes: `0` closed and committed (and pushed with `--push`, or left
 uncommitted with `--no-commit`), or already closed; `1` no such session file;
@@ -187,7 +187,8 @@ exit 32).
 
 A session whose own `- status:` is terminal cannot claim a new task: the run is
 refused with exit 2, the status is named, and nothing is written. The four
-terminal statuses are the ones listed under "Fields" in `references/register.md`
+terminal statuses are the ones listed under "The field semantics" in
+`references/register.md`
 and the same set the census treats as inactive. The refusal is a write-time check
 on the file this run was pointed at — claim rows an earlier session left in a
 file that has since gone terminal are left untouched and are not a new

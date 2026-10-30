@@ -177,8 +177,9 @@ def _run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return _git(list(args), repo)
 
 
-def _push_with_retry(repo: Path, branch: str, attempts: int = MAX_PUSH_ATTEMPTS) -> int:
-    """fetch-rebase-push with at most `attempts` attempts.
+def _push_with_retry(repo: Path, branch: str, attempts: int = MAX_PUSH_ATTEMPTS,
+                     messages: _session_push.RebaseMessages | None = None) -> int:
+    """fetch-rebase-push with at most `attempts` attempts, via the shared loop.
 
     The losing pusher ends rebased-and-pushed (both claims land); the census
     then flags the double-claim. Returns EXIT_OK on success, EXIT_PUSH_FAILED
@@ -188,40 +189,22 @@ def _push_with_retry(repo: Path, branch: str, attempts: int = MAX_PUSH_ATTEMPTS)
     the timeout with the state left indeterminate. Every path that can have
     entered a rebase attempts an abort, so a timeout that landed mid-rebase
     does not leave the clone wedged.
+
+    The loop itself is ``_session_push.fetch_rebase_push``'s (its docstring
+    states the attempts and the three verdicts), driven through ``_run_git`` so
+    every call it makes is this command's own git and nothing else: claim.py
+    keeps one git seam, not a copy of the loop. ``messages`` lets a caller
+    substitute the wording another verb publishes; the default is this command's
+    own table, so the operator reads claim's voice.
     """
-    for attempt in range(1, attempts + 1):
-        if attempt > 1:
-            # A previous push was rejected: fetch, rebase onto the latest tip,
-            # push again.
-            fetch = _git(["fetch", "origin"], repo)
-            if fetch.returncode != 0:
-                print(f"{labels.CLAIM}: fetch failed: " + _safe(fetch.stderr.strip()), file=sys.stderr)
-                return EXIT_PUSH_FAILED
-            rebase = _git(["rebase", "origin/" + branch], repo)
-            if rebase.returncode != 0:
-                if rebase.returncode == GIT_TIMEOUT_RC:
-                    # A killed rebase says nothing about conflicts on its own,
-                    # but it may have stopped before it was killed, so the
-                    # state still decides the report: an unresolved abort is
-                    # what wedges the next command.
-                    return _classify_rebase_failure(repo, rebase, timed_out=True)
-                return _classify_rebase_failure(repo, rebase)
-        push = _git(["push", "origin", branch], repo)
-        if push.returncode == 0:
-            return EXIT_OK
-        if push.returncode == GIT_TIMEOUT_RC:
-            print(
-                f"{labels.CLAIM}: push attempt " + str(attempt) + "/" + str(attempts)
-                + " timed out: " + _safe(push.stderr.strip()),
-                file=sys.stderr,
-            )
-            continue
-        print(
-            f"{labels.CLAIM}: push attempt " + str(attempt) + "/" + str(attempts) + " rejected: "
-            + _safe(push.stderr.strip() or push.stdout.strip()),
-            file=sys.stderr,
-        )
-    return EXIT_PUSH_FAILED
+    return _session_push.fetch_rebase_push(
+        repo, branch, attempts, label=labels.CLAIM,
+        exit_push_failed=EXIT_PUSH_FAILED,
+        exit_rebase_conflict=EXIT_REBASE_CONFLICT,
+        exit_rebase_refused=EXIT_REBASE_REFUSED,
+        messages=messages if messages is not None else _REBASE_MESSAGES,
+        run_git=_run_git,
+    )
 
 
 def _report(code: int, *lines: str) -> int:
@@ -274,17 +257,16 @@ _REBASE_MESSAGES = {
 
 
 
-def _classify_rebase_failure(
-    repo: Path, rebase: subprocess.CompletedProcess[str], timed_out: bool = False
-) -> int:
-    """Turn a failed rebase into this command's exit code, via the shared verdict.
+def _push_verdict(repo: Path, rebase: subprocess.CompletedProcess[str],
+                  timed_out: bool) -> int:
+    """One failed rebase, read by the shared verdict, in this command's voice.
 
     ``_session_push.classify_rebase_failure`` holds the reading of the rebase
     state and the abort-or-not decision (its docstring states the two cases it
     tells apart), and claims its probe loop from here through ``_run_git``, so
-    claim.py keeps no copy of that loop. This hands it claim.py's label,
-    exit-code constants and wording, so the operator reads this command's voice
-    and the numbers stay the ones the docstring above documents.
+    claim.py keeps no copy of that loop. This hands it claim.py's label, its
+    exit-code constants and its wording, so the operator reads this command's
+    voice and the numbers stay the ones the docstring above documents.
     """
     return _session_push.classify_rebase_failure(
         repo, rebase, label=labels.CLAIM, timed_out=timed_out,

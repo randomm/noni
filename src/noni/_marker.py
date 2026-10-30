@@ -92,7 +92,15 @@ def write_marker(marker: Path | None, session_id: str) -> bool:
     try:
         marker.parent.mkdir(parents=True, exist_ok=True)
         _session_git.atomic_write(marker, session_id + "\n")
-    except OSError:
+    except Exception:
+        # The advertised contract is a bool, never an exception: the writer has
+        # already committed its file by the time it marks the tree, so a fault
+        # here is a marker that did not land (the caller warns and continues),
+        # not a reason to end a run whose work is committed. That covers the
+        # faults this write can meet -- an OSError from the directory or the
+        # replace, and a TypeError from payload bytes the text writer cannot
+        # encode -- while the temp file is still cleaned up by the writer's own
+        # BaseException guard.
         return False
     return True
 
@@ -157,11 +165,16 @@ def restore_marker(marker: Path | None, previous: bytes | None) -> bool:
                 marker.unlink()
         else:
             _atomic_write_bytes(marker, previous)
-    except OSError:
-        # The only fault a byte restore can meet: a directory that will not take
-        # the temp file, a replace that cannot land, or bytes nobody may write.
-        # That is a restore that cannot land, not a reason to trace back over the
-        # operator's failure message.
+    except Exception:
+        # The faults a byte restore can meet: a directory that will not take the
+        # temp file, a replace that cannot land, or bytes nobody may write (a
+        # payload that is not bytes at all raises TypeError from the write). All
+        # of them are a restore that cannot land, which is what the bool reports:
+        # the contract advertised here is True/False, never a raised fault, and
+        # this runs inside the commit's own failure path, where an exception
+        # would trace back over the message the operator is meant to read. The
+        # temp file is not leaked: ``_atomic_write_bytes`` removes it on any
+        # BaseException before re-raising into this handler.
         return False
     return True
 
@@ -173,6 +186,11 @@ def _atomic_write_bytes(path: Path, payload: bytes) -> None:
     (which takes text, opens with a UTF-8 codec, and cannot carry these bytes):
     same guarantee, same mode rule, no codec in the way, so a marker whose
     previous bytes were never valid UTF-8 is restored as those bytes.
+
+    The cleanup guard catches ``BaseException`` rather than ``Exception`` and
+    re-raises: a temp file beside a git directory is somebody else's clutter, so
+    it is unlinked even when the write faults on a payload that is not bytes or
+    on an interrupt, and the caller decides what the fault means.
     """
     fd, tmp_name = tempfile.mkstemp(dir=str(path.parent),
                                     prefix=f".{path.name}.", suffix=".tmp")

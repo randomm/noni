@@ -124,6 +124,8 @@ working directory. Every git call is bounded by a timeout, makes no signing
 promise, runs no repository hooks, and refuses the external transports a remote
 could name.
 
+### Commit refused by git
+
 When git refuses the commit the writer already wrote its file (exit 3 for all
 four writers), the one line on stderr names the cause in noni's own words —
 this branch has no upstream configured, the upstream branch no longer exists on

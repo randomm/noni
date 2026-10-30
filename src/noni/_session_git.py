@@ -16,18 +16,17 @@ here, once, so no writer keeps its own copy of a git call:
                                       index entry
      Every other staged entry is never touched: it stays staged and
      uncommitted. A whole-tree commit is never used.
-  fetch_rebase_push(repo, branch)       -- push, and on rejection fetch, rebase
-                                       onto origin/<branch> and push again, at
-                                       most 3 attempts; a rebase that stopped
-                                       is aborted (exit 5), a rebase git never
-                                       started is not (exit 6)
+The push loop is not here: it lives in :mod:`noni._session_push`, which imports
+these primitives from here. A re-export would be a cycle, so the writers import
+that module directly for their ``--push``.
 
 The reason a commit failed is named in noni's own words rather than handed
 through as git's. That half lives in :mod:`noni._commit_cause`, which
 classifies the four states a writer can be left in (no upstream, the upstream
 gone, nothing to commit, or some other git fault) and assembles the one line a
-failure prints; this module calls it and re-exports the four clauses, so the
-writers read everything about their commit from here.
+failure prints. :func:`stage_and_commit` takes that namer as a parameter and
+imports it only when a commit is refused, so this module holds no compile-time
+reference to the classifier and the classifier keeps calling git through here.
 
 The set of statuses that end a session lives here too, as
 :data:`TERMINAL_STATUSES`, so the four writers agree on what "already closed"
@@ -53,8 +52,12 @@ import subprocess
 import tempfile
 import unicodedata
 from pathlib import Path
+from typing import Callable, Literal
 
-from . import _commit_cause, gitenv
+from . import gitenv
+
+# What :func:`stopped_state` answers about one probed rebase state directory.
+StoppedStateAnswer = Literal["stopped", "absent", "unreadable"]
 
 # Statuses that end a session. A claim from a session in one of these states
 # no longer counts toward the double-claim check, and close.py calls a session
@@ -170,15 +173,6 @@ def in_git_worktree(repo: Path) -> bool:
     return git(repo, "rev-parse", "--absolute-git-dir").returncode == 0
 
 
-# The clauses a commit failure is reported with live with the classifier
-# (:mod:`noni._commit_cause`) and are re-exported here because the writers and
-# their tests read them off the module they already import for the primitive.
-NO_UPSTREAM = _commit_cause.NO_UPSTREAM
-UPSTREAM_GONE = _commit_cause.UPSTREAM_GONE
-NOTHING_TO_COMMIT = _commit_cause.NOTHING_TO_COMMIT
-GIT_REFUSED = _commit_cause.GIT_REFUSED
-
-
 def is_terminal_status(status: str) -> bool:
     """True when ``status`` names a session that has ended (see the set)."""
     return status.strip().lower() in TERMINAL_STATUSES
@@ -198,14 +192,13 @@ def session_status(body: str) -> str | None:
     field: a writer needs the one answer a census run on the same bytes would
     act on, and the same bytes handed to two writers must give one verdict.
     """
-    found: str | None = None
-    for line in body.splitlines():
+    for line in reversed(body.splitlines()):
         stripped = line.strip()
         if stripped.startswith(STATUS_FIELD):
             value = stripped[len(STATUS_FIELD):].strip()
             if value:
-                found = value
-    return found
+                return value
+    return None
 
 
 def valid_token(token: str) -> bool:
@@ -274,7 +267,24 @@ def rel_of(repo: Path, path: Path) -> str:
     return os.path.relpath(absolute, root).replace(os.sep, "/")
 
 
-def stage_and_commit(repo: Path, path: Path, message: str) -> tuple[bool, str]:
+def _failure_line(repo: Path,
+                  result: subprocess.CompletedProcess[str],
+                  rel: str) -> str:
+    """The default commit-failure namer: the classifier's line, imported when asked.
+
+    Deferred to the call rather than bound at import: ``_commit_cause`` asks git
+    through :func:`git` in this module, so a module-level reference between the
+    two would be taken while one of them is still running its own import.
+    """
+    from . import _commit_cause
+    return _commit_cause.commit_failed(repo, result, rel)
+
+
+def stage_and_commit(
+    repo: Path, path: Path, message: str,
+    name_failure: Callable[[Path, subprocess.CompletedProcess[str], str],
+                           str] | None = None,
+) -> tuple[bool, str]:
     """Commit exactly ``path`` under ``message``; ``(True, "")`` or ``(False, why)``.
 
     The three steps are the primitive (see the module docstring): reset the
@@ -285,9 +295,10 @@ def stage_and_commit(repo: Path, path: Path, message: str) -> tuple[bool, str]:
     Any git refusal comes back as ``(False, one noni-worded line)``: this helper
     owns no exit code, so the caller names the class of failure and prints the
     hint. The line leads with the cause in noni's own words and ends with what
-    git said, sanitised and bounded (see :func:`commit_failed`): a writer that
-    stops here has already written its file, and the operator who aborts the run
-    reads one sentence, not git's status block. A path outside the repository is
+    git said, sanitised and bounded (see
+    :func:`noni._commit_cause.commit_failed`): a writer that stops here has
+    already written its file, and the operator who aborts the run reads one
+    sentence, not git's status block. A path outside the repository is
     answered the same way rather than as a raised ``ValueError``: the helper's
     promise is that it never hands back anything but a verdict, so the caller's
     one ``if not ok`` covers every way this can fail and no writer has to guard
@@ -305,7 +316,8 @@ def stage_and_commit(repo: Path, path: Path, message: str) -> tuple[bool, str]:
         return False, _detail(added, f"git add failed for {rel}")
     committed = git(repo, "commit", "-q", "-m", message, "--only", "--", rel)
     if committed.returncode != 0:
-        return False, _commit_cause.commit_failed(repo, committed)
+        name = name_failure or _failure_line
+        return False, name(repo, committed, rel)
     return True, ""
 
 
@@ -330,7 +342,7 @@ def _safe(text: str) -> str:
     return "" if cleaned.strip() == "" else cleaned
 
 
-def stopped_state(repo: Path, probed: Path) -> tuple[Path | None, str]:
+def stopped_state(repo: Path, probed: Path) -> tuple[Path | None, StoppedStateAnswer]:
     """One probed rebase state directory: ``(dir, answer)``, answer in three kinds.
 
     ``"stopped"`` when the directory carries positive evidence of a live
@@ -360,11 +372,6 @@ def stopped_state(repo: Path, probed: Path) -> tuple[Path | None, str]:
 
 
 # The push loop lives in :mod:`noni._session_push`, which imports these
-# primitives from here. It is re-exported below so the writers keep reading
-# everything about their commit and their push from this one module:
-#
-#   from ._session_push import current_branch, fetch_rebase_push
-#
-# ...would be a cycle (_session_push imports from this module), so the writers
-# import it directly and this module's docstring names it.
+# primitives from here. A re-export here would be a cycle, so the writers import
+# that module directly.
 

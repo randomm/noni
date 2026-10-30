@@ -36,7 +36,7 @@ Each register file records five fields:
 | `identity` | permanent | stable role name (e.g. `developer`, `reviewer`) |
 | `host/worktree` | ephemeral | host name and worktree path of this working copy (defaults never include an absolute path or hostname) |
 | `started` | ephemeral | UTC ISO-8601 timestamp of registration |
-| `status` | permanent | `active`, or a terminal state (`closed`, `done`, `superseded`, `ended`) — see `close.py` |
+| `status` | permanent | `active`, or a terminal state — the four under **status** in `references/register.md` — see `close.py` |
 | `claims` | ephemeral | list of `- claim: <task>` rows |
 
 The identity is permanent: it survives across commits, pulls, and clones. The
@@ -74,7 +74,6 @@ copy reads that marker:
 | active, same identity | continues it: exit 0, nothing written, no commit (`<id>.md already registered (identity=X)`) |
 | active, different identity | refused: exit 1, both identities named, the other session's bytes untouched |
 | terminal (`closed`, `done`, `superseded`, `ended`), or its file gone | allocates a new session and re-marks the working copy for it |
-
 A marker this run cannot read is no evidence of a session, and a marked file it
 cannot read is a refusal (exit 2) rather than an overwrite: the writer never
 replaces bytes it has not seen. `--no-commit` opts out of both the commit and
@@ -97,9 +96,8 @@ A commit that git refuses (exit 3) leaves the session file on disk and puts the
 working-copy marker back to the bytes it held before this run, including no
 marker at all when this run created one: a working copy is never left marked
 for a session git never received. The one line on stderr names the cause in
-noni's words — no upstream configured, the upstream gone from origin, nothing
-to commit because the file already holds those bytes, or git refused
-otherwise — and what git said follows it, sanitised.
+noni's words and quotes git after it — see the four states under "Committing a
+session file" in `references/register.md`.
 
 ## Releasing a claim
 
@@ -121,10 +119,9 @@ away.
 
 A refusal (exit 1, 2 or 4) writes nothing: the register file keeps the bytes it
 had and `git status --porcelain` stays empty for it. A commit git refuses (exit
-3) leaves the row removed in the work tree and names the cause in noni's words
-— no upstream configured, the upstream gone from origin, nothing to commit
-because the file already holds those bytes, or git refused otherwise — with the
-path it left written but uncommitted.
+3) leaves the row removed in the work tree and names the cause in noni's words —
+see "Committing a session file" in `references/register.md` for the four
+states — with the path it left written but uncommitted.
 
 Exit codes: `0` the row is gone and committed (and pushed with `--push`, or
 left uncommitted with `--no-commit`); `1` no such session file; `2` the session
@@ -154,9 +151,8 @@ leaves the tree byte-identical.
 
 A refusal (exit 1, 2 or 4) writes nothing. A commit git refuses (exit 3) leaves
 the status line written in the work tree and names the cause in noni's words —
-no upstream configured, the upstream gone from origin, nothing to commit because
-the file already holds those bytes, or git refused otherwise — with the path it
-left written but uncommitted.
+see "Committing a session file" in `references/register.md` for the four states
+— with the path it left written but uncommitted.
 
 Exit codes: `0` closed and committed (and pushed with `--push`, or left
 uncommitted with `--no-commit`), or already closed; `1` no such session file;
@@ -186,12 +182,14 @@ file, commits it, and (with `--push`) pushes with fetch-rebase-push (at most
 id. A claim row without a task reference is malformed (the census flags it,
 exit 32).
 
-A session whose own `- status:` is terminal (`closed`, `done`, `superseded`,
-`ended`) cannot claim a new task: the run is refused with exit 2, the status is
-named, and nothing is written. The refusal is a write-time check on the file
-this run was pointed at — claim rows an earlier session left in a file that has
-since gone terminal are left untouched and are not a new reportable state; the
-census keeps ignoring terminal sessions, exactly as it did before.
+A session whose own `- status:` is terminal cannot claim a new task: the run is
+refused with exit 2, the status is named, and nothing is written. The four
+terminal statuses are the ones listed under "Fields" in `references/register.md`
+and the same set the census treats as inactive. The refusal is a write-time check
+on the file this run was pointed at — claim rows an earlier session left in a
+file that has since gone terminal are left untouched and are not a new
+reportable state; the census keeps ignoring terminal sessions, exactly as it did
+before.
 
 `--no-commit` appends the row through the same validation chain and stops
 before git: no `git add`, no `git commit`, and one line on stdout saying the
@@ -215,7 +213,7 @@ is stopped. Exit codes (the full table, with the abort post-condition, is in
 |---|---|
 | `0` | claim committed (and pushed, with `--push`), or appended and left uncommitted with `--no-commit` |
 | `1` | the register file for `--session-id` does not exist (register first) |
-| `2` | the session file is malformed (no `- claims:` marker, not readable as UTF-8), the session already claims the same task, or the session's status is terminal (`closed`, `done`, `superseded`, `ended`) and nothing was written |
+| `2` | the session file is malformed (no `- claims:` marker, not readable as UTF-8), the session already claims the same task, or the session's status is terminal; see the paragraph above for what each refusal writes |
 | `3` | push failed after 3 fetch-rebase-push attempts; also a failed fetch, a detached HEAD, an unresolvable branch, a git call that timed out, or a `git add`/`git commit` that git refused |
 | `4` | usage error: bad `--task` or `--branch` value, `--no-commit` with `--push`, or a `--repo` that is not a directory |
 | `5` | rebase conflict: the rebase started and stopped; the script aborts it, which leaves the clone on the branch it was invoked on at the claim commit it made (if the abort itself fails, the message says the clone needs manual cleanup) |

@@ -6,7 +6,8 @@ working copy's own git directory, which is how the next run of the same command
 finds the session it already owns. The marker is uncommitted local state, which
 makes it the one thing a failed run can leave pointing at a session nobody
 committed -- so this module holds both halves: reading and writing it, and
-putting it back when the commit that was supposed to justify it did not happen.
+putting it back when the commit that was supposed to justify it did not happen
+(``marker_path`` is the one place the path rule is stated).
 
 The path is built from ``--repo`` alone, never through ``git rev-parse``,
 ``GIT_DIR`` or ``GIT_WORK_TREE``, so an inherited environment cannot move a
@@ -63,13 +64,16 @@ def read_marker(marker: Path | None) -> str | None:
 
     The first line is the id; a marker that cannot be read, is empty, or whose
     first line is blank answers nothing (the caller allocates afresh), because a
-    marker this run cannot trust is no evidence of a session at all.
+    marker this run cannot trust is no evidence of a session at all. A file whose
+    bytes are not UTF-8 is unreadable in exactly the way an OSError makes one --
+    the run cannot trust it either -- so it answers nothing here too rather than
+    raising out of the run that only came to look up its own session.
     """
     if marker is None:
         return None
     try:
         text = marker.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeError):
         return None
     first = text.split("\n", 1)[0].strip()
     return first or None
@@ -113,7 +117,7 @@ def read_marker_raw(marker: Path | None) -> str | None:
         return "" if marker.exists() else None
 
 
-def restore_marker(marker: Path | None, previous: str | None) -> None:
+def restore_marker(marker: Path | None, previous: str | None) -> bool:
     """Put the working copy's marker back to the bytes it held before this run.
 
     Called when a run wrote the marker and then could not commit its file: the
@@ -122,11 +126,17 @@ def restore_marker(marker: Path | None, previous: str | None) -> None:
     that run continue (or refuse to overwrite) a session nobody committed.
     'Back' means the previous bytes, including no marker at all when this run
     created one, so a first registration that fails leaves the tree exactly as
-    it found it. A restore that cannot land is not a second failure: the
-    commit's own refusal is the one the operator reads.
+    it found it.
+
+    Returns True when the tree is back where it was (nothing to restore counts
+    as restored), False when the restore could not land. A failed restore is
+    never raised into the caller -- the commit's own refusal is the fault the
+    operator reads, and this runs inside that failure path -- but it is not
+    silent either: the caller says the marker may still name a session git never
+    received, which is the one state this function exists to prevent.
     """
     if marker is None:
-        return
+        return True
     try:
         if previous is None:
             if marker.exists():
@@ -134,5 +144,11 @@ def restore_marker(marker: Path | None, previous: str | None) -> None:
         else:
             marker.parent.mkdir(parents=True, exist_ok=True)
             _session_git.atomic_write(marker, previous)
-    except OSError:
-        pass
+    except (OSError, UnicodeError):
+        # UnicodeError as well as OSError: read_marker_raw reads with
+        # surrogateescape, so a marker holding bytes that are not UTF-8 comes
+        # back as lone surrogates, and the UTF-8 write below cannot encode them.
+        # That is a restore that cannot land, not a reason to trace back over
+        # the operator's failure message.
+        return False
+    return True

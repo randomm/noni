@@ -166,46 +166,15 @@ def _append_claim(path: Path, task: str, body: str) -> int:
     return EXIT_OK
 
 
-def _stopped_state_dir(repo: Path) -> tuple[Path | None, bool]:
-    """Locate a rebase this clone is stopped in, and say so when that is unanswerable.
+def _run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """This command's git seam, in the shape ``_session_push`` injects.
 
-    Returns (dir, indeterminate). ``dir`` is the state directory (see
-    REBASE_STATE_DIRS) holding a genuinely stopped rebase, or None; it is set
-    only when the directory carries positive evidence of being stopped, which is
-    what the shared reader decides (``_session_git.stopped_state``: both
-    ``head-name`` and ``onto`` read back non-empty, which a live stopped rebase
-    always leaves and a stray directory does not). ``indeterminate`` says the
-    question could not be answered: a probe could not run or a state file could
-    not be read.
-
-    Existence alone is not evidence: a directory whose files cannot be read is
-    somebody else's leftover and aborting it would reset the caller's worktree
-    and index. Probes go through 'git rev-parse --git-path', which resolves the
-    directories wherever the git dir lives (plain clone, worktree, GIT_DIR).
-
-    The probe is this command's own rather than the shared loop's private one
-    because the line printed when a probe cannot run at all is claim.py's
-    wording, and because a test that drives one scripted answer per git call has
-    to be able to replace the probe and nothing else.
+    The shared rebase verdict takes one callable for every git call it makes (its
+    state probes and its abort alike) and hands it the repo as its first
+    argument; claim.py's own git helper takes the argument list first, so this
+    adapter is what lets the verdict drive claim.py's git and nobody else's.
     """
-    indeterminate = False
-    for name in REBASE_STATE_DIRS:
-        probe = _git(["rev-parse", "--git-path", name], repo)
-        if probe.returncode != 0:
-            # One line, not one per failed probe: outside a repository every
-            # probe fails and git's own text repeated twice is noise.
-            indeterminate = True
-            print(
-                f"{labels.CLAIM}: cannot probe rebase state: {_safe(probe.stderr.strip())}",
-                file=sys.stderr,
-            )
-            break
-        state, answer = _session_git.stopped_state(repo, Path(probe.stdout.strip()))
-        if answer == "stopped":
-            return state, indeterminate
-        if answer == "unreadable":
-            indeterminate = True
-    return None, indeterminate
+    return _git(list(args), repo)
 
 
 def _push_with_retry(repo: Path, branch: str, attempts: int = MAX_PUSH_ATTEMPTS) -> int:
@@ -276,6 +245,8 @@ _REBASE_MESSAGES = {
         "{quoted}",
         "fix: run 'git status' and 'git rebase --abort' by hand in {name}, then "
         "re-run claim",
+        "note: 'git rev-parse --git-path' could not probe the rebase state, so "
+        "this run reports no knowledge of it",
     ),
     "abort_failed": (
         "rebase conflict and git rebase --abort failed: {abort}",
@@ -308,18 +279,19 @@ def _classify_rebase_failure(
 ) -> int:
     """Turn a failed rebase into this command's exit code, via the shared verdict.
 
-    ``_session_push._classify_rebase_failure`` holds the reading of the rebase
+    ``_session_push.classify_rebase_failure`` holds the reading of the rebase
     state and the abort-or-not decision (its docstring states the two cases it
-    tells apart). This hands it claim.py's label, exit-code constants and
-    wording, so the operator reads this command's voice and the numbers stay the
-    ones the docstring above documents.
+    tells apart), and claims its probe loop from here through ``_run_git``, so
+    claim.py keeps no copy of that loop. This hands it claim.py's label,
+    exit-code constants and wording, so the operator reads this command's voice
+    and the numbers stay the ones the docstring above documents.
     """
-    return _session_push._classify_rebase_failure(
+    return _session_push.classify_rebase_failure(
         repo, rebase, label=labels.CLAIM, timed_out=timed_out,
         exit_push_failed=EXIT_PUSH_FAILED,
         exit_rebase_conflict=EXIT_REBASE_CONFLICT,
         exit_rebase_refused=EXIT_REBASE_REFUSED, messages=_REBASE_MESSAGES,
-        probe=_stopped_state_dir, abort=lambda path: _git(["rebase", "--abort"], path),
+        run_git=_run_git,
     )
 
 

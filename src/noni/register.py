@@ -378,12 +378,20 @@ def main(argv: list[str] | None = None) -> int:
     if not ok:
         # The file is on disk and the marker was written for it; the marker goes
         # back to what it held before this run, so a working copy is never left
-        # marked for a session git never received.
-        _marker.restore_marker(marker, marker_before)
+        # marked for a session git never received. When the restore itself could
+        # not land, that is said too: a marker still naming this session is the
+        # half-applied state the restore exists to prevent, and the commit
+        # refusal alone would not tell the operator about it.
+        restored = _marker.restore_marker(marker, marker_before)
         marked_ok = False
-        return _fail(EXIT_GIT,
-                     f"git could not commit {rel} (the file is written): {why}",
-                     f"commit {rel} by hand, or re-run register.py once git answers")
+        headline = f"git could not commit {rel} (the file is written): {why}"
+        hint = f"commit {rel} by hand, or re-run register.py once git answers"
+        if not restored:
+            headline += (f", and the marker at {marker} could not be restored, so "
+                         "this working copy may still be marked for it")
+            hint = (f"remove or repair the marker at {marker}, then commit {rel} "
+                    "by hand or re-run register.py once git answers")
+        return _fail(EXIT_GIT, headline, hint)
     print(f"{labels.REGISTER}: registered session {session_id} -> {target}")
     if not marked_ok:
         _warn_unmarked(marker)

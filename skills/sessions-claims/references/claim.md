@@ -29,7 +29,8 @@ The session must be registered first (the register file must exist); a claim
 on an unregistered session exits 1.
 
 A session that has ended claims nothing further. When the file's own
-`- status:` field reads `closed`, `done`, `superseded` or `ended`, the run is
+`- status:` field reads a terminal state — the four listed under **status** in
+`references/register.md`, the same set the census treats as inactive — the run is
 refused with exit 2, the status is named in the message, and nothing is
 written. The check runs after the file has been read as UTF-8 (so a file no
 parser can read is still reported as malformed, not as terminal) and before the
@@ -154,7 +155,7 @@ tables are in `references/census.md`.
 |---|---|
 | `0` | claim committed (and pushed, with `--push`), or appended and left uncommitted with `--no-commit` |
 | `1` | the register file for `--session-id` does not exist (register first) |
-| `2` | the session file is malformed (no `- claims:` marker, not readable as UTF-8), the session already claims the same task, or the session's status is terminal (`closed`, `done`, `superseded`, `ended`) and nothing was written |
+| `2` | the session file is malformed (no `- claims:` marker, not readable as UTF-8), the session already claims the same task, or the session's status is terminal; see the terminal-status paragraph above for what each refusal writes |
 | `3` | push failed after 3 fetch-rebase-push attempts; also a failed fetch, a detached HEAD, an unresolvable branch, a git call that timed out, or a `git add`/`git commit` that git refused (the row is left in the worktree or the index, unstaged or staged as the failure says) |
 | `4` | usage error: bad `--task` or `--branch` value, `--no-commit` with `--push`, or a `--repo` that is not a directory |
 | `5` | rebase conflict; see the abort post-condition above |
@@ -213,10 +214,10 @@ committed and pushed.
 
 A refusal (exit 1, 2 or 4) removes no row: the file keeps the bytes it had.
 When git refuses the commit (exit 3) the row is already gone from the work
-tree, and the one line on stderr names the cause in noni's words — no upstream
-configured, the upstream gone from origin, nothing to commit because the file
-already holds those bytes, or git refused otherwise — followed by the path this
-run left written but uncommitted and, after it, what git said, sanitised.
+tree, and the one line on stderr names the cause in noni's words — the four
+states are under "Committing a session file" in `references/register.md` —
+followed by the path this run left written but uncommitted and, after it, what
+git said, sanitised.
 
 ## Closing a session
 
@@ -234,10 +235,9 @@ refusal — it writes nothing and keeps the exit 0 it always had.
 
 A refusal (exit 1, 2 or 4) moves no line. When git refuses the commit (exit 3)
 the status line is already written, and the one line on stderr names the cause
-in noni's words — no upstream configured, the upstream gone from origin,
-nothing to commit because the file already holds those bytes, or git refused
-otherwise — followed by the path this run left written but uncommitted and,
-after it, what git said, sanitised.
+in noni's words — the four states are under "Committing a session file" in
+`references/register.md` — followed by the path this run left written but
+uncommitted and, after it, what git said, sanitised.
 
 | code | meaning |
 |---|---|

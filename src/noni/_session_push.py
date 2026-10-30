@@ -8,11 +8,12 @@ the clone mid-rebase (anything run next would commit on top of a half-finished
 rebase), so it is aborted and reported as a conflict; a rebase git never started
 left nothing to clean up, so the refusal's hint names committing or stashing.
 
-The module is mechanics only. It owns no exit-code contract and no wording of its
-own beyond the defaults below: the caller hands in its ``label`` and its four
-codes, and may hand in ``messages``, ``probe`` and ``abort`` to keep its own
-phrasing and drive its own git, so an operator hears the command they ran and the
-git calls are the ones that command actually makes.
+The module owns the mechanics of the loop and a default wording for each
+verdict. It owns no exit-code contract: the caller hands in its ``label``, its
+four codes, and (for the rebase verdict) its own ``messages`` table, ``probe``
+and ``abort``, so an operator hears the command they ran and the git calls are
+the ones that command actually makes. The defaults exist for a caller with no
+wording of its own; every shipped writer passes its own.
 """
 
 from __future__ import annotations
@@ -31,6 +32,17 @@ from ._session_git import (
     git,
     stopped_state,
 )
+
+
+def _run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """The one git seam the loop uses, so one injection covers every call it makes.
+
+    A caller that drives its own git (a scripted test double, or claim.py's own
+    call shape) hands a callable here and every call the verdict makes -- the
+    state probes, the abort -- goes through it, so what the report says is the
+    outcome of the calls that caller actually made.
+    """
+    return git(repo, *args)
 
 
 def current_branch(repo: Path) -> tuple[str | None, str]:
@@ -78,11 +90,12 @@ def fetch_rebase_push(repo: Path, branch: str, attempts: int = MAX_PUSH_ATTEMPTS
                                "check the remote and the network, then re-run with --push")
             rebase = git(repo, "rebase", f"origin/{branch}")
             if rebase.returncode != 0:
-                return _classify_rebase_failure(
+                return classify_rebase_failure(
                     repo, rebase, label=label, exit_push_failed=exit_push_failed,
                     exit_rebase_conflict=exit_rebase_conflict,
                     exit_rebase_refused=exit_rebase_refused,
                     timed_out=rebase.returncode == GIT_TIMEOUT_RC,
+                    messages=_REBASE_MESSAGES,
                 )
         push = git(repo, "push", "origin", branch)
         if push.returncode == 0:
@@ -109,7 +122,7 @@ def _report(label: str, code: int, *lines: str) -> int:
     return code
 
 
-def _stopped_state_dir(repo: Path) -> tuple[Path | None, bool]:
+def stopped_state_dir(repo: Path, run_git=_run_git) -> tuple[Path | None, bool]:
     """Locate a rebase this clone is actually stopped in.
 
     Returns ``(dir, indeterminate)``. ``dir`` is set only when the state
@@ -118,11 +131,13 @@ def _stopped_state_dir(repo: Path) -> tuple[Path | None, bool]:
     answered: a probe could not run, or a state file could not be read.
 
     Probes go through ``git rev-parse --git-path``, which resolves the
-    directories wherever the git dir lives (plain clone, worktree).
+    directories wherever the git dir lives (plain clone, worktree). This is the
+    one probe loop the session writers have: ``claim.py`` calls it too, passing
+    its own git seam, so the two cannot disagree about the clone's state.
     """
     indeterminate = False
     for name in REBASE_STATE_DIRS:
-        probe = git(repo, "rev-parse", "--git-path", name)
+        probe = run_git(repo, "rev-parse", "--git-path", name)
         if probe.returncode != 0:
             indeterminate = True
             break
@@ -134,11 +149,12 @@ def _stopped_state_dir(repo: Path) -> tuple[Path | None, bool]:
     return None, indeterminate
 
 
-# The default wording for each rebase verdict, in this helper's own voice. A
-# caller hands its own ``messages`` mapping to keep its own phrasing (claim.py
-# speaks of the claim, close.py of the close); the keys are the verdict names
-# and each value is the tuple of lines that verdict prints, formatted from the
-# slots the call fills in: {quoted}, {name}, {seconds}, {abort}.
+# The default wording for each rebase verdict, in this helper's own voice, for a
+# caller with none of its own. ``claim.py`` (and any writer that wants its verb
+# in the hint) hands its own ``messages`` mapping to :func:`classify_rebase_failure`
+# instead; the keys are the verdict names and each value is the tuple of lines
+# that verdict prints, formatted from the slots the call fills in:
+# {quoted}, {name}, {seconds}, {abort}.
 _REBASE_MESSAGES: dict[str, tuple[str, ...]] = {
     "state_unreadable": (
         "rebase failed and its state cannot be read, so no abort was attempted: "
@@ -170,11 +186,11 @@ _REBASE_MESSAGES: dict[str, tuple[str, ...]] = {
 }
 
 
-def _classify_rebase_failure(
+def classify_rebase_failure(
     repo: Path, rebase: subprocess.CompletedProcess[str], *, label: str,
     exit_push_failed: int, exit_rebase_conflict: int, exit_rebase_refused: int,
-    timed_out: bool = False, messages: dict[str, tuple[str, ...]] | None = None,
-    probe=None, abort=None,
+    timed_out: bool = False, messages: dict[str, tuple[str, ...]],
+    run_git=_run_git,
 ) -> int:
     """Turn a failed ``git rebase origin/<branch>`` into the caller's exit code.
 
@@ -185,20 +201,16 @@ def _classify_rebase_failure(
     running an abort there would be noise: the refusal code's hint names
     committing or stashing.
 
-    ``probe`` is the function that locates a stopped rebase
-    (``(repo) -> (dir, indeterminate)``). The default is this module's own,
-    which probes through the hardened helper; a caller that drives its own push
-    loop hands the probe it uses, so its scripted or hardened git seam is the
-    one the verdict asks, and the two cannot disagree about the clone's state.
-    ``abort`` is handed the same reason: the abort is a git call too, and a
-    caller that drives its own git must be the one that runs it, so what this
-    reports is the outcome of the call the caller actually made.
+    ``run_git`` is the git seam every call this verdict makes goes through --
+    the rebase-state probes and the abort alike. One seam, not two: a caller
+    that drives its own git hands in one callable and the verdict cannot then
+    disagree with it about the clone's state, and the abort the report quotes is
+    the call that caller actually made.
     """
-    quoted = " ".join((_safe(rebase.stderr) or _safe(rebase.stdout)
-                       or "no reason given").splitlines()[:3])
-    wording = messages or _REBASE_MESSAGES
+    quoted = _quote(rebase)
+    wording = messages
     slots = {"quoted": quoted, "name": repo.name, "seconds": str(GIT_TIMEOUT)}
-    state, indeterminate = (probe or _stopped_state_dir)(repo)
+    state, indeterminate = stopped_state_dir(repo, run_git)
     if state is None and indeterminate:
         # The probe could not answer, so this run claims no knowledge of the
         # clone's state: an unrunnable probe must not become "not stopped",
@@ -207,7 +219,7 @@ def _classify_rebase_failure(
         return _report_lines(label, exit_rebase_refused,
                              wording["state_unreadable"], slots)
     if state is not None:
-        abort = (abort or _abort_rebase)(repo)
+        abort = run_git(repo, "rebase", "--abort")
         if abort.returncode != 0:
             aborted = dict(slots)
             aborted["abort"] = _detail(abort, "git said")
@@ -222,12 +234,38 @@ def _classify_rebase_failure(
     return _report_lines(label, exit_rebase_refused, wording["refused"], slots)
 
 
-def _abort_rebase(repo: Path) -> subprocess.CompletedProcess[str]:
-    """The default abort: one hardened 'git rebase --abort' in this clone."""
-    return git(repo, "rebase", "--abort")
+# Back-compatible name for the one caller that reached this helper by its old
+# private name (claim.py) -- same function, same behaviour.
+_classify_rebase_failure = classify_rebase_failure
+
+
+def _quote(result: subprocess.CompletedProcess[str]) -> str:
+    """git's own words for a failed call, sanitised, bounded, on up to three lines.
+
+    Kept as its own slot value rather than interpolated into a template: these
+    bytes can originate with the remote or a credential helper, so braces in
+    them are literal text and must never be read as format placeholders.
+    """
+    return " ".join((_safe(result.stderr) or _safe(result.stdout)
+                     or "no reason given").splitlines()[:3])
 
 
 def _report_lines(label: str, code: int, lines: tuple[str, ...],
                   slots: dict[str, str]) -> int:
-    """One verdict's report, its lines formatted from the caller's slots."""
-    return _report(label, code, *[line.format(**slots) for line in lines])
+    """One verdict's report, its lines formatted from the caller's slots.
+
+    The slots are filled by plain substitution, not ``str.format``: ``quoted``
+    carries git's own text, which can come from the remote or a credential
+    helper, and a payload reading as ``{0!r}`` or ``{quoted}`` would otherwise
+    raise out of the push loop instead of printing the refusal. Only the three
+    known slot names are ever looked up, and a line that names no slot prints
+    verbatim.
+    """
+    return _report(label, code, *[_fill(line, slots) for line in lines])
+
+
+def _fill(line: str, slots: dict[str, str]) -> str:
+    """Substitute the known ``{name}`` slots in ``line``, leaving anything else alone."""
+    for key, value in slots.items():
+        line = line.replace("{" + key + "}", value)
+    return line

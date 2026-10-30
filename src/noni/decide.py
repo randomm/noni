@@ -97,7 +97,6 @@ EXIT_COMMIT_FAILED: int = 5
 # census accepts as a plain path segment (census.sh reports a basename outside
 # ^[A-Za-z0-9._-]+\.json$ as 10:bad-name). Dashes only: the split is not ambiguous.
 SLUG_RE = re.compile(r"[a-z0-9-]+")
-DATE_FLAG_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 ID_RE = re.compile(r"\d{4}-\d{2}-\d{2}-[a-z0-9-]+")
 
 # Status is derived from the answers; it is the one field of an existing record this
@@ -230,10 +229,12 @@ def _validate_usage(args: argparse.Namespace) -> tuple[str, list[dict], list[str
     if not args.asked_by.strip():
         return _fail(EXIT_USAGE, "--asked-by is empty", "name the agent role or session that asked")
 
-    date_part, refused = _decide_flags.parse_date(args.date)
+    date_part, refused = _decide_flags.parse_date(args.date, fail=_fail,
+                                                   exit_usage=EXIT_USAGE)
     if refused is not None:
         return refused
-    questions, refused = _decide_flags.parse_questions(args.question)
+    questions, refused = _decide_flags.parse_questions(args.question, fail=_fail,
+                                                       exit_usage=EXIT_USAGE)
     if refused is not None:
         return refused
     # The ids --question asked, kept here because --option and --answer are
@@ -263,7 +264,9 @@ def _validate_usage(args: argparse.Namespace) -> tuple[str, list[dict], list[str
     answered_ids = {oid for oid, _value in answers}
     unanswered = [qid for qid, _text in questions if qid not in answered_ids]
     if args.supersedes is not None:
-        refused = _decide_flags.check_supersede(args, questions, answers)
+        refused = _decide_flags.check_supersede(args.supersedes, args.date,
+                                                questions, answers, fail=_fail,
+                                                exit_usage=EXIT_USAGE)
         if refused is not None:
             return refused
         if not ID_RE.fullmatch(args.supersedes):

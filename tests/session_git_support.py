@@ -17,6 +17,28 @@ from pathlib import Path
 
 from _harness import _git_ok, build_bare_origin, build_gone_upstream
 
+from noni import _session_git
+
+
+def _tracked_session(repo: Path) -> Path:
+    """One committed session file under ``repo``, at a fixed path.
+
+    Committed through the primitive itself, which is the point: the cause tests
+    ask what the primitive says about the state this helper built, so a baseline
+    that did not land must fail here and not silently become a 'nothing to
+    commit' the tree never had.
+    """
+    target = repo / "noni" / "sessions" / "2026-10-01-dddddd.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("- status: active\n", encoding="utf-8")
+    ok, why = _session_git.stage_and_commit(repo, target, "register: d")
+    if not ok:
+        raise AssertionError(f"the fixture could not commit its baseline: {why}")
+    shown = _git_ok(repo, "rev-list", "--count", "HEAD").stdout.strip()
+    if shown == "0":
+        raise AssertionError("the fixture's baseline commit is not on HEAD")
+    return target
+
 
 def _repo(tmp_path: Path, *, isolated: bool = True) -> Path:
     """A git repo with one commit, on main, under tmp_path.
@@ -47,10 +69,14 @@ def _commit_files(repo: Path, rev: str = "HEAD") -> list[str]:
     return _git_ok(repo, "show", "--name-only", "--format=", rev).stdout.split()
 
 
-def _pushable_clone(tmp_path):
-    """A clone of a bare origin with one commit pushed, ready to diverge."""
-    origin = tmp_path / "origin.git"
-    clone = tmp_path / "clone"
+def _pushable_clone(tmp_path, name="clone"):
+    """A clone of a bare origin with one commit pushed, ready to diverge.
+
+    ``name`` lets one test build several clones under one ``tmp_path`` without
+    the second iteration writing into the first one's tree.
+    """
+    origin = tmp_path / f"{name}.origin.git"
+    clone = tmp_path / name
     build_bare_origin(origin, [clone])
     return origin, clone
 

@@ -129,10 +129,13 @@ four writers), the one line on stderr names the cause in noni's own words —
 this branch has no upstream configured, the upstream branch no longer exists on
 origin, the file already holds the bytes this run wrote so git found nothing to
 commit, or git refused for some other reason — and quotes what git said after
-it, sanitised and bounded. The writer's headline names the path it left written
-but uncommitted, so an operator aborting the run knows what to restore: the
-file for all four writers, and for `register.py` the marker as well, which the
-run restores itself.
+it, sanitised and bounded. This is the one place those four states are written
+out; the other pages point here. The writer's headline names the path it left
+written but uncommitted, so an operator aborting the run knows what to restore:
+the file for all four writers, and for `register.py` the marker as well, which
+the run restores itself. When the marker cannot be put back, that line says so
+and names the marker, because a marker still naming a session git never
+received is the state the restore exists to prevent.
 
 `--push` pushes the branch `git rev-parse --abbrev-ref HEAD` names, with
 fetch-rebase-push in at most 3 attempts; a detached HEAD is refused rather than

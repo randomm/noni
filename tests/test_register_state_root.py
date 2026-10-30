@@ -16,7 +16,7 @@ import subprocess
 from pathlib import Path
 
 from _harness import REGISTER, _git_ok, run_from
-from test_register_defaults import _fields, _git_repo, _sid_of
+from register_refusal_fixtures import _fields, _git_repo, _sid_of
 
 REGISTER_STATE_DIR = "register-state-root"
 REGISTER_CWD_DIR = "register-cwd"

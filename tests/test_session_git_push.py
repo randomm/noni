@@ -69,7 +69,7 @@ def test_a_rebase_that_stops_is_aborted_and_reported_as_the_conflict_code(tmp_pa
     assert "rebase conflict" in err, err
     # The clone is not left mid-rebase: the state directory is gone and HEAD
     # names the branch it was invoked on.
-    assert _session_push._stopped_state_dir(clone) == (None, False)
+    assert _session_push.stopped_state_dir(clone) == (None, False)
     assert _git_ok(clone, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "main"
 
 
@@ -94,7 +94,7 @@ def test_a_rebase_git_never_started_is_reported_as_the_refusal_code_and_not_abor
     err = capsys.readouterr().err
     assert "release.py:" in err, err
     # Nothing was aborted behind the caller's back, and the branch is intact.
-    assert _session_push._stopped_state_dir(clone)[0] is None
+    assert _session_push.stopped_state_dir(clone)[0] is None
     assert _git_ok(clone, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "main"
 
 
@@ -119,16 +119,16 @@ def test_stopped_state_dir_answers_from_the_state_files_not_their_presence(tmp_p
     # and no answer is reported as indeterminate, not as "nothing stopped".
     _git_ok(repo, "init", "-q", "-b", "main")
     git_dir = repo / ".git"
-    assert _session_push._stopped_state_dir(repo) == (None, False)
+    assert _session_push.stopped_state_dir(repo) == (None, False)
 
     (git_dir / "rebase-merge").mkdir(parents=True)
-    assert _session_push._stopped_state_dir(repo) == (None, True)
+    assert _session_push.stopped_state_dir(repo) == (None, True)
 
     # Positive evidence is both files reading back non-empty.
     (git_dir / "rebase-merge" / "head-name").write_text("refs/heads/main\n",
                                                         encoding="utf-8")
     (git_dir / "rebase-merge" / "onto").write_text("abc123\n", encoding="utf-8")
-    state, indeterminate = _session_push._stopped_state_dir(tmp_path / "repo")
+    state, indeterminate = _session_push.stopped_state_dir(tmp_path / "repo")
     assert state == git_dir / "rebase-merge", state
     assert indeterminate is False
 

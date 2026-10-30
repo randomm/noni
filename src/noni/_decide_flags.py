@@ -17,31 +17,23 @@ renderer they feed.
 
 from __future__ import annotations
 
-import argparse
 import re
-import sys
 from datetime import datetime, timezone
-
-from . import labels
+from typing import Callable
 
 # A date flag is four-digit year, month, day; a real calendar day is checked
-# against the calendar on top of the shape.
+# against the calendar on top of the shape. Anchored, and used with fullmatch:
+# '$' alone also matches before a trailing newline.
 DATE_FLAG_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
-# decide.py's usage code, restated here so this module imports nothing from
-# decide.py (decide.py imports this one).
-_EXIT_USAGE = 2  # decide.EXIT_USAGE: a malformed flag set is a usage fault
+# The refusal this module prints: decide.py's own printer and its usage code,
+# handed in by the caller so a refusal is worded and coded in one place. This
+# module imports nothing from decide.py (decide.py imports this one), so the
+# code and the format come in as arguments rather than being restated here.
+Fail = Callable[[int, str, str | None], int]
 
 
-def _fail(message: str, hint: str | None = None) -> int:
-    """Print one decide.py usage refusal in decide.py's words and give back its code."""
-    print(f"{labels.DECIDE}: {message}", file=sys.stderr)
-    if hint:
-        print(f"{labels.DECIDE}: fix: {hint}", file=sys.stderr)
-    return _EXIT_USAGE
-
-
-def parse_date(date: str | None) -> tuple[str | None, int | None]:
+def parse_date(date: str | None, *, fail: Fail, exit_usage: int) -> tuple[str | None, int | None]:
     """The date part of the record id, or the exit code of the refusal printed.
 
     ``None`` for the flag's absence means 'today, UTC', which is what a run that
@@ -50,17 +42,18 @@ def parse_date(date: str | None) -> tuple[str | None, int | None]:
     if date is None:
         return datetime.now(timezone.utc).strftime("%Y-%m-%d"), None
     if not DATE_FLAG_RE.fullmatch(date):
-        return None, _fail(f"--date {date!r} is not YYYY-MM-DD",
-                           "pass the record date as --date 2026-10-26")
+        return None, fail(exit_usage, f"--date {date!r} is not YYYY-MM-DD",
+                          "pass the record date as --date 2026-10-26")
     try:
         datetime.strptime(date, "%Y-%m-%d")
     except ValueError:
-        return None, _fail(f"--date {date!r} is not a real calendar date",
-                           "pass a date that exists, e.g. --date 2026-10-26")
+        return None, fail(exit_usage, f"--date {date!r} is not a real calendar date",
+                          "pass a date that exists, e.g. --date 2026-10-26")
     return date, None
 
 
-def parse_questions(values: list[str]) -> tuple[list[tuple[str, str]], int | None]:
+def parse_questions(values: list[str], *, fail: Fail,
+                    exit_usage: int) -> tuple[list[tuple[str, str]], int | None]:
     """``(id, text)`` per ``--question``, or the exit code of the refusal printed.
 
     One to four questions, each ``ID=TEXT``, each id used once: the record's
@@ -68,7 +61,8 @@ def parse_questions(values: list[str]) -> tuple[list[tuple[str, str]], int | Non
     merge two questions into one answer.
     """
     if not 1 <= len(values) <= 4:
-        return [], _fail(
+        return [], fail(
+            exit_usage,
             f"{len(values)} --question flag(s); a record carries 1-4 questions",
             "ask between one and four questions, each as --question q1=<text>")
     questions: list[tuple[str, str]] = []
@@ -77,18 +71,21 @@ def parse_questions(values: list[str]) -> tuple[list[tuple[str, str]], int | Non
         qid, sep, text = value.partition("=")
         qid = qid.strip()
         if not sep or not qid or not text:
-            return [], _fail(f"--question {value!r} is not an ID=TEXT pair",
-                             "write it as --question q1=<the question as asked>")
+            return [], fail(
+                exit_usage, f"--question {value!r} is not an ID=TEXT pair",
+                "write it as --question q1=<the question as asked>")
         if qid in seen:
-            return [], _fail(f"--question id {qid!r} is used twice",
-                             "give each question its own id")
+            return [], fail(exit_usage, f"--question id {qid!r} is used twice",
+                            "give each question its own id")
         seen.add(qid)
         questions.append((qid, text))
     return questions, None
 
 
-def check_supersede(args: argparse.Namespace, questions: list[tuple[str, str]],
-                    answers: list[tuple[str, str]]) -> int | None:
+def check_supersede(supersedes: str | None, date: str | None,
+                    questions: list[tuple[str, str]],
+                    answers: list[tuple[str, str]], *, fail: Fail,
+                    exit_usage: int) -> int | None:
     """The rule a supersede adds, or the exit code of the refusal printed.
 
     A declined steer is an open chain-root record, never a supersede: an
@@ -98,17 +95,19 @@ def check_supersede(args: argparse.Namespace, questions: list[tuple[str, str]],
     answered_ids = {oid for oid, _value in answers}
     unanswered = [qid for qid, _text in questions if qid not in answered_ids]
     if unanswered:
-        return _fail(
-            f"--supersedes {args.supersedes!r} with {len(unanswered)} unanswered "
+        return fail(
+            exit_usage,
+            f"--supersedes {supersedes!r} with {len(unanswered)} unanswered "
             f"question(s) ({', '.join(unanswered)}) would leave the chain with no "
             "answer",
             "answer every question with --answer ID=<answer>, or record the "
             "decline as an open chain-root record without --supersedes",
         )
-    if args.date is None:
+    if date is None:
         # A supersede carries the date of the record it replaces, so without
         # --date there is nothing to place it in the chain it corrects.
-        return _fail("--supersedes needs --date: a supersede carries the date of "
-                     "the record it replaces",
-                     "pass the target's date, e.g. --date 2026-10-26")
+        return fail(exit_usage,
+                    "--supersedes needs --date: a supersede carries the date of "
+                    "the record it replaces",
+                    "pass the target's date, e.g. --date 2026-10-26")
     return None

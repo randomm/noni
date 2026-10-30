@@ -236,34 +236,39 @@ def test_a_commit_that_found_nothing_to_commit_names_that_cause(tmp_path):
     HEAD: the file was written, git found nothing to commit, and the run must
     say so instead of echoing a status block. The tree has a real upstream here
     (the gone-upstream case is the test below), so the cause can only be the
-    empty diff, and the porcelain is checked as the fixture's precondition."""
+    empty diff, and the porcelain is checked as the fixture's precondition.
+
+    A dirty path the writer does not own is planted alongside its own: the
+    probes are scoped to the writer's path, so that unrelated dirt must not turn
+    the answer into 'something changed' and lose the clause the operator needs.
+    """
     origin, clone = _pushable_clone(tmp_path)
     _commit_files(clone)  # the fixture's own baseline commit exists
     target = _tracked_session(clone)
     target.write_text("- status: active\n", encoding="utf-8")
+    unrelated = clone / "notes.md"
+    unrelated.write_text("somebody else's dirty file\n", encoding="utf-8")
     assert _git_ok(clone, "status", "--porcelain", "--",
                    "noni/sessions/2026-10-01-dddddd.md").stdout == ""  # (no-op write)
 
     ok, why = _session_git.stage_and_commit(clone, target, "close: d")
 
     assert ok is False, why
-    assert _session_git.NOTHING_TO_COMMIT in why, why
+    assert _commit_cause.NOTHING_TO_COMMIT in why, why
     # The commit did not happen: HEAD is still the register commit.
     assert _commit_files(clone) == ["noni/sessions/2026-10-01-dddddd.md"]
     assert origin.is_dir()
 
 
-def test_a_commit_the_upstream_rejected_names_that_cause(tmp_path):
-    """The upstream exists and the commit itself is fine: the tree diverged from
-    origin, so the push that follows would be rejected and git refuses the commit
-    for a reason that is none of the three named states.
+def test_a_diverged_clone_still_commits(tmp_path):
+    """A clone whose origin moved ahead still commits: the divergence is the
+    push's problem, not the commit's.
 
-    This is the case the classifier must not guess at. The upstream resolves,
-    the index carries a real change, so the only honest answer is git's own
-    words with the generic clause in front of them, and a run told to fix an
-    upstream it does have is a run sent the wrong way. The tree is built by
-    hand (a clone whose origin moved ahead) rather than by the gone-upstream
-    fixture, because that fixture's whole point is a ref that does not resolve.
+    The upstream resolves and the index carries a real change, so this is none
+    of the four named states and nothing here should refuse the write. The tree
+    is built by hand (a clone whose origin moved ahead) rather than by the
+    gone-upstream fixture, because that fixture's whole point is a ref that does
+    not resolve.
     """
     origin, clone = _pushable_clone(tmp_path)
     _seed_ahead(origin, tmp_path, "ahead", {"other.md": "moved\n"})
@@ -273,6 +278,7 @@ def test_a_commit_the_upstream_rejected_names_that_cause(tmp_path):
     ok, why = _session_git.stage_and_commit(clone, target, "close: d")
 
     assert ok is True, why
+    assert origin.is_dir()
 
 
 def _git_commit(repo, message, rel):
@@ -315,10 +321,16 @@ def test_a_commit_git_accepted_reports_no_cause(tmp_path):
     assert ok is True, why
     assert why == ""
     assert _git_ok(repo, "log", "-1", "--format=%s").stdout.strip() == "close: d"
-    silent = subprocess.CompletedProcess([], 1, "", "")
-    assert _commit_cause.commit_failure_cause(repo, silent) is not None
+    # The same tree with a real upstream, and a writer that owns a path of its
+    # own to ask about: a failed call there is answered by the probes, and an
+    # accepted call has no cause to name at all.
+    origin, clone = _pushable_clone(tmp_path, name="cause-check")
+    _tracked_session(clone)
+    assert _commit_cause.commit_failure_cause(
+        clone, subprocess.CompletedProcess([], 1, "", "")) is None
     assert _commit_cause.commit_failure_cause(
         repo, subprocess.CompletedProcess([], 0, "", "")) is None
+    assert origin.is_dir()
 
 
 def test_a_commit_whose_upstream_origin_deleted_names_that_cause(tmp_path):
@@ -332,7 +344,7 @@ def test_a_commit_whose_upstream_origin_deleted_names_that_cause(tmp_path):
     ok, why = _session_git.stage_and_commit(clone, target, "close: d")
 
     assert ok is False, why
-    assert _session_git.UPSTREAM_GONE in why, why
+    assert _commit_cause.UPSTREAM_GONE in why, why
     assert origin.is_dir()
 
 
@@ -361,20 +373,18 @@ def test_a_failure_git_explained_nothing_reports_no_invented_cause(tmp_path):
 
     A cause is a claim about the tree. ``commit_failure_cause`` returns None
     rather than guess, and the message falls back to git's words so an operator
-    is not sent to fix an upstream that was there all along.
+    is not sent to fix an upstream that was there all along. The tree here has
+    a real, resolving upstream, so the None is the probes' answer and not the
+    absence of anything to ask about.
     """
-    repo = _repo(tmp_path)
+    origin, clone = _pushable_clone(tmp_path, name="silent-cause")
+    _tracked_session(clone)
     silent = subprocess.CompletedProcess([], 1, "", "")
-    assert _commit_cause.commit_failure_cause(repo, silent) in (
-        _session_git.NO_UPSTREAM,  # a repo with no remote is a real answer too
-        _session_git.UPSTREAM_GONE,
-        _session_git.NOTHING_TO_COMMIT,
-        _session_git.GIT_REFUSED,
-        None,
-    )
-    line = _commit_cause.commit_failed(repo, subprocess.CompletedProcess(
+    assert _commit_cause.commit_failure_cause(clone, silent) is None
+    line = _commit_cause.commit_failed(clone, subprocess.CompletedProcess(
         [], 1, "", "fatal: some git fault"))
     assert "fatal: some git fault" in line, line
+    assert origin.is_dir()
 
 
 def test_session_status_reads_the_field_the_census_would_act_on():

@@ -51,7 +51,7 @@ from pathlib import Path
 
 from . import _session_git, _session_push, labels
 
-STATUS_PREFIX = "- status:"
+STATUS_PREFIX = _session_git.STATUS_FIELD
 CLOSED_STATUS = "closed"
 
 # Every return path in this module names one of these constants, and the

@@ -13,9 +13,9 @@ a terminal -- worth sanitising. Each probe is a plumbing call through
 :func:`noni._session_git.git`, so it is bounded, never signs, runs no hooks and
 refuses the external transports a remote could name.
 
-The wording is noni's own: an operator who runs a writer and gets exit 3 reads a
-sentence, not git's status block, and each clause names the state that needs
-fixing.
+The line leads with a sentence in noni's words and quotes git after it. The
+clause is what an operator acts on; git's own output follows as the evidence,
+sanitised and bounded, rather than standing in place of the sentence.
 """
 
 from __future__ import annotations
@@ -23,16 +23,12 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from noni import _session_git
+from ._session_git import GIT_TIMEOUT_RC, git, safe_text
 
-# subprocess.run(timeout=) reports a killed call with this code (the
-# TimeoutExpired sentinel). A probe that came back with it answered nothing, and
-# reading 'changed' is the honest fallback (see _index_matches_head).
-GIT_TIMEOUT_RC = 124
-
-# The four clauses. Each names a state an operator can act on, and the test
-# suite reads these constants rather than copying them, so rewording a clause is
-# a change the tests see.
+# The four clauses. Each names a state an operator can act on, and the tests
+# read these constants rather than copying them. The operator-facing docs
+# paraphrase them: references/register.md's "Committing a session file" is the
+# one place the four states are spelled out, and nothing else restates them.
 NO_UPSTREAM = "this branch has no upstream configured"
 UPSTREAM_GONE = "the upstream branch no longer exists on origin"
 NOTHING_TO_COMMIT = ("the file already holds the bytes this run wrote, so git "
@@ -40,129 +36,180 @@ NOTHING_TO_COMMIT = ("the file already holds the bytes this run wrote, so git "
 GIT_REFUSED = "git refused the commit"
 
 _HEADS_PREFIX = "refs/heads/"
-# The module the git calls go through, named once so the test that proves every
-# probe is bounded reaches it the same way the writers reach their own git calls.
-def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    """One bounded, hardened git call, through the writers' own helper.
 
-    Resolved at call time rather than bound at import: this module and
-    ``_session_git`` refer to each other (the commit primitive asks this one to
-    name a failure, and a failure's cause is asked of git through that
-    primitive), so a module-level binding would be taken while the other side
-    is still running its own import.
+
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """One bounded, hardened git call, through the writers' own helper."""
+    return git(repo, *args)
+
+
+def _answered(result: subprocess.CompletedProcess[str] | None) -> bool:
+    """Whether a probe answered. A call killed by the timeout answered nothing.
+
+    None is the shape a helper uses for 'this probe could not run'; it is the
+    same non-answer as the timeout sentinel and reads the same way everywhere.
     """
-    return _session_git.git(repo, *args)
+    return result is not None and result.returncode != GIT_TIMEOUT_RC
 
 
 def commit_failure_cause(repo: Path,
-                         result: subprocess.CompletedProcess[str]) -> str | None:
+                         result: subprocess.CompletedProcess[str],
+                         rel: str | None = None) -> str | None:
     """One noni-worded clause naming why this commit failed, or None when nothing answered.
 
-    A cause is a claim about a failure that happened, so it is returned only for
-    a call that reports one: ``result`` is the commit attempt this message
-    accompanies, and an accepted commit has no cause to name (a caller that
-    asked anyway gets None, which :func:`commit_failed` prints as git's words
-    alone rather than as an invented fault).
+    Two invariants, both about not inventing facts. A cause is a claim about a
+    failure that happened, so it is returned only for a call that reports one;
+    and a cause is returned only when a git call answered it, because when a
+    probe could not run -- including a call killed by the timeout, which is the
+    same non-answer -- :func:`commit_failed` prints git's words alone rather
+    than naming a state on a guess.
 
     The order is the order of what an operator can act on: the state that stops
-    a push is named before the state that merely made this run a no-op, so a
-    tree that is both -- never pushed, and carrying no change -- is reported as
-    the one that needs a fix:
-
-    - the branch names no remote, a remote with no fetch refspec, or the
-      literal ``.`` (this clone itself): there is no upstream to compare
-      against, which is what a fresh state repository that was never pushed
-      looks like;
-    - the upstream's remote-tracking ref does not resolve, or git abbreviates it
-      back to the literal ``HEAD``: that is git's "upstream is gone", the origin
-      having deleted the branch;
-    - the index matches HEAD: there was nothing to commit, which is what a
-      release or close whose row or status already matches HEAD looks like;
-    - anything else is git's own fault, and its words follow the clause.
-
-    The branch is read from this tree (``symbolic-ref --short HEAD``), not from
-    the literal ``HEAD``, which an inherited ``GIT_DIR`` would resolve
-    elsewhere. A cause is returned only when a git call answered it; when a
-    probe could not run this returns None and :func:`commit_failed` prints git's
-    words alone, because guessing at the state and printing it as fact is worse
-    than naming the fault and quoting what git said.
+    a push comes before the state that merely made this run a no-op. The branch
+    is read from this tree (``symbolic-ref --short HEAD``), not from the literal
+    ``HEAD``, which an inherited ``GIT_DIR`` would resolve elsewhere.
     """
-    if result is None or result.returncode == 0:
+    if result.returncode == 0:
         return None
-    said = _said(result)
     branch = _git(repo, "symbolic-ref", "--short", "HEAD")
+    if not _answered(branch):
+        return None
     name = branch.stdout.strip()
     if branch.returncode != 0 or not name or name == "HEAD":
         # Not even a branch name, so there is no upstream to classify: leave
         # this one to git's own words rather than call a broken tree a missing
         # upstream.
         return None
-    upstream, missing = _upstream_ref(repo, name)
-    if missing:
+    no_upstream, verdict = _upstream_ref(repo, name)
+    if verdict == "probe-failed":
+        return None
+    if not no_upstream:
+        # Every 'none' state answers with an empty ref: there is nothing here to
+        # compare against. That one clause is worth printing whatever git
+        # quoted, because it is a fact about the tree's own config and not a
+        # reading of the refusal. Everything else needs something to have been
+        # said: a quiet failure on a tree whose every other probe answered
+        # healthy is left unclassified rather than given the generic clause.
         return NO_UPSTREAM
-    if not _resolves(repo, upstream) or _abbreviates_to_head(repo, upstream):
+    if not _said(result):
+        return None
+    upstream = no_upstream
+    resolves = _resolves(repo, upstream)
+    if resolves is None:
+        return None
+    if resolves.returncode != 0:
         return UPSTREAM_GONE
-    if _index_matches_head(repo):
+    abbreviated = _abbreviates_to_head(repo, upstream)
+    if abbreviated is None:
+        return None
+    if abbreviated:
+        return UPSTREAM_GONE
+    matches = _index_matches_head(repo, upstream, rel)
+    if matches is None:
+        return None
+    if matches:
         return NOTHING_TO_COMMIT
-    return GIT_REFUSED if said else None
+    return GIT_REFUSED
 
 
-def _upstream_ref(repo: Path, branch: str) -> tuple[str, bool]:
-    """``(upstream ref, no upstream)`` for ``branch``; the second is True when none.
-
-    Three states answer 'none': the branch names no remote; the remote it names
-    is the literal ``.``, which is this clone itself, so no origin's branch
-    could have gone; and the remote carries no fetch refspec, which leaves a ref
-    the clone can never hold -- the state git's own wording cannot tell apart
-    from a branch origin deleted.
-
-    The branch's remote is read from its own config lines
-    (``branch.<name>.remote`` and ``branch.<name>.merge``) rather than from
-    ``<branch>@{upstream}``: a branch whose remote carries no such ref does not
-    resolve, and that call answers with its own spelling and a non-zero exit,
-    which reads as 'no upstream' whether or not that is the truth.
-    """
-    remote = _config_value(repo, f"branch.{branch}.remote")
-    if not remote:
-        named = _git(repo, "rev-parse", "--symbolic-full-name",
-                     f"{branch}@{{upstream}}")
-        ref = named.stdout.strip()
-        if named.returncode != 0 or "/" not in ref:
-            return "", True
-        remote = ref.split("/", 1)[0]
-    if not remote or remote == ".":
-        return "", True
-    merge = _config_value(repo, f"branch.{branch}.merge")
-    if merge.startswith(_HEADS_PREFIX):
-        return f"{remote}/{merge[len(_HEADS_PREFIX):]}", False
-    configured = _git(repo, "config", "--get-regexp", r"^remote\..*\.fetch$")
-    if configured.returncode != 0:
-        return "", True
-    wanted = f"remote.{remote}.fetch"
-    for line in configured.stdout.splitlines():
-        if line.split(maxsplit=1)[0] == wanted:
-            return f"{remote}/{branch}", False
-    return "", True
-
-
-def _config_value(repo: Path, key: str) -> str:
-    """One git config value, '' when unset or unreadable.
-
-    Read without ``--global``: the writer's hardened environment already
-    neutralises the host's config, and a tree's own config is the state that
-    decides where this clone's commits go.
-    """
+def _config_value(repo: Path, key: str) -> str | None:
+    """One git config value: the value, ``""`` when unset, None when the probe died."""
     result = _git(repo, "config", "--get", key)
+    if not _answered(result):
+        return None
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
-def _resolves(repo: Path, ref: str) -> bool:
-    """Whether ``ref`` names an object in this clone (``--verify --quiet``)."""
-    return _git(repo, "rev-parse", "--verify", "--quiet", ref).returncode == 0
+def _configured_upstream(repo: Path, branch: str) -> tuple[str | None, str | None] | None:
+    """The ``(remote, merge)`` a branch's own config lines name.
+
+    ``(None, None)`` is git's own answer of 'this branch has no upstream'; None
+    is a probe that could not run, which is not an answer either. Read from
+    ``branch.<name>.remote`` and ``branch.<name>.merge`` rather than from
+    ``<branch>@{upstream}`` for the states that can be read from config at all:
+    a branch whose remote carries no such ref does not resolve, and that call
+    answers with its own spelling and a non-zero exit, which reads as 'no
+    upstream' whether or not that is the truth. The @{upstream} call is asked
+    with ``--end-of-options`` so a branch named after one of git's option
+    sentinels cannot turn this plumbing call into an argument-injection path.
+    """
+    remote = _config_value(repo, f"branch.{branch}.remote")
+    if remote is None:
+        return None
+    if not remote:
+        # No branch.remote line: the only upstream a branch can have then is one
+        # git resolved itself, and the ref it resolved names the remote.
+        named = _git(repo, "rev-parse", "--end-of-options",
+                     f"{branch}@{{upstream}}")
+        if not _answered(named):
+            return None
+        ref = named.stdout.strip()
+        if named.returncode != 0 or "/" not in ref:
+            # git's own 'no upstream configured', or a ref that names no remote.
+            return None, None
+        remote = ref.split("/", 1)[0]
+    merge = _config_value(repo, f"branch.{branch}.merge")
+    if merge is None:
+        return None
+    return remote, (merge if merge.startswith(_HEADS_PREFIX) else None)
 
 
-def _abbreviates_to_head(repo: Path, upstream: str) -> bool:
-    """Whether git abbreviates ``upstream`` back to the literal ``HEAD``.
+def _no_upstream() -> tuple[str, str]:
+    """The one answer for 'this branch has no upstream to compare against'."""
+    return "", "none"
+
+
+def _upstream_ref(repo: Path, branch: str) -> tuple[str, str]:
+    """``(upstream ref, verdict)`` for ``branch``.
+
+    The verdict is ``"none"`` for every state that leaves nothing to compare
+    against, and ``"probe-failed"`` when a probe could not run: a config call
+    that died is not evidence of a missing upstream. Each ``"none"`` exit is one
+    of these, and each names something an operator can go and look at:
+
+    - the branch names no remote at all, and git resolves no upstream ref for it
+      either (a fresh state repository that was never pushed);
+    - the remote it names is the literal ``.``, which is this clone itself, so
+      no origin's branch could have gone;
+    - the remote carries no fetch refspec, which leaves a ref the clone can
+      never hold -- the state git's own wording cannot tell apart from a branch
+      origin deleted.
+    """
+    configured = _configured_upstream(repo, branch)
+    if configured is None:
+        return "", "probe-failed"
+    remote, merge = configured
+    if remote is None:
+        # No branch.remote line and no upstream ref to read one from: this is
+        # git's own 'no upstream configured for branch' state, which is what a
+        # fresh state repository that was never pushed looks like.
+        return _no_upstream()
+    if not remote or remote == ".":
+        return _no_upstream()
+    if merge is not None:
+        return f"{remote}/{merge[len(_HEADS_PREFIX):]}", ""
+    # No branch.merge line: the upstream is whatever origin's fetch refspec
+    # could have fetched under the branch's own name.
+    refspec_lines = _git(repo, "config", "--get-regexp", r"^remote\..*\.fetch$")
+    if not _answered(refspec_lines):
+        return "", "probe-failed"
+    if refspec_lines.returncode != 0:
+        return _no_upstream()
+    wanted = f"remote.{remote}.fetch"
+    for line in refspec_lines.stdout.splitlines():
+        if line.split(maxsplit=1)[0] == wanted:
+            return f"{remote}/{branch}", ""
+    return _no_upstream()
+
+
+def _resolves(repo: Path, ref: str) -> subprocess.CompletedProcess[str] | None:
+    """The ``--verify --quiet`` verdict for ``ref``, or None when the probe died."""
+    result = _git(repo, "rev-parse", "--verify", "--quiet", ref)
+    return result if _answered(result) else None
+
+
+def _abbreviates_to_head(repo: Path, upstream: str) -> bool | None:
+    """Whether git abbreviates ``upstream`` back to the literal ``HEAD``; None if unasked.
 
     That is how git marks an upstream whose remote-tracking ref is gone: the
     configured name still reads back as a string, but no object stands behind
@@ -172,26 +219,52 @@ def _abbreviates_to_head(repo: Path, upstream: str) -> bool:
     """
     if not upstream or upstream == "HEAD":
         return True
-    return _git(repo, "rev-parse", "--no-abbrev", "--verify", "--quiet",
-                f"{upstream}^{{commit}}").returncode != 0
+    result = _git(repo, "rev-parse", "--no-abbrev", "--verify", "--quiet",
+                  f"{upstream}^{{commit}}")
+    if not _answered(result):
+        return None
+    return result.returncode != 0
 
 
-def _index_matches_head(repo: Path) -> bool:
-    """Whether the index carries no change against HEAD: git's 'nothing to commit'.
+def _index_matches_head(repo: Path, upstream: str,
+                        rel: str | None) -> bool | None:
+    """Whether the index carries no change against HEAD; None when a probe died.
 
     Asked of the index as well as the work tree, so a file the writer wrote and
     staged (its reset and add steps ran) answers honestly: the bytes are in the
-    index, and if they equal HEAD's there is nothing to commit. A probe killed
-    by the timeout is not an answer, so it reports 'changed'.
+    index, and if they equal HEAD's there is nothing to commit.
+
+    Both probes carry the one pathspec this writer owns (``rel``, the form
+    ``_session_git.rel_of`` produces), as every other step of
+    ``stage_and_commit`` does: the question is whether *this* file's bytes
+    changed, and a whole-tree probe would re-stat the entire work tree to answer
+    a question about one path -- and would report somebody else's dirty file as
+    a reason this run's own write had something to commit. ``rel=None`` is the
+    whole-tree question, for a caller that named no path. The staged probe is
+    against the commit ``--only`` will be judged against -- ``HEAD``, which is
+    the commit git itself refuses against, and not against the remote-tracking
+    ref: on the common path the writer's own register commit sits between
+    ``HEAD`` and ``origin/<branch>", and a diff against origin would report
+    that committed change as work still to be committed.
     """
-    staged = _git(repo, "diff", "--cached", "--quiet", "HEAD", "--")
-    unstaged = _git(repo, "diff", "--quiet", "--")
-    if staged.returncode == GIT_TIMEOUT_RC or unstaged.returncode == GIT_TIMEOUT_RC:
+    pathspec = rel if rel else "."
+    staged = _git(repo, "diff", "--cached", "--quiet", "HEAD", "--", pathspec)
+    unstaged = _git(repo, "diff", "--quiet", "--", pathspec)
+    if not _answered(staged) or not _answered(unstaged):
+        return None
+    if staged.returncode != 0 or unstaged.returncode != 0:
         return False
-    return staged.returncode == 0 and unstaged.returncode == 0
+    # Untracked files are no reason to call this run's own write a change: the
+    # writer commits one path and untracked siblings are not part of it.
+    untracked = _git(repo, "ls-files", "--others", "--exclude-standard",
+                     "--", pathspec)
+    if not _answered(untracked):
+        return None
+    return untracked.stdout.strip() == ""
 
 
-def commit_failed(repo: Path, result: subprocess.CompletedProcess[str]) -> str:
+def commit_failed(repo: Path, result: subprocess.CompletedProcess[str],
+                  rel: str | None = None) -> str:
     """The one line a commit failure reports: the cause in noni's words, then git's.
 
     The caller adds its own headline (which path it wrote and what to do about
@@ -202,7 +275,7 @@ def commit_failed(repo: Path, result: subprocess.CompletedProcess[str]) -> str:
     credential-helper output -- and printed on its own it reads as a raw
     ``git status`` dump.
     """
-    cause = commit_failure_cause(repo, result)
+    cause = commit_failure_cause(repo, result, rel)
     said = _said(result)
     if cause is None:
         return f"git could not commit: {said or 'no reason given'}"
@@ -220,6 +293,6 @@ def _said(result: subprocess.CompletedProcess[str]) -> str:
     return " ".join(said.split())
 
 
-def _safe(text: str) -> str:
-    cleaned = _session_git.safe_text((text or "").strip())
+def _safe(text: str | None) -> str:
+    cleaned = safe_text((text or "").strip())
     return "" if cleaned.strip() == "" else cleaned

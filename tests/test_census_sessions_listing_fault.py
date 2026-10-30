@@ -36,6 +36,7 @@ CENSUS_PY = REPO / "skills" / "census" / "scripts" / "census.py"
 SESSIONS_CHECKS_PY = REPO / "src" / "noni" / "census_sessions_checks.py"
 
 SESSIONS_PROBE_PY = REPO / "src" / "noni" / "census_sessions_probe.py"
+CENSUS_RUN_PY = REPO / "src" / "noni" / "census_run.py"
 
 class TestSessionsListingFault:
     """A ``noni/sessions/`` that cannot be listed is a fault, not a clean register.
@@ -341,11 +342,13 @@ class TestSessionsListingFault:
         for ``glob`` by moving house.
         """
         # The census's tree holds the census, the probe's tree the split-out
-        # probe and the checks' tree the split-out session group; the ban below
-        # reads all three, so a listing cannot reach for `glob` by moving house.
+        # probe, the checks' tree the split-out session group and the run's tree
+        # the body of the run that asks for the register; the ban below reads all
+        # four, so a listing cannot reach for `glob` by moving house.
         census_trees = [(CENSUS_PY, ast.parse(_harness_source(CENSUS_PY))),
                         (SESSIONS_PROBE_PY, ast.parse(_harness_source(SESSIONS_PROBE_PY))),
-                        (SESSIONS_CHECKS_PY, ast.parse(_harness_source(SESSIONS_CHECKS_PY)))]
+                        (SESSIONS_CHECKS_PY, ast.parse(_harness_source(SESSIONS_CHECKS_PY))),
+                        (CENSUS_RUN_PY, ast.parse(_harness_source(CENSUS_RUN_PY)))]
         # Two names, one listing: the sibling defines the readdir as
         # `sessions_listing` and the census wraps it as `_sessions_listing`, the
         # name `main` calls. One definition of each (a second of either is a

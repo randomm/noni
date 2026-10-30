@@ -1,0 +1,363 @@
+"""The census's ledger group: the record checks over ``noni/decisions/``.
+
+Split from ``census.py`` so each file stays the size one responsibility is
+worth: ``census.py`` owns the CLI, the exit-code table, the row shape and the
+group wiring, and this module owns the record pass — the composition of the
+group, the schema check, the empty-ledger reporter, and the I/O and parse pass.
+The two git-backed integrity checks, which answer the only two questions about
+the ledger that history rather than the filesystem settles, sit in
+``census_ledger_edited.py`` beside this file.
+
+The row mechanics each reporter needs — ``row``, ``rel_to``, ``rel_to_root``,
+``file_kind``, ``bounded``, ``clipped``, ``repo_sha1`` and the cannot-tell row —
+are handed in at the call, exactly as the ordering and session splits do it, so
+the row shape, its visibility marker and the machine-local-path rule keep their
+single owner in ``census.py`` and this module composes no row of its own
+devising. The one probe of the ledger directory is taken by the census
+(``_ledger_probe``) and arrives here as the ``probe`` argument: this module never
+lists the directory for itself.
+
+The group's own constants — the schema field set, the record date shape and the
+empty-state vocabulary — are declared here beside the code that reads them, and
+``census.py`` re-exports them so a caller that already imports the census still
+names them through it.
+
+Nothing here prints or exits: every answer is appended to the caller's
+``findings`` list.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+from typing import TYPE_CHECKING, Callable
+
+from . import census_ledger as _ledger
+from . import census_text as _text
+
+if TYPE_CHECKING:  # pragma: no cover - typing only, nothing imported at runtime
+    from .census_git import Git
+
+NAME_RE = re.compile(r"^[A-Za-z0-9._-]+\.json$")
+REQUIRED_LEDGER_FIELDS = (
+    "id",
+    "date",
+    "asked_by",
+    "questions",
+    "by",
+    "scope",
+    "status",
+    "supersedes",
+)
+
+# The one optional (but validated) ledger field: ``source``. It carries the
+# tracker provenance of a record produced from a tracker-sourced answer (an
+# adapter's question-legitimacy verdict): an object with ``issue_number``
+# (int) and ``comment_id`` (int). ``null`` (or absent) for records that did
+# not come from a tracker. A record without it stays valid: the eight
+# REQUIRED_LEDGER_FIELDS above are the closed required set, and ``source`` is
+# the one extra key the schema admits.
+
+# A UTC ISO-8601 second-resolution timestamp (the record date shape).
+DATE_RE = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+)
+
+
+# The five states the ledger probe answers: the four the ledger-empty class
+# reports, each in exactly one row's message, plus the silent "ok". "empty"
+# names a tree with no decision record to arbitrate: noni/ present without a
+# decisions/ directory, or a decisions/ directory that holds no *.json record.
+# The words and their wording are pinned by LEDGER_EMPTY_MESSAGES below and the
+# tests iterate that table, so renaming a state without updating its wording
+# (and tests/test_census_ledger_empty.py) is a contract change.
+LEDGER_EMPTY_STATES = ("absent", "empty", "not a directory", "symlink", "ok")
+
+# state word -> the detail the row carries, or None for the state that reports
+# nothing. The keys ARE the state vocabulary: _ledger_probe returns one of
+# them and _check_ledger_empty looks its message up here, so the contract has
+# exactly one owner.
+LEDGER_EMPTY_MESSAGES: dict[str, str | None] = {
+    "absent": "no decision record is censusable: the ledger directory is absent "
+    "(no noni/decisions under this repo — no steering ledger to arbitrate)",
+    "empty": "the ledger holds no *.json record: either noni/ has no decisions/ "
+    "directory, or that directory exists and holds none",
+    "not a directory": "noni/ is not a directory, so no ledger can live under it",
+    "symlink": "noni/ or the ledger path is a symlink; the census does not read through links",
+    "ok": None,
+}
+
+
+def _validate_record(obj: object) -> list[str]:
+    """Schema-check a parsed decision record; return the list of problems
+    (empty = valid). Mirrors the eight-field shape of the steering-ledger
+    record, including the closed-set rule (exactly the eight fields)."""
+    if not isinstance(obj, dict):
+        return ["record is not a JSON object"]
+    problems: list[str] = []
+    missing = [f for f in REQUIRED_LEDGER_FIELDS if f not in obj]
+    if missing:
+        problems.append("missing field(s): " + ", ".join(missing))
+    extra = [k for k in obj if k not in REQUIRED_LEDGER_FIELDS and k != "source"]
+    if extra:
+        problems.append("unknown field(s): " + ", ".join(sorted(extra)))
+    if "source" in obj:
+        src = obj["source"]
+        if src is not None:
+            if not isinstance(src, dict):
+                problems.append("source must be null or an object with issue_number and comment_id")
+            else:
+                if not isinstance(src.get("issue_number"), int) or isinstance(src.get("issue_number"), bool):
+                    problems.append("source.issue_number must be an integer")
+                if not isinstance(src.get("comment_id"), int) or isinstance(src.get("comment_id"), bool):
+                    problems.append("source.comment_id must be an integer")
+                src_extra = [k for k in src if k not in ("issue_number", "comment_id")]
+                if src_extra:
+                    problems.append("source unknown field(s): " + ", ".join(sorted(src_extra)))
+    date = obj.get("date")
+    if isinstance(date, str):
+        if not DATE_RE.match(date):
+            problems.append("date is not a valid UTC ISO-8601 string")
+        else:
+            month, day = int(date[5:7]), int(date[8:10])
+            hour, minute, second = int(date[11:13]), int(date[14:16]), int(date[17:19])
+            if not 1 <= month <= 12:
+                problems.append("date month out of range")
+            if not 1 <= day <= 31:
+                problems.append("date day out of range")
+            if not 0 <= hour <= 23:
+                problems.append("date hour out of range")
+            if not 0 <= minute <= 59:
+                problems.append("date minute out of range")
+            if not 0 <= second <= 60:
+                problems.append("date second out of range")
+    elif "date" in obj:
+        problems.append("date is not a string")
+    questions = obj.get("questions")
+    if "questions" in obj:
+        if not isinstance(questions, list) or not 1 <= len(questions) <= 4:
+            problems.append("questions must be an array of 1-4 entries")
+        else:
+            for q in questions:
+                if not isinstance(q, dict):
+                    problems.append("question entry is not an object")
+                    continue
+                if not ({"id", "text", "options"} <= set(q)):
+                    problems.append("question missing id/text/options")
+                options = q.get("options")
+                if not isinstance(options, list) or not 2 <= len(options) <= 4:
+                    problems.append("question options must be an array of 2-4 strings")
+                elif not all(isinstance(o, str) for o in options):
+                    problems.append("question options must be strings")
+                if "answer" in q and q["answer"] is not None and not isinstance(q["answer"], str):
+                    problems.append("question answer must be a string or null")
+    status = obj.get("status")
+    if "status" in obj and status not in ("decided", "open", "superseded"):
+        problems.append("status not one of decided|open|superseded")
+    for field in ("id", "by", "asked_by", "scope"):
+        value = obj.get(field)
+        if field in obj and (not isinstance(value, str) or not value):
+            problems.append(f"{field} must be a non-empty string")
+    sup = obj.get("supersedes")
+    if "supersedes" in obj and sup is not None and (not isinstance(sup, str) or not sup):
+        problems.append("supersedes must be null or a non-empty string")
+    return problems
+
+
+# The ledger probe (the state word for `noni/decisions/` and the one row a
+# listing that faulted earns) lives in census_ledger.py beside this file, in the
+# same shape as the hygiene and ordering splits: an ordinary package import, with
+
+def check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict],
+                 strict: bool, probe: _ledger.LedgerProbe, *,
+                 row: Callable[..., dict],
+                 rel_to: Callable[[Path, Path], str | None],
+                 rel_to_root: Callable[[Path, Path], str],
+                 bounded: Callable[..., str],
+                 clipped: Callable[[str], str],
+                 file_kind: Callable[..., tuple[str, str | None]],
+                 repo_sha1: Callable[[Path], str | None],
+                 cannot_tell: Callable[[str, str, bool, list[dict]], None],
+                 edit_check: Callable[..., None],
+                 deletion_check: Callable[..., bool],
+                 chain_check: Callable[..., None]) -> None:
+    """Check the steering ledger; append findings (each a partial finding row).
+
+    ``probe`` is the run's one classification of ``ledger``, built by ``main``
+    before it decided whether this group runs at all: a second probe would be a
+    second read of the directory and a second chance to disagree with the first,
+    so the group reports from the answer that got it here.
+
+    The composition only: the ledger-empty probe, then record I/O + schema
+    validation, the edited check (git-backed), the deleted check (git-backed)
+    and the supersede-chain check, in that order. The record pass reads the
+    probe's own names, so the group's read of the directory is the probe's
+    single readdir (see ``LedgerProbe.names``). ledger-empty only ADDS rows:
+    the states where the record pass has nothing to say. The git-backed
+    integrity checks run whatever the empty probe found — see the
+    deleted-sole-record regression tests in tests/test_census_exit_codes.py.
+
+    The two rows the composition adds itself, both probe honesty:
+
+    * a listing that faulted gets one cannot-tell row of its own and stops the
+      group there (`census_ledger.append_listing_fault`, called with this group's
+      own ``ledger-edited`` class, noun and question): the probe read nothing, so
+      no state word it answered is one this run established and no record pass
+      can be trusted either;
+    * when the deletion check could not put its question to git and the ledger
+      reads as "empty", the run says so (probe honesty, issue #33). "Empty" is
+      the only state that can mean "committed records were deleted", and this
+      check is the only signal for that, so a silent one here would let a
+      gutted ledger read as a plain no-ledger warning — the row is warn by
+      default, fail under --strict."""
+    if probe.listing_fault is not None:
+        # The probe could not list the ledger, so no state word it answered is
+        # one this run established: the empty class stays silent, the record
+        # pass has nothing trustworthy to read, and the one row the group adds
+        # says what the read could not do (`census_ledger.append_listing_fault`).
+        _ledger.append_listing_fault(
+            ledger, root, findings, strict, probe.listing_fault,
+            check="ledger-edited", noun="the ledger directory",
+            unknown="so whether a committed record was deleted or edited cannot be "
+                    "answered",
+            row=row, rel_to_root=rel_to_root, bounded=bounded, clipped=clipped)
+        return
+    check_ledger_empty(probe, ledger, root, findings, strict, row=row, rel_to_root=rel_to_root, bounded=bounded)
+    valid, unparseable = check_ledger_records(ledger, root, findings, probe, row=row, file_kind=file_kind)
+    edit_check(valid, unparseable, git, root, findings, strict, row=row, rel_to=rel_to, repo_sha1=repo_sha1)
+    could_not_answer = deletion_check(ledger, git, root, findings, strict, row=row, rel_to_root=rel_to_root, cannot_tell=cannot_tell)
+    if could_not_answer and probe.state == "empty":
+        cannot_tell(
+            "ledger-edited",
+            "the git-backed deletion check could not run on this empty ledger "
+            "(no readable git history), so whether committed records were deleted "
+            "from it cannot be answered", strict, findings)
+    chain_check(valid, ledger, root, findings, row=row)
+
+def check_ledger_empty(probe: _ledger.LedgerProbe, ledger: Path, root: Path,
+                       findings: list[dict],
+                       strict: bool, *,
+                       row: Callable[..., dict],
+                       rel_to_root: Callable[[Path, Path], str],
+                       bounded: Callable[..., str]) -> None:
+    """The ledger-empty class: exactly one warn row when there is no ledger.
+
+    A pure reporter: it appends its row and returns. The git-backed integrity
+    checks are not gated on the outcome — a ledger that reads as empty today
+    may have been emptied by a deletion, and that deletion is reported by
+    `_check_ledger_deleted` regardless. The four states of
+    LEDGER_EMPTY_MESSAGES (other than the silent "ok") each produce exactly one
+    row carrying their own state word, so "no ledger at all" reads as a
+    reported warning rather than a silent clean (the state word IS the
+    finding: a census that stays quiet here cannot tell "nothing to census"
+    apart from "the ledger went missing").
+
+    The class only ADDS rows: it never weakens a failure the group already
+    reports. The states it owns are exactly the ones where no record can be
+    read: no ``noni/``, ``noni/`` not a directory, a symlink, or no record to
+    census (``noni/`` with no ``decisions/``, or a ``decisions/`` directory
+    holding no ``*.json`` record). Malformed records remain the ledger-record
+    failure: only the absence of records is a warn.
+
+    This class is warn-severity: a run that has only this finding exits 0,
+    and --strict promotes it to exit 42. Symlinks are reported, never read
+    through (the probe-honesty rule).
+    """
+    detail = LEDGER_EMPTY_MESSAGES[probe.state]
+    if detail is None:
+        return
+    if probe.problem:
+        # Foreign text from this tree, so it gets the bound-and-scrub the
+        # listing-fault row applies to its fault text: a row built from someone
+        # else's error must not smuggle a host path or run past the length every
+        # other row keeps. The sentence around it is this census's own wording.
+        detail = f"{detail} (probe error: {bounded(probe.problem)})"
+    artifact = rel_to_root(root, ledger)
+    findings.append(
+        row("ledger-empty", strict, artifact, artifact,
+             f"ledger-empty ({probe.state}): {detail}", root)
+    )
+
+
+
+def check_ledger_records(ledger: Path, root: Path, findings: list[dict],
+                         probe: _ledger.LedgerProbe, *,
+                         row: Callable[..., dict],
+                         file_kind: Callable[..., tuple[str, str | None]]) -> (
+                         tuple[list[tuple[str, Path, dict]], list[tuple[str, Path]]]):
+    """I/O + schema validation. Returns (valid, unparseable) where each entry
+    of unparseable is (name, path) of a file that exists on disk but failed
+    parsing — it still gets the git edited check.
+
+    ``probe`` is the run's one classification of ``ledger``, and this pass reads
+    both of its answers and asks neither again: ``probe.state`` for whether a
+    record pass is warranted at all, and ``probe.names`` for the records
+    themselves. The names are the probe's because the probe's readdir is the
+    only one this run performs — a second listing was a second read of a tree
+    that can change under the run, and one that faulted after the probe's had
+    succeeded raised out of ``main`` as a traceback rather than a row.
+
+    ``state`` other than "ok" means this pass reads no records at all, so any
+    state other than "ok" is ledger-empty's finding and adds no row here. "ok"
+    means the directory holds at least one ``*.json`` name, so every row this
+    pass adds is a malformed-record failure.
+    """
+    def add(check: str, subject: str, artifact: str, message: str) -> None:
+        findings.append(row(check, False, subject, artifact, message, root))
+
+    if probe.state != "ok" or probe.names is None:
+        # ledger-empty owns every no-ledger state (absent, not a directory,
+        # symlink, and any probe fault folded into one of them) as a warn that
+        # names the state; this pass keeps only the malformed-record failures,
+        # so a ledger that is not there adds no ledger-record row here. The
+        # ``names is None`` arm is belt and braces: no state of "ok" is ever
+        # built without the names that produced it.
+        return [], []
+
+    names = sorted(probe.names)
+    valid: list[tuple[str, Path, dict]] = []
+    unparseable: list[tuple[str, Path]] = []
+    for name in names:
+        path = ledger / name
+        if not NAME_RE.match(name):
+            add("ledger-record", name, str(path), "filename is not a plain <name>.json path segment")
+            continue
+        fkind, fproblem = file_kind(path)
+        if fkind != "regular":
+            add("ledger-record", name, str(path), f"record is unreadable: {fproblem}")
+            continue
+        try:
+            raw = path.read_bytes()
+            body = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            # The exception message embeds the offending bytes, which are
+            # untrusted record content (a record that contains raw NULs or
+            # other control bytes would smuggle them into stderr); the fixed
+            # wording below names the class without echoing the bytes.
+            add("ledger-record", name, str(path), "record is not valid UTF-8")
+            unparseable.append((name, path))
+            continue
+        except OSError as e:
+            # The filename is the path of the record itself, which this row
+            # already carries in ``artifact``: the fault contributes its class
+            # and its errno words, nothing else.
+            add("ledger-record", name, str(path),
+                f"record is unreadable: {_text.fault_text(e)}")
+            unparseable.append((name, path))
+            continue
+        try:
+            obj = json.loads(body)
+        except json.JSONDecodeError:
+            add("ledger-record", name, str(path), "record is not valid JSON")
+            unparseable.append((name, path))
+            continue
+        problems = _validate_record(obj)
+        if problems:
+            add("ledger-record", obj.get("id", name) if isinstance(obj, dict) else name, str(path), "; ".join(problems))
+            continue
+        valid.append((obj["id"], path, obj))
+
+    return valid, unparseable
+
+

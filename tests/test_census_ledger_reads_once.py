@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 from _harness import (  # noqa: E402
+    SRC,
     _commit_file,
     _fault_the_ledger_listing,
     _harness_source,
@@ -177,9 +178,16 @@ def test_the_run_probes_the_ledger_once(tmp_path, monkeypatch):
     assert len(calls) == 1, f"a faulted listing probed {len(calls)} times: {calls}"
 
     source = _harness_source(CENSUS)
-    assert "ledger_probe = _ledger_probe(ledger)" in source
-    assert "ledger_probe.listing_fault" in source
-    assert "_check_ledger(ledger, git, root, findings, args.strict, ledger_probe)" in source
+    # The run moved to census_run.py (issue #52); the wiring the pin asks about
+    # is the run's, so it is read from the file that holds it now. The census's
+    # own source is still read for the rule that a second probe path is back: the
+    # probe seam itself stays a name of the census.
+    run_source = (SRC / "noni" / "census_run.py").read_text(encoding="utf-8")
+    # The seam is resolved once per helper body now (`census = _census()`), so the
+    # pin names the call through that local binding rather than the inline form.
+    assert "ledger_probe = census._ledger_probe(ledger)" in run_source
+    assert "ledger_probe.listing_fault" in run_source
+    assert "census._check_ledger(ledger, git, root, findings, args.strict," in run_source
     assert "_ledger.listing_fault(" not in source, \
         "a second probe path is back: main must read the fault off its one probe"
 

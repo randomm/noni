@@ -302,8 +302,13 @@ def test_git_timeout_reports_tool_missing_not_crash(tmp_path, monkeypatch):
     degrades to the cannot-tell / tool-missing outcome. When git cannot be run
     (unavailable), the census exits 3 (required tool missing)."""
     import census as _census
+
     # Simulate git being entirely unavailable (shutil.which returns None).
-    monkeypatch.setattr(_census.shutil, "which", lambda name: None)
+    # shutil.which is consulted by the run now (census_run, issue #52), so the
+    # seam sits on the module that asks the question. The census re-exports the
+    # same module object, so either spelling faults the same lookup.
+    import noni.census_run as _run
+    monkeypatch.setattr(_run.shutil, "which", lambda name: None)
     import io
     from contextlib import redirect_stderr
     err = io.StringIO()

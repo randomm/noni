@@ -34,6 +34,7 @@ from census_run import _run_census
 REPO = Path(__file__).resolve().parent.parent
 
 CENSUS_PY = REPO / "skills" / "census" / "scripts" / "census.py"
+CENSUS_RUN_PY = REPO / "src" / "noni" / "census_run.py"
 
 class TestSessionsListingFault:
     """A ``noni/sessions/`` that cannot be listed is a fault, not a clean register.
@@ -92,15 +93,20 @@ class TestSessionsListingFault:
         )
         assert rc == 0, f"the fault row is a warn, got {rc}\nstderr: {err}"
 
-        tree = ast.parse(_harness_source(CENSUS_PY))
-        defined = {node.name for node in ast.walk(tree)
+        # The one call site of the register's reader now lives in the run split
+        # (census_run.py, issue #52); the census still defines the seam itself, so
+        # both files are read: the definition from the census, the call site from
+        # the run that asks for the register.
+        census_tree = ast.parse(_harness_source(CENSUS_PY))
+        run_tree = ast.parse(_harness_source(CENSUS_RUN_PY))
+        defined = {node.name for node in ast.walk(census_tree)
                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
         assert "_sessions_listing" in defined, \
             "the register's one reader is gone from the census"
-        call_sites = [node for node in ast.walk(tree)
+        call_sites = [node for node in ast.walk(run_tree)
                       if isinstance(node, ast.Call)
-                      and isinstance(node.func, ast.Name)
-                      and node.func.id == "_sessions_listing"]
+                      and isinstance(node.func, ast.Attribute)
+                      and node.func.attr == "_sessions_listing"]
         assert len(call_sites) == 1, (
             f"the register has {len(call_sites)} listing call sites; the gate and "
             "the rows must be the answer of one readdir"

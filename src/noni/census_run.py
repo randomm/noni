@@ -9,12 +9,13 @@ renders the report.
 
 This module is the leaf of the census's package graph: it imports the census and
 is imported by no census module, so nothing cycles. It asks the census for every
-group at the call (``_census()._check_ledger`` and its three siblings) rather than
-binding a copy at import, so a seam a test puts on a census name is the seam this
-run uses. The ledger composition goes one step further and reads its row
-mechanics off the census module at its own call (see ``_check_ledger`` there), so
-a seam on the row factory, the classifier or the content digest reaches the moved
-reporters too.
+group through a module resolved at the call (``census = _census()``, then
+``census._check_ledger`` and its siblings) rather than binding a copy at import,
+so a seam a test puts on a census name is the seam this run uses. The ledger
+composition names its row mechanics literally at its own call (see
+``_check_ledger`` there), so the names are looked up in the census's globals when
+the call runs and a seam on the row factory, the classifier or the content digest
+reaches the moved reporters too.
 
 Nothing here composes a finding of its own: the rows are built by the census's
 row factory and the modules it hands its mechanics to. The only output this file
@@ -30,13 +31,13 @@ import shutil
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from . import census_json as _census_json
 from . import census_ordering as _ordering
 from . import census_ordering_readers as _ordering_readers
 from . import census_sessions_checks as _sessions_checks
 from .census_cli import _build_parser
-from .census_git import Git, _git_top
 from .census_report import (
     CLASS_CODE,
     EXIT_CLEAN,
@@ -52,6 +53,9 @@ from .census_report import (
     _render,
     _threshold,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - typing only, nothing imported at runtime
+    from .census_git import Git
 
 
 def _census():
@@ -70,7 +74,7 @@ def _census():
 
 
 def _check_sessions(
-    sessions: Path, git: Git | None, root: Path, now: datetime, stale_after: timedelta,
+    sessions: Path, git: "Git" | None, root: Path, now: datetime, stale_after: timedelta,
     strict: bool, findings: list[dict], probe
 ) -> None:
     """The session group, run by the module beside the census.
@@ -80,18 +84,21 @@ def _check_sessions(
     census at the call rather than closed over at import, so the row shape, its
     visibility marker and the machine-local-path rule keep their single owner in
     ``census.py`` (see the sibling's docstring for the group's own rules) and a
-    seam a test puts on any of them is the one the moved reporters use.
+    seam a test puts on any of them is the one the moved reporters use. The
+    deletion check is this module's own helper, reached directly rather than
+    through the census's sibling wrapper.
     """
+    census = _census()
     _sessions_checks.check_sessions(
         sessions, git, root, now, stale_after, strict, findings, probe,
-        row=_census()._row, file_kind=_census()._file_kind,
-        rel_to=_census()._rel_to,
-        append_listing_fault=_census()._append_sessions_listing_fault,
+        row=census._row, file_kind=census._file_kind,
+        rel_to=census._rel_to,
+        append_listing_fault=census._append_sessions_listing_fault,
         check_sessions_deleted=_check_sessions_deleted)
 
 
 def _check_sessions_deleted(
-    sessions: Path, git: Git | None, root: Path, strict: bool, findings: list[dict]
+    sessions: Path, git: "Git" | None, root: Path, strict: bool, findings: list[dict]
 ) -> None:
     """The deleted-session-file check, composed in ``census_sessions_checks``.
 
@@ -99,23 +106,25 @@ def _check_sessions_deleted(
     census's own and are read off it at the call, so the row shape and the
     cannot-tell severity rule keep their single owner there.
     """
+    census = _census()
     _sessions_checks.check_sessions_deleted(
         sessions, git, root, strict, findings,
-        row=_census()._row, rel_to_root=_census()._rel_to_root,
-        append_cannot_tell=_census()._append_cannot_tell)
+        row=census._row, rel_to_root=census._rel_to_root,
+        append_cannot_tell=census._append_cannot_tell)
 
 
 def _load_issue_state(issue_state_path: Path | None):
     """The ``--issue-state`` map, read by the readers module beside the census.
 
-    The census's own classifier, bounder and strict reader are handed in at the
-    call, exactly as the ordering group's own row mechanics are, so a lookalike
-    earlier on the path cannot answer for the artifact and no second file writes
-    a row or clips a message.
+    The census's own classifier and bounder are read off the census at the call,
+    exactly as the ordering group's own row mechanics are, so a lookalike earlier
+    on the path cannot answer for the artifact and no second file writes a row or
+    clips a message.
     """
+    census = _census()
     return _ordering_readers.load_issue_state(
-        issue_state_path, _ordering.ISSUE_STATE_STATES, _census()._file_kind,
-        _census()._bounded, _census_json.load_json_strict)
+        issue_state_path, _ordering.ISSUE_STATE_STATES, census._file_kind,
+        census._bounded, _census_json.load_json_strict)
 
 
 def _check_ordering(
@@ -135,18 +144,19 @@ def _check_ordering(
     group's record lookups: the ordering group reads the ledger the census
     already read and never walks the directory again (see ``LedgerProbe.names``).
     """
+    census = _census()
     _ordering.check_ordering(order, ledger, root, now, ordering_stale_after,
                              issue_state, strict, findings,
-                             row=_census()._row,
-                             rel_to_root=_census()._rel_to_root,
-                             file_kind=_census()._file_kind,
-                             bounded=_census()._bounded,
-                             parse_iso=_census()._parse_iso,
-                             clipped=_census()._clipped, names=names,
+                             row=census._row,
+                             rel_to_root=census._rel_to_root,
+                             file_kind=census._file_kind,
+                             bounded=census._bounded,
+                             parse_iso=census._parse_iso,
+                             clipped=census._clipped, names=names,
                              readers=_ordering_readers,
                              load_json_strict=_census_json.load_json_strict,
                              names_zone=_ordering_readers.names_zone,
-                             ledger_name=_census()._ledger_name)
+                             ledger_name=census._ledger_name)
 
 
 def _run(argv: list[str] | None = None) -> int:
@@ -154,10 +164,12 @@ def _run(argv: list[str] | None = None) -> int:
 
     The census owns the entry point and the flag list it reads (see
     ``census.main``); this is the sequence that acts on it. Every group and every
-    row mechanic is asked of the census module at the call (``_census()._`` …), so
-    a seam a test puts on a census name is the seam this body uses.
+    row mechanic is asked of the census module once per body (``census =
+    _census()``, then ``census._`` …), so a seam a test puts on a census name is
+    the seam this body uses.
     """
     args = _build_parser().parse_args(sys.argv[1:] if argv is None else argv)
+    census = _census()
 
     checks = _known_checks(args.only, args.skip)
     if isinstance(checks, tuple):
@@ -169,7 +181,7 @@ def _run(argv: list[str] | None = None) -> int:
             print(name)
         return EXIT_CLEAN
 
-    now, err = _census()._parse_now(args.now)
+    now, err = census._parse_now(args.now)
     if err:
         print(err, file=sys.stderr)
         return EXIT_USAGE
@@ -205,8 +217,8 @@ def _run(argv: list[str] | None = None) -> int:
                             else _threshold(ORDERING_STALE_AFTER_DEFAULT))
 
     # git is a required tool: the census reads history for three of its four
-    # groups. The lookup goes through this module's own ``shutil`` so the seam a
-    # test puts on the census's ``shutil.which`` is the one the run asks.
+    # groups. The lookup goes through this module's own ``shutil``, so the seam a
+    # test puts on ``noni.census_run.shutil.which`` is the one the run asks.
     if shutil.which("git") is None:
         print("census: git not found on the reading machine", file=sys.stderr)
         return EXIT_TOOL_MISSING
@@ -226,8 +238,8 @@ def _run(argv: list[str] | None = None) -> int:
     if issue_state_path is not None:
         issue_state_path = Path(os.path.expanduser(str(issue_state_path)))
 
-    top = _git_top(root)
-    git = _census().Git(top) if top is not None else None
+    top = census._git_top(root)
+    git = census.Git(top) if top is not None else None
 
     findings: list[dict] = []
     # One --only/--skip rule for all four groups: a group runs when any class
@@ -255,7 +267,7 @@ def _run(argv: list[str] | None = None) -> int:
     # the answer: `main` reads `listing_fault` off this one probe to decide
     # whether the group runs at all, and the same probe goes into
     # `_check_ledger` for the rows.
-    ledger_probe = _census()._ledger_probe(ledger)
+    ledger_probe = census._ledger_probe(ledger)
 
     if (LEDGER_CHECKS | {"ledger-empty"}) & requested or ledger_probe.listing_fault:
         # The group runs whenever one of its classes was asked for, and also
@@ -268,8 +280,8 @@ def _run(argv: list[str] | None = None) -> int:
         # with are read off that module at the call, so a seam a test puts
         # on the census's own row factory, classifier or probe is the one
         # the moved code uses.
-        _census()._check_ledger(ledger, git, root, findings, args.strict,
-                              ledger_probe)
+        census._check_ledger(ledger, git, root, findings, args.strict,
+                             ledger_probe)
         findings[:] = keep(findings)
 
     # One readdir of the register per run, taken here before the group is gated
@@ -278,7 +290,7 @@ def _run(argv: list[str] | None = None) -> int:
     # filter named no session class: a register the run could not list must be
     # reportable whatever the filter asked for, and one read is what keeps the
     # gate and the rows from disagreeing about whether that read happened.
-    sessions_probe = _census()._sessions_listing(sessions)
+    sessions_probe = census._sessions_listing(sessions)
 
     # The same field, tested the same way as `_check_sessions` tests it, so the
     # gate cannot open a group whose reporter would say nothing, nor leave a
@@ -311,8 +323,8 @@ def _run(argv: list[str] | None = None) -> int:
     # and the message bounder it hands the scanner are read off that module at the
     # call and a seam on either is the one the scanner uses.
     if "hygiene" in requested:
-        _census()._check_hygiene(top, args.strict, findings, row=_census()._row,
-                               bounded=_census()._bounded)
+        census._check_hygiene(top, args.strict, findings, row=census._row,
+                              bounded=census._bounded)
 
     # --- Aggregate -----------------------------------------------------------
     # Warnings never set the exit code on their own: clean means exit 0 even

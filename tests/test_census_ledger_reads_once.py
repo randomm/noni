@@ -183,9 +183,11 @@ def test_the_run_probes_the_ledger_once(tmp_path, monkeypatch):
     # own source is still read for the rule that a second probe path is back: the
     # probe seam itself stays a name of the census.
     run_source = (SRC / "noni" / "census_run.py").read_text(encoding="utf-8")
-    assert "ledger_probe = _census()._ledger_probe(ledger)" in run_source
+    # The seam is resolved once per helper body now (`census = _census()`), so the
+    # pin names the call through that local binding rather than the inline form.
+    assert "ledger_probe = census._ledger_probe(ledger)" in run_source
     assert "ledger_probe.listing_fault" in run_source
-    assert "_census()._check_ledger(ledger, git, root, findings, args.strict," in run_source
+    assert "census._check_ledger(ledger, git, root, findings, args.strict," in run_source
     assert "_ledger.listing_fault(" not in source, \
         "a second probe path is back: main must read the fault off its one probe"
 

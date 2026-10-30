@@ -20,18 +20,13 @@ row shape keeps its single owner there; the class table is looked up through
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
+from .census_report import CLASS_CODE, CLASS_SEVERITY, _promote
+
 if TYPE_CHECKING:  # pragma: no cover - typing only, nothing imported at runtime
     from .census_git import Git
-
-def _repo_sha1(path: Path) -> str | None:
-    try:
-        return hashlib.sha1(path.read_bytes()).hexdigest()
-    except OSError:
-        return None
 
 
 def check_ledger_edited(
@@ -105,8 +100,6 @@ def append_cannot_tell(check: str, reason: str, strict: bool,
     ``_row``'s explicit ``severity`` argument rather than through this helper,
     because it names the record it could not verify instead of the check.
     """
-    from .census_report import CLASS_CODE, CLASS_SEVERITY, _promote
-
     base = CLASS_SEVERITY[check]
     severity = "warn" if base == "fail" else base
     findings.append({

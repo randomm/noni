@@ -58,15 +58,14 @@ from pathlib import Path
 
 from .census_git import (  # noqa: F401  (re-exported: the census is their home)
     GIT_ENV_NEUTRAL,
-    GIT_TIMEOUT_SECONDS,
+    GIT_TIMEOUT_SECONDS,  # noqa: F401  (patching this name on census does NOT
+    # change census_git's timeout: Git._run/_git_top read the one in census_git)
     Git,
     _git_config_args,
     _git_env,
     _git_top,
+    _repo_sha1,
     subprocess,
-)
-from .census_git import (
-    _repo_sha1 as _moved_repo_sha1,
 )
 
 # The ledger group's record pass lives in census_ledger_checks.py beside this file;
@@ -120,9 +119,10 @@ from .census_report import (  # noqa: F401  (re-exported: the census is their ho
     _warn_class_names,
 )
 
-# The census owns these public spellings: its tests and the mechanics table below
-# name them through this module, and each is the moved function, not a copy.
-_repo_sha1 = _moved_repo_sha1
+# The census owns these public spellings: they are patch targets, and each is the
+# moved function re-exported under the spelling its callers and tests name, not a
+# copy. The ledger reporters' call signature now takes the row mechanics as
+# keyword-only arguments, unlike the same-named functions on main.
 _append_cannot_tell = append_cannot_tell
 _check_ledger_edited = check_ledger_edited
 _check_ledger_deleted = check_ledger_deleted
@@ -341,23 +341,11 @@ _clipped = _text._clipped
 # declared here, the file that owns the check contract, and the sibling reads them
 # through this module rather than copying them, so a compiled pattern has one
 # definition.
-from . import census_sessions_checks as _sessions_checks  # noqa: E402
 
-
-def _parse_session(body: str) -> tuple[dict[str, str], list[str], list[str]]:
-    """The register body parse, composed in ``census_sessions_checks``.
-
-    Re-exported as the one function, not a copy, so a caller (and the census's
-    own tests) still names it through the module it already imports.
-    """
-    return _sessions_checks.parse_session(body)
-
-
-def _is_non_terminal(fields: dict[str, str]) -> bool:
-    """The register's one "still open" test, composed in ``census_sessions_checks``
-    and re-exported as the one function for the same reason as `_parse_session`."""
-    return _sessions_checks.is_non_terminal(fields)
-
+# `_parse_session` / `_is_non_terminal` are NOT re-exported here: the register's
+# own module reads `parse_session` and `is_non_terminal` off
+# ``census_sessions_checks`` directly, the census's helpers use that sibling's own
+# row pass, and neither wrapper had a caller or a test.
 
 # The composition of the session group (``_check_sessions`` and its deletion
 # check) lives in ``census_run.py`` beside this file with the body of the run that
@@ -398,37 +386,23 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
     The entry point stays a name of this module (the run calls it, and its tests
     pin that call). The row mechanics the composition builds its rows from — the
     row factory, the two root-relative identifiers, the bounders, the classifier,
-    the content digest and the cannot-tell row — are passed by name through
-    ``_CHECK_LEDGER_MECHANICS`` and looked up on this module when the run asks,
-    never closed over at import: a seam a test puts on one of them here is the
-    seam the moved reporters read.
+    the content digest and the cannot-tell row — are named literally at the call,
+    never bound into a table or closed over at import: the arguments are looked up
+    in this module's globals when the call runs, so a seam a test puts on one of
+    them here is the seam the moved reporters read.
     """
     check_ledger(ledger, git, root, findings, strict, probe,
-                 **dict(zip(_CHECK_LEDGER_MECHANICS[0::2],
-                            (globals()[name]
-                             for name in _CHECK_LEDGER_MECHANICS[1::2]),
-                            strict=True)))
-
-
-# The ledger group's composition lives in census_ledger_checks.py beside this
-# file, with the git-backed edit, deletion and chain checks in
-# census_ledger_edited.py. Each pair below is a keyword of that composition and
-# the name of the census's own mechanic that answers to it; the table sits beside
-# the function that reads it so the row shape and the probe seams keep their one
-# owner in this file.
-_CHECK_LEDGER_MECHANICS = (
-    "row", "_row",
-    "rel_to", "_rel_to",
-    "rel_to_root", "_rel_to_root",
-    "bounded", "_bounded",
-    "clipped", "_clipped",
-    "file_kind", "_file_kind",
-    "repo_sha1", "_repo_sha1",
-    "cannot_tell", "_append_cannot_tell",
-    "edit_check", "_check_ledger_edited",
-    "deletion_check", "_check_ledger_deleted",
-    "chain_check", "_check_ledger_chain",
-)
+                 row=_row,
+                 rel_to=_rel_to,
+                 rel_to_root=_rel_to_root,
+                 bounded=_bounded,
+                 clipped=_clipped,
+                 file_kind=_file_kind,
+                 repo_sha1=_repo_sha1,
+                 cannot_tell=_append_cannot_tell,
+                 edit_check=_check_ledger_edited,
+                 deletion_check=_check_ledger_deleted,
+                 chain_check=_check_ledger_chain)
 
 
 def _check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,

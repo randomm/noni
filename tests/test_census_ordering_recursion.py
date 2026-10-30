@@ -286,7 +286,7 @@ def test_the_census_hands_its_own_strict_reader_to_the_group():
     source = CENSUS_RUN_PY.read_text(encoding="utf-8")
     assert "load_json_strict=_census_json.load_json_strict" in source, \
         "the ordering group is not handed the census's own strict reader"
-    assert "clipped=_census()._clipped" in source, \
+    assert "clipped=census._clipped" in source, \
         "the ordering group is not handed the census's own message clipper"
 
 

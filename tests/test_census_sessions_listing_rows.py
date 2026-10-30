@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 
-import census_ledger  # noqa: E402
+import census_ledger
 from _harness import _commit_file, _fault_the_sessions_listing, _init_repo
 from census_fixtures import (
     _ndjson_rows,

@@ -84,8 +84,8 @@ from pathlib import Path
 # Import the shared contract and the allow-list loader from the sibling
 # integrations module (no package; tests insert integrations/ on sys.path —
 # the same pattern every noni script uses).
-import adapter_protocol  # noqa: E402
-from adapter_protocol import (  # noqa: E402
+import adapter_protocol
+from adapter_protocol import (
     VERDICT_MANY,
     VERDICT_NONE,
     VERDICT_ONE,

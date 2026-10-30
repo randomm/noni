@@ -107,16 +107,20 @@ in the branch name, never in the commit scope.
 
 All checks must pass locally before push:
 
-- [ ] Tests passing (0 failures)
-- [ ] Coverage meets threshold
-- [ ] Linting passing (0 errors)
-- [ ] Type checking passing (0 errors)
+- [ ] Tests passing (0 failures): `pytest`
+- [ ] Coverage meets threshold: `coverage run -m pytest`, `coverage combine`, `coverage report`
+- [ ] Linting passing (0 errors): `ruff check .`
+- [ ] Source files within the line limits: `pytest tests/test_file_size_limit.py`
 
-## Zero technical debt
+No type checker runs in this project, in CI or locally, so there is no type
+checking gate to tick. If one is ever added, it goes here and into CI together.
 
-- ❌ No `# noqa`, `@ts-ignore`, `# type: ignore`
-- ❌ No `// biome-ignore` without explicit justification
-- ❌ No suppressions in the diff
+## Suppressions
+
+One rule per suppression, with the reason on the same line:
+`# noqa: E402  (src/ goes on sys.path just above)`. An unused suppression is a
+failure: ruff's RUF100 is enabled in `pyproject.toml`, so a `# noqa` that
+stopped suppressing anything must be deleted rather than left in place.
 
 # Context7 Protocol
 
@@ -153,14 +157,19 @@ standard-library features, or meta-questions about the project.
 | --- | --- |
 | test | `pytest` |
 | lint | `ruff check .` |
+| size | `pytest tests/test_file_size_limit.py` |
 
 
 ## Quality Gates
 
-Run these before pushing. All must pass locally:
+Run these before pushing. These are the commands CI runs (see
+`.github/workflows/ci.yml`: lint, then the suite under coverage), plus the size
+test. All must pass locally:
 
 - **pytest**: `pytest`
+- **coverage gate**: `coverage run -m pytest`, then `coverage combine`, then `coverage report`
 - **ruff**: `ruff check .`
+- **file size**: `pytest tests/test_file_size_limit.py`
 
 ## Project conventions
 
@@ -169,10 +178,15 @@ These are working conventions. The checks that enforce rules are the ones under 
 - No ALL_CAPS scratch files (PLAN.md, DESIGN.md, NOTES.md, RESEARCH.md, TODO.md and the like). The issue thread holds plans and notes.
 - Docs change in the same PR as the behaviour they describe. Never leave the repo claiming something that is not true.
 - Prose in docs, comments, commit messages and PR text is plain and direct: short sentences, no em dashes, no hype. Comments explain why, not what; leave a comment out if the code already says it.
-- File size ratchet: new Python and shell source files under `skills/`, `scripts/` and `integrations/` stay at or under 500 lines; a file already over the limit is grandfathered and may be edited but may not grow in a PR. SKILL.md files keep their own 400-line cap.
+- Source file size: every tracked source file is at or under 500 lines, and every `SKILL.md` at or under 400. Tracked source means a `.py` file, a `.sh` file, a workflow YAML under `.github/workflows/`, and any tracked file whose first line is a shebang. Markdown other than `SKILL.md`, JSON and data files are exempt. No exceptions, no grandfathering, no override flag: split the file along a natural seam. Enforced by `tests/test_file_size_limit.py`.
 - Never commit secrets or tokens, `.env` files, raw model output, scratch files, or local research artifacts.
 - Scope discipline: change only the files the issue covers (check `git diff --name-only origin/main...HEAD` before opening a PR). A bug found along the way gets its own issue and a note in the PR.
 - Tests are offline and deterministic: no network, no real accounts; use fixtures and stubs.
 - Fail closed: a missing or malformed setting stops the command with a clear message; never fall back to something wider.
-- Work cycles do not edit their own gates: a gate file (see Gate files) is changed by people (or by the agents-md tool on the operator's request), not by a work cycle.
+- Scratch work goes in one ignored folder per issue (`tmp/issue-N/`), never in the tree root or a tracked directory.
+- Commit subjects are at most 72 characters.
+- Run any command that can hang under a time limit (`timeout 1500 pytest`, and a `timeout=` on a subprocess a test launches).
+- Dependencies come from the public package registry only: no vendored copies, no private index, no git URL.
+- Never run `git config` against this repository or a worktree of it. Tests that need git settings use a throwaway repo under `tmp_path`.
+- Work cycles do not edit their own gates: a gate file (see Gate files) is changed by people (or by the agents-md tool on the operator's request), not by a work cycle. The governing copy of these rules is the one on `main`, and a PR that changes a gate file needs the operator's merge (see Merge authority).
 

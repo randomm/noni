@@ -93,7 +93,7 @@ def test_no_secrets_or_machine_local_paths_in_the_new_skill_and_fixture(tmp_path
     """The scrub's own patterns, applied to the two new files by name: the gate
     that covers them is parametrised over SKILL_FILES, and a parametrisation
     that quietly stopped including a file would be invisible without this."""
-    from public_safety import (  # noqa: E402  (registered by _harness)
+    from public_safety import (
         FIXTURE_HOME_PATH_PATTERNS,
         HOME_PATH_PATTERNS,
         SECRET_PATTERNS,

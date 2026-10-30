@@ -9,7 +9,7 @@ Split out of ``tests/test_census_ledger_probe.py``; the builders are in
 
 from __future__ import annotations
 
-import census_ledger  # noqa: E402
+import census_ledger
 import pytest
 from census_ledger_fixtures import _is_census_written_path
 

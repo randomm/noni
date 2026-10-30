@@ -11,13 +11,13 @@ from __future__ import annotations
 import json
 
 import census
-from _harness import (  # noqa: E402
+from _harness import (
     _commit_file,
     _fault_the_ledger_listing,
     _fault_the_sessions_listing,
     _init_repo,
 )
-from census_exit_codes_builders import (  # noqa: E402
+from census_exit_codes_builders import (
     _HOME_PATH,
     _rows,
     _run,

@@ -33,7 +33,7 @@ if str(SRC) not in sys.path:
 from noni.public_safety import (
     HOME_PATH_PATTERNS,  # noqa: F401  (re-exported for harness_faults)
     SECRET_PATTERNS,  # noqa: F401  (re-exported for harness_faults)
-)  # noqa: E402  (src/ goes on sys.path just above)
+)
 
 # Back-compatible module aliases for the tests that were written against the
 # flat scripts/ layout. Those files imported the tool by its script name

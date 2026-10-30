@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import os
 
-from _harness import _git  # noqa: E402
+from _harness import _git
 from env_isolation_support import (
     CONFTEST,
     DECOY_DENYLIST_ENTRY,

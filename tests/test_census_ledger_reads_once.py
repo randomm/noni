@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from _harness import (  # noqa: E402
+from _harness import (
     SRC,
     _commit_file,
     _fault_the_ledger_listing,

@@ -16,7 +16,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from _harness import REPO, _git  # noqa: E402
+from _harness import REPO, _git
 
 CENSUS = REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"
 

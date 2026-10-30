@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import census_ledger  # noqa: E402
+import census_ledger
 from census_ledger_fixtures import _fault_iterdir
 
 # --- the listing helper ---------------------------------------------------------

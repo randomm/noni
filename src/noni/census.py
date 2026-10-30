@@ -58,8 +58,6 @@ from pathlib import Path
 
 from .census_git import (  # noqa: F401  (re-exported: the census is their home)
     GIT_ENV_NEUTRAL,
-    GIT_TIMEOUT_SECONDS,  # noqa: F401  (patching this name on census does NOT
-    # change census_git's timeout: Git._run/_git_top read the one in census_git)
     Git,
     _git_config_args,
     _git_env,
@@ -83,7 +81,7 @@ from .census_ledger_checks import (  # noqa: F401  (re-exported)
     check_ledger_empty,
     check_ledger_records,
 )
-from .census_ledger_edited import (  # noqa: F401  (re-exported)
+from .census_ledger_edited import (
     append_cannot_tell,
     check_ledger_chain,
     check_ledger_deleted,

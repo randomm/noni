@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import census_ledger  # noqa: E402
+import census_ledger
 
 
 def _kind_dir_ok(path: Path, kind: str = "file") -> tuple[str, str | None]:

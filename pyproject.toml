@@ -44,7 +44,14 @@ target-version = "py311"
 extend-exclude = ["noni/decisions"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B"]
+# RUF100 makes an unused suppression a failure, so a `# noqa` that stopped
+# suppressing anything is deleted rather than left to rot (AGENTS.md,
+# Suppressions). E402 and F401 are named in the select alongside the letter
+# groups so a `# noqa: E402` or `# noqa: F401` that stops suppressing a real
+# finding is caught too: naming the rules changes no verdict on this tree
+# (they report nothing today, with the surviving suppressions in place), it
+# only makes a stale suppression on those two rules visible.
+select = ["E", "F", "W", "I", "B", "E402", "F401", "RUF100"]
 ignore = ["E501"]
 
 [tool.pytest.ini_options]

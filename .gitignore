@@ -20,6 +20,8 @@ htmlcov/
 /.noni-scrub-denylist
 # local adapter allow-list (integrations/): never committed
 /.noni-adapter-allowlist
+# per-issue scratch folders (tmp/issue-N/)
+/tmp/
 # local research artifacts (never commit)
 /outputs/
 /parallel-research/

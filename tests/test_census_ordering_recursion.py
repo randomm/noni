@@ -14,7 +14,7 @@ import importlib.util
 import json
 import sys
 
-from _harness import REPO, SRC, _harness_source
+from _harness import REPO, SRC
 from ordering_fixtures import (
     _entry,
     _order,
@@ -29,6 +29,11 @@ from ordering_shapes import DEEP, _deep, _deep_artifact
 BASELINE_ID = "2026-10-01-baseline"
 
 CENSUS = REPO / "skills" / "census" / "scripts" / "census.py"
+# The two halves of the census's own wiring, read where they now live: the
+# record pass that reads its names off the probe is in the ledger split, the run
+# that hands the ordering group the one listing is in the run split (issue #52).
+LEDGER_CHECKS_PY = SRC / "noni" / "census_ledger_checks.py"
+CENSUS_RUN_PY = SRC / "noni" / "census_run.py"
 
 FRESH = "2026-10-26T00:00:00Z"
 
@@ -188,14 +193,15 @@ def test_the_census_lists_the_ledger_through_the_one_shared_helper():
     fault on its own -- see ``_listing_faults``. Reaching it through a private
     name, or binding it at the call, would make every ordering-fault test here
     fault the ledger group's read as well."""
-    census_src = _harness_source(CENSUS)
-    assert "if probe.state != \"ok\" or probe.names is None:" in census_src, \
+    ledger_checks_src = LEDGER_CHECKS_PY.read_text(encoding="utf-8")
+    run_src = CENSUS_RUN_PY.read_text(encoding="utf-8")
+    assert "if probe.state != \"ok\" or probe.names is None:" in ledger_checks_src, \
         "the record pass no longer reads its names off the probe"
-    assert "sorted(probe.names)" in census_src, \
+    assert "names = sorted(probe.names)" in ledger_checks_src, \
         "the record pass no longer reads the probe's names"
-    assert "_ledger.listing_helper(ledger)" not in census_src, \
+    assert "_ledger.listing_helper(ledger)" not in ledger_checks_src, \
         "the record pass lists the ledger again: the run must take one readdir"
-    assert "findings, ledger_probe.names)" in census_src, \
+    assert "findings, ledger_probe.names)" in run_src, \
         "the ordering group is no longer handed the run's one listing"
     readers_src = (SCRIPTS / "census_ordering_readers.py").read_text(encoding="utf-8")
     assert "names = listing_helper(ledger)" in readers_src, \
@@ -207,8 +213,8 @@ def test_the_census_lists_the_ledger_through_the_one_shared_helper():
         "read has no seam to fault on"
     assert "ledger.glob" not in readers_src, \
         "the ordering group lists the ledger with glob, which swallows the fault"
-    assert "ledger.glob" not in census_src, \
-        "the census lists the ledger with glob, which swallows the fault"
+    assert "ledger.glob" not in run_src, \
+        "the census run lists the ledger with glob, which swallows the fault"
     ledger_src = (SCRIPTS / "census_ledger.py").read_text(encoding="utf-8")
     assert "ledger.iterdir()" in ledger_src, \
         "the shared helper must list with iterdir, the call that raises"
@@ -277,10 +283,10 @@ def test_the_census_hands_its_own_strict_reader_to_the_group():
     The clipper is pinned in the same breath: the rows this group composes are
     clipped by the census's own rule, not by a bound the group invents for itself.
     """
-    source = _harness_source(CENSUS)
+    source = CENSUS_RUN_PY.read_text(encoding="utf-8")
     assert "load_json_strict=_census_json.load_json_strict" in source, \
         "the ordering group is not handed the census's own strict reader"
-    assert "clipped=_clipped" in source, \
+    assert "clipped=_census()._clipped" in source, \
         "the ordering group is not handed the census's own message clipper"
 
 

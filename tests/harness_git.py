@@ -293,6 +293,36 @@ def build_bare_origin(origin: Path, worktrees: list[Path]) -> None:
         _git_ok(wt.parent, "clone", "-q", "-b", "main", str(origin), str(wt))
 
 
+def build_gone_upstream(origin: Path, worktrees: list[Path]) -> None:
+    """Build a bare origin plus clones on ``main`` whose upstream branch is gone.
+
+    The half-applied writer path — the file written, the commit refused, exit 3
+    — was unreachable through every existing fixture, because
+    :func:`build_bare_origin` pushes ``main`` with ``-u`` and never takes it
+    back. This builds the same origin and clones, then deletes the branch on
+    origin and fetches with ``--prune`` in each clone so the remote-tracking ref
+    goes too. Deleting origin's ref alone leaves ``refs/remotes/origin/main``
+    standing and git prints ``## main...origin/main``, not ``[gone]``, so the
+    prune is part of the state and not a convenience.
+
+    The precondition is asserted, not assumed: ``git status -sb`` must print
+    ``[gone]``. A fixture that silently built the wrong state would drive a
+    commit that succeeds, and the writer's failure branch would go untested
+    while the test stayed green.
+    """
+    build_bare_origin(origin, worktrees)
+    env = {**os.environ, **_git_env_with_identity()}
+    _git_ok(origin, "update-ref", "-d", "refs/heads/main", env=env)
+    for worktree in worktrees:
+        _git_ok(worktree, "fetch", "--prune", "origin", env=env)
+        shown = _git_e2(worktree, "status", "-sb", env=env).stdout
+        if "[gone]" not in shown:
+            raise RuntimeError(
+                f"gone-upstream fixture did not reach its state: git status -sb "
+                f"prints {shown!r}, expected the branch to read as [gone]"
+            )
+
+
 def advance_origin_with_claim(
     origin: Path, seeder: Path, session_file: str, task: str, branch: str = "main"
 ) -> str:

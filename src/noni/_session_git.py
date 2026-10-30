@@ -22,11 +22,20 @@ here, once, so no writer keeps its own copy of a git call:
                                        is aborted (exit 5), a rebase git never
                                        started is not (exit 6)
 
+The reason a commit failed is named in noni's own words rather than handed
+through as git's. That half lives in :mod:`noni._commit_cause`, which
+classifies the four states a writer can be left in (no upstream, the upstream
+gone, nothing to commit, or some other git fault) and assembles the one line a
+failure prints; this module calls it and re-exports the four clauses, so the
+writers read everything about their commit from here.
+
 The set of statuses that end a session lives here too, as
 :data:`TERMINAL_STATUSES`, so the four writers agree on what "already closed"
-means. A test asserts it equals the census's own two inactive sets
-(``census_sessions._INACTIVE_STATUSES`` and ``census.INACTIVE_STATUSES``); the
-census sources are not changed and import nothing from here.
+means, and :func:`session_status` reads the field that set is decided from, so
+no writer keeps its own copy of the '- status:' scan. A test asserts it equals
+the census's own two inactive sets (``census_sessions._INACTIVE_STATUSES`` and
+``census.INACTIVE_STATUSES``); the census sources are not changed and import
+nothing from here.
 
 Like the package's other git helpers, every call is bounded, never signs, runs
 no repository hooks and refuses the external transports a remote could name.
@@ -41,12 +50,11 @@ import os
 import re
 import stat
 import subprocess
-import sys
 import tempfile
 import unicodedata
 from pathlib import Path
 
-from . import gitenv
+from . import _commit_cause, gitenv
 
 # Statuses that end a session. A claim from a session in one of these states
 # no longer counts toward the double-claim check, and close.py calls a session
@@ -162,9 +170,42 @@ def in_git_worktree(repo: Path) -> bool:
     return git(repo, "rev-parse", "--absolute-git-dir").returncode == 0
 
 
+# The clauses a commit failure is reported with live with the classifier
+# (:mod:`noni._commit_cause`) and are re-exported here because the writers and
+# their tests read them off the module they already import for the primitive.
+NO_UPSTREAM = _commit_cause.NO_UPSTREAM
+UPSTREAM_GONE = _commit_cause.UPSTREAM_GONE
+NOTHING_TO_COMMIT = _commit_cause.NOTHING_TO_COMMIT
+GIT_REFUSED = _commit_cause.GIT_REFUSED
+
+
 def is_terminal_status(status: str) -> bool:
     """True when ``status`` names a session that has ended (see the set)."""
     return status.strip().lower() in TERMINAL_STATUSES
+
+
+# The field a session's lifecycle reads. register.py writes it, close.py sets
+# it, and the census parses it; the writers that need to read it read it here,
+# so a file whose status lines disagree cannot answer 'active' to one writer
+# and 'closed' to another.
+STATUS_FIELD = "- status:"
+
+
+def session_status(body: str) -> str | None:
+    """The value of the last '- status:' line of ``body``, or None when it has none.
+
+    Last occurrence wins, the way the census's own parser reads a repeated
+    field: a writer needs the one answer a census run on the same bytes would
+    act on, and the same bytes handed to two writers must give one verdict.
+    """
+    found: str | None = None
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(STATUS_FIELD):
+            value = stripped[len(STATUS_FIELD):].strip()
+            if value:
+                found = value
+    return found
 
 
 def valid_token(token: str) -> bool:
@@ -241,12 +282,16 @@ def stage_and_commit(repo: Path, path: Path, message: str) -> tuple[bool, str]:
     nobody had committed before is committed by these same three steps, and a
     path somebody else had staged is left staged and uncommitted.
 
-    Any git refusal comes back as ``(False, git's own words)``: this helper
+    Any git refusal comes back as ``(False, one noni-worded line)``: this helper
     owns no exit code, so the caller names the class of failure and prints the
-    hint. A path outside the repository is answered the same way rather than as
-    a raised ``ValueError``: the helper's promise is that it never hands back
-    anything but a verdict, so the caller's one ``if not ok`` covers every way
-    this can fail and no writer has to guard a git call with its own except.
+    hint. The line leads with the cause in noni's own words and ends with what
+    git said, sanitised and bounded (see :func:`commit_failed`): a writer that
+    stops here has already written its file, and the operator who aborts the run
+    reads one sentence, not git's status block. A path outside the repository is
+    answered the same way rather than as a raised ``ValueError``: the helper's
+    promise is that it never hands back anything but a verdict, so the caller's
+    one ``if not ok`` covers every way this can fail and no writer has to guard
+    a git call with its own except.
     """
     try:
         rel = rel_of(repo, path)
@@ -260,195 +305,66 @@ def stage_and_commit(repo: Path, path: Path, message: str) -> tuple[bool, str]:
         return False, _detail(added, f"git add failed for {rel}")
     committed = git(repo, "commit", "-q", "-m", message, "--only", "--", rel)
     if committed.returncode != 0:
-        return False, _detail(committed, f"git commit failed for {rel}")
+        return False, _commit_cause.commit_failed(repo, committed)
     return True, ""
 
 
 def _detail(result: subprocess.CompletedProcess[str], headline: str) -> str:
     """One headline naming what git said about a failed call, sanitised."""
-    said = _safe(result.stderr) or _safe(result.stdout) or "no reason given"
-    return f"{headline}: {said}"
+    return f"{headline}: {_said(result) or 'no reason given'}"
+
+
+def _said(result: subprocess.CompletedProcess[str]) -> str:
+    """What git said about a failed call, sanitised, bounded, on one line.
+
+    The same flattening :mod:`noni._commit_cause` applies to a commit failure's
+    quotation: these bytes are the tail of one report line, and a multi-line
+    echo reads as a raw status dump rather than as a quotation in a sentence.
+    """
+    said = _safe(result.stderr) or _safe(result.stdout) or ""
+    return " ".join(said.split())
 
 
 def _safe(text: str) -> str:
-    cleaned = safe_text(text.strip())
+    cleaned = safe_text((text or "").strip())
     return "" if cleaned.strip() == "" else cleaned
 
 
-def current_branch(repo: Path) -> tuple[str | None, str]:
-    """The branch HEAD names: ``(branch, "")``, or ``(None, why)``.
+def stopped_state(repo: Path, probed: Path) -> tuple[Path | None, str]:
+    """One probed rebase state directory: ``(dir, answer)``, answer in three kinds.
 
-    ``git rev-parse --abbrev-ref HEAD`` prints the literal string ``HEAD``
-    when HEAD is detached, so that is the value refused here (a push to a
-    branch literally named "HEAD" is not a push anyone asked for). A call that
-    failed or printed nothing is refused the same way: the caller cannot push
-    to a branch it cannot name.
+    ``"stopped"`` when the directory carries positive evidence of a live
+    stopped rebase -- both ``head-name`` and ``onto`` read back non-empty,
+    which is what a stopped rebase always leaves and what a stray directory
+    does not; ``"absent"`` when there is nothing stopped here; ``"unreadable"``
+    when the question could not be answered because a state file could not be
+    read. Existence alone is not evidence: a directory whose files cannot be
+    read is somebody else's leftover, and aborting it would reset the caller's
+    worktree and index -- which is why unreadable is its own answer and not
+    folded into either of the others.
+
+    ``probed`` is what ``git rev-parse --git-path`` printed, which is relative
+    to the working tree that call resolved (the clone itself), so a relative
+    answer is joined to ``repo`` here rather than by each caller.
     """
-    result = git(repo, "rev-parse", "--abbrev-ref", "HEAD")
-    if result.returncode != 0:
-        return None, _detail(result, "cannot resolve the current branch")
-    branch = result.stdout.strip()
-    if branch in ("", "HEAD"):
-        return None, "cannot push from detached HEAD"
-    return branch, ""
+    state = probed if probed.is_absolute() else repo / probed
+    try:
+        head_name = (state / "head-name").read_text(encoding="utf-8", errors="replace")
+        onto = (state / "onto").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        # Absent is an answer (nothing stopped here); unreadable is not.
+        return None, "unreadable" if state.is_dir() else "absent"
+    if head_name.strip() and onto.strip():
+        return state, "stopped"
+    return None, "absent"
 
 
-def fetch_rebase_push(repo: Path, branch: str, attempts: int = MAX_PUSH_ATTEMPTS,
-                      *, label: str, exit_push_failed: int,
-                      exit_rebase_conflict: int,
-                      exit_rebase_refused: int) -> int:
-    """Push ``branch`` to origin, retrying with fetch and rebase; return the caller's code.
+# The push loop lives in :mod:`noni._session_push`, which imports these
+# primitives from here. It is re-exported below so the writers keep reading
+# everything about their commit and their push from this one module:
+#
+#   from ._session_push import current_branch, fetch_rebase_push
+#
+# ...would be a cycle (_session_push imports from this module), so the writers
+# import it directly and this module's docstring names it.
 
-    fetch-rebase-push, at most ``attempts`` attempts: the losing pusher ends
-    rebased-and-pushed, so both writers' commits land and the census is what
-    flags the disagreement. The exit codes are the caller's own constants,
-    handed in with its ``label`` — this module is mechanics, and the operator
-    hears the command they ran, not the helper that ran git for it.
-
-    Returns ``exit_push_failed`` when the attempts run out, a fetch fails or a
-    call is killed by the timeout; ``exit_rebase_conflict`` when a rebase
-    entered and stopped, which this helper aborts; ``exit_rebase_refused`` when
-    git never started the rebase or its state could not be read, which this
-    helper leaves alone.
-    """
-    for attempt in range(1, attempts + 1):
-        if attempt > 1:
-            fetch = git(repo, "fetch", "origin")
-            if fetch.returncode != 0:
-                return _report(label, exit_push_failed,
-                               _detail(fetch, "git fetch failed"),
-                               "check the remote and the network, then re-run with --push")
-            rebase = git(repo, "rebase", f"origin/{branch}")
-            if rebase.returncode != 0:
-                return _classify_rebase_failure(
-                    repo, rebase, label=label, exit_push_failed=exit_push_failed,
-                    exit_rebase_conflict=exit_rebase_conflict,
-                    exit_rebase_refused=exit_rebase_refused,
-                    timed_out=rebase.returncode == GIT_TIMEOUT_RC,
-                )
-        push = git(repo, "push", "origin", branch)
-        if push.returncode == 0:
-            return 0
-        if push.returncode == GIT_TIMEOUT_RC:
-            _report(label, 0, _detail(push, f"push attempt {attempt}/{attempts} timed out"))
-            continue
-        _report(label, 0,
-                f"push attempt {attempt}/{attempts} rejected: "
-                + (_safe(push.stderr) or _safe(push.stdout) or "no reason given"))
-    return _report(
-        label, exit_push_failed,
-        f"push still rejected after {attempts} attempts",
-        f"run 'git -C {repo.name} fetch origin' and 'git -C {repo.name} rebase "
-        f"origin/{branch}' by hand, then re-run with --push",
-    )
-
-
-def _report(label: str, code: int, *lines: str) -> int:
-    """Print one report to stderr in the caller's voice and hand back its code."""
-    for line in lines:
-        if line:
-            print(f"{label}: {line}", file=sys.stderr)
-    return code
-
-
-def _stopped_state_dir(repo: Path) -> tuple[Path | None, bool]:
-    """Locate a rebase this clone is actually stopped in.
-
-    Returns ``(dir, indeterminate)``. ``dir`` is set only when the state
-    directory carries positive evidence of being stopped: both ``head-name``
-    and ``onto`` read back non-empty, which is what a live stopped rebase
-    always leaves and what a stray directory does not. ``indeterminate`` says
-    the question could not be answered: a probe could not run, or a state file
-    could not be read.
-
-    Existence alone is not evidence: a directory whose files cannot be read is
-    somebody else's leftover, and aborting it would reset the caller's worktree
-    and index. Probes go through ``git rev-parse --git-path``, which resolves
-    the directories wherever the git dir lives (plain clone, worktree).
-    """
-    indeterminate = False
-    for name in REBASE_STATE_DIRS:
-        probe = git(repo, "rev-parse", "--git-path", name)
-        if probe.returncode != 0:
-            indeterminate = True
-            break
-        state = Path(probe.stdout.strip())
-        if not state.is_absolute():
-            # --git-path prints a path relative to the working tree git
-            # resolved for this call, which is the clone itself.
-            state = repo / state
-        try:
-            head_name = (state / "head-name").read_text(encoding="utf-8", errors="replace")
-            onto = (state / "onto").read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            # Absent is an answer (nothing stopped here); unreadable is not.
-            if state.is_dir():
-                indeterminate = True
-            continue
-        if head_name.strip() and onto.strip():
-            return state, indeterminate
-    return None, indeterminate
-
-
-def _classify_rebase_failure(
-    repo: Path, rebase: subprocess.CompletedProcess[str], *, label: str,
-    exit_push_failed: int, exit_rebase_conflict: int, exit_rebase_refused: int,
-    timed_out: bool = False,
-) -> int:
-    """Turn a failed ``git rebase origin/<branch>`` into the caller's exit code.
-
-    The two cases are not the same bug. A rebase that started and stopped
-    leaves the clone mid-rebase, so anything the caller runs next commits on
-    top of a half-finished rebase: this helper aborts it and hands back the
-    conflict code. A rebase git never started left nothing to clean up, so
-    running an abort there would be noise: the refusal code's hint names
-    committing or stashing.
-    """
-    quoted = " ".join((_safe(rebase.stderr) or _safe(rebase.stdout)
-                       or "no reason given").splitlines()[:3])
-    state, indeterminate = _stopped_state_dir(repo)
-    if state is None and indeterminate:
-        # The probe could not answer, so this run claims no knowledge of the
-        # clone's state: an unrunnable probe must not become "not stopped",
-        # because a real conflict would then be reported as a refusal whose
-        # hint cannot resolve it.
-        return _report(
-            label, exit_rebase_refused,
-            f"rebase failed and its state cannot be read, so no abort was "
-            f"attempted: {quoted}",
-            f"run 'git status' and 'git rebase --abort' by hand in {repo.name}, "
-            "then re-run this command",
-        )
-    if state is not None:
-        abort = git(repo, "rebase", "--abort")
-        if abort.returncode != 0:
-            return _report(
-                label, exit_rebase_conflict,
-                f"rebase conflict and git rebase --abort failed: {_detail(abort, 'git said')}",
-                f"the clone is still mid-rebase in {repo.name}; run git rebase --abort "
-                "by hand",
-            )
-        if timed_out:
-            return _report(
-                label, exit_push_failed,
-                f"rebase timed out after {GIT_TIMEOUT}s and was stopped in a "
-                f"conflict, so it was aborted: {quoted}",
-            )
-        return _report(
-            label, exit_rebase_conflict,
-            f"rebase conflict: someone else changed the same session file, so the "
-            f"rebase stopped: {quoted}",
-            f"fix: fetch origin, resolve the conflict in the session file, then "
-            f"re-run; the commit this run made is intact on {repo.name}",
-        )
-    if timed_out:
-        return _report(
-            label, exit_push_failed,
-            f"rebase timed out after {GIT_TIMEOUT}s: {quoted}",
-        )
-    return _report(
-        label, exit_rebase_refused,
-        f"rebase refused (it never started): {quoted}",
-        "fix: commit or stash the uncommitted changes in this clone, then re-run; "
-        "this run started no rebase, so the commit it made is intact",
-    )

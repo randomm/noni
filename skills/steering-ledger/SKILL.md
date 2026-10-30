@@ -70,7 +70,11 @@ stages exactly the paths the command wrote (`git add -- <paths>` then
 `git commit --only -- <paths>`), so a file somebody else had staged is neither
 committed nor unstaged. `--no-commit` writes through the same validation chain
 and stops before git, printing one line that names the paths and says to commit
-them before running the census.
+them before running the census. With `--supersedes` that same line also says the
+target's status is now `superseded`: `--no-commit` writes **both** files, so an
+operator who aborts the run has two paths to put right — delete the new record
+and restore the target — or the chain is left with no live record and the
+census reports it (exit 20, `zero-live`).
 
 `--supersedes ID` writes the new record and flips the target's `status` to
 `superseded` in **one** commit of exactly those two paths, with the message

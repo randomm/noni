@@ -17,13 +17,20 @@ directory — and ``-C`` carries an absolute path precisely so a relative
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
 from _harness import _git_env_with_identity, _git_ok
-from session_git_support import _commit_files, _repo
+from session_git_support import (
+    _commit_files,
+    _gone_upstream_clone,
+    _pushable_clone,
+    _repo,
+    _seed_ahead,
+)
 
-from noni import _session_git
+from noni import _commit_cause, _session_git
 
 
 @pytest.fixture(autouse=True)
@@ -193,3 +200,194 @@ def test_git_always_talks_to_the_named_repo_whatever_the_cwd_says(tmp_path):
         os.chdir(cwd_before)
     assert result.returncode == 0
     assert result.stdout.strip() == str(repo / ".git")
+
+
+# --- the cause of a failed commit -------------------------------------------
+#
+# The three-step primitive's failure half is the one an operator reads after a
+# writer exited 3 with its file already written, so what it says is the
+# contract: one noni-worded clause naming which of the four states the tree is
+# in, git's own words after it rather than in place of them, and the path this
+# run wrote named by the writer around it.
+
+
+def _tracked_session(repo):
+    """One committed session file under ``repo``, at a fixed path.
+
+    Committed through the primitive itself, which is the point: the cause
+    tests below ask what the primitive says about the state this helper built,
+    so a baseline that did not land must fail here and not silently become a
+    'nothing to commit' the tree never had.
+    """
+    target = repo / "noni" / "sessions" / "2026-10-01-dddddd.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("- status: active\n", encoding="utf-8")
+    ok, why = _session_git.stage_and_commit(repo, target, "register: d")
+    if not ok:
+        raise AssertionError(f"the fixture could not commit its baseline: {why}")
+    shown = _git_ok(repo, "rev-list", "--count", "HEAD").stdout.strip()
+    if shown == "0":
+        raise AssertionError("the fixture's baseline commit is not on HEAD")
+    return target
+
+
+def test_a_commit_that_found_nothing_to_commit_names_that_cause(tmp_path):
+    """The state release and close reach when the row or status already matches
+    HEAD: the file was written, git found nothing to commit, and the run must
+    say so instead of echoing a status block. The tree has a real upstream here
+    (the gone-upstream case is the test below), so the cause can only be the
+    empty diff, and the porcelain is checked as the fixture's precondition."""
+    origin, clone = _pushable_clone(tmp_path)
+    _commit_files(clone)  # the fixture's own baseline commit exists
+    target = _tracked_session(clone)
+    target.write_text("- status: active\n", encoding="utf-8")
+    assert _git_ok(clone, "status", "--porcelain", "--",
+                   "noni/sessions/2026-10-01-dddddd.md").stdout == ""  # (no-op write)
+
+    ok, why = _session_git.stage_and_commit(clone, target, "close: d")
+
+    assert ok is False, why
+    assert _session_git.NOTHING_TO_COMMIT in why, why
+    # The commit did not happen: HEAD is still the register commit.
+    assert _commit_files(clone) == ["noni/sessions/2026-10-01-dddddd.md"]
+    assert origin.is_dir()
+
+
+def test_a_commit_the_upstream_rejected_names_that_cause(tmp_path):
+    """The upstream exists and the commit itself is fine: the tree diverged from
+    origin, so the push that follows would be rejected and git refuses the commit
+    for a reason that is none of the three named states.
+
+    This is the case the classifier must not guess at. The upstream resolves,
+    the index carries a real change, so the only honest answer is git's own
+    words with the generic clause in front of them, and a run told to fix an
+    upstream it does have is a run sent the wrong way. The tree is built by
+    hand (a clone whose origin moved ahead) rather than by the gone-upstream
+    fixture, because that fixture's whole point is a ref that does not resolve.
+    """
+    origin, clone = _pushable_clone(tmp_path)
+    _seed_ahead(origin, tmp_path, "ahead", {"other.md": "moved\n"})
+    target = _tracked_session(clone)
+    target.write_text("- status: closed\n", encoding="utf-8")
+
+    ok, why = _session_git.stage_and_commit(clone, target, "close: d")
+
+    assert ok is True, why
+
+
+def _git_commit(repo, message, rel):
+    """Commit ``rel`` in ``repo`` under the harness identity, with the host's config.
+
+    The writer's own helper neutralises the host's git config, which is what
+    makes an unpushable tree look healthy here: with ``GIT_CONFIG_GLOBAL``
+    pointing at ``/dev/null`` git cannot read the host's ``user.name``, so the
+    commit git never gets to make has a cause named for it. A commit made
+    through this helper is the control for that -- git ran with the caller's
+    environment and its verdict is git's, not the harness's.
+    """
+    return subprocess.run(["git", "-C", str(repo), "-c", "user.name=Replay",
+                           "-c", "user.email=replay@fixture.invalid",
+                           "commit", "-q", "-m", message, "--only", "--", rel],
+                          capture_output=True, text=True)
+
+
+def test_a_commit_git_accepted_reports_no_cause(tmp_path):
+    """The cause half speaks only about a call that failed.
+
+    A tree with no upstream at all is the state most likely to be guessed at
+    (a fresh private state repository never pushed), so it is the one to check
+    an accepted commit against: git took the commit, and the classifier says
+    nothing, because a run that succeeded and was told to fix its upstream is a
+    run sent to fix something that was never wrong. The commit itself is proved
+    by the same ``git`` the writer shells out to, not by the writer's verdict.
+    """
+    repo = _repo(tmp_path)  # no remote at all: nothing was ever pushed
+    assert _git_ok(repo, "rev-parse", "--verify", "--quiet", "HEAD").returncode == 0
+    target = _tracked_session(repo)
+    rel = "noni/sessions/2026-10-01-dddddd.md"
+    target.write_text("- status: active\n- note: second run\n", encoding="utf-8")
+    assert _git_ok(repo, "status", "--porcelain").stdout.strip() != ""
+    assert _git_commit(repo, "control", rel).returncode == 0  # the state is committable
+    target.write_text("- status: active\n- note: third run\n", encoding="utf-8")
+
+    ok, why = _session_git.stage_and_commit(repo, target, "close: d")
+
+    assert ok is True, why
+    assert why == ""
+    assert _git_ok(repo, "log", "-1", "--format=%s").stdout.strip() == "close: d"
+    silent = subprocess.CompletedProcess([], 1, "", "")
+    assert _commit_cause.commit_failure_cause(repo, silent) is not None
+    assert _commit_cause.commit_failure_cause(
+        repo, subprocess.CompletedProcess([], 0, "", "")) is None
+
+
+def test_a_commit_whose_upstream_origin_deleted_names_that_cause(tmp_path):
+    """The upstream is gone: origin's branch was deleted and the clone's
+    remote-tracking ref pruned with it. The cause is read from git's own
+    answers, so it holds whatever wording git prints for the state."""
+    origin, clone = _gone_upstream_clone(tmp_path)
+    target = _tracked_session(clone)
+    target.write_text("- status: active\n", encoding="utf-8")
+
+    ok, why = _session_git.stage_and_commit(clone, target, "close: d")
+
+    assert ok is False, why
+    assert _session_git.UPSTREAM_GONE in why, why
+    assert origin.is_dir()
+
+
+def test_the_failure_line_names_the_cause_and_keeps_git_sown_words(tmp_path):
+    """One line: noni's clause first, git's own sanitised words after it.
+
+    Both halves matter. The clause is what an operator acts on; git's words are
+    the evidence, bounded and stripped of control bytes and newlines on the way
+    out. The message carries no raw status block on its own and no commit
+    subject.
+    """
+    repo = _repo(tmp_path)
+    target = _tracked_session(repo)
+    target.write_text("- status: active\n", encoding="utf-8")
+
+    ok, why = _session_git.stage_and_commit(repo, target, "register: secret-subject")
+
+    assert ok is False
+    assert why.count("\n") == 0, why  # one line, whatever git printed
+    assert why.startswith("git could not commit -- "), why
+    assert "register: secret-subject" not in why, why
+
+
+def test_a_failure_git_explained_nothing_reports_no_invented_cause(tmp_path):
+    """When no probe answered, the line quotes git and asserts nothing.
+
+    A cause is a claim about the tree. ``commit_failure_cause`` returns None
+    rather than guess, and the message falls back to git's words so an operator
+    is not sent to fix an upstream that was there all along.
+    """
+    repo = _repo(tmp_path)
+    silent = subprocess.CompletedProcess([], 1, "", "")
+    assert _commit_cause.commit_failure_cause(repo, silent) in (
+        _session_git.NO_UPSTREAM,  # a repo with no remote is a real answer too
+        _session_git.UPSTREAM_GONE,
+        _session_git.NOTHING_TO_COMMIT,
+        _session_git.GIT_REFUSED,
+        None,
+    )
+    line = _commit_cause.commit_failed(repo, subprocess.CompletedProcess(
+        [], 1, "", "fatal: some git fault"))
+    assert "fatal: some git fault" in line, line
+
+
+def test_session_status_reads_the_field_the_census_would_act_on():
+    """One field reader for the three writers that read it.
+
+    Last occurrence wins and surrounding space is dropped, which is what the
+    census's parser does: a file whose two status lines disagree must not be
+    'active' to claim.py and 'closed' to close.py.
+    """
+    assert _session_git.session_status("- status: active\n") == "active"
+    assert _session_git.session_status(
+        "  - status: active\n- status: closed\n") == "closed"
+    assert _session_git.session_status("- identity: dev\n") is None
+    assert _session_git.session_status("- status:\n") is None
+    assert _session_git.is_terminal_status(" Superseded ")
+    assert not _session_git.is_terminal_status("active")

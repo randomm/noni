@@ -20,7 +20,7 @@ import pytest
 from _harness import _git_env_with_identity, _git_ok, build_bare_origin
 from session_git_support import _pushable_clone, _seed_ahead
 
-from noni import _session_git
+from noni import _session_git, _session_push
 
 
 @pytest.fixture(autouse=True)
@@ -60,7 +60,7 @@ def test_a_rebase_that_stops_is_aborted_and_reported_as_the_conflict_code(tmp_pa
     _git_ok(clone, "-c", "user.name=Replay", "-c", "user.email=replay@fixture.invalid",
             "commit", "-q", "-m", "clone side")
 
-    code = _session_git.fetch_rebase_push(
+    code = _session_push.fetch_rebase_push(
         clone, "main", attempts=2, label="close.py", exit_push_failed=3,
         exit_rebase_conflict=5, exit_rebase_refused=6)
     assert code == 5, (code, capsys.readouterr())
@@ -69,7 +69,7 @@ def test_a_rebase_that_stops_is_aborted_and_reported_as_the_conflict_code(tmp_pa
     assert "rebase conflict" in err, err
     # The clone is not left mid-rebase: the state directory is gone and HEAD
     # names the branch it was invoked on.
-    assert _session_git._stopped_state_dir(clone) == (None, False)
+    assert _session_push._stopped_state_dir(clone) == (None, False)
     assert _git_ok(clone, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "main"
 
 
@@ -87,14 +87,14 @@ def test_a_rebase_git_never_started_is_reported_as_the_refusal_code_and_not_abor
     _git_ok(clone, "-c", "user.name=Replay", "-c", "user.email=replay@fixture.invalid",
             "commit", "-q", "--allow-empty", "-m", "local commit")
 
-    code = _session_git.fetch_rebase_push(
+    code = _session_push.fetch_rebase_push(
         clone, "main", attempts=2, label="release.py", exit_push_failed=3,
         exit_rebase_conflict=5, exit_rebase_refused=6)
     assert code in (5, 6), (code, capsys.readouterr().err)
     err = capsys.readouterr().err
     assert "release.py:" in err, err
     # Nothing was aborted behind the caller's back, and the branch is intact.
-    assert _session_git._stopped_state_dir(clone)[0] is None
+    assert _session_push._stopped_state_dir(clone)[0] is None
     assert _git_ok(clone, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "main"
 
 
@@ -119,16 +119,16 @@ def test_stopped_state_dir_answers_from_the_state_files_not_their_presence(tmp_p
     # and no answer is reported as indeterminate, not as "nothing stopped".
     _git_ok(repo, "init", "-q", "-b", "main")
     git_dir = repo / ".git"
-    assert _session_git._stopped_state_dir(repo) == (None, False)
+    assert _session_push._stopped_state_dir(repo) == (None, False)
 
     (git_dir / "rebase-merge").mkdir(parents=True)
-    assert _session_git._stopped_state_dir(repo) == (None, True)
+    assert _session_push._stopped_state_dir(repo) == (None, True)
 
     # Positive evidence is both files reading back non-empty.
     (git_dir / "rebase-merge" / "head-name").write_text("refs/heads/main\n",
                                                         encoding="utf-8")
     (git_dir / "rebase-merge" / "onto").write_text("abc123\n", encoding="utf-8")
-    state, indeterminate = _session_git._stopped_state_dir(tmp_path / "repo")
+    state, indeterminate = _session_push._stopped_state_dir(tmp_path / "repo")
     assert state == git_dir / "rebase-merge", state
     assert indeterminate is False
 
@@ -152,7 +152,7 @@ def test_fetch_rebase_push_reports_the_callers_own_code_when_attempts_run_out(tm
     # push itself fail by pointing origin at nothing.
     _git_ok(clone, "remote", "set-url", "origin", str(tmp_path / "gone.git"))
 
-    code = _session_git.fetch_rebase_push(
+    code = _session_push.fetch_rebase_push(
         clone, "main", label="register.py", exit_push_failed=7,
         exit_rebase_conflict=8, exit_rebase_refused=9)
     assert code == 7, code
@@ -167,9 +167,9 @@ def test_current_branch_refuses_a_detached_head(tmp_path):
     origin = tmp_path / "origin.git"
     clone = tmp_path / "clone"
     build_bare_origin(origin, [clone])
-    assert _session_git.current_branch(clone) == ("main", "")
+    assert _session_push.current_branch(clone) == ("main", "")
 
     _git_ok(clone, "checkout", "-q", "--detach")
-    branch, why = _session_git.current_branch(clone)
+    branch, why = _session_push.current_branch(clone)
     assert branch is None
     assert "detached HEAD" in why, why

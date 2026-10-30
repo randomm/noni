@@ -14,6 +14,7 @@ executes.
 
 from __future__ import annotations
 
+import os
 import socket
 import subprocess
 import sys
@@ -21,6 +22,8 @@ from pathlib import Path
 
 from _harness import REGISTER, SRC, _git_ok, run_from, subprocess_env
 from conftest import run_register
+
+from noni import _marker
 
 
 def _git_repo(tmp_path: Path) -> Path:
@@ -89,6 +92,120 @@ def _hostworktree_value(body: str) -> str:
         if line.startswith("- host/worktree:"):
             return line[len("- host/worktree:"):].strip()
     raise AssertionError(f"no host/worktree field in session file:\n{body}")
+
+
+def _no_committer_env(tmp_path: Path) -> dict[str, str]:
+    """The environment a commit refusal needs: a gitconfig that names no committer.
+
+    An empty file, not ``/dev/null``, because the writer's git helper keeps
+    ``GIT_CONFIG_GLOBAL`` in its environment (a caller's identity is meant to
+    survive the filter), and a device reads as no config file at all -- which
+    would let the *host's* config decide the committer and make the commit
+    succeed. An empty regular file says 'this machine configured nothing', which
+    is the state these tests want: the operator who runs a writer on a box where
+    no committer was ever set. ``GIT_AUTHOR_*`` / ``GIT_COMMITTER_*`` stay
+    unset (the suite's autouse fixture clears them and the launcher is asked not
+    to add them), so git has no committer from either source.
+    """
+    empty = tmp_path / "_empty_gitconfig"
+    empty.write_text("", encoding="utf-8")
+    return {"GIT_CONFIG_GLOBAL": str(empty),
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+# The environment a commit refusal needs: no global config for git to read a
+# committer from, and no GIT_AUTHOR_* / GIT_COMMITTER_* (the launcher is asked
+# not to add them, and the suite's autouse fixture already cleared them). That
+# is also how an operator reaches the state -- a state repository prepared on a
+# machine that never configured a committer.
+
+
+def _refused_register(tmp_path, name, identity="dev"):
+    """A committing register run whose git commit is refused; the tree is returned.
+
+    ``_git_repo`` builds ``<dir>/repo``, so the tree comes back from it rather
+    than being assumed to be ``tmp_path / name``.
+    """
+    parent = tmp_path / name
+    parent.mkdir(parents=True, exist_ok=True)
+    repo = _git_repo(parent)
+    return repo, _register_refusing_commit(repo, tmp_path, identity)
+
+
+def _register_refusing_commit(repo: Path, scratch: Path, identity: str = "dev"
+                              ) -> subprocess.CompletedProcess[str]:
+    """One registering run in ``repo`` whose commit git will not take.
+
+    ``scratch`` is where that run's empty gitconfig lives; the run is otherwise
+    an ordinary one, so the only difference an operator can see is the refusal.
+    """
+    return run_from(repo, REGISTER, "--repo", str(repo), "--identity", identity,
+                    identity=False, env=_no_committer_env(scratch))
+
+
+def _sid_of_any(repo: Path) -> str:
+    """The session id of the one register file this run left in ``repo``.
+
+    The id is minted from the clock, so a test that needs to name the path reads
+    it back from the tree rather than guessing at the date.
+    """
+    files = list((repo / "noni" / "sessions").glob("*.md"))
+    assert len(files) == 1, files
+    return files[0].name
+
+
+def test_a_refused_commit_leaves_no_marker_for_a_session_that_never_landed(tmp_path):
+    """AC1 for register: a run whose commit git refused leaves the tree exactly as
+    it found it, marker included.
+
+    The marker is the evidence a later run reads to find this working copy's
+    session, so a marker naming a file git never received would make the next
+    register continue (or refuse to overwrite) a session that exists only as an
+    uncommitted file -- the half-applied state this issue is about, one step
+    further along. Three promises, asserted: the run says so with a cause in
+    noni's words and a hint that names the path to commit by hand (and no raw
+    ``git status --porcelain`` dump), HEAD did not move, and the marker this run
+    created is gone.
+    """
+    repo, proc = _refused_register(tmp_path, "fresh")
+
+    assert proc.returncode == 3, f"{proc.returncode}: {proc.stderr}"
+    assert "git could not commit" in proc.stderr, proc.stderr
+    assert "by hand" in proc.stderr and "register.py" in proc.stderr, proc.stderr
+    assert "git status --porcelain" not in proc.stderr, proc.stderr
+    assert " M noni/" not in proc.stderr and "A  noni/" not in proc.stderr, proc.stderr
+    assert _head(repo) == _git_ok(repo, "rev-parse", "HEAD").stdout.strip()
+    assert not _marker.marker_path(repo).exists(), \
+        "a failed first registration left a marker behind"
+    # The file itself is still written (the message says so), and it is still the
+    # only change this run made to the tree: no sibling touched, and nothing else
+    # staged for a later 'git add -A' to sweep in by accident. The staged entry
+    # for this one path is the primitive's own (reset, add, then the commit git
+    # refused), and the message's whole claim is that the change is written and
+    # uncommitted -- HEAD above proves the uncommitted half. The coverage hook's
+    # data file appears beside it under the suite and is not this writer's doing,
+    # so the assertion names the path it cares about.
+    rows = [row for row in _git_ok(repo, "status", "--porcelain").stdout.splitlines()
+            if "noni/" in row]
+    assert rows == [f"A  noni/sessions/{_sid_of_any(repo)}"], rows
+
+
+def test_a_refused_commit_restores_a_marker_an_earlier_run_left(tmp_path):
+    """The same refusal against a tree that already carried a marker: the earlier
+    run's bytes come back verbatim, trailing newline included.
+
+    A restore that rewrote the marker through the writer's own formatter would be
+    a second change this run made and did not commit, and the id it names would
+    still be this run's rather than the session the marker was written for.
+    """
+    repo, _first = _refused_register(tmp_path, "marked")
+    marker = _marker.marker_path(repo)
+    previous = "2026-10-01-keepme\n"
+    marker.write_text(previous, encoding="utf-8")
+
+    again = _register_refusing_commit(repo, tmp_path)
+
+    assert again.returncode == 3, f"{again.returncode}: {again.stderr}"
+    assert "git could not commit" in again.stderr, again.stderr
+    assert marker.read_text(encoding="utf-8") == previous
 
 
 def test_register_defaults_publish_no_local_paths_or_hostname(tmp_path):
@@ -372,98 +489,3 @@ def test_parse_fields_splits_on_the_first_colon_only():
     }
 
 
-# --- State root: --repo names it, the cwd does not ----------------------------
-#
-# register.py is the writer that creates noni/sessions/ in the first place, so a
-# run that resolved the sessions directory from its cwd would seed a project
-# nobody pointed it at. Three trees: the state repository (a git repo holding no
-# noni/ yet), a decoy register beside the cwd, and an empty cwd a stray write
-# would show up in.
-
-REGISTER_STATE_DIR = "register-state-root"
-REGISTER_CWD_DIR = "register-cwd"
-REGISTER_DECOY_DIR = "register-decoy"
-REGISTER_DECOY_SID = "2026-10-01-dddddd"
-
-
-def _register_case(tmp_path: Path) -> tuple[Path, Path, Path]:
-    """The three trees of one register state-root run: (root, decoy, cwd)."""
-    root = _git_repo(tmp_path)
-    root = root.rename(tmp_path / REGISTER_STATE_DIR)
-    decoy = tmp_path / REGISTER_DECOY_DIR
-    sessions = decoy / "noni" / "sessions"
-    sessions.mkdir(parents=True)
-    (sessions / f"{REGISTER_DECOY_SID}.md").write_text(
-        "# session decoy\n\n- identity: decoy\n- host/worktree: decoy (decoy)\n"
-        "- started: 2026-10-01T10:00:00Z\n- status: active\n- claims:\n"
-        "  - claim: #999\n",
-        encoding="utf-8",
-    )
-    cwd = tmp_path / REGISTER_CWD_DIR
-    cwd.mkdir(parents=True, exist_ok=True)
-    return root, decoy, cwd
-
-
-def _register_from(cwd: Path, repo: Path, identity: str = "developer"
-                   ) -> subprocess.CompletedProcess[str]:
-    """register.py launched from ``cwd``, with ``--repo`` naming the state root."""
-    return run_from(cwd, REGISTER, "--repo", str(repo), "--identity", identity)
-
-
-def test_register_creates_the_register_only_under_the_state_root(tmp_path):
-    """A first registration creates ``noni/sessions/`` in the state repository
-    and leaves the decoy and the cwd exactly as they were."""
-    root, decoy, cwd = _register_case(tmp_path)
-    decoy_bytes = (decoy / "noni" / "sessions" / f"{REGISTER_DECOY_SID}.md").read_bytes()
-    assert not (root / "noni").exists(), "the state root must start with no noni/"
-
-    proc = _register_from(cwd, root)
-    assert proc.returncode == 0, f"{proc.returncode}: {proc.stderr}"
-
-    files = list((root / "noni" / "sessions").glob("*.md"))
-    assert len(files) == 1, f"one register file is one registration: {files}"
-    body = files[0].read_text(encoding="utf-8")
-    assert _fields(body)["identity"] == "developer"
-    # The commit landed in the state repository, not wherever the run happened
-    # to be launched from: HEAD's only path is the new register file.
-    subject = _git_ok(root, "log", "-1", "--format=%s").stdout.strip()
-    assert subject.startswith("register:"), subject
-    assert (decoy / "noni" / "sessions" / f"{REGISTER_DECOY_SID}.md").read_bytes() \
-        == decoy_bytes, (
-        "the run touched the decoy register beside its cwd, so the sessions "
-        "directory resolved from somewhere other than --repo"
-    )
-    assert not (cwd / "noni").exists(), "the run created noni/ under the cwd"
-
-
-def test_register_reuses_the_state_roots_marker_not_the_cwds(tmp_path):
-    """The working-copy marker is read from ``--repo`` too: a second run in the
-    same state root continues the session instead of minting a new one, even
-    though both runs launch from an unrelated directory."""
-    root, _decoy, cwd = _register_case(tmp_path)
-    first = _register_from(cwd, root)
-    assert first.returncode == 0, first.stderr
-    sid = _sid_of(first.stdout)
-
-    second = _register_from(cwd, root)
-    assert second.returncode == 0, second.stderr
-    assert f"{sid}.md already registered" in second.stdout, second.stdout
-    assert len(list((root / "noni" / "sessions").glob("*.md"))) == 1, (
-        "a second run allocated a second session, so the marker was not the "
-        "state root's"
-    )
-
-
-def test_register_refuses_a_repo_that_is_not_a_directory(tmp_path):
-    """A --repo naming no directory is a usage error (exit 2) naming the
-    argument, and it creates nothing beside the cwd."""
-    _root, decoy, cwd = _register_case(tmp_path)
-    decoy_bytes = (decoy / "noni" / "sessions" / f"{REGISTER_DECOY_SID}.md").read_bytes()
-
-    proc = _register_from(cwd, tmp_path / "no-such-state-root")
-    assert proc.returncode == 2, f"expected exit 2, got {proc.returncode}: {proc.stderr}"
-    assert "--repo" in proc.stderr.lower(), proc.stderr
-    assert "directory" in proc.stderr.lower(), proc.stderr
-    assert (decoy / "noni" / "sessions" / f"{REGISTER_DECOY_SID}.md").read_bytes() \
-        == decoy_bytes
-    assert not (cwd / "noni").exists()

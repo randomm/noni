@@ -50,7 +50,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import _session_git, labels
+from . import _session_git, _session_push, labels
 
 # The claim row grammar, unchanged by this writer: the row is matched on the
 # stripped line, so an indented row under '- claims:' and a bare one at EOF
@@ -207,18 +207,17 @@ def main(argv: list[str] | None = None) -> int:
     if not ok:
         return _fail(EXIT_PUSH_FAILED,
                      f"git could not commit {rel} (the change is written): {why}",
-                     f"run 'git status --porcelain -- {rel}' and commit that path "
-                     "by hand, or re-run release.py once git answers")
+                     f"commit {rel} by hand, or re-run release.py once git answers")
     print(f"{labels.RELEASE}: released {task} from {session_file.name}")
 
     if not args.push:
         return EXIT_OK
-    branch, why = _session_git.current_branch(repo)
+    branch, why = _session_push.current_branch(repo)
     if branch is None:
         return _fail(EXIT_PUSH_FAILED, f"push refused: {why}",
                      "release.py has no --branch flag: check out a branch and "
                      "re-run with --push, or push this commit by hand")
-    return _session_git.fetch_rebase_push(
+    return _session_push.fetch_rebase_push(
         repo, branch, label=labels.RELEASE, exit_push_failed=EXIT_PUSH_FAILED,
         exit_rebase_conflict=EXIT_REBASE_CONFLICT,
         exit_rebase_refused=EXIT_REBASE_REFUSED,

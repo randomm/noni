@@ -24,7 +24,8 @@ Exit codes:
     1  the register file for --session-id does not exist (register first)
     2  the session file is malformed and the claim cannot be appended, or
        the session already claims the same task (a task can only be claimed
-       once per session)
+       once per session), or the session's status is terminal (closed, done,
+       superseded or ended) and the run refuses before writing anything
     3  git push failed after 3 fetch-rebase-push attempts (also a fetch
        failure, a detached HEAD, an unresolvable branch, or a git call that
        timed out)
@@ -59,7 +60,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import _session_git, labels
+from . import _session_git, _session_push, labels
 
 CLAIM_PREFIX = "- claim: "
 # The push loop's bound and attempt count are the session writers' shared
@@ -166,20 +167,26 @@ def _append_claim(path: Path, task: str, body: str) -> int:
 
 
 def _stopped_state_dir(repo: Path) -> tuple[Path | None, bool]:
-    """Locate a rebase this clone is actually stopped in.
+    """Locate a rebase this clone is stopped in, and say so when that is unanswerable.
 
     Returns (dir, indeterminate). ``dir`` is the state directory (see
     REBASE_STATE_DIRS) holding a genuinely stopped rebase, or None; it is set
-    only when the directory carries positive evidence of being stopped: both
-    head-name and onto read back non-empty, which is what a live stopped
-    rebase always leaves and what a stray directory does not. ``indeterminate``
-    says the question could not be answered: a probe could not run or a state
-    file could not be read.
+    only when the directory carries positive evidence of being stopped, which is
+    what the shared reader decides (``_session_git.stopped_state``: both
+    ``head-name`` and ``onto`` read back non-empty, which a live stopped rebase
+    always leaves and a stray directory does not). ``indeterminate`` says the
+    question could not be answered: a probe could not run or a state file could
+    not be read.
 
     Existence alone is not evidence: a directory whose files cannot be read is
     somebody else's leftover and aborting it would reset the caller's worktree
     and index. Probes go through 'git rev-parse --git-path', which resolves the
     directories wherever the git dir lives (plain clone, worktree, GIT_DIR).
+
+    The probe is this command's own rather than the shared loop's private one
+    because the line printed when a probe cannot run at all is claim.py's
+    wording, and because a test that drives one scripted answer per git call has
+    to be able to replace the probe and nothing else.
     """
     indeterminate = False
     for name in REBASE_STATE_DIRS:
@@ -193,21 +200,11 @@ def _stopped_state_dir(repo: Path) -> tuple[Path | None, bool]:
                 file=sys.stderr,
             )
             break
-        state = Path(probe.stdout.strip())
-        if not state.is_absolute():
-            # --git-path prints a path relative to the working tree git
-            # resolved for this call, which is the clone itself.
-            state = repo / state
-        try:
-            head_name = (state / "head-name").read_text(encoding="utf-8", errors="replace")
-            onto = (state / "onto").read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            # Absent is an answer (nothing stopped here); unreadable is not.
-            if state.is_dir():
-                indeterminate = True
-            continue
-        if head_name.strip() and onto.strip():
+        state, answer = _session_git.stopped_state(repo, Path(probe.stdout.strip()))
+        if answer == "stopped":
             return state, indeterminate
+        if answer == "unreadable":
+            indeterminate = True
     return None, indeterminate
 
 
@@ -270,79 +267,59 @@ def _report(code: int, *lines: str) -> int:
     return code
 
 
+# The wording this command's rebase reports carry, handed to the shared verdict
+# so delegating the reading of the state changes nothing an operator reads. The
+# {name} slot is the repository's directory name, as in every other hint here.
+_REBASE_MESSAGES = {
+    "state_unreadable": (
+        "rebase failed and its state cannot be read, so no abort was attempted: "
+        "{quoted}",
+        "fix: run 'git status' and 'git rebase --abort' by hand in {name}, then "
+        "re-run claim",
+    ),
+    "abort_failed": (
+        "rebase conflict and git rebase --abort failed: {abort}",
+        "git said: {quoted}",
+        "the clone is still mid-rebase in {name}; run git rebase --abort by hand",
+    ),
+    "timeout_stopped": (
+        "rebase timed out after {seconds}s and was stopped in a conflict, so it "
+        "was aborted: {quoted}",
+    ),
+    "conflict": (
+        "rebase conflict: someone else changed the same session file, so the "
+        "rebase stopped: {quoted}",
+        "fix: fetch origin, resolve the conflict in the session file, then re-run "
+        "claim; the claim commit is intact on {name}",
+    ),
+    "timeout": ("rebase timed out after {seconds}s: {quoted}",),
+    "refused": (
+        "rebase refused (it never started): {quoted}",
+        "fix: commit or stash the uncommitted changes in this clone, then re-run "
+        "claim; this run started no rebase, so the claim commit is intact",
+    ),
+}
+
+
+
+
 def _classify_rebase_failure(
     repo: Path, rebase: subprocess.CompletedProcess[str], timed_out: bool = False
 ) -> int:
-    """Turn a failed 'git rebase origin/<branch>' into an exit code.
+    """Turn a failed rebase into this command's exit code, via the shared verdict.
 
-    The two cases are not the same bug. A rebase that started and stopped
-    leaves the clone mid-rebase, so anything the caller runs next (register.py
-    above all) commits on top of a half-finished rebase: claim.py aborts it
-    and hands back exit 5. A rebase git never started left nothing to clean
-    up, so running an abort there would be noise: exit 6 says commit or
-    stash and re-run.
-
-    ``timed_out`` marks a rebase killed by GIT_TIMEOUT rather than refused by
-    git: the wording keeps the timeout visible (a slow remote is not a
-    conflict) and it reports as the push class, while the state probe still
-    decides whether an abort has to run first.
+    ``_session_push._classify_rebase_failure`` holds the reading of the rebase
+    state and the abort-or-not decision (its docstring states the two cases it
+    tells apart). This hands it claim.py's label, exit-code constants and
+    wording, so the operator reads this command's voice and the numbers stay the
+    ones the docstring above documents.
     """
-    detail = _safe(rebase.stderr.strip() or rebase.stdout.strip()).splitlines()
-    quoted = " ".join(detail[:3])
-    state, indeterminate = _stopped_state_dir(repo)
-    if state is None and indeterminate:
-        # The probe could not answer, so this run claims no knowledge of the
-        # clone's state and asserts nothing about it: an unrunnable probe must
-        # not become "not stopped", because a real conflict would then be
-        # reported as a refusal whose hint cannot resolve it.
-        return _report(
-            EXIT_REBASE_REFUSED,
-            f"{labels.CLAIM}: rebase failed and its state cannot be read, so no abort "
-            "was attempted: " + quoted,
-            f"{labels.CLAIM}: fix: run 'git status' and 'git rebase --abort' by hand in "
-            + repo.name + ", then re-run claim",
-        )
-    if state is not None:
-        abort = _git(["rebase", "--abort"], repo)
-        if abort.returncode != 0:
-            # The clone is still mid-rebase: say so plainly, and keep git's own
-            # rebase output, because this is the one path where the caller most
-            # needs to know the clone is wedged and what git said about it.
-            return _report(
-                EXIT_REBASE_CONFLICT,
-                f"{labels.CLAIM}: rebase conflict and git rebase --abort failed: "
-                + _safe(abort.stderr.strip()),
-                f"{labels.CLAIM}: git said: " + quoted,
-                f"{labels.CLAIM}: the clone is still mid-rebase in " + repo.name
-                + "; run git rebase --abort by hand",
-            )
-        if timed_out:
-            return _report(
-                EXIT_PUSH_FAILED,
-                f"{labels.CLAIM}: rebase timed out after " + str(GIT_TIMEOUT)
-                + "s and was stopped in a conflict, so it was aborted: " + quoted,
-            )
-        return _report(
-            EXIT_REBASE_CONFLICT,
-            f"{labels.CLAIM}: rebase conflict: someone else changed the same session "
-            "file, so the rebase stopped: " + quoted,
-            f"{labels.CLAIM}: fix: fetch origin, resolve the conflict in the session "
-            "file, then re-run claim; the claim commit is intact on "
-            + repo.name,
-        )
-    if timed_out:
-        # Nothing stopped, so nothing to abort: this is the push class the
-        # timeout belongs to.
-        return _report(
-            EXIT_PUSH_FAILED,
-            f"{labels.CLAIM}: rebase timed out after " + str(GIT_TIMEOUT)
-            + "s: " + quoted,
-        )
-    return _report(
-        EXIT_REBASE_REFUSED,
-        f"{labels.CLAIM}: rebase refused (it never started): " + quoted,
-        f"{labels.CLAIM}: fix: commit or stash the uncommitted changes in this clone, "
-        "then re-run claim; this run started no rebase, so the claim commit is intact",
+    return _session_push._classify_rebase_failure(
+        repo, rebase, label=labels.CLAIM, timed_out=timed_out,
+        exit_push_failed=EXIT_PUSH_FAILED,
+        exit_rebase_conflict=EXIT_REBASE_CONFLICT,
+        exit_rebase_refused=EXIT_REBASE_REFUSED, messages=_REBASE_MESSAGES,
+        probe=_stopped_state_dir, abort=lambda path: _git(["rebase", "--abort"], path),
     )
 
 
@@ -417,6 +394,31 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"{labels.CLAIM}: {session_file.name} is not readable as UTF-8 "
             f"({exc.__class__.__name__}); cannot check for a duplicate claim",
+            file=sys.stderr,
+        )
+        return EXIT_SESSION_MALFORMED
+    # A session that has ended claims nothing further. The check is a write-time
+    # refusal only: it reads this file's own status field, and claim rows an
+    # earlier session left in a file that has since gone terminal are the
+    # census's business, not this command's. The status is read after the UTF-8
+    # check (so a file no parser can read is still reported as malformed, not as
+    # terminal) and before the duplicate-row check (so a terminal session is
+    # reported as terminal whichever task is named), and nothing is written
+    # before it passes. TERMINAL_STATUSES is the census's own set, shared with
+    # close.py rather than copied.
+    status = _session_git.session_status(existing)
+    if status is not None and _session_git.is_terminal_status(status):
+        settled = status.strip().lower()
+        print(
+            f"{labels.CLAIM}: {session_file.name} is {settled}; a session whose "
+            "status is terminal cannot claim a new task (close is final: the "
+            "census ignores a terminal session's claims)",
+            file=sys.stderr,
+        )
+        print(
+            f"{labels.CLAIM}: fix: claim from a session whose status is active, "
+            f"or re-register (--repo {args.repo} --identity IDENTITY) and claim "
+            "from the new session",
             file=sys.stderr,
         )
         return EXIT_SESSION_MALFORMED

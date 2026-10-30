@@ -160,6 +160,75 @@ def test_invalid_utf8_session_is_refused_without_traceback(tmp_path):
     assert "Traceback" not in proc.stderr, f"unhandled exception: {proc.stderr}"
 
 
+def test_a_terminal_session_claims_nothing(tmp_path):
+    """AC4: a session whose status has ended claims nothing further (exit 2).
+
+    ``close`` is final, and the census ignores a terminal session's claims, so a
+    row appended here would be invisible work: the run refuses before writing
+    anything rather than leaving a claim nobody counts. Every status the census
+    treats as ended is driven, not just 'closed', because the refusal is one set
+    (``_session_git.TERMINAL_STATUSES``) and a set a test only samples can lose
+    a member silently. Each case asserts the bytes are unchanged and uncommitted
+    -- a refusal that wrote and committed a row would be the half-applied state
+    this issue is about, with a nicer message on it.
+    """
+    for settled in ("closed", "done", "superseded", "ended"):
+        repo = _make_session(tmp_path / settled)
+        body = _session_path(repo).read_text(encoding="utf-8")
+        body = body.replace("- status: active", f"- status: {settled}")
+        _session_path(repo).write_text(body, encoding="utf-8")
+        _git(repo, "commit", "-q", "-am", f"settle {settled}")
+
+        proc = run_claim(repo, SESSION_ID, "#42")
+
+        assert proc.returncode == 2, f"{settled}: expected exit 2, got {proc.returncode}: {proc.stderr}"
+        assert settled in proc.stderr.lower(), f"{settled}: {proc.stderr}"
+        assert "terminal" in proc.stderr.lower(), f"{settled}: {proc.stderr}"
+        # Nothing was written: the file still holds exactly the committed bytes.
+        assert _session_path(repo).read_text(encoding="utf-8") == body
+        assert _git_text(repo, "status", "--porcelain") == "", f"{settled}: left dirty"
+
+
+def test_a_terminal_refusal_precedes_the_duplicate_check(tmp_path):
+    """Which refusal a terminal session gets when its task is also a duplicate.
+
+    Both guards answer exit 2, but only one of them names the state the operator
+    has to act on, and the order is what makes the message true: a run that
+    reported 'already claims #42' for a closed session would be describing a
+    live session. The duplicate row is planted before the status is settled, so
+    the duplicate is genuinely there and the message that comes back is the
+    terminal one.
+    """
+    repo = _make_session(tmp_path, claims=["#42"])
+    body = _session_path(repo).read_text(encoding="utf-8")
+    _session_path(repo).write_text(
+        body.replace("- status: active", "- status: closed"), encoding="utf-8")
+    _git(repo, "commit", "-q", "-am", "close it")
+
+    proc = run_claim(repo, SESSION_ID, "#42")
+
+    assert proc.returncode == 2, proc.stderr
+    assert "closed" in proc.stderr.lower(), proc.stderr
+
+
+def test_a_session_with_no_status_field_still_claims(tmp_path):
+    """The refusal is a status check, not a shape check. A register file with no
+    '- status:' line at all is not terminal (the census has its own way of
+    reading a file like that), and refusing it here would turn a file claim.py
+    has always accepted into one the writer will not touch."""
+    repo = _make_session(tmp_path)
+    body = _session_path(repo).read_text(encoding="utf-8")
+    _session_path(repo).write_text(
+        "".join(line + "\n" for line in body.splitlines() if "- status:" not in line),
+        encoding="utf-8")
+    _git(repo, "commit", "-q", "-am", "drop the status line")
+
+    proc = run_claim(repo, SESSION_ID, "#42")
+
+    assert proc.returncode == 0, proc.stderr
+    assert "- claim: #42" in _session_path(repo).read_text(encoding="utf-8")
+
+
 def test_detached_head_push_is_refused(tmp_path):
     """The detached-HEAD guard fires on the literal string git actually
     prints (rev-parse --abbrev-ref HEAD prints "HEAD" when detached, not

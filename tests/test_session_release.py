@@ -12,6 +12,7 @@ file's failure rather than a silently passing assertion.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -37,6 +38,12 @@ BODY = """# session {sid}
   - claim: #1
   - claim: #2
 """
+
+
+_PATH = os.environ.get("PATH", "/usr/bin:/bin")
+# The environment a refused commit needs: no global config for git to read a
+# committer from, and no GIT_AUTHOR_* / GIT_COMMITTER_* (the launcher is asked
+# not to add them). See the refused-commit test for what that state proves.
 
 
 def _repo_with_session(tmp_path, body=None, sid="2026-10-01-aaaaaa", name="clone"):
@@ -277,6 +284,38 @@ def test_rebase_verdicts_carry_their_hint_keywords_and_no_traceback(tmp_path):
         assert "stash" in err, err
     else:
         raise AssertionError(f"unexpected verdict {proc.returncode}: {err}")
+
+
+def test_a_commit_that_was_refused_names_the_cause_in_noni_words(tmp_path):
+    """AC2 for release: a refused commit says so in one noni sentence, not a dump.
+
+    Reached the way an operator reaches it (a state repository whose committer
+    was never configured), and asserted in both directions: the message names
+    the cause, names the path, admits the row is already removed in the working
+    copy, and carries none of the ``XY path`` rows a raw ``git status
+    --porcelain`` block is made of. The row really is gone from the file and
+    really is still in HEAD, which is the half-applied state the message has to
+    describe truthfully.
+    """
+    clone, session = _repo_with_session(tmp_path, name="clone-refused")
+    head_before = _git_ok(clone, "rev-parse", "HEAD").stdout.strip()
+
+    proc = run_from(clone, RELEASE, "--repo", str(clone),
+                    "--session-id", "2026-10-01-aaaaaa", "--task", "#1",
+                    identity=False,
+                    env={"GIT_CONFIG_GLOBAL": "/dev/null", "PATH": _PATH})
+
+    assert proc.returncode == release_mod.EXIT_PUSH_FAILED, f"{proc.returncode}: {proc.stderr}"
+    err = proc.stderr
+    assert "git could not commit" in err, err
+    assert "the change is written" in err, err
+    assert "noni/sessions/2026-10-01-aaaaaa.md" in err, err
+    assert "by hand" in err, err
+    assert " M noni/" not in err and "A  noni/" not in err, err
+    assert "- claim: #1" not in session.read_text(encoding="utf-8")
+    assert "- claim: #1" in _git_ok(clone, "show", "HEAD:noni/sessions/"
+                                    "2026-10-01-aaaaaa.md").stdout
+    assert _git_ok(clone, "rev-parse", "HEAD").stdout.strip() == head_before
 
 
 def test_failure_hints_name_their_code_and_carry_no_traceback(tmp_path):

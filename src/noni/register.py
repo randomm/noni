@@ -13,7 +13,8 @@ The marker is the file ``noni-session`` inside this working copy's own git
 directory (``<repo>/.git/noni-session`` when ``.git`` is a directory; for a
 linked worktree, the gitdir its ``gitdir:`` line names, so each worktree marks
 itself). It is written by this command and read by no census, and it is never
-written under ``noni/`` — it is working-copy state, not committed state.
+written under ``noni/`` — it is working-copy state, not committed state. The
+helpers that resolve, read, write and restore it live in ``noni._marker``.
 
 The file holds two kinds of field:
 
@@ -63,12 +64,11 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import _session_git, labels
+from . import _marker, _session_git, _session_push, labels
 
-# The marker file that names the session this working copy owns. It lives in
-# the git directory, never in the work tree: it is this clone's state, not the
-# project's, so it is never committed and the census never lists it.
-MARKER_NAME = "noni-session"
+# The marker file that names the session this working copy owns lives with the
+# marker helpers in ``_marker``: it sits in the git directory, never in the work
+# tree, because it is this clone's state and not the project's.
 
 # Where session files live, relative to the repo. --file is admitted only as a
 # file of this directory, which is what makes a foreign path a refusal rather
@@ -124,75 +124,6 @@ def _fail(code: int, headline: str, hint: str) -> int:
     return code
 
 
-def marker_path(repo: Path) -> Path | None:
-    """Where this working copy's marker lives, or None when it cannot be resolved.
-
-    The path is built as a literal from ``--repo`` — never through ``git
-    rev-parse``, GIT_DIR or GIT_WORK_TREE — so the marker belongs to the tree
-    the operator named, whatever environment the caller inherited.
-
-    ``<repo>/.git`` as a directory is the plain clone: the marker sits inside
-    it. ``<repo>/.git`` as a file is a linked worktree, and the ``gitdir:`` line
-    inside that file names the directory that holds this worktree's own state,
-    so each worktree marks itself and two worktrees of one repository never
-    share a session. Anything else (no ``.git``, a ``gitdir:`` line that is
-    blank, malformed, or names a directory that does not exist) resolves to
-    None: the caller mints a new session, writes no marker, and says so.
-    """
-    dot_git = repo / ".git"
-    if dot_git.is_dir():
-        return dot_git / MARKER_NAME
-    try:
-        text = dot_git.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    for line in text.splitlines():
-        line = line.strip()
-        if not line.startswith("gitdir:"):
-            continue
-        named = line.split(":", 1)[1].strip()
-        if not named:
-            return None
-        gitdir = Path(named)
-        if not gitdir.is_absolute():
-            gitdir = repo / gitdir
-        return gitdir / MARKER_NAME if gitdir.is_dir() else None
-    return None
-
-
-def read_marker(marker: Path | None) -> str | None:
-    """The session id the marker names, or None when there is nothing to read.
-
-    The first line is the id; a marker that cannot be read, is empty, or whose
-    first line is blank answers nothing (the caller allocates afresh), because a
-    marker this run cannot trust is no evidence of a session at all.
-    """
-    if marker is None:
-        return None
-    try:
-        text = marker.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    first = text.split("\n", 1)[0].strip()
-    return first or None
-
-
-def write_marker(marker: Path | None, session_id: str) -> bool:
-    """Record that this working copy owns ``session_id``; True when it landed.
-
-    Written only after the session file itself was written, so a working copy
-    never wakes up marked for a session whose file is not on disk.
-    """
-    if marker is None:
-        return False
-    try:
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        _session_git.atomic_write(marker, session_id + "\n")
-    except OSError:
-        return False
-    return True
-
-
 def _warn_unmarked(marker: Path | None) -> None:
     """Say that this run could not mark the working copy, and what that costs.
 
@@ -202,7 +133,7 @@ def _warn_unmarked(marker: Path | None) -> None:
     could not use.
     """
     named = "<repo>/.git" if marker is None else str(marker.parent)
-    print(f"{labels.REGISTER}: no {MARKER_NAME} was written under {named}, so this "
+    print(f"{labels.REGISTER}: no {_marker.MARKER_NAME} was written under {named}, so this "
           "session is not marked as this working copy's own", file=sys.stderr)
     print(f"{labels.REGISTER}: fix: run register.py inside a git working copy (a "
           ".git directory, or a .git file whose gitdir: line names a directory "
@@ -340,8 +271,8 @@ def main(argv: list[str] | None = None) -> int:
                          f"({exc.__class__.__name__}: {exc.strerror or exc})",
                          f"check that {repo} is writable, then re-run register.py")
 
-    marker = marker_path(repo)
-    marked = read_marker(marker)
+    marker = _marker.marker_path(repo)
+    marked = _marker.read_marker(marker)
     # The reuse question, answered only for a marked file that exists and has
     # not ended: a marker naming a file that is gone is no evidence of a
     # session (see the module docstring), and neither is one whose status is
@@ -418,7 +349,13 @@ def main(argv: list[str] | None = None) -> int:
                      f"{target} could not be written "
                      f"({exc.__class__.__name__}: {exc.strerror or exc})",
                      f"check that {sessions_dir} is writable, then re-run register.py")
-    marked_ok = write_marker(marker, session_id) if not args.no_commit else False
+    # The bytes the marker held before this run touched it, read first and only
+    # when this run is about to write one: a run that wrote no marker has
+    # nothing to put back, and reading after the write would hand the restore
+    # the bytes this run itself wrote (see _marker.restore_marker for what
+    # 'back' means, including no marker at all).
+    marker_before = _marker.read_marker_raw(marker) if not args.no_commit else None
+    marked_ok = _marker.write_marker(marker, session_id) if not args.no_commit else False
 
     if args.no_commit:
         # Same validation chain and the same write as the committing path, minus
@@ -439,21 +376,25 @@ def main(argv: list[str] | None = None) -> int:
     rel = target.relative_to(repo).as_posix()
     ok, why = _session_git.stage_and_commit(repo, target, f"register: {session_id}")
     if not ok:
+        # The file is on disk and the marker was written for it; the marker goes
+        # back to what it held before this run, so a working copy is never left
+        # marked for a session git never received.
+        _marker.restore_marker(marker, marker_before)
+        marked_ok = False
         return _fail(EXIT_GIT,
                      f"git could not commit {rel} (the file is written): {why}",
-                     f"run 'git status --porcelain -- {rel}' and commit that path "
-                     "by hand, or re-run register.py once git answers")
+                     f"commit {rel} by hand, or re-run register.py once git answers")
     print(f"{labels.REGISTER}: registered session {session_id} -> {target}")
     if not marked_ok:
         _warn_unmarked(marker)
 
     if not args.push:
         return EXIT_OK
-    branch, why = _session_git.current_branch(repo)
+    branch, why = _session_push.current_branch(repo)
     if branch is None:
         return _fail(EXIT_GIT, f"push refused: {why}",
                      "check out a branch, or run the push by hand once HEAD names one")
-    return _session_git.fetch_rebase_push(
+    return _session_push.fetch_rebase_push(
         repo, branch, label=labels.REGISTER, exit_push_failed=EXIT_GIT,
         exit_rebase_conflict=EXIT_GIT, exit_rebase_refused=EXIT_GIT,
     )

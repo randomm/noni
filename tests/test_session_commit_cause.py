@@ -37,33 +37,40 @@ def _git_identity(monkeypatch):
         monkeypatch.setenv(name, value)
 
 
+def _verb_of(argv):
+    """The git verb of an argv the hardened helper built, or "" when it has none.
+
+    ``git.git`` puts a ``-C``/``-c`` preamble in front of the verb, so the verb
+    is the first word after that preamble which does not start with a dash.
+    """
+    skip_next = False
+    for part in argv[1:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if part in ("-C", "-c"):
+            skip_next = True
+            continue
+        if part.startswith("-"):
+            continue
+        return part
+    return ""
+
+
 def _hung_probe_git(hung_verbs):
     """A ``subprocess.run`` replacement that times out the named git verbs only.
 
     ``git.git`` passes the argv it built (with the ``-C``/``-c`` preamble in
-    front), so the verb is the first positional word after that preamble -- which
-    is how a test drives the timeout sentinel for one class of call (a transport
-    call that cannot finish, or one plumbing verb) while every other call keeps
-    answering for real. Every call is recorded, so a test can say which probes
-    this run actually asked.
+    front), so :func:`_verb_of` is how a test drives the timeout sentinel for one
+    class of call (a transport call that cannot finish, or one plumbing verb)
+    while every other call keeps answering for real. Every call is recorded, so
+    a test can say which probes this run actually asked.
     """
     real_run = subprocess.run
 
     def _run(cmd, *args, **kwargs):
         argv = [str(part) for part in cmd]
-        skip_next = False
-        verb = ""
-        for part in argv[1:]:
-            if skip_next:
-                skip_next = False
-                continue
-            if part in ("-C", "-c"):
-                skip_next = True
-                continue
-            if part.startswith("-"):
-                continue
-            verb = part
-            break
+        verb = _verb_of(argv)
         _run.asked.append(verb)
         if verb in hung_verbs:
             raise subprocess.TimeoutExpired(list(cmd), _session_git.GIT_TIMEOUT)
@@ -75,17 +82,56 @@ def _hung_probe_git(hung_verbs):
 _HARDENED_GIT = _session_git.git
 
 
+def _git_refusing(verb, said):
+    """Adapt a refusal of one git verb to ``git``'s own signature.
+
+    The refusal has the shape git's own rejection has (non-zero exit, text on
+    stderr) and only the named verb is refused: every other call runs for real
+    through the hardened helper, so the classifier still has to measure the
+    upstream, the index and the work tree of this tree before it can name the
+    fault. Forcing it at this seam, rather than by arranging a state git happens
+    to refuse, is what makes it independent of whatever identity the checkout's
+    ambient config supplies (see the test that uses it). Same seam
+    :func:`_git_via` uses, for the reason that docstring gives.
+    """
+    refused = subprocess.CompletedProcess(["git", verb], 128, "", said)
+
+    def _call(repo, *args, _run=subprocess.run, **kwargs):
+        if args and str(args[0]) == verb:
+            return refused
+        return _HARDENED_GIT(repo, *args, _run=_run, **kwargs)
+    return _call
+
+
 def _git_via(run):
     """Adapt a ``subprocess.run`` double to ``git``'s own signature.
 
     Replacing the seam (rather than ``subprocess.run`` itself, which the hardened
     helper reaches through its own module) is what lets a test hang one class of
     git call and leave the rest answering for real. The helper is captured before
-    the monkeypatch, so the wrapper cannot recurse into itself.
+    the monkeypatch, so the wrapper cannot recurse into itself. (The helper
+    resolves ``subprocess.run`` once, at its own definition, so patching
+    ``subprocess.run`` would reach neither the hung call nor the others.)
     """
     def _call(repo, *args, _run=run, **kwargs):
         return _HARDENED_GIT(repo, *args, _run=_run, **kwargs)
     return _call
+
+
+def _pushable_clone_with_change(tmp_path):
+    """A pushable clone whose tracked session file carries an uncommitted change.
+
+    The tree is the one the generic-cause test needs: committable (``main``
+    tracks a branch origin still holds), and holding a real change (the close
+    run's bytes are on disk and not in HEAD) -- the state in which a refused
+    commit matches none of the named causes and only the generic clause fits.
+    """
+    origin = tmp_path / "nc-origin.git"
+    clone = tmp_path / "nc-clone"
+    build_bare_origin(origin, [clone])
+    target = _tracked_session(clone)
+    target.write_text("- status: closed\n", encoding="utf-8")
+    return origin, clone, target
 
 
 def test_a_killed_probe_leaves_the_line_to_gits_own_words(tmp_path, monkeypatch):
@@ -190,40 +236,35 @@ def test_the_failure_line_quotes_gits_words_without_reading_them_as_slots(tmp_pa
     assert "git could not commit -- " in line, line
 
 
-def test_a_commit_the_upstream_rejected_names_the_generic_cause(tmp_path, monkeypatch):
+def test_a_commit_the_upstream_rejected_names_the_generic_cause(tmp_path,
+                                                                monkeypatch):
     """The upstream resolves and the tree carries a real change, so none of the
     three named states holds: the honest answer is git's own fault clause with
     git's words after it, not a state the classifier guessed at.
 
-    git is driven to refuse a commit it would otherwise take -- an author whose
-    address its own config cannot supply -- rather than faked, so the refusal is
-    a real one and the probes run against the same tree that produced it.
+    The refusal is forced at the seam instead of by taking git's identity away.
+    Stripping ``GIT_AUTHOR_EMAIL``/``GIT_COMMITTER_EMAIL`` was the wrong lever:
+    git reads an identity from four sources and the env vars rank *below* the
+    tree's own ``.git/config``, so a CI checkout that set ``user.name`` and
+    ``user.email`` repo-locally (what ``actions/checkout`` does) supplied one
+    anyway and the commit landed -- green on the developer's machine, red on the
+    runner. The forcing must not depend on ambient config, so the refusal is
+    made at the seam the writers' helper calls through: exactly the commit call
+    comes back refused (with git's own 'no identity' text, the answer this tree
+    would have given) while reset, add and every classifier probe run for real
+    against the tree that produced the refusal.
     """
-    origin, clone, target = _pushable_clone_no_committer(tmp_path)
+    origin, clone, target = _pushable_clone_with_change(tmp_path)
     _seed_ahead(origin, tmp_path, "rejected", {"other.md": "moved\n"})
-    monkeypatch.delenv("GIT_AUTHOR_EMAIL", raising=False)
-    monkeypatch.delenv("GIT_COMMITTER_EMAIL", raising=False)
+    monkeypatch.setattr(_session_git, "git",
+                        _git_refusing("commit", "Author identity unknown"))
 
     ok, why = _session_git.stage_and_commit(clone, target, "close: d")
 
     assert ok is False, why
     assert _commit_cause.GIT_REFUSED in why, why
     assert "git said:" in why, why
-
-
-def _pushable_clone_no_committer(tmp_path):
-    """A pushable clone plus the session file a close run would rewrite.
-
-    The tree carries no committer identity of its own, so a commit through the
-    writer's helper (which neutralises the host's config) can be refused for
-    want of one while every upstream probe still answers.
-    """
-    origin = tmp_path / "nc-origin.git"
-    clone = tmp_path / "nc-clone"
-    build_bare_origin(origin, [clone])
-    target = _tracked_session(clone)
-    target.write_text("- status: closed\n", encoding="utf-8")
-    return origin, clone, target
+    assert "Author identity unknown" in why, why
 
 
 def test_a_detached_tree_is_left_to_gits_own_words(tmp_path):

@@ -15,7 +15,6 @@ import json
 import sys
 
 from _harness import REPO, SRC, _harness_source
-from order_fixtures import DEEP, _deep, _deep_artifact
 from ordering_fixtures import (
     _entry,
     _order,
@@ -25,6 +24,7 @@ from ordering_fixtures import (
     _run_in_process,
     _seed,
 )
+from ordering_shapes import DEEP, _deep, _deep_artifact
 
 BASELINE_ID = "2026-10-01-baseline"
 
@@ -49,9 +49,10 @@ SCRIPTS = SRC / "noni"
 # this deep before this product's bound is consulted.
 # Before the bound, one such file ended the whole run with a traceback: an
 # arbiter that crashes answers nothing, and a report that never prints is the
-# same lie as one that prints "clean". The ``DEEP`` / ``_deep`` shapes have one
-# owner in ``tests/order_fixtures.py``, and ``_deep_artifact`` there takes the
-# timestamp as ``confirmed`` so this file can plant the census's own ``FRESH``.
+# same lie as one that prints "clean". The ``DEEP`` / ``_deep`` shapes live in
+# ``tests/ordering_shapes.py`` (the module both ordering suites read), and
+# ``_deep_artifact`` there takes the timestamp as ``confirmed`` so this file
+# plants the census's own ``FRESH``.
 
 
 def test_a_deeply_nested_artifact_is_malformed_and_not_a_traceback(tmp_path):

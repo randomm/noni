@@ -15,27 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-from _harness import _git_env_with_identity, _git_ok, build_bare_origin
-
-
-@pytest.fixture(autouse=True)
-def _git_identity(monkeypatch):
-    """Pin a git identity for the real commits of the suites that import it.
-
-    The suite's autouse conftest clears ``GIT_AUTHOR_*`` / ``GIT_COMMITTER_*``
-    so a host identity cannot reach a test — which also means the in-process
-    helper calls of the session-git suites would have git refuse every commit
-    for want of one. The subprocess launchers pin their own (``run_claim``,
-    ``run_close``, ``run_register``); these tests drive the helpers directly, so
-    they pin it the same way from the same table, and block the host gitconfig
-    the same way those launchers do.
-
-    autouse here, and imported by name into each of the three test files, so
-    the pin applies to every test in them without each file restating it.
-    """
-    for name, value in _git_env_with_identity().items():
-        monkeypatch.setenv(name, value)
+from _harness import _git_ok, build_bare_origin
 
 
 def _repo(tmp_path: Path) -> Path:

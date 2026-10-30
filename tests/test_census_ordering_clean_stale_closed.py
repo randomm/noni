@@ -11,9 +11,10 @@ Split out of ``tests/test_census_ordering.py``; the builders are in
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from _harness import REPO
-from ordering_fixtures import _commit, _entry, _repo, _run, _seed, _state
+from ordering_fixtures import _commit, _entry, _repo, _run, _seed
 from ordering_shapes import issue_state_shapes
 
 BASELINE_ID = "2026-10-01-baseline"
@@ -114,6 +115,11 @@ def test_every_stale_entry_gets_its_own_row(tmp_path):
 
 # --- ordering-closed ----------------------------------------------------------
 
+
+def _state(repo: Path, mapping: dict[str, str]) -> str:
+    path = repo / "issue-state.json"
+    path.write_text(json.dumps(mapping), encoding="utf-8")
+    return str(path)
 
 
 def test_a_closed_issue_is_reported_at_forty_six(tmp_path):

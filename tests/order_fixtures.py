@@ -295,39 +295,6 @@ def _schema_case(**entry_fields):
     return {"schema": schema.ORDER_SCHEMA, "entries": [entry]}
 
 
-# The depth that overflows the standard reader. How deep a JSON document the
-# interpreter will still parse depends on the interpreter: 3.11 gives up near
-# ``sys.getrecursionlimit()`` (default 1000: measured to break at about 990
-# levels under pytest), later builds go on to a few thousand before the C stack
-# itself gives out, so the RecursionError arms are reachable on 3.11 and not
-# merely theoretical. Before the bound, one such file at either path turned a
-# writer run into a traceback.
-DEEP = 100000
-
-
-def _deep(depth: int = DEEP) -> str:
-    """Legal JSON text nested ``depth`` levels: ``json.loads`` overflows on it.
-
-    Built as text: the value it describes is the one the standard reader cannot
-    build, so a fixture that parsed it first could not test the reader meant to
-    survive it.
-    """
-    return "[" * depth + "1" + "]" * depth
-
-
-def _deep_artifact(confirmed: str = STAMP) -> str:
-    """An otherwise well-formed artifact whose entry carries one extra field
-    nested ``DEEP`` levels.
-
-    ``confirmed`` is a parameter because the census's ordering tests plant the
-    artifact at the census's own "fresh" timestamp while the writer's tests
-    plant it at this module's ``STAMP``; the default keeps the writer side's
-    bytes exactly as they were.
-    """
-    return ('{"schema": "noni.order/1", "entries": [{"issue": 7, "decision": null, '
-            '"confirmed": "' + confirmed + '", "x": ' + _deep() + "}]}")
-
-
 def _order_ast() -> ast.Module:
     return _script_ast(ORDER)
 

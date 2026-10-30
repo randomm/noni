@@ -297,6 +297,7 @@ def _ordering_host_faults() -> list[tuple[OSError, tuple[str, ...]]]:
         (OSError(13, "Permission denied", "~deploy"), ("deploy",)),
     ]
 
+
 @contextlib.contextmanager
 def _listing_fault(ledger: Path, fault: OSError):
     """Fault the ordering group's read of ``ledger`` with one given exception.
@@ -332,6 +333,7 @@ def _state(repo: Path, mapping: dict[str, str]) -> str:
     path = repo / "issue-state.json"
     path.write_text(json.dumps(mapping), encoding="utf-8")
     return str(path)
+
 
 def _strict_reader_copy(name: str, filename: str):
     """One module of the strict-reading pair, loaded by path from its own dir.

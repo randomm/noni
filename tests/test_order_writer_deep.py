@@ -15,15 +15,13 @@ from _harness import (
 )
 from order_fixtures import (
     BASELINE_ID,
-    DEEP,
     FIXTURE,
     NOW,
     ORDER_REL,
+    STAMP,
     _assert_census_clean,
     _canonical,
     _census_ordering,
-    _deep,
-    _deep_artifact,
     _entry,
     _order,
     _order_path,
@@ -34,7 +32,10 @@ from order_fixtures import (
     _seed,
 )
 from ordering_shapes import (
+    DEEP,
     MALFORMED_SHAPES,
+    _deep,
+    _deep_artifact,
     commit_artifact,
     writer_text,
 )
@@ -48,7 +49,8 @@ from ordering_shapes import (
 # itself gives out, so the RecursionError arms are reachable on 3.11 and not
 # merely theoretical. Before the bound, one such file at either path turned a
 # writer run into a traceback. The ``DEEP`` / ``_deep`` / ``_deep_artifact``
-# shapes have one owner in ``tests/order_fixtures.py``.
+# shapes live in ``tests/ordering_shapes.py``, the module the census's ordering
+# suite reads too; this side passes its own ``STAMP``.
 
 
 def test_a_deeply_nested_artifact_is_refused_at_four_and_not_a_traceback(tmp_path):
@@ -56,7 +58,7 @@ def test_a_deeply_nested_artifact_is_refused_at_four_and_not_a_traceback(tmp_pat
     malformed refusal (exit 4), leaving the operator's bytes exactly as they
     were: a crash would be worse than a refusal, and an overwrite worse still."""
     repo = _repo(tmp_path)
-    before = _deep_artifact()
+    before = _deep_artifact(STAMP)
     _order_path(repo).parent.mkdir(parents=True, exist_ok=True)
     _order_path(repo).write_text(before, encoding="utf-8")
     proc = _order(repo, "confirm", "--now", NOW)

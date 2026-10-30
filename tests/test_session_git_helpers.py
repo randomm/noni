@@ -20,11 +20,28 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from session_git_support import _git_identity as _git_identity  # noqa: F401
+from _harness import _git_env_with_identity
 
 from noni import _session_git, gitenv
 from noni import census as census_mod
 from noni import census_sessions as census_sessions_mod
+
+
+@pytest.fixture(autouse=True)
+def _git_identity(monkeypatch):
+    """Pin a git identity for this file's real commits.
+
+    The suite's autouse conftest clears ``GIT_AUTHOR_*`` / ``GIT_COMMITTER_*``
+    so a host identity cannot reach a test — which also means the in-process
+    helper calls below would have git refuse every commit for want of one. The
+    subprocess launchers pin their own (``run_claim``, ``run_close``,
+    ``run_register``); these tests drive the helpers directly, so they pin it
+    the same way from the same table, and block the host gitconfig the same way
+    those launchers do.
+    """
+    for name, value in _git_env_with_identity().items():
+        monkeypatch.setenv(name, value)
+
 
 # --- the hardened call -------------------------------------------------------
 

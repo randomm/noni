@@ -105,10 +105,13 @@ GIT_OUTPUT_LIMIT: int = 500
 # would let a task like '#42\n' write a two-line row.
 TASK_RE = re.compile(r"^\S+$")
 
-# --branch must be a safe ref name: a single path segment with no slashes, no
-# "..", and no ref-name specials, so a malformed --branch never reaches git.
-# fullmatch for the same trailing-newline reason as TASK_RE.
-BRANCH_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+# --branch must be a safe ref name that the push loop itself would accept.
+# The check lives in ``_session_push.unsafe_branch_reason`` -- the one validator
+# every path into the push passes through -- so the explicit ``--branch`` here
+# and the name discovered from the tree cannot be guarded by two patterns that
+# drift apart. The single-segment rule below is this command's own addition on
+# top of the shared validator.
+BRANCH_SEGMENT_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 def _safe(text: str, limit: int = GIT_OUTPUT_LIMIT) -> str:
@@ -177,8 +180,7 @@ def _run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return _git(list(args), repo)
 
 
-def _push_with_retry(repo: Path, branch: str, attempts: int = MAX_PUSH_ATTEMPTS,
-                     messages: _session_push.RebaseMessages | None = None) -> int:
+def _push_with_retry(repo: Path, branch: str, attempts: int = MAX_PUSH_ATTEMPTS) -> int:
     """fetch-rebase-push with at most `attempts` attempts, via the shared loop.
 
     The losing pusher ends rebased-and-pushed (both claims land); the census
@@ -191,18 +193,17 @@ def _push_with_retry(repo: Path, branch: str, attempts: int = MAX_PUSH_ATTEMPTS,
     does not leave the clone wedged.
 
     The loop itself is ``_session_push.fetch_rebase_push``'s (its docstring
-    states the attempts and the three verdicts), driven through ``_run_git`` so
-    every call it makes is this command's own git and nothing else: claim.py
-    keeps one git seam, not a copy of the loop. ``messages`` lets a caller
-    substitute the wording another verb publishes; the default is this command's
-    own table, so the operator reads claim's voice.
+    states the attempts, the branch validation and the three verdicts), driven
+    through ``_run_git`` so every call it makes is this command's own git and
+    nothing else: claim.py keeps one git seam, not a copy of the loop. The
+    wording is this command's own table, so the operator reads claim's voice.
     """
     return _session_push.fetch_rebase_push(
         repo, branch, attempts, label=labels.CLAIM,
         exit_push_failed=EXIT_PUSH_FAILED,
         exit_rebase_conflict=EXIT_REBASE_CONFLICT,
         exit_rebase_refused=EXIT_REBASE_REFUSED,
-        messages=messages if messages is not None else _REBASE_MESSAGES,
+        messages=_REBASE_MESSAGES,
         run_git=_run_git,
     )
 
@@ -255,28 +256,6 @@ _REBASE_MESSAGES = {
 }
 
 
-
-
-def _push_verdict(repo: Path, rebase: subprocess.CompletedProcess[str],
-                  timed_out: bool) -> int:
-    """One failed rebase, read by the shared verdict, in this command's voice.
-
-    ``_session_push.classify_rebase_failure`` holds the reading of the rebase
-    state and the abort-or-not decision (its docstring states the two cases it
-    tells apart), and claims its probe loop from here through ``_run_git``, so
-    claim.py keeps no copy of that loop. This hands it claim.py's label, its
-    exit-code constants and its wording, so the operator reads this command's
-    voice and the numbers stay the ones the docstring above documents.
-    """
-    return _session_push.classify_rebase_failure(
-        repo, rebase, label=labels.CLAIM, timed_out=timed_out,
-        exit_push_failed=EXIT_PUSH_FAILED,
-        exit_rebase_conflict=EXIT_REBASE_CONFLICT,
-        exit_rebase_refused=EXIT_REBASE_REFUSED, messages=_REBASE_MESSAGES,
-        run_git=_run_git,
-    )
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog=labels.CLAIM,
@@ -315,13 +294,20 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_USAGE
 
     branch = args.branch
-    if branch is not None and not BRANCH_RE.fullmatch(branch):
-        print(
-            f"{labels.CLAIM}: --branch {branch!r} is not a safe ref name "
-            "(expected a single segment of letters, digits, ., _ or -)",
-            file=sys.stderr,
-        )
-        return EXIT_USAGE
+    if branch is not None:
+        # The shared validator first (the one the push loop itself applies, so
+        # no --branch value can be refused here and admitted there, or the
+        # reverse), then this command's own single-segment rule.
+        reason = _session_push.unsafe_branch_reason(branch)
+        if not reason and not BRANCH_SEGMENT_RE.fullmatch(branch):
+            reason = "not a single path segment (no slashes) of letters, digits, ., _ or -"
+        if reason:
+            print(
+                f"{labels.CLAIM}: --branch {branch!r} is {reason} "
+                "(expected a single segment of letters, digits, ., _ or -)",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE
 
     # Refused before anything is written: with --no-commit there is no commit
     # to push, so a run that asked for both cannot mean one thing.

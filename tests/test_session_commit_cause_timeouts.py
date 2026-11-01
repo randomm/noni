@@ -161,10 +161,23 @@ def test_a_result_that_was_never_waited_on_names_no_cause(tmp_path):
     """
     origin, clone = _pushable_clone(tmp_path, name="none-returncode")
     _tracked_session(clone)
-    never_waited = subprocess.CompletedProcess(["git", "commit"], None, "", "")
+    never_waited = subprocess.CompletedProcess(
+        ["git", "commit"], None, "", "fatal: pre-receive hook declined")
     assert _commit_cause.commit_failure_cause(clone, never_waited) is None
     assert _commit_cause._answered(never_waited) is False
-    # The line a caller prints for it stays git's own words, not a state.
+    # The line a caller prints for it stays git's own words, not a state. The
+    # stderr is deliberately non-empty: with an empty one the classifier's
+    # inner probe path (every probe reads a returncode it never answered)
+    # would print no cause for the accidental reason that git said nothing,
+    # and deleting the outer guard would keep this test green. With text
+    # present, a classifier without the guard reads ``None != 0`` as a refusal
+    # git never made and names a state -- which is what the assertion below
+    # would then catch.
+    assert "fatal: pre-receive hook declined" in never_waited.stderr
     line = _commit_cause.commit_failed(clone, never_waited)
-    assert "no reason given" in line or "could not commit" in line, line
+    assert "could not commit" in line, line
+    assert "no reason given" not in line, line
+    for clause in (_commit_cause.NO_UPSTREAM, _commit_cause.UPSTREAM_GONE,
+                   _commit_cause.NOTHING_TO_COMMIT, _commit_cause.GIT_REFUSED):
+        assert clause not in line, (clause, line)
     assert origin.is_dir()

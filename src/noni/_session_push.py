@@ -10,9 +10,11 @@ left nothing to clean up, so the refusal's hint names committing or stashing.
 
 The module owns the mechanics of the loop and the verdicts, and no wording: each
 writer hands in its own ``label``, its four codes, its ``messages`` table for the
-rebase verdicts, and (for the classifier) its own ``probe`` and ``abort``, so an
+rebase verdicts, and (for the classifier) its own ``run_git`` seam, so an
 operator hears the command they ran and the git calls are the ones that command
-actually makes. ``claim.py`` is the shipped holder of the rebase wording and
+actually makes: every call the loop and the verdicts make -- the fetch, the
+rebase, the push, the state probes and the abort -- goes through that one
+parameter. ``claim.py`` is the shipped holder of the rebase wording and
 passes it to both entry points; a caller with no wording of its own gets a generic
 line per verdict rather than a second table nobody keeps in step.
 """
@@ -46,12 +48,50 @@ GitRunner = Callable[..., subprocess.CompletedProcess[str]]
 # makes the check worth having: ``git push origin <name>`` reads a leading-dash
 # argument as a push option (``--force``, ``--receive-pack=...``) rather than as
 # a ref, so a name the loop did not choose for itself must never be passed bare.
-# The rest of the pattern refuses the ref-name shapes git itself refuses (a
-# component of only dots, a ``.lock`` suffix, a trailing slash), and
-# ``git check-ref-format`` accepts every name this one does. fullmatch, not
-# match: ``$`` also matches before a trailing newline, which would let ``main\n``
-# reach the command line as a name plus an argument.
+# The rest of the pattern refuses the ref-name shapes ``git check-ref-format``
+# refuses and that no writer needs: ``..``, ``@{``, a tilde or caret (revision
+# suffixes), the ``?``/``*``/``[`` glob characters, a backslash, any control
+# byte, a component that is only dots, a trailing ``/`` or ``.``, and any name
+# beginning with a dash. Every name this pattern admits is one
+# ``git check-ref-format`` accepts. fullmatch, not match: ``$`` also matches
+# before a trailing newline, which would let ``main\n`` reach the command line
+# as a name plus an argument.
 BRANCH_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+
+# The characters a branch name may never carry, whatever its first character
+# is: the two-byte ``@{}`` sequence is its own rule (a single ``@`` is legal --
+# ``1.2.3`` above would break otherwise), and ``\x7f`` closes the control range
+# the pattern's character class would otherwise admit.
+BRANCH_FORBIDDEN_SUBSTRINGS: tuple[str, ...] = ("..", "@{", "~", "^", "?",
+                                                "*", "[", "\\")
+
+
+def unsafe_branch_reason(branch: str) -> str:
+    """Why ``branch`` must never reach a git argv, or ``""`` when it may.
+
+    The single validation every path into the push passes through. The regex
+    admits the ordinary shapes (a letter or digit first, then letters, digits,
+    ``.``, ``_``, ``-`` and ``/``); this adds the refusals the base pattern
+    cannot express as a character class, the ones :data:`BRANCH_NAME_RE`'
+    own comment lists. It is a predicate, not a raise: the push loop reports
+    the refusal through its caller's exit codes, and a CLI reports it through
+    its own usage line, so both keep their own voice while sharing one rule.
+    """
+    if not BRANCH_NAME_RE.fullmatch(branch):
+        return ("not a safe ref name (expected a letter or digit, then "
+                "letters, digits, ., _, - or /)")
+    if branch.startswith("-") or branch.startswith("/"):
+        return "begins with a dash or a slash"
+    if branch.endswith("/") or branch.endswith("."):
+        return "ends with a slash or a dot"
+    if any(component.strip(".") == "" for component in branch.split("/")):
+        return "has a component that is only dots"
+    for sequence in BRANCH_FORBIDDEN_SUBSTRINGS:
+        if sequence in branch:
+            return f"contains {sequence!r}"
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7f for ch in branch):
+        return "contains a control character"
+    return ""
 
 # The wording one writer's rebase reports carry, keyed by the verdict names in
 # :data:`REBASE_VERDICTS`. The type names what :func:`classify_rebase_failure`
@@ -82,11 +122,10 @@ def current_branch(repo: Path) -> tuple[str | None, str]:
     to a branch it cannot name.
 
     A name that is not a safe ref name is refused too, for the reason
-    :data:`BRANCH_NAME_RE` states: this is the one place the loop learns the
-    name, so it is the one place that name can be stopped from becoming an
-    option of the push. A detached HEAD keeps its own message, which is the
-    fact the operator needs (check out a branch), and is not reported as a
-    malformed name.
+    :func:`unsafe_branch_reason` states: the loop learns the name here, and the
+    name must be stopped before it becomes an option of the push. A detached
+    HEAD keeps its own message, which is the fact the operator needs (check out
+    a branch), and is not reported as a malformed name.
     """
     result = git(repo, "rev-parse", "--abbrev-ref", "HEAD")
     if result.returncode != 0:
@@ -94,16 +133,14 @@ def current_branch(repo: Path) -> tuple[str | None, str]:
     branch = result.stdout.strip()
     if branch in ("", "HEAD"):
         return None, "cannot push from detached HEAD"
-    if not BRANCH_NAME_RE.fullmatch(branch):
-        # git can be coaxed into creating a ref this regex refuses (an
+    reason = unsafe_branch_reason(branch)
+    if reason:
+        # git can be coaxed into creating a ref this validator refuses (an
         # ``update-ref`` of ``--force``, for one) and the tree's own history can
         # arrive with one, so the loop must not be the place that name turns into
-        # an argument of its own git call. This is the shape claim.py's --branch
-        # check applies to its own argument, applied here to the name the tree
-        # reported (looser by design: this name may carry a slash).
-        return None, (f"the current branch {branch!r} is not a safe ref name "
-                      "(expected a letter or digit, then letters, digits, ., _, "
-                      "- or /)")
+        # an argument of its own git call. The same validator guards claim.py's
+        # explicit ``--branch`` (looser by design: this name may carry a slash).
+        return None, f"the current branch {branch!r} is {reason}"
     return branch, ""
 
 
@@ -133,12 +170,25 @@ def fetch_rebase_push(repo: Path, branch: str, attempts: int = MAX_PUSH_ATTEMPTS
     writer owns is that writer's prose, and the loop has nothing of its own to
     say about it.
 
+    Before the loop starts, ``branch`` is validated by
+    :func:`unsafe_branch_reason`: every path into this function passes here --
+    discovery through :func:`current_branch`, and any caller's explicit
+    ``--branch`` argument -- so neither a tree whose HEAD names a leading-dash
+    ref nor a caller who typed one reaches a git argv. A refusal is reported in
+    this helper's own voice with the caller's push code.
+
     Every git call the loop makes -- the fetch, the rebase, the push, and the
     verdict's probes and abort -- goes through ``run_git``, which defaults to this
     module's own bounded :func:`git`. A caller that drives its own git hands in one
     callable and keeps one seam, so the report can never disagree with the command
     about what git answered.
     """
+    reason = unsafe_branch_reason(branch)
+    if reason:
+        return _report(label, exit_push_failed,
+                       f"cannot push: the branch {branch!r} is {reason}",
+                       "pass a branch name git itself accepts (see "
+                       "'git help check-ref-format'), then re-run with --push")
     for attempt in range(1, attempts + 1):
         if attempt > 1:
             fetch = run_git(repo, "fetch", "origin")
@@ -152,20 +202,19 @@ def fetch_rebase_push(repo: Path, branch: str, attempts: int = MAX_PUSH_ATTEMPTS
                     repo, rebase, label=label, exit_push_failed=exit_push_failed,
                     exit_rebase_conflict=exit_rebase_conflict,
                     exit_rebase_refused=exit_rebase_refused,
-                    timed_out=rebase.returncode == GIT_TIMEOUT_RC,
+                    timed_out=_timed_out(rebase),
                     messages=messages, run_git=run_git,
                 )
         # An explicit refspec, so the name is read as a ref and never as an
         # option: ``refs/heads/<name>`` is what a plain branch argument resolves
         # to, so the push is the same operation with the leading-dash reading
-        # taken away. ``branch`` has already passed BRANCH_NAME_RE in
-        # :func:`current_branch` (or the caller's own check for an explicit
-        # ``--branch``).
+        # taken away. ``branch`` has already passed
+        # :func:`unsafe_branch_reason` above, on every path into this loop.
         push = run_git(repo, "push", "origin",
                        f"refs/heads/{branch}:refs/heads/{branch}")
         if push.returncode == 0:
             return 0
-        if push.returncode == GIT_TIMEOUT_RC:
+        if _timed_out(push):
             _report(label, 0, _detail(push, f"push attempt {attempt}/{attempts} timed out"))
             continue
         _report(label, 0,
@@ -177,6 +226,17 @@ def fetch_rebase_push(repo: Path, branch: str, attempts: int = MAX_PUSH_ATTEMPTS
         f"run 'git -C {repo.name} fetch origin' and 'git -C {repo.name} rebase "
         f"origin/{branch}' by hand, then re-run with --push",
     )
+
+
+def _timed_out(result: subprocess.CompletedProcess[str]) -> bool:
+    """Whether one git call reports the timeout kill, and nothing else reports it.
+
+    ``GIT_TIMEOUT_RC`` is a returncode a git call could itself carry, so the
+    sentinel alone is a weak signal; a ``returncode`` of ``None`` is the shape of
+    a call that was launched and never waited on, which is not an answer either.
+    Only an ``int`` returncode equal to the sentinel says 'killed'.
+    """
+    return isinstance(result.returncode, int) and result.returncode == GIT_TIMEOUT_RC
 
 
 def _report(label: str, code: int, *lines: str) -> int:

@@ -328,13 +328,14 @@ def _heading_texts(path) -> set[str]:
 def _section_pointers(path) -> list[tuple[str, str]]:
     r"""Each ``"Section" ... in references/x.md`` pointer the page makes.
 
-    Three phrasings are matched, because these pages use all three: a section name
-    followed by the file, the same preceded by the word "under", and the chained
-    form that names a parent section between the two -- where both names are
-    pointers and both must resolve. An earlier version matched only the innermost
-    pair, so a pointer to a heading that did not exist passed the gate simply by
-    sitting in front of one that did. The backquote around the file name is
-    optional so a plain mention still resolves.
+    Two phrasings are matched, because these pages use both: a section name
+    followed directly by the file, and the same preceded by the word "under"
+    -- and either may carry the chained form that names a parent section
+    between the two, where both names are pointers and both must resolve. An
+    earlier version matched only the innermost pair, so a pointer to a heading
+    that did not exist passed the gate simply by sitting in front of one that
+    did. The backquote around the file name is optional so a plain mention
+    still resolves.
     """
     text = path.read_text(encoding="utf-8")
     found: list[tuple[str, str]] = []

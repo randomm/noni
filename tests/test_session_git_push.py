@@ -318,25 +318,132 @@ def test_the_push_names_an_explicit_refspec_so_no_argument_reads_as_an_option(tm
         assert not any(arg.startswith("-") for arg in args[1:]), args
 
 
-def test_a_dash_prefixed_branch_never_reaches_git_as_a_push_option(tmp_path):
-    """The regression: a leading-dash branch name is refused, not pushed.
+def test_a_dash_prefixed_branch_never_reaches_git_as_a_push_option(tmp_path, capsys):
+    """The regression: a leading-dash branch name is refused at the push boundary.
 
-    Driven through the argv the loop would have sent. With the guard, the run
-    refuses before the loop starts and no push call is made at all; without it,
-    the argv below is ``push origin --force``, which git would have applied as an
-    option to the push instead of reading it as a ref.
+    Driven through the argv the loop would have sent. The trust boundary is
+    ``fetch_rebase_push`` itself, not only ``current_branch``: an explicit
+    ``--branch`` from a caller's own CLI arrives here without ever passing
+    through discovery, so the loop must refuse it before its first git call.
+    With the check, no argv is recorded at all and the caller's push code comes
+    back; without it, the argv below is ``push origin --force``, which git would
+    have applied as an option to the push instead of reading it as a ref.
     """
     calls, run_git = _recording_git({("push",): 0})
-    branch, why = _branch_as_head_names("--force")
-    assert branch is None, why
-    # And a loop entered with that name anyway (a caller that skipped the check)
-    # still sends the refspec, never the bare name.
     code = _session_push.fetch_rebase_push(
         tmp_path, "--force", attempts=1, label="close.py", exit_push_failed=3,
         exit_rebase_conflict=5, exit_rebase_refused=6,
         messages=dict(_CLAIM_MESSAGES), run_git=run_git)
-    assert code == 0, code
-    pushes = [args for args in calls if args[0] == "push"]
-    assert pushes == [("push", "origin",
-                       "refs/heads/--force:refs/heads/--force")], pushes
-    assert "--force" not in [arg for args in pushes for arg in args[1:]], pushes
+    assert code == 3, (code, calls)
+    assert calls == [], f"a refused branch must never reach git: {calls}"
+    err = capsys.readouterr().err
+    assert "close.py:" in err, err
+    assert "--force" in err, f"the refusal must name the bad branch: {err}"
+
+
+@pytest.mark.parametrize("name", [
+    "--force", "-receive-pack=evil", "-o", "-u",
+    "a..b", "feat/..", "a@{b}", "a~1", "a^2", "a?b", "a*b", "a[b", "a\\b",
+    "...", "a/", "a.", "a\nb", "a\tb",
+])
+def test_the_push_boundary_refuses_every_shape_check_ref_format_refuses(
+        tmp_path, capsys, name):
+    """The tightened pattern, pinned name by name.
+
+    ``git check-ref-format`` refuses each of these (``..``, ``@{``, a revision
+    suffix, a glob character, a backslash, a control byte, an all-dots
+    component, a trailing ``/`` or ``.``, a leading dash) and none of them is a
+    name a noni writer needs, so admitting one would be an argument-injection
+    path kept open for no reason. The refusal is identical whichever shape
+    arrives: same code, the branch named in the line, zero git calls.
+    """
+    calls, run_git = _recording_git({})
+    code = _session_push.fetch_rebase_push(
+        tmp_path, name, attempts=1, label="claim.py", exit_push_failed=3,
+        exit_rebase_conflict=5, exit_rebase_refused=6,
+        messages=dict(_CLAIM_MESSAGES), run_git=run_git)
+    assert code == 3, (name, code)
+    assert calls == [], (name, calls)
+    err = capsys.readouterr().err
+    assert "claim.py:" in err, (name, err)
+    # The refusal names the bad branch the way every other refusal here does:
+    # repr(), so a control byte shows as its escape and the line stays one line.
+    assert repr(name) in err, (name, err)
+
+
+def test_the_push_boundary_refuses_identically_to_discovery(tmp_path, capsys):
+    """Both paths into a push refuse the same name, from the one validator.
+
+    The bug was two patterns drifting: discovery (``current_branch``) checked
+    one regex, an explicit ``--branch`` checked another that admitted a leading
+    dash. A name the tree reports and a name an operator types are now checked
+    by the same function, so the refusal text and the code must agree.
+    """
+    name = "-receive-pack=evil"
+    branch, why = _branch_as_head_names(name)
+    assert branch is None, why
+    calls, run_git = _recording_git({})
+    code = _session_push.fetch_rebase_push(
+        tmp_path, name, attempts=1, label="claim.py", exit_push_failed=3,
+        exit_rebase_conflict=5, exit_rebase_refused=6,
+        messages=dict(_CLAIM_MESSAGES), run_git=run_git)
+    assert code == 3, code
+    assert calls == [], calls
+    err = capsys.readouterr().err
+    # One rule, one wording: the reason phrase discovery prints is the reason
+    # phrase the boundary prints. A second pattern would print a second prose.
+    reason = why.removeprefix(f"the current branch {name!r} is ")
+    assert reason in err, (why, err)
+
+
+def test_the_push_boundary_accepts_the_names_real_branches_use(tmp_path):
+    """The tightened pattern must not refuse an ordinary push.
+
+    The names the discovery test accepts are pushed through the boundary here
+    as well: a check that refused ``feature/issue-57-fix`` would stop every
+    real run, so acceptance is pinned on both paths, not only the one.
+    """
+    for name in ("main", "feature/issue-57-fix", "1.2.3", "v1.0.0-rc1",
+                 "release/2026-10", "a-b_c.d/e"):
+        calls, run_git = _recording_git({})
+        code = _session_push.fetch_rebase_push(
+            tmp_path, name, attempts=1, label="close.py", exit_push_failed=3,
+            exit_rebase_conflict=5, exit_rebase_refused=6,
+            messages=dict(_CLAIM_MESSAGES), run_git=run_git)
+        assert code == 0, (name, code, calls)
+        pushes = [args for args in calls if args[0] == "push"]
+        assert pushes == [("push", "origin",
+                           f"refs/heads/{name}:refs/heads/{name}")], (name, calls)
+
+
+def test_a_returncode_of_none_is_never_read_as_a_timeout(tmp_path, capsys):
+    """A returncode that is not an int is never read as the timeout kill.
+
+    The loop's timeout reading is ``returncode == GIT_TIMEOUT_RC``. A call that
+    was launched and never waited on carries ``None`` there, and a text-shaped
+    sentinel (``"124"`` from a stream that never parsed as an int) compares
+    equal to nothing but proves nothing either: neither shape may take the
+    'killed' branch, which reports a timeout this run never observed. Both must
+    fall through to the ordinary rejection path.
+    """
+    for shape in (None, str(_session_git.GIT_TIMEOUT_RC)):
+        calls, run_git = _recording_git({})
+
+        def answering(repo, *args, shape=shape, run_git=run_git):
+            # Record through the shared double first, then answer with the
+            # shape under test: an argv this loop never recorded is itself the
+            # failure this test is about.
+            recorded = run_git(repo, *args)
+            if args[0] == "push":
+                return subprocess.CompletedProcess(list(args), shape, "", "")
+            return recorded
+
+        code = _session_push.fetch_rebase_push(
+            tmp_path, "main", attempts=1, label="close.py", exit_push_failed=3,
+            exit_rebase_conflict=5, exit_rebase_refused=6,
+            messages=dict(_CLAIM_MESSAGES), run_git=answering)
+        assert code == 3, (shape, code)
+        pushes = [args for args in calls if args[0] == "push"]
+        assert pushes, (shape, calls)
+        err = capsys.readouterr().err
+        assert "timed out" not in err, (shape, err)

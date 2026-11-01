@@ -7,6 +7,7 @@ import re
 
 from _harness import (
     CLAIM,
+    SRC,
     _git,
     _harness_source,
     _init_repo,
@@ -127,7 +128,7 @@ def test_no_commit_validates_branch_then_ignores_it(tmp_path):
 
 
 def test_task_and_branch_guards_are_anchored_against_a_trailing_newline(tmp_path):
-    """The two guards must be anchored at the tail, not just prefixed.
+    """The guards must be anchored at the tail, not just prefixed.
 
     Under re.match, '$' also matches before a final newline, so '^\\S+$' accepts
     '#42\\n'. Two layers happen to stand in front of that today, and both are
@@ -136,21 +137,42 @@ def test_task_and_branch_guards_are_anchored_against_a_trailing_newline(tmp_path
     consumer — the regex is the only guard that would ever see it. Hence this
     pins the guard itself (fullmatch plus a tail anchor, read off the shipped
     source) and not just the behaviour.
+
+    The task guard is claim.py's own. The branch guard now lives where every
+    path into a push must pass: ``_session_push.unsafe_branch_reason``, whose
+    ``BRANCH_NAME_RE`` is read off that module's shipped source. claim.py's
+    remaining ``BRANCH_SEGMENT_RE`` is pinned too, as is the fact that main()
+    applies each of them with ``fullmatch``.
     """
-    # The guard: pattern and call site, read from the file claim.py ships
+    # The guards: pattern and call site, read from the files as shipped
     # (re.compile(...) is a Call, not a literal, so _script_constant cannot
     # reach these constants).
     source = _harness_source(CLAIM)
-    for name in ("TASK_RE", "BRANCH_RE"):
-        decl = re.search(rf"^{name} = re\.compile\(r\"(.*)\"\)", source, re.MULTILINE)
-        assert decl is not None, f"claim.py does not define {name} as expected"
+    anchor_pins = ((source, CLAIM.name, "TASK_RE"),
+                   (source, CLAIM.name, "BRANCH_SEGMENT_RE"),
+                   ((SRC / "noni" / "_session_push.py").read_text(encoding="utf-8"),
+                    "_session_push.py", "BRANCH_NAME_RE"))
+    for shipped, origin, name in anchor_pins:
+        decl = re.search(rf"^{name} = re\.compile\(r\"(.*)\"\)", shipped, re.MULTILINE)
+        assert decl is not None, f"{origin} does not define {name} as expected"
         assert decl.group(1).endswith("$"), (
             f"{name} = {decl.group(1)!r}: must end with a tail anchor"
         )
-        assert f"{name}.fullmatch(" in source, (
+        applied = f"{name}.fullmatch(" in shipped
+        if name == "BRANCH_NAME_RE":
+            # The shared validator is the one call site, and it is a fullmatch.
+            assert "BRANCH_NAME_RE.fullmatch(" in shipped, (
+                f"{name} must be applied with fullmatch")
+        assert applied, (
             f"{name} must be applied with fullmatch: under match, '$' also "
             f"matches before a trailing newline"
         )
+    # The branch validation is one rule, not two that can drift: claim.py
+    # routes its --branch through the shared validator rather than keeping a
+    # regex of its own for the shapes git refuses.
+    assert "unsafe_branch_reason(" in source, (
+        f"{CLAIM.name} must validate --branch through the push loop's own "
+        "validator, not a second pattern")
 
     # The end state, for every way a newline can ride in on the task. Each
     # case either exits 4 having written nothing, or exits 0 with the file
@@ -188,7 +210,8 @@ def test_task_and_branch_guards_are_anchored_against_a_trailing_newline(tmp_path
     assert _git_text(repo, "status", "--porcelain") == "", "the refusal writes nothing"
 
     # The branch guard is anchored the same way: it feeds a push refspec, and
-    # no strip stands in front of it.
+    # no strip stands in front of it. A newline is refused both as a leading
+    # and as a trailing byte, and the refusal writes nothing.
     repo = _make_session(tmp_path / "t-branch")
     body_before = _session_path(repo).read_text()
     proc = run_claim(repo, SESSION_ID, "#42", branch="main\n", **{"no-commit": None})

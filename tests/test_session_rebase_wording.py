@@ -262,7 +262,9 @@ def test_an_abort_that_fails_with_no_wording_keeps_the_conflict_code(tmp_path,
 
     ``abort_failed`` carries the ``{abort}`` slot no generic line has, so the
     generic fallback has to survive a slot it does not fill rather than raise on
-    it. The code is what an operator scripts on; the line is what they read.
+    it. The code is what an operator scripts on; the line is what they read --
+    and a line a caller reads must never still show the slot's braces, which is
+    an unfilled hole in the report rather than a sentence.
     """
     repo = _seed_stopped_state(tmp_path, "aborted")
     code = _classify(repo, messages={}, run_git=_stopped_git(abort_returncode=1),
@@ -270,11 +272,18 @@ def test_an_abort_that_fails_with_no_wording_keeps_the_conflict_code(tmp_path,
     assert code == 5, code
     err = capsys.readouterr().err
     assert "abort_failed" in err, err
+    assert "{" not in err, f"an unfilled slot leaked into the report: {err}"
 
 
 def test_a_timeout_with_no_wording_reports_the_push_code(tmp_path, capsys):
-    """The timeout verdict's generic line keeps the code the caller published."""
+    """The timeout verdict's generic line keeps the code the caller published.
+
+    Same no-unfilled-slot rule as the abort case: the generic line fills
+    ``{quoted}`` and no other slot, so no brace may survive into the report.
+    """
     code = _classify(tmp_path, messages={}, timed_out=True,
                      run_git=_git_answering({}))
     assert code == 3, code
-    assert "timeout" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "timeout" in err, err
+    assert "{" not in err, f"an unfilled slot leaked into the report: {err}"

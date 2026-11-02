@@ -273,62 +273,69 @@ def _block_commands(lines: list[str]) -> list[list[str]]:
 
 
 def _block_words(argv: list[str]) -> tuple[str, ...]:
-    """The command words of one line: the program, plus its subcommand.
+    """The command words of one README line: the program, plus its subcommand.
 
-    ``git config user.name Casey`` reduces to ``('git', 'config')`` and
-    ``python3 ../noni/skills/.../decide.py ...`` to ``('python3',)``, which is
-    what the allow-list above matches against: the question is which programs a
-    page may tell a reader to run, not which flags or targets it passes. The one
-    exception is ``git clone <url> <dir>``, a fetch from outside the reader's
-    repository, which keeps its two words; ``cd`` is exempt as the one built-in
-    the page uses to enter a directory. Ordered, so a permitted ``git config`` is
-    not also a permit for any other git subcommand. A token carrying a dot or a
-    slash (a path, a URL, a config key, a directory name) ends the words.
+    The rules are fixed in this body, not passed in: the allow-list above is the
+    page's command vocabulary, so a caller that could re-parameterise the walk
+    could re-word a line into something the vocabulary permits. The README's
+    rules:
 
-    This is the shared reader behind ``quickstart_runner.words``, which adds this
-    page's two extra rules (an option consumes its value, and ``@``/``:``/``>``
-    also end the walk); the rules are kept separate because the README's own
-    allow-list is matched against the shape defined here.
-    """
-    return _command_words(argv)
+    - ``git config user.name Casey`` reduces to ``('git', 'config')`` and
+      ``python3 ../noni/skills/.../decide.py ...`` to ``('python3',)``, which is
+      what the allow-list matches against: the question is which programs a page
+      may tell a reader to run, not which flags or targets it passes.
+    - ``git clone <url> <dir>`` is the one two-word form that survives intact, as
+      the fetch from outside the reader's repository; ``cd`` is the one built-in
+      and keeps its single word.
+    - A token carrying a dot or a slash (a path, a URL, a config key, a directory
+      name) ends the words, so a permitted ``git config`` is not also a permit for
+      any other git subcommand.
+    - An option does *not* consume its value here: the README's block carries no
+      ``-C``, so the first word after any flags is the subcommand.
 
-
-def _command_words(argv: list[str], *, option_takes_value: bool = False,
-                   end_words_on: tuple[str, ...] = (".", "/"),
-                   keep: tuple[tuple[str, ...], ...] = (("git", "clone"),),
-                   ) -> tuple[str, ...]:
-    """The shared walk behind :func:`_block_words` and the quickstart's reader.
-
-    One loop, three knobs: whether an option swallows the token after it (the
-    quickstart's pages print ``git -C <dir> <verb>``, where the verb -- not the
-    directory -- is the subcommand), which characters mark a token as a path
-    (the quickstart prints an scp-style remote, a URL and a redirect), and which
-    two-word forms survive intact.
+    The quickstart's rules are the sibling :func:`_quickstart_words`, which differ
+    in exactly two ways and name the page they read.
     """
     if not argv:
         return ()
     if argv[0] == "cd":
         return ("cd",)
-    for pair in keep:
-        if argv[0] == pair[0] and tuple(argv[1:1 + len(pair) - 1]) == pair[1:]:
-            return pair
-    words = [argv[0]]
-    index = 1
-    while index < len(argv):
-        token = argv[index]
+    if argv[0] == "git" and len(argv) > 1 and argv[1] == "clone":
+        return ("git", "clone")
+    words: list[str] = [argv[0]]
+    for token in argv[1:]:
         if token.startswith("-"):
-            if not option_takes_value:
-                index += 1
-                continue
-            index += 2 if not (token.startswith("--") and "=" in token) else 1
-            if token == "-m":
-                words.append(token)
             continue
-        if any(part in token for part in end_words_on):
+        if "." in token or "/" in token:
             break
         words.append(token)
         break
     return tuple(words)
+
+
+def _quickstart_words(argv: list[str]) -> tuple[str, ...]:
+    """The command words of one quickstart line, by that page's own fixed rules.
+
+    Kept beside :func:`_block_words` rather than merged with it: the two pages'
+    commands differ in exactly two ways, each rule has to be readable against the
+    page it serves, and neither function takes a knob -- a shared walker with
+    parameters lets a caller re-word a line into something the other page's
+    allow-list permits.
+
+    - **An option consumes its value**: this page prints
+      ``git -C .noni-state config user.name Casey``, where the verb -- not the
+      directory -- is the subcommand, and ``python3 -m pip install``, where the
+      ``-m`` belongs to the command.
+    - **A token ends the walk** when it carries ``@``, ``:``, ``>``, a dot or a
+      slash: this page prints an scp-style remote, a URL and a redirect.
+
+    ``quickstart_runner.words`` is the launcher's copy of these rules (the import
+    below is what keeps the two in step), and ``tests/test_quickstart.py`` asserts
+    the pair agree on every line the page prints.
+    """
+    from quickstart_runner import words
+
+    return words(argv)
 
 
 def _script_name(argv: list[str]) -> str:

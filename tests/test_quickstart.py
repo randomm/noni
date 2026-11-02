@@ -33,6 +33,7 @@ exactly like the README try-it harness, and never touch this repository.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -50,19 +51,31 @@ from quickstart_runner import (
     build_world,
     git,
     launch,
-    reroot_state_git,
     route_commands,
     words,
 )
 from quickstart_runner import checked as _checked
 
-# A fixed clock for the ordering run that reads the recipe's map: the ordering
-# group's stale class is time-based, and a run without --now would let the host
-# clock decide whether the fixture's confirmed stamps read as stale.
-ORDERING_NOW = "2026-10-27T12:00:00Z"
 
-# The two runs of item 5 compare one tree's plain and ``--json`` output; the note
-# they are compared on is read out of the product by ``_note_from_product``.
+def _run_route_b(world: World) -> list[list[str]]:
+    """Launch every Route B command, checked, with the session id taken after register.
+
+    The one walk both Route B tests need: the exit-code test and the
+    origin-contents test drive the same commands in the same order, and the
+    register line's session id has to be read off disk before the claim line that
+    names it. Sharing the walk keeps the two from diverging into runs that prove
+    different things.
+    """
+    commands = route_commands("Route B")
+    assert commands, "the quickstart no longer has a Route B command block"
+    for argv in commands:
+        if words(argv)[:2] == ("noni", "register"):
+            world.mark_sessions()
+        proc = launch(world, argv, world.project, state=True)
+        _checked(proc, f"Route B command {argv}")
+        if words(argv)[:2] == ("noni", "register"):
+            world.collect_session_id()
+    return commands
 
 
 @pytest.fixture
@@ -174,13 +187,7 @@ def test_route_b_commands_all_exit_zero(world: World) -> None:
     the wrong path, a writer pointed at the project instead of the state clone --
     and each is observed here rather than assumed.
     """
-    commands = route_commands("Route B")
-    assert commands, "the quickstart no longer has a Route B command block"
-    for argv in commands:
-        proc = launch(world, argv, world.project, state=True)
-        _checked(proc, f"Route B command {argv}")
-        if words(argv)[:2] == ("noni", "register"):
-            world.collect_session_id()
+    commands = _run_route_b(world)
 
     assert (world.state / "noni" / "decisions").is_dir(), "no ledger under the state clone"
     assert (world.project / ".gitignore").is_file(), "the ignore rule was never written"
@@ -217,11 +224,7 @@ def test_the_state_route_leaves_the_origin_holding_the_writers_commits(world: Wo
     branch sees the ledger; a run that committed locally and never landed anywhere
     would pass the exit-code assertions above.
     """
-    for argv in route_commands("Route B"):
-        proc = launch(world, argv, world.project, state=True)
-        _checked(proc, f"Route B command {argv}")
-        if words(argv)[:2] == ("noni", "register"):
-            world.collect_session_id()
+    _run_route_b(world)
     pushed = git(world.origin, "ls-tree", "--name-only", "main", env=world.env)
     _checked(pushed, "origin main tree")
     assert "noni" in pushed.stdout.split(), (
@@ -235,9 +238,11 @@ def test_the_ordering_note_appears_in_human_mode_and_not_in_json(world: World) -
     The page tells the reader the census says out loud that ``ordering-closed``
     was not evaluated, and that ``--json`` mode prints no such line. Both halves
     are about output, so both are read from two runs of the same census over the
-    same tree: the note is there without ``--json`` and absent with it, and the
-    JSON run still reaches its verdict line in the summary row. A page that
-    claimed the opposite (or dropped the human-mode half) fails here.
+    same tree. The absence in the ``--json`` run is only worth anything next to
+    the positive half in the *same* run: the stream has to parse as NDJSON, carry
+    the ordering group's summary row, and reach the verdict the page ends with.
+    An assertion that only looked for the note's absence would be satisfied by a
+    census that never read anything, which is the vacuity this pins shut.
     """
     for argv in route_commands("Route A"):
         _checked(launch(world, argv, world.project), f"Route A command {argv}")
@@ -256,7 +261,35 @@ def test_the_ordering_note_appears_in_human_mode_and_not_in_json(world: World) -
     assert note not in as_json.stdout, (
         f"--json mode prints the note the page says it never prints: "
         f"{as_json.stdout!r}")
-    assert as_json.stdout.strip(), "--json mode printed no stream at all"
+    # The positive half, in this same run: the payload is the ordering group's
+    # own rows, so the absence asserted above is an absence from a stream that
+    # demonstrably answered, not from one that printed nothing at all.
+    rows = [json.loads(line) for line in as_json.stdout.splitlines() if line.strip()]
+    assert rows, f"--json mode printed no stream at all: {as_json.stdout!r}"
+    summaries = [row for row in rows if row.get("kind") == "summary"]
+    assert len(summaries) == 1, f"no single summary row in the --json stream: {rows}"
+    summary, = summaries
+    assert summary.get("exit") == 0 and summary.get("ok") is True, summary
+    assert all(row.get("schema") == rows[0]["schema"] for row in rows), rows
+    # The payload has to answer for the ordering group, not just be well-formed:
+    # the page tells the reader to keep the group in the run ("``--only`` must
+    # name an ordering class, or name none"), and this tree holds no ordering
+    # artifact, which the page itself says earns no ordering rows at all. So the
+    # honest positive half is the group's own count, present and zero -- a run
+    # that had read nothing, or had dropped the class from the run, prints a
+    # summary with no such entry, and the absence asserted above would then be
+    # true of a stream that never asked the question.
+    page = read(QUICKSTART)
+    assert "name an ordering class" in page, (
+        "the page no longer says the ordering group must stay in the run, so the "
+        "count asserted below is unpinned")
+    assert "ordering rows at all" in page, (
+        "the page no longer says what a tree with no ordering artifact earns from "
+        "the ordering group, so a zero count below proves nothing")
+    assert summary.get("counts", {}).get("ordering-closed", 0) == 0, (
+        f"a tree with no ordering artifact produced ordering-closed findings: "
+        f"{summary}")
+    assert not [row for row in rows if row.get("kind") == "finding"], rows
 
 
 
@@ -342,28 +375,3 @@ def _note_from_product() -> str:
     parts = re.findall(r'"((?:[^"\\]|\\.)*)"', match.group(0))
     assert parts and parts[0].startswith("note: ordering-closed was not evaluated"), parts
     return "".join(parts)
-
-
-def test_reroot_state_git_keeps_the_c_option_and_moves_only_its_value():
-    """The re-rooting replaces the value after ``-C``, never ``-C`` itself.
-
-    Dropping the option together with its target leaves ``git push -u origin
-    main`` to run in the launcher's cwd, which is the reader's *project* tree: the
-    harness would push the code repository and still report the page's exit 0.
-    Checked at argv level, because a whole-route run cannot tell the two trees
-    apart when both hold a branch called ``main``.
-    """
-    state = Path("/scratch/project/.noni-state")
-    argv = ["git", "-C", STATE_DIR, "push", "-u", "origin", "main"]
-    rerooted = reroot_state_git(argv, state)
-    assert rerooted == ["git", "-C", str(state), "push", "-u", "origin", "main"], rerooted
-    assert rerooted[:2] == ["git", "-C"], (
-        f"the re-rooted line lost its -C, so it would run against the project: "
-        f"{rerooted}")
-    # The verb and its arguments are untouched, so a page that named the wrong
-    # verb still fails the way a reader would see it.
-    assert rerooted[3:] == argv[3:]
-    # A line that names no state directory is returned unchanged: the launcher
-    # must not invent a -C for a command the page wrote without one.
-    plain = ["git", "config", "user.name", "Casey"]
-    assert reroot_state_git(plain, state) == plain

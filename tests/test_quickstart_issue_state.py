@@ -7,51 +7,55 @@ recipe's two halves are checked by different tools, and only their pairing prove
 the page: ``jq`` turns the tracker's payload into a map, and the census's own
 ``--issue-state`` reader decides whether that map is usable.
 
-The reader is reached through ``census_run._load_issue_state``, the function the
-census's run calls for the flag, and its four arguments are replayed from the
-source of that call. Importing ``load_issue_state`` and passing this file's
-helpers would be a different program: the classifier, bounder and strict JSON
-reader are exactly the three things that decide whether a map is accepted, so a
-recipe that satisfied hand-picked versions of them could still be refused by the
-ones the tool uses.
+The reader is reached only through a real census child run. That is the whole of
+the test: ``noni census --repo <tree> --issue-state <file>`` is the census's own
+call site (``census_run._load_issue_state``), and the verdict is read off the
+child's exit code and its rows. A helper that reached the reader some other way --
+by importing it and supplying its own classifier, bounder and JSON reader, or by
+reading those arguments off the product's source and replaying them -- would be a
+different program, and one whose acceptance proves nothing about the tool the
+reader runs: those three arguments are exactly what decides whether a map is
+usable, so a recipe that satisfied hand-picked versions of them could still be
+refused by the ones the census uses.
 """
 
 from __future__ import annotations
 
-import inspect
 import json
-import re
 import subprocess
 from pathlib import Path
 
 from docs_promises import issue_state_from_page
 from harness_runners import run_noni
 from ordering_fixtures import _entry, _repo, _seed
+from quickstart_runner import ORDERING_NOW, run_env
 from quickstart_runner import checked as _checked
-from quickstart_runner import run_env
 
-# A fixed clock for the ordering run that reads the recipe's map: the ordering
-# group's stale class is time-based, and a run without --now would let the host
-# clock decide whether the fixture's confirmed stamps read as stale.
-ORDERING_NOW = "2026-10-27T12:00:00Z"
+# The verdicts a census run that was asked about ``ordering-closed`` can honestly
+# reach: 0 for a map it accepted, 15 (``ordering-malformed``) for a file it
+# refused. Anything else means the run never got as far as reading the map -- a
+# usage error, a missing tool -- and the assertion below says so rather than
+# letting a run that answered nothing look like a run that answered "accepted".
+EXIT_MAP_ACCEPTED = 0
+EXIT_MAP_REFUSED = 15
+
 
 def test_the_issue_state_recipe_produces_a_map_the_census_accepts(tmp_path: Path) -> None:
-    """The gh + jq recipe on the page is run, not quoted.
+    """The gh + jq recipe on the page is run, and the census accepts what it emits.
 
-    ``jq`` is invoked with the page's own filter over a payload shaped like the
-    tracker's output (issue numbers as numbers, states upper-case), and the result
-    is handed to ``census_run._load_issue_state`` -- the function the census's own
-    run calls for ``--issue-state`` -- rather than to ``load_issue_state`` wired up
-    by hand here. The census's classifier, bounder and strict JSON reader are the
-    three arguments that decide whether a map is accepted, and this test may not
-    supply its own version of them: a recipe that satisfied hand-picked helpers
-    could still be refused by the ones the tool actually uses.
+    ``jq`` runs the page's own filter over a payload shaped like the tracker's
+    output (issue numbers as numbers, states upper-case); the file it wrote goes
+    to a real ``noni census --issue-state`` over a tree whose ordering artifact
+    cites those two issues. The exit code is pinned to one exact value in each
+    case -- 0 here, 15 for each broken variant below -- so the run cannot pass by
+    never reading the file: a census that refused the map exits 15, and this
+    assertion says 0.
 
-    The two refusals that reader makes -- a key that is not the bare decimal
+    The two refusals the reader makes -- a key that is not the bare decimal
     spelling, a state word outside the two it names -- are the reason the filter
     carries ``tostring`` and ``ascii_downcase``, so both are checked here with the
-    filter removed: a recipe that lost either would pass a reading test and fail a
-    reader.
+    conversion removed: a recipe that lost either would pass a reading test and
+    fail the census.
     """
     filter_text = issue_state_from_page()
     repo = _repo(tmp_path)
@@ -61,11 +65,25 @@ def test_the_issue_state_recipe_produces_a_map_the_census_accepts(tmp_path: Path
                                    {"number": 12, "state": "OPEN"}]), encoding="utf-8")
     proc = _jq(filter_text, payload)
     _checked(proc, "the page's jq recipe")
+    # The map jq produced, read as JSON: the census's exit code below says the
+    # tool accepted it, and this says the recipe's own conversions did their work
+    # (a numeric key or an upper-case state could not produce these two pairs).
+    assert json.loads(proc.stdout) == {"7": "closed", "12": "open"}, proc.stdout
     map_path = tmp_path / "issue-state.json"
     map_path.write_text(proc.stdout, encoding="utf-8")
-    result = _census_load_issue_state(repo, map_path)
-    assert result.problem is None, f"the census refuses the page's map: {result.problem}"
-    assert result.map == {"7": "closed", "12": "open"}, result.map
+
+    rows = _census_verdict(repo, map_path, EXIT_MAP_ACCEPTED)
+    closed = [r for r in rows if r.get("check") == "ordering-closed"]
+    # The map's two halves, both observed: the issue it says is closed earns the
+    # closed finding, and the one it says is open earns no row (an open issue is
+    # the answer the class is happy with, not a cannot-tell). A map the census had
+    # not read would produce neither, and the exit code pinned above is 0.
+    assert [(r["subject"], r["message"].startswith("closed:")) for r in closed] == [
+        ("#7", True)], f"the accepted map did not reach the closed class: {rows}"
+    assert not [r for r in closed if r["subject"] == "#12"], (
+        f"the map says #12 is open, so the closed class owes it no finding: {rows}")
+    summary = [r for r in rows if r.get("kind") == "summary"]
+    assert summary and summary[0].get("exit") == EXIT_MAP_ACCEPTED, rows
 
     # Without tostring the keys arrive as numbers and the reader refuses them;
     # without ascii_downcase the state words do. Both are the recipe's job.
@@ -79,11 +97,10 @@ def _assert_broken_filter(tmp_path: Path, name: str, broken: str, payload: Path,
                           state_repo: Path) -> None:
     """One variant of the recipe, with one required conversion removed.
 
-    A filter that breaks ``jq`` outright is the same failure to the reader as one
-    that emits a map the census refuses: no usable file. The empty document is
-    what jq leaves behind, and the census calls that a map that answers nothing,
-    so it counts as a refusal for the same reason -- the recipe did not produce
-    the map the page promises.
+    The census must refuse it: exit 15 and the malformed row naming the file, on
+    the same tree and the same flags that gave the accepted run above. A filter
+    that breaks ``jq`` outright is caught at the jq step, since the map the page
+    promises would then not exist at all.
     """
     assert broken != issue_state_from_page(), f"the page's filter no longer names {name}"
     faulty = _jq(broken, payload)
@@ -93,11 +110,11 @@ def _assert_broken_filter(tmp_path: Path, name: str, broken: str, payload: Path,
     )
     bad = tmp_path / f"bad-{name}.json"
     bad.write_text(faulty.stdout, encoding="utf-8")
-    verdict = _census_load_issue_state(state_repo, bad)
-    assert verdict.problem is not None or verdict.map != {"7": "closed", "12": "open"}, (
-        f"a filter without {name} still produced the map the page promises, so "
-        f"the assertion above pins nothing"
-    )
+    rows = _census_verdict(state_repo, bad, EXIT_MAP_REFUSED)
+    malformed = [r for r in rows if r.get("check") == "ordering-malformed"]
+    assert malformed and malformed[0]["subject"] == "issue-state", (
+        f"a filter without {name} did not come back as the malformed row the "
+        f"census owes a file it cannot read: {rows}")
 
 
 def _jq(filter_text: str, payload: Path):
@@ -105,129 +122,61 @@ def _jq(filter_text: str, payload: Path):
                           text=True, env=run_env(), timeout=60)
 
 
-def _census_load_issue_state(repo: Path, path: Path):
-    """The census's own ``--issue-state`` read of one file, in a child process.
+def _census_verdict(repo: Path, path: Path, expected: int) -> list[dict]:
+    """One census child run over ``path``, pinned to one exact exit code.
 
-    The census's run calls ``census_run._load_issue_state`` for the flag and hands
-    it its own classifier, bounder and strict JSON reader. This drives that call
-    site -- a real ``noni census --issue-state FILE`` over ``repo``, whose ordering
-    artifact cites the issues the map answers, so the load happens on the path a
-    reader takes -- rather than importing ``load_issue_state`` and passing this
-    file's version of those helpers: the map has to be accepted by the code the
-    tool uses, not by a copy of its wiring kept here.
+    This is the census's own ``--issue-state`` call site: the flag, the tree and
+    the fixed clock are the only inputs, and the answer is the child's exit code
+    plus the rows on its ``--json`` stream. Nothing here imports the reader or
+    rebuilds its arguments -- the classifier, bounder and strict JSON reader are
+    whatever the tool uses, because the tool is what runs.
 
-    A map the census refuses keeps its reason in the child's report, so the verdict
-    is rebuilt here from the census's own reader on exactly the arguments
-    ``_load_issue_state`` passes to it.
+    ``expected`` is a single value, not a range, and the note that says the class
+    was never evaluated is refused: both are there to catch a run that answered
+    nothing and still looked like a verdict.
     """
-    from noni import census_run
-
     proc = run_noni("census", "--repo", str(repo), "--now", ORDERING_NOW, "--json",
                     "--only", "ordering-closed", "--issue-state", str(path),
                     cwd=repo)
-    assert proc.returncode in (0, 15), (
-        f"the census run that reads the recipe's file did not reach a verdict "
-        f"({proc.returncode})\nstdout: {proc.stdout}\nstderr: {proc.stderr}")
+    assert proc.returncode == expected, (
+        f"the census answered {proc.returncode}, not {expected}, for the map at "
+        f"{path.name}\nstdout: {proc.stdout}\nstderr: {proc.stderr}")
     assert "ordering-closed was not evaluated" not in proc.stdout, (
-        f"the run answered the closed class without the file, so the map given was "
-        f"never read: {proc.stdout!r}")
+        f"the run answered the closed class without reading the file given: "
+        f"{proc.stdout!r}")
+    return [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
 
-    call = inspect.getcallargs(census_run._load_issue_state, path)
-    assert call["issue_state_path"] == path, (
-        "the census's run does not take the file path as its argument")
-    signature = inspect.signature(census_run._ordering_readers.load_issue_state)
-    positional = [name for name, parameter in signature.parameters.items()
-                  if parameter.kind is parameter.POSITIONAL_OR_KEYWORD]
-    bound = inspect.signature(census_run._load_issue_state).parameters
-    assert set(bound) == {"issue_state_path"}, (
-        f"_load_issue_state no longer takes only the path, so the four readers "
-        f"arguments below are no longer the census's own: {list(bound)}")
-    args = _replay_load_arguments(census_run, path, positional)
-    from noni.census_ordering_readers import load_issue_state
-
-    return load_issue_state(*args)
-
-
-# Strings and comments stripped out of the census's own call before its
-# arguments are split on commas: a quoted comma must not look like a separator.
-_DROP_STRINGS_AND_COMMENTS = re.compile(
-    '"(?:[^"\\\\]|\\\\.)*"' r"|'[^']*'|#.*$", re.M)
-
-
-def _load_issue_state_source() -> str:
-    """The source of the census's own loader, as its module file holds it.
-
-    Read by name from ``census_run.__file__`` rather than with
-    ``inspect.getsource``: the census's own run helpers import ``census.py`` under
-    the ``__main__`` name (it is a script, not a package module), and
-    ``inspect.getsource`` resolves a function whose module is ``__main__`` through
-    ``sys.modules['__main__']`` -- pytest's module here -- and hands back the wrong
-    file. The path comes from the module's own ``__file__``, so the text is the
-    file the run executes, not a guess at it.
-    """
-    from noni import census_run
-
-    name = census_run._load_issue_state.__name__
-    text = Path(census_run.__file__).read_text(encoding="utf-8")
-    match = re.search(rf"^def {name}\(.*?^    return .*?\)\n", text, re.M | re.S)
-    assert match, (
-        f"{name} no longer ends in a single return call in {census_run.__file__}, "
-        f"so this test has no source to replay its arguments from")
-    return match.group(0)
-
-
-def _replay_load_arguments(census_run, path: Path, positional: list[str]) -> list[object]:
-    """The four arguments ``_load_issue_state`` passes on, read off its own body.
-
-    The census's run is not instrumented from outside (it runs in a child), so the
-    values are taken from the expressions the function itself writes, in the order
-    the readers module declares them. Each expression is the one the census module
-    resolves -- the state tuple, the classifier, the bounder, the strict reader --
-    so a rename or a swap of any of them is the failure this reports rather than a
-    silently hand-picked replacement.
-    """
-    source = _load_issue_state_source()
-    stripped = _DROP_STRINGS_AND_COMMENTS.sub("", source)
-    call_text = stripped[stripped.rindex("load_issue_state(") + len("load_issue_state("):]
-    inner = call_text[:call_text.index(")")]
-    parts = [part.strip() for part in inner.split(",") if part.strip()]
-    assert parts[0] == "issue_state_path", (
-        f"_load_issue_state no longer passes the path first, so this test's "
-        f"replacement call is not the census's: {parts}")
-    assert len(parts) == len(positional), (
-        f"_load_issue_state no longer passes the readers module's {len(positional)} "
-        f"positional arguments, so this test cannot replay its call: {parts}")
-    # The loader resolves the census module into a local named ``census`` at its
-    # own call, so that is the name the expressions above are evaluated under.
-    scope = {**vars(census_run), "census": census_run._census()}
-    return [path, *[eval(expression, scope) for expression in parts[1:]]]
 
 def test_the_census_run_reads_the_map_the_recipe_produces(tmp_path: Path) -> None:
     """The census answers the closed class only when the recipe's file is given.
 
-    The child run inside ``_census_load_issue_state`` is the census's own call
-    site, and a helper that never reached it would still answer the assertions
-    above from its in-process replay. This pins the observable difference the
-    flag makes on the same tree: no flag, no closed row and the note that says so;
-    the recipe's map, a closed row that names the issue the map says is closed.
+    The observable difference the flag makes on one tree: no flag, no closed row;
+    the recipe's map, a closed row naming the issue the map says is closed. Both
+    runs are pinned to their exit code, so the half that says "the row appeared"
+    cannot be vacuous about a run that read nothing.
     """
     repo = _repo(tmp_path)
     _seed(repo, _entry(7, None), _entry(12, None))
     path = tmp_path / "issue-state.json"
     path.write_text(json.dumps({"7": "open", "12": "closed"}), encoding="utf-8")
     without = _census_json_run(repo, None)
+    assert without.returncode == EXIT_MAP_ACCEPTED, (
+        f"the run with no --issue-state did not reach its verdict: "
+        f"{without.returncode} {without.stdout!r} {without.stderr!r}")
     assert not [line for line in without.stdout.splitlines()
                 if '"check": "ordering-closed"' in line], (
         f"a run with no --issue-state answered the closed class: {without.stdout!r}")
     assert "ordering-closed was not evaluated" not in without.stdout, (
         f"--json mode must not print the human-mode note: {without.stdout!r}")
     with_flag = _census_json_run(repo, str(path))
+    assert with_flag.returncode == EXIT_MAP_ACCEPTED, (
+        f"the run with the recipe's map did not reach its verdict: "
+        f"{with_flag.returncode} {with_flag.stdout!r} {with_flag.stderr!r}")
     rows = [json.loads(line) for line in with_flag.stdout.splitlines() if line.strip()]
     closed = [r for r in rows if r.get("check") == "ordering-closed"]
     assert [r["subject"] for r in closed] == ["#12"], (
         f"the map the recipe's filter produces did not reach the census through "
-        f"_load_issue_state (it reads a file, so this is the flag's own path): "
-        f"{with_flag.stdout!r}")
+        f"its own --issue-state flag: {with_flag.stdout!r}")
 
 
 def _census_json_run(repo: Path, issue_state: str | None):

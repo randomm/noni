@@ -53,26 +53,52 @@ STATE_DIR = ".noni-state"
 def _denylist_state_words() -> tuple[str, ...]:
     """The inactive state words, read out of the two files that render them.
 
-    ``public_safety`` owns the status names (``absent``, ``corrupt``) and
-    ``census_hygiene`` owns the comments-only word. Both are read from source, not
-    imported: the census module pulls in a scanner this helper has no business
-    loading, and the words are what matters here.
+    ``public_safety`` owns the status names and ``census_hygiene`` owns the
+    comments-only word, and both are read from source rather than imported: the
+    census module pulls in a scanner this helper has no business loading.
+
+    The status names come from the ``Literal`` annotation on
+    ``DenylistResult.status`` -- the one declaration of the closed set -- with
+    ``"ok"`` removed as the state a reader never sees in an "inactive" row.
+    Reading it that way is what makes the derivation fail loudly: a status that
+    is renamed, added or dropped changes this tuple and the pages that have to
+    name all of them fail, instead of the tuple shrinking quietly around a word
+    the page no longer documents. Both files are asserted to be the ones this
+    helper believes they are, so a source that moved or reworded its declaration
+    is a failure rather than an empty derivation.
     """
     hygiene = (REPO / "src" / "noni" / "census_hygiene.py").read_text(encoding="utf-8")
     safety = (REPO / "src" / "noni" / "public_safety.py").read_text(encoding="utf-8")
     empty = re.search(r'return "([^"]+)" if not getattr\(denylist, "entries"', hygiene)
     assert empty, "census_hygiene no longer renders a comments-only deny-list word"
-    groups = re.findall(r'status: Literal\[([^\]]+)\]', safety)
-    named = [word.strip().strip('"') for group in groups for word in group.split(",")]
-    assert set(named) >= {"absent", "corrupt"}, (
+    declared = re.search(r"status:\s*Literal\[([^\]]+)\]", safety)
+    assert declared, (
+        "public_safety no longer declares DenylistResult.status as a Literal, so "
+        "this helper has no source for the deny-list states the page must document")
+    named = tuple(word.strip().strip('"').strip("'")
+                  for word in declared.group(1).split(","))
+    assert all(named), f"public_safety declares an empty deny-list status name: {named}"
+    assert "ok" in named, (
+        f"public_safety's DenylistResult.status no longer names the active state "
+        f"'ok', so this helper cannot subtract it from the set: {named}")
+    inactive = tuple(word for word in named if word != "ok")
+    assert set(inactive) >= {"absent", "corrupt"}, (
         f"public_safety no longer names the deny-list statuses this page must "
-        f"document: {named}")
-    return tuple(word for word in ("absent", "corrupt") if word in named) + (
-        empty.group(1),)
+        f"document: {inactive}")
+    return (*inactive, empty.group(1))
 
 
-# Filled in here, once the reader above exists.
+# The three words, in the order the page lists them. The expected set is stated
+# here as well as derived so a rename on either side is a hard failure rather
+# than a tuple that quietly changed shape: the tuple must be exactly these words.
+_EXPECTED_DENYLIST_STATES: tuple[str, ...] = ("absent", "corrupt", "present but empty")
+
 DENYLIST_STATES: tuple[str, ...] = _denylist_state_words()
+
+assert set(DENYLIST_STATES) == set(_EXPECTED_DENYLIST_STATES), (
+    f"the deny-list state words derived from the product are "
+    f"{sorted(DENYLIST_STATES)}, not the set every page that documents the "
+    f"inactive class has to name: {sorted(_EXPECTED_DENYLIST_STATES)}")
 
 # One line of the page's gh + jq recipe: the filter that turns tracker output
 # into the map the census accepts. Matched by the two conversions it owes the

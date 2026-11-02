@@ -172,10 +172,15 @@ Keep it untracked, and say so in the tree's `.gitignore` the way this repository
 does, with a rule for the file's own name (`/.noni-scrub-denylist`): it is the
 half of the public-repo hygiene rule the committed patterns cannot carry, because
 the names themselves must not be committed. `docs/PUBLISHING.md` step 1 is the
-checklist that uses it, and the gate it runs is
-`python scripts/public_safety.py` — not a clean census. That CLI exits 2 when the
-class was not active, so it cannot report a false "clean" on a tree whose
-deny-list is absent, corrupt or empty.
+checklist that uses it, and the gate it runs — not a clean census — is this, from
+the clone's own root:
+
+```bash
+python scripts/public_safety.py
+```
+
+That CLI exits 2 when the class was not active, so it cannot report a false
+"clean" on a tree whose deny-list is absent, corrupt or empty.
 
 ## The --issue-state map, and what the census skips without it
 

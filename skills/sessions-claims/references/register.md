@@ -64,14 +64,16 @@ construction. The writer allocates the path and then refuses to write any
 path it did not allocate:
 
 - `register.py --file <path>` where `<path>` is neither the path this run
-  allocated nor the marked session's file → exit 2 (refused). The allocated id
-  is minted once per run, so `--file` is only meaningful within the same run as
-  the allocation — pass the freshly-allocated path as printed in the
-  `registered session <id>` output, or the path of the session this working copy
-  is marked for. A path belonging to some other session is refused, not written.
-  The marked path is admitted only on the run that reuses the marked session: a
-  run given `--file`, or one that allocates (`--no-commit`, or a marked session
-  that has ended or whose file is gone), writes only the name it allocated.
+  allocated nor the marked session's file → exit 2 (refused). One rule, both
+  pages: `--file` is admitted only for this run's allocation, or for the marked
+  name on the route that reuses it. The allocated id is minted once per run, so
+  `--file` is only meaningful within the same run as the allocation — pass the
+  freshly-allocated path as printed in the `registered session <id>` output, or
+  the path of the session this working copy is marked for. A run that allocates —
+  `--no-commit`, or one whose marked session has ended, whose file is gone, or
+  whose file has no readable `- status:` value — admits only the name it
+  allocated: the marked file is the target of the reuse route alone. A path
+  belonging to some other session is refused, not written.
 - A file that already exists with a different identity → exit 1 (refused).
 - A file that already exists with the same identity → exit 0 (idempotent no-op).
 
@@ -107,7 +109,9 @@ same working copy recognise the session it already owns.
   marker, and says so on stderr (`no noni-session was written under <path>`) —
   the session is registered but the next run in this working copy will not find
   it. A marked file that cannot be read is a refusal (exit 2), never an
-  overwrite.
+  overwrite, and a `- status:` line with no readable value is refused the same
+  way: register allocates afresh rather than continue a session it cannot tell is
+  active.
 - **`--no-commit` does not mark.** Asking for the file to be left in the work
   tree is a caller that intends to write more than one session here and commit
   them itself, so it gets a fresh allocation and the existing marker stays where

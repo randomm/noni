@@ -175,6 +175,106 @@ def test_unreadable_marked_file_is_refused_not_overwritten(tmp_path):
     assert target.read_bytes() == b"\xff\xfe\x00\x01 not text"
 
 
+def test_a_garbled_marked_status_is_refused_not_continued(tmp_path):
+    """A `- status:` line whose value strips to empty is no status: exit 2.
+
+    The line is present, so the file is not "missing a field" for register's
+    purposes, and a value that strips to empty answers neither active nor terminal.
+    Continuing it would keep a session alive whose lifecycle this run cannot read;
+    allocating afresh would move the working copy's marker off a file that may still
+    name an active session. So the run refuses with register's usage code and names
+    the file and the marker -- the same fail-closed choice as an unreadable file
+    above, made on the field rather than the bytes.
+    """
+    repo = _git_repo(tmp_path)
+    first = run_register(repo, "synth")
+    assert first.returncode == 0, first.stderr
+    sid = _sid_of(first.stdout)
+    target = repo / "noni" / "sessions" / f"{sid}.md"
+    marker = repo / ".git" / "noni-session"
+    original = target.read_text(encoding="utf-8")
+    assert "- status: active" in original, original
+    # Present, but its value is nothing a parser can read.
+    _mark_status(target, "   ")
+    head_before = _head(repo)
+
+    second = run_register(repo, "synth")
+
+    assert second.returncode == 2, (
+        f"an unreadable status must not be continued or replaced, got "
+        f"{second.returncode}: {second.stdout}{second.stderr}")
+    err = second.stderr.lower()
+    assert "status" in err, second.stderr
+    assert "no readable value" in err, second.stderr
+    assert sid in second.stderr, second.stderr
+    assert target.read_text(encoding="utf-8") == _status_line_blank(original), (
+        "the refusal wrote the file it refused to classify")
+    # Fail closed means no second session either: the marker still names the file
+    # this run refused to act on, and HEAD did not move.
+    assert marker.read_text(encoding="utf-8") == sid + "\n", (
+        "a refused run moved the working copy's marker off the session it named")
+    assert [p.name for p in target.parent.glob("*.md")] == [f"{sid}.md"]
+    assert _head(repo) == head_before, "a refusal commits nothing"
+
+
+def test_a_garbled_marked_status_hides_no_terminal_state(tmp_path):
+    """The verdict and the printed line cannot diverge on a garbled status.
+
+    The empty value is what `session_status` answers None for, so there is no string
+    left for one branch to call terminal while another calls it active: the terminal
+    line is printed for a status that reads, and the refusal for one that does not. An
+    earlier shape compared `marked_status or ""` for the verdict and
+    `marked_status.strip()` for the line, so an empty value reached the line as a
+    terminal claim about a session the verdict had kept alive.
+    """
+    repo = _git_repo(tmp_path)
+    first = run_register(repo, "synth")
+    assert first.returncode == 0, first.stderr
+    sid = _sid_of(first.stdout)
+    target = repo / "noni" / "sessions" / f"{sid}.md"
+    # U+2028 LINE SEPARATOR is stripped by str.strip() (it is a str whitespace), so the
+    # value reads as empty while the line itself is present and not blank-looking.
+    _mark_status(target, "\u2028")
+
+    second = run_register(repo, "synth")
+
+    assert second.returncode == 2, f"{second.returncode}: {second.stderr}"
+    assert "allocating a new session" not in second.stdout + second.stderr, (
+        "a run that refused the status still described itself as allocating")
+    assert "already registered" not in second.stdout, (
+        f"the reuse line was printed for a status with no value: {second.stdout}")
+
+
+def test_a_blank_marked_status_line_is_a_refusal_too(tmp_path):
+    """`- status:` with nothing after the colon answers no status either.
+
+    Same verdict as the garbled value: the field is present and empty, which is not
+    evidence of an active session. Pinning the plain form as well keeps the refusal
+    about the readable value rather than about one particular way of not having one.
+    """
+    repo = _git_repo(tmp_path)
+    first = run_register(repo, "synth")
+    assert first.returncode == 0, first.stderr
+    sid = _sid_of(first.stdout)
+    target = repo / "noni" / "sessions" / f"{sid}.md"
+    text = target.read_text(encoding="utf-8")
+    target.write_text("\n".join(
+        "- status:" if line.startswith("- status:") else line
+        for line in text.splitlines()) + "\n", encoding="utf-8")
+
+    second = run_register(repo, "synth")
+
+    assert second.returncode == 2, f"{second.returncode}: {second.stderr}"
+    assert "no readable value" in second.stderr.lower(), second.stderr
+
+
+def _status_line_blank(text: str) -> str:
+    """``text`` with its status line as ``_mark_status`` leaves it."""
+    return "\n".join(
+        "- status:    " if line.startswith("- status:") else line
+        for line in text.splitlines()) + "\n"
+
+
 def test_a_session_with_no_identity_field_is_not_overwritten(tmp_path):
     """A pre-existing file that carries no identity is treated as someone
     else's (an empty identity differs from the requested one): exit 1, never a

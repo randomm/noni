@@ -172,11 +172,27 @@ def test_relative_name_refuses_a_name_carrying_a_control_character():
     message the operator was meant to read. Refusing it here is what lets
     ``stage_and_commit`` keep returning ``(False, why)``; the behaviour is pinned
     by ``test_session_git.test_stage_and_commit_returns_a_nul_name_instead_of_raising``.
+
+    The set is every Unicode category-C code point, which is what ``safe_text``
+    strips, so a name and a printed line are judged the same way: C0 and DEL, the
+    C1 range (``\x85`` NEL), the format characters (``\u202e`` RIGHT-TO-LEFT
+    OVERRIDE, zero-width joiners) and the surrogates. A C1 or format character is
+    the interesting case -- it is not an ASCII control byte, it survives
+    ``str.strip()``, and a bidi override is exactly what makes a printed path read
+    as something other than what it is.
     """
     for bad in ("noni/sessions/a\x00b.md", "noni/sessions/a\x01b.md",
                 "noni/sessions/a\x1fb.md", "noni/sessions/a\nb.md",
-                "noni/sessions/a\tb.md", "noni/sessions/a\x7fb.md"):
+                "noni/sessions/a\tb.md", "noni/sessions/a\x7fb.md",
+                "noni/sessions/a\x85b.md", "noni/sessions/a\u0085b.md",
+                "noni/sessions/a\u202eb.md", "noni/sessions/a\u200bb.md",
+                "noni/sessions/a\ufeffb.md", "noni/sessions/a\U000e0001b.md"):
         assert _session_git.relative_name(bad) == "", repr(bad)
+        assert _session_git.writer_name(bad.split("/")[2][:-3]) == "", repr(bad)
+    # A printable non-ASCII name is still admitted, so the refusals above are
+    # category C and not merely "not ASCII".
+    assert _session_git.relative_name("noni/sessions/a\u00e9b.md") == \
+        "noni/sessions/a\u00e9b.md"
 
 
 def test_relative_name_refuses_a_name_that_cannot_be_encoded_as_utf8():

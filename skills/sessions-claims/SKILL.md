@@ -64,9 +64,10 @@ scripts/register.py --repo REPO --identity IDENTITY [--status STATUS]
 ```
 
 The register writer allocates a session-id, creates the file at
-`noni/sessions/<session-id>.md`, commits that one file, and refuses to write a
-path it did not allocate (exit 2). It marks the working copy with the id it
-allocated, under that tree's own `.git/`, and the next run in the same working
+`noni/sessions/<session-id>.md`, commits that one file, and refuses to write any
+other path (exit 2): `--file` is admitted only for this run's allocation, or for
+the marked name on the route that reuses it. It marks the working copy with the id
+it allocated, under that tree's own `.git/`, and the next run in the same working
 copy reads that marker:
 
 | the marked session | what the next register does |
@@ -74,6 +75,7 @@ copy reads that marker:
 | active, same identity | continues it: exit 0, nothing written, no commit (`<id>.md already registered (identity=X)`) |
 | active, different identity | refused: exit 1, both identities named, the other session's bytes untouched |
 | terminal (`closed`, `done`, `superseded`, `ended`), or its file gone | allocates a new session and re-marks the working copy for it |
+| a `- status:` line with no readable value | refused: exit 2, the file and the marker named, nothing written |
 A marker this run cannot read is no evidence of a session, and a marker whose
 text is not a session id counts as no marker at all: the run says so on stderr,
 allocates afresh, and never builds a path from marker text. A marked file it
@@ -89,9 +91,9 @@ hostname, because the register file is committed to a public repo. Explicit
 `--host` / `--worktree` values are written as given.
 
 Exit codes: `0` registered, or the marked active session continued; `1` the
-marked file belongs to another identity; `2` a path this run did not allocate,
-or a marked file that cannot be read, or `--repo` naming no directory or being a
-symlink (refused, never followed); `3` git
+marked file belongs to another identity; `2` a path this run did not allocate, or
+a marked file that cannot be read or carries no readable `- status:` value, or
+`--repo` naming no directory or being a symlink (refused, never followed); `3` git
 could not commit; `4` a `--identity`/`--status` that is not one token, the
 session name this run allocated is not one file under `noni/sessions/` (a name
 the writer derived itself, so the hint names `--identity` and does not blame

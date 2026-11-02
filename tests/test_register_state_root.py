@@ -51,10 +51,13 @@ def _register_case(tmp_path: Path) -> tuple[Path, Path, Path]:
     return root, decoy, cwd
 
 
-def _register_from(cwd: Path, repo: Path, identity: str = "developer"
+def _register_from(cwd: Path, repo: Path, identity: str = "developer",
+                   no_commit: bool = False,
                    ) -> subprocess.CompletedProcess[str]:
     """register.py launched from ``cwd``, with ``--repo`` naming the state root."""
-    return run_from(cwd, REGISTER, "--repo", str(repo), "--identity", identity)
+    extra = ["--no-commit"] if no_commit else []
+    return run_from(cwd, REGISTER, "--repo", str(repo), "--identity", identity,
+                    *extra)
 
 
 def test_register_creates_the_register_only_under_the_state_root(tmp_path):
@@ -81,6 +84,31 @@ def test_register_creates_the_register_only_under_the_state_root(tmp_path):
         "directory resolved from somewhere other than --repo"
     )
     assert not (cwd / "noni").exists(), "the run created noni/ under the cwd"
+
+
+def test_register_no_commit_from_a_foreign_cwd_writes_only_under_the_repo(tmp_path):
+    """The --no-commit route keeps the state-root contract: --repo alone decides
+    the tree, and its line names the path under that tree and nothing else.
+
+    The route runs no git, so it is the one a cwd-reading derivation could still
+    survive -- and the one the census fixtures and any second-identity caller
+    actually use. The decoy register beside the cwd is the assertion.
+    """
+    root, decoy, cwd = _register_case(tmp_path)
+    decoy_bytes = (decoy / "noni" / "sessions" / f"{REGISTER_DECOY_SID}.md").read_bytes()
+
+    proc = _register_from(cwd, root, no_commit=True)
+
+    assert proc.returncode == 0, f"{proc.returncode}: {proc.stdout}{proc.stderr}"
+    assert "left uncommitted" in proc.stdout, proc.stdout
+    files = list((root / "noni" / "sessions").glob("*.md"))
+    assert len(files) == 1, f"one run is one file: {files}"
+    assert str(files[0]) in proc.stdout, (
+        f"the line must name the file under --repo, not a cwd-relative path: "
+        f"{proc.stdout}")
+    assert (decoy / "noni" / "sessions" / f"{REGISTER_DECOY_SID}.md").read_bytes() \
+        == decoy_bytes, "the --no-commit route touched the decoy beside its cwd"
+    assert not (cwd / "noni").exists(), "the --no-commit route created noni/ under cwd"
 
 
 def test_register_reuses_the_state_roots_marker_not_the_cwds(tmp_path):

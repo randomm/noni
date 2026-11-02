@@ -69,6 +69,9 @@ path it did not allocate:
   the allocation — pass the freshly-allocated path as printed in the
   `registered session <id>` output, or the path of the session this working copy
   is marked for. A path belonging to some other session is refused, not written.
+  The marked path is admitted only on the run that reuses the marked session: a
+  run given `--file`, or one that allocates (`--no-commit`, or a marked session
+  that has ended or whose file is gone), writes only the name it allocated.
 - A file that already exists with a different identity → exit 1 (refused).
 - A file that already exists with the same identity → exit 0 (idempotent no-op).
 

@@ -74,7 +74,9 @@ copy reads that marker:
 | active, same identity | continues it: exit 0, nothing written, no commit (`<id>.md already registered (identity=X)`) |
 | active, different identity | refused: exit 1, both identities named, the other session's bytes untouched |
 | terminal (`closed`, `done`, `superseded`, `ended`), or its file gone | allocates a new session and re-marks the working copy for it |
-A marker this run cannot read is no evidence of a session, and a marked file it
+A marker this run cannot read is no evidence of a session, and a marker whose
+text is not a session id counts as no marker at all: the run says so on stderr,
+allocates afresh, and never builds a path from marker text. A marked file it
 cannot read is a refusal (exit 2) rather than an overwrite: the writer never
 replaces bytes it has not seen. `--no-commit` opts out of both the commit and
 the marker, which is how a caller that plants more than one session file in one
@@ -90,8 +92,10 @@ Exit codes: `0` registered, or the marked active session continued; `1` the
 marked file belongs to another identity; `2` a path this run did not allocate,
 or a marked file that cannot be read, or `--repo` naming no directory or being a
 symlink (refused, never followed); `3` git
-could not commit; `4` a `--identity`/`--status` that is not one token, or
-`--no-commit` with `--push`.
+could not commit; `4` a `--identity`/`--status` that is not one token, the
+session name this run allocated is not one file under `noni/sessions/` (a name
+the writer derived itself, so the hint names `--identity` and does not blame
+`--repo` or a symlink), or `--no-commit` with `--push`.
 
 A commit that git refuses (exit 3) is the same shape for all four writers: the
 file stays on disk with the bytes this run wrote, the one line on stderr names

@@ -36,13 +36,13 @@ these primitives from here. A re-export would be a cycle, so the writers import
 that module directly for their ``--push``.
 
 The reason a commit failed is named in noni's own words rather than handed
-through as git's. That half lives in :mod:`noni._commit_cause`, which
-classifies the four states a writer can be left in (no upstream, the upstream
-gone, nothing to commit, or some other git fault) and assembles the one line a
-failure prints. :func:`stage_and_commit` asks it for that line only when a
-commit is refused, importing it there rather than at module scope, so this
-module holds no compile-time reference to the classifier and the classifier keeps
-calling git through here.
+through as git's. That half lives in :mod:`noni._commit_cause`, which classifies
+the four states a writer can be left in (no upstream, the upstream gone, nothing
+to commit, some other git fault). :func:`stage_and_commit` asks it for that line
+only when a commit is refused, importing it there rather than at module scope, so
+no compile-time cycle exists between the two. Caller-supplied text in a printed refusal -- a name, an argument,
+a path -- goes through :func:`safe_text` first, so no escape sequence reaches
+the terminal.
 
 The set of statuses that end a session lives here too, as
 :data:`TERMINAL_STATUSES`, so the four writers agree on what "already closed"
@@ -135,9 +135,14 @@ def name_refusal(name: object, *, arg: str = "--session-id",
     composed its own sentence would be the drift this helper exists to prevent.
     ``arg`` names the argument the operator actually typed, so the hint says
     which argument to fix instead of pointing at a state root that was fine.
+
+    Both fields carry text the caller supplied -- a name from a command line or a
+    working-copy marker, or an argument name -- and this pair goes straight to
+    stderr, so each is rendered through :func:`safe_text`: an escape sequence in
+    a name cannot reach the terminal and be acted on there.
     """
-    return (NAME_REFUSAL.format(name=name, directory=directory),
-            NAME_REFUSAL_HINT.format(arg=arg, directory=directory))
+    return (safe_text(NAME_REFUSAL.format(name=name, directory=directory)),
+            safe_text(NAME_REFUSAL_HINT.format(arg=arg, directory=directory)))
 
 
 
@@ -166,29 +171,24 @@ def git(repo: Path, *args: str, _run=subprocess.run) -> subprocess.CompletedProc
     the session writers make through here. It is not a knob a caller turns — the
     writers never pass it.
 
-    ``commit.gpgsign=false`` keeps a signing requirement from wedging the
-    commit; ``core.hooksPath=`` at the null device keeps the repository's own
-    hooks off it; ``protocol.ext.allow=never`` refuses the external transports
-    a remote could name; ``core.fsmonitor=false`` keeps the tree's file-system
-    monitor helper off every call. Global config is NOT neutralised: the
-    commit is made under whoever's git config applies to the tree, like every
-    other noni writer.
+    Hardening, per call: ``commit.gpgsign=false`` (no signing promise),
+    ``core.hooksPath=`` at the null device (no repository hooks),
+    ``protocol.ext.allow=never`` (no external transports a remote could name),
+    ``core.fsmonitor=false`` (no file-system monitor helper). Global config is NOT
+    neutralised: the commit runs under whoever's git config applies to the tree.
 
     The caller's working directory is removed from the picture, not consulted:
     ``repo`` and every ``args`` entry that names a path are made absolute where
-    they are used, so a relative ``--repo`` resolves against the tree named on
-    the command line rather than wherever the caller happened to start. That
-    is not pedantry: a tree containing a ``noni/`` directory (the attached
-    project's own state directory) turns a cwd-relative ``noni/sessions/x.md``
-    into a path in a *different* repository, and a commit made there is a write
-    nobody asked for.
+    they are used, so a relative ``--repo`` resolves against the tree named on the
+    command line, not wherever the process started. A tree that holds its own
+    ``noni/`` directory turns a cwd-relative name into a path in a *different*
+    repository, and a commit made there is a write nobody asked for.
 
-    A hang is answered, not propagated: the call that cannot finish comes back
-    as ``GIT_TIMEOUT_RC`` so every caller classifies it the same way instead of
-    the run ending in a traceback.
+    A hang is answered, not propagated: the call that cannot finish comes back as
+    ``GIT_TIMEOUT_RC``, so every caller classifies it the same way.
 
-    The environment is ``gitenv.child_env()``: every variable whose name begins
-    with ``GIT_`` is removed except the identity, config and transport names on
+    The environment is ``gitenv.child_env()``: every ``GIT_*`` variable is
+    removed except the identity, config and transport names on
     ``gitenv.CHILD_ENV_GIT_ALLOWLIST``, so an inherited one cannot send this
     commit to another repository, stage it through a stray index, write its
     objects to another object store or trace itself into a file the caller
@@ -292,12 +292,14 @@ def atomic_write(path: Path, text: str) -> None:
 def writer_name(session_id: str) -> str:
     """The name a session's own file carries inside the state root, or ``""``.
 
-    One validated derivation for the four writers: the id must be a single token
-    (see :func:`valid_token` -- no whitespace, no path separator, nothing that
-    can reach another directory from inside a name) and must not begin with a
-    ``.``, which would make the file a hidden one no census listing reports. An
-    id that fails either answers ``""``, and the caller refuses on its own usage
-    code rather than writing a file at a name it cannot defend.
+    One validated derivation for the four writers, and the strict superset of
+    :func:`relative_name`: the id must be a single token (see
+    :func:`valid_token`) and must not begin with a ``.`` (a hidden file the
+    census's listing would not report), and the name built from it must then
+    answer as a session file to :func:`relative_name` itself. A token may still
+    carry a control character, and such a name is one this module will not commit
+    (``subprocess`` refuses the argv element), so the id step refuses it rather
+    than leaving it to the commit step.
 
     One function because four writers must stage, print and probe the same
     string: the file write location (``repo / name``), the pathspec, the failure
@@ -307,7 +309,7 @@ def writer_name(session_id: str) -> str:
     """
     if not valid_token(session_id) or session_id.startswith("."):
         return ""
-    return f"{SESSIONS_REL}/{session_id}{SESSION_SUFFIX}"
+    return relative_name(f"{SESSIONS_REL}/{session_id}{SESSION_SUFFIX}") or ""
 
 
 def relative_name(name: str | PurePosixPath) -> str:
@@ -323,23 +325,13 @@ def relative_name(name: str | PurePosixPath) -> str:
     of it arrives at a path whose first component is ``..`` -- refused whatever
     the rest of it spells.
 
-    Four shapes are refused: an absolute path (git accepts an absolute pathspec
-    from outside the ``-C`` tree, returns 0 and stages nothing, so a silent
-    nothing-landed is the exact fault the primitive must not be able to produce);
-    a name that walks out of the root; the empty name or the root itself,
-    because a writer commits one file and not a tree; and a name carrying a
-    control character, because such an argv element makes ``subprocess`` raise
-    ``ValueError`` and this module's promise is that a bad name comes back as
-    ``(False, why)``.
-
-    Two shapes are refused on top of the path rules because every caller of this
-    function stages one session file: a name that is not under
-    :data:`SESSIONS_REL`, and one that does not end in :data:`SESSION_SUFFIX`.
-    The writers all build their name with :func:`writer_name`, and the one
-    remaining caller that takes a name from a command line -- ``register.py``'s
-    ``--file`` -- admits only a name equal to one of those two. So the shape
-    check costs no caller anything and makes the primitive's answer about the
-    name it can actually commit.
+    Six shapes are refused: an absolute path (git accepts one from outside the
+    ``-C`` tree, exits 0 and stages nothing -- the silent nothing-landed the
+    primitive must not produce); a ``..`` that walks out of the root; the empty
+    name or the root itself; a control character or a lone surrogate (neither is
+    an argument ``subprocess`` can carry, and a bad name must come back as
+    ``(False, why)``); and a name that is not one ``.md`` file under
+    :data:`SESSIONS_REL`, because every caller here stages exactly that.
 
     A backslash is a character of a POSIX file name, not a separator: ``a\\b`` is
     one bizarre filename on this platform and two components on Windows, and the
@@ -355,6 +347,13 @@ def relative_name(name: str | PurePosixPath) -> str:
     """
     text = str(name)
     if any(ch in CONTROL_CHARS for ch in text):
+        return ""
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        # A lone surrogate is not a name any writer can commit: no argv element
+        # and no file write carries it, so the never-raises promise is kept here
+        # rather than by whatever ``subprocess`` or ``open`` would have raised.
         return ""
     if text.startswith("/"):
         return ""
@@ -390,23 +389,19 @@ def stage_and_commit(repo: Path, name: str | PurePosixPath, message: str) -> tup
     The caller's working directory is not consulted, on either side: the name is
     never resolved against it (which is why it is a name and not a path), and
     ``git -C`` carries an absolute path, so a relative ``--repo`` names the tree
-    it named on the command line rather than wherever the process started. The
-    two together are what make ``--repo`` the only thing that decides the target
-    repository.
+    it named on the command line. The two together are what make ``--repo`` the
+    only thing that decides the target repository.
 
     Two refusals, both ``(False, one noni-worded line)`` rather than a raised
     ``ValueError``, so the caller's one ``if not ok`` covers every way this can
-    fail and no writer guards a git call with its own except:
-
-    * the name is not one the primitive will commit -- :func:`relative_name`'s
-      verdict (absolute, outside the root, not a ``.md`` file under
-      :data:`SESSIONS_REL`, or carrying a control character), said in noni's
-      words from :data:`NAME_REFUSAL`. A writer asks the same question before it
-      writes, so this half is the backstop rather than the usual path. The
-      control-character half is what keeps the never-raises promise: an argv
-      element carrying a NUL makes ``subprocess`` raise ``ValueError``, so such
-      a name must never be handed to git;
-    * the state root is itself a symlink -- :func:`linked_state_root`'s.
+    fail and no writer guards a git call with its own except: the name is not one
+    the primitive will commit (:func:`relative_name`'s verdict, said in noni's
+    words from :data:`NAME_REFUSAL`, sanitised like every other line this module
+    prints), or the state root is itself a symlink (:func:`linked_state_root`'s).
+    A writer asks the name question before it writes, so the first half is the
+    backstop rather than the usual path, and it is also what keeps the never-raises
+    promise: an argv element carrying a NUL or a lone surrogate makes
+    ``subprocess`` raise, so such a name must never be handed to git.
 
     Any git refusal also comes back as ``(False, one noni-worded line)``: this
     helper owns no exit code, so the caller names the class of failure and prints
@@ -418,7 +413,10 @@ def stage_and_commit(repo: Path, name: str | PurePosixPath, message: str) -> tup
     """
     rel = relative_name(name)
     if not rel:
-        return False, name_refusal(name)[0]
+        # ``safe_text`` again: the name is refused precisely because its bytes
+        # are not fit for a terminal or an argv element, so the words about it
+        # may not carry them either.
+        return False, safe_text(name_refusal(name)[0])
     linked, why = linked_state_root(repo)
     if linked is not None:
         return False, f"cannot commit {rel}: {why}"
@@ -439,24 +437,25 @@ def linked_state_root(repo: Path) -> tuple[Path | None, str]:
 
     The one place the rule is written, so the refusal a caller makes before it
     touches the tree and the one the commit primitive makes cannot drift apart.
+    The answer is rendered through :func:`safe_text`: the path is operator-supplied
+    text and the pair is printed to stderr.
 
     ``git`` works on the resolved path of the tree ``-C`` names, while a writer's
-    own path arithmetic stays unresolved -- the writer joins the state root to a
-    name inside it rather than resolving a file it has not created yet. A state
-    root that is itself a link is where the two readings disagree, and the resolved path is what :mod:`noni._marker` would keep the
-    working-copy marker at and what anyone auditing the commit later would have
-    to match against a path nobody named on the command line. So the writer
-    refuses and names ``resolved``, the one thing the operator can go and look
-    at, rather than quietly following the link.
-
-    A project directory *reached through* a link is not this state: only the
+    own path arithmetic stays unresolved -- it joins the state root to a name
+    inside it rather than resolving a file it has not created yet. A state root
+    that is itself a link is where the two readings disagree: the resolved path is
+    where :mod:`noni._marker` would keep the working-copy marker, and what anyone
+    auditing the commit later would have to match against a path nobody named. So
+    the writer refuses and names the real path rather than following the link. A
+    project directory *reached through* a link is not this state: only the
     ``--repo`` component itself is examined, never the cwd it is read against.
     """
     absolute = os.path.abspath(str(repo))
     if not (Path(absolute).is_symlink() or os.path.islink(str(repo))):
         return None, ""
-    return Path(absolute), (f"--repo {repo} is a symlink to {os.path.realpath(absolute)}: "
-                            "the session writers refuse a state root that is a symlink")
+    return Path(absolute), safe_text(
+        f"--repo {repo} is a symlink to {os.path.realpath(absolute)}: "
+        "the session writers refuse a state root that is a symlink")
 
 
 def _failure_line(repo: Path,

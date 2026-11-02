@@ -248,7 +248,10 @@ def test_stage_and_commit_returns_a_nul_name_instead_of_raising(tmp_path):
     assert _git_ok(repo, "status", "--porcelain").stdout.splitlines() == [], \
         "precondition: the tree starts clean"
 
-    for bad in ("noni/sessions/a\x00b.md", "noni/sessions/a\x01b.md"):
+    for bad in ("noni/sessions/a\x00b.md", "noni/sessions/a\x01b.md",
+                # Text no UTF-8 codec can carry: it passes every path rule and
+                # would fault the write or the git call instead of reporting.
+                "noni/sessions/\ud800.md", "noni/sessions/a\udc00b.md"):
         ok, why = _session_git.stage_and_commit(repo, bad, "nope")
         assert ok is False, repr(bad)
         assert isinstance(why, str) and why, repr(bad)

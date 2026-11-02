@@ -64,6 +64,11 @@ import sys
 from pathlib import Path
 
 from . import _session_git, _session_push, labels
+from ._session_rebase_state import (  # noqa: F401  (re-exported: one definition,
+    # read by this module's classifier and by the
+    # tests' post-condition helper)
+    REBASE_STATE_DIRS,
+)
 
 CLAIM_PREFIX = "- claim: "
 # The push loop's bound and attempt count are the session writers' shared
@@ -89,10 +94,12 @@ EXIT_USAGE: int = 4
 EXIT_REBASE_CONFLICT: int = 5
 EXIT_REBASE_REFUSED: int = 6
 
-# The two directories a stopped rebase can leave: the merge backend writes
-# rebase-merge/, the am backend writes rebase-apply/, so the classifier probes
-# both. The tests' post-condition helper reads this same constant.
-REBASE_STATE_DIRS: tuple[str, ...] = ("rebase-merge", "rebase-apply")
+# The two directories a stopped rebase can leave (rebase-merge/, written by the
+# merge backend, and rebase-apply/, written by the am backend) are defined once,
+# in :mod:`noni._session_rebase_state`, which is where the probe reads them. The
+# import above brings that one definition into this module's name space rather
+# than restating the pair, so the push loop, this module's classifier and the
+# tests' post-condition helper all read one list.
 
 # How much of git's own output the push loop and the classifier echo. These
 # streams are not this process's words (a fetch or push against an origin can

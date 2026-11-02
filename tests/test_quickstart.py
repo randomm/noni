@@ -33,7 +33,6 @@ exactly like the README try-it harness, and never touch this repository.
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 
@@ -42,22 +41,28 @@ from _harness import REPO
 from docs_commands import comment_lines, fenced_blocks, placeholder_words, read
 from docs_promises import (
     DENYLIST_STATES,
-    ISSUE_STATE_RECIPE,
     QUICKSTART,
     STATE_DIR,
 )
+from harness_runners import run_noni
 from quickstart_runner import (
     World,
     build_world,
     git,
     launch,
+    reroot_state_git,
     route_commands,
-    run_env,
     words,
 )
-from quickstart_runner import (
-    checked as _checked,
-)
+from quickstart_runner import checked as _checked
+
+# A fixed clock for the ordering run that reads the recipe's map: the ordering
+# group's stale class is time-based, and a run without --now would let the host
+# clock decide whether the fixture's confirmed stamps read as stale.
+ORDERING_NOW = "2026-10-27T12:00:00Z"
+
+# The two runs of item 5 compare one tree's plain and ``--json`` output; the note
+# they are compared on is read out of the product by ``_note_from_product``.
 
 
 @pytest.fixture
@@ -174,6 +179,8 @@ def test_route_b_commands_all_exit_zero(world: World) -> None:
     for argv in commands:
         proc = launch(world, argv, world.project, state=True)
         _checked(proc, f"Route B command {argv}")
+        if words(argv)[:2] == ("noni", "register"):
+            world.collect_session_id()
 
     assert (world.state / "noni" / "decisions").is_dir(), "no ledger under the state clone"
     assert (world.project / ".gitignore").is_file(), "the ignore rule was never written"
@@ -187,6 +194,18 @@ def test_route_b_commands_all_exit_zero(world: World) -> None:
     )
     _checked(git(world.origin, "rev-parse", "--verify", "main", env=world.env),
              "the state branch on the origin")
+    # The page promises the first push makes every later push and pull work
+    # "without naming the remote again", and `-u` is the whole of that promise.
+    # An exit-0 push proves nothing about the tracking branch, so the upstream
+    # the clone itself reports is read here: a push that lost its -u would leave
+    # the writers' later ``--push`` with no branch to name.
+    upstream = git(world.state, "rev-parse", "--abbrev-ref", "--symbolic-full-name",
+                   "@{u}", env=world.env)
+    _checked(upstream, "the state clone's upstream after the page's first push")
+    assert upstream.stdout.strip() == "origin/main", (
+        f"the page's first push did not set the branch's upstream to origin/main, "
+        f"so the later --push runs have no remote-tracking branch: "
+        f"{upstream.stdout!r} {upstream.stderr!r}")
     assert [a for a in commands if words(a)[:2] == ("noni", "census")], \
         "the Route B block never runs the census"
 
@@ -199,7 +218,10 @@ def test_the_state_route_leaves_the_origin_holding_the_writers_commits(world: Wo
     would pass the exit-code assertions above.
     """
     for argv in route_commands("Route B"):
-        launch(world, argv, world.project, state=True)
+        proc = launch(world, argv, world.project, state=True)
+        _checked(proc, f"Route B command {argv}")
+        if words(argv)[:2] == ("noni", "register"):
+            world.collect_session_id()
     pushed = git(world.origin, "ls-tree", "--name-only", "main", env=world.env)
     _checked(pushed, "origin main tree")
     assert "noni" in pushed.stdout.split(), (
@@ -207,67 +229,35 @@ def test_the_state_route_leaves_the_origin_holding_the_writers_commits(world: Wo
     )
 
 
-def test_the_issue_state_recipe_produces_a_map_the_census_accepts(tmp_path: Path) -> None:
-    """The gh + jq recipe on the page is run, not quoted.
+def test_the_ordering_note_appears_in_human_mode_and_not_in_json(world: World) -> None:
+    """The page's claim about the ``--json`` stream, observed on the Route A tree.
 
-    ``jq`` is invoked with the page's own filter over a payload shaped like the
-    tracker's output (issue numbers as numbers, states upper-case), and the result
-    is fed through the census's own reader. The two refusals that reader makes -- a
-    key that is not the bare decimal spelling, a state word outside the two it
-    names -- are the reason the filter carries ``tostring`` and ``ascii_downcase``,
-    so both are checked here with the filter removed: a recipe that lost either
-    would pass a reading test and fail a reader.
+    The page tells the reader the census says out loud that ``ordering-closed``
+    was not evaluated, and that ``--json`` mode prints no such line. Both halves
+    are about output, so both are read from two runs of the same census over the
+    same tree: the note is there without ``--json`` and absent with it, and the
+    JSON run still reaches its verdict line in the summary row. A page that
+    claimed the opposite (or dropped the human-mode half) fails here.
     """
-    from noni.census_ordering import ISSUE_STATE_STATES
-    from noni.census_ordering_readers import load_issue_state
+    for argv in route_commands("Route A"):
+        _checked(launch(world, argv, world.project), f"Route A command {argv}")
 
-    filter_text = _issue_state_filter()
-    payload = tmp_path / "issues.json"
-    payload.write_text(json.dumps([{"number": 7, "state": "CLOSED"},
-                                   {"number": 12, "state": "OPEN"}]), encoding="utf-8")
-    proc = _jq(filter_text, payload)
-    _checked(proc, "the page's jq recipe")
-    map_path = tmp_path / "issue-state.json"
-    map_path.write_text(proc.stdout, encoding="utf-8")
-    result = load_issue_state(map_path, ISSUE_STATE_STATES, _file_kind, _identity,
-                              _strict_json)
-    assert result.problem is None, f"the census refuses the page's map: {result.problem}"
-    assert result.map == {"7": "closed", "12": "open"}, result.map
+    plain = run_noni("census", "--repo", str(world.project), "--only", "ordering-closed",
+                     cwd=world.project, env=world.env)
+    _checked(plain, "the plain census run")
+    note = _note_from_product()
+    assert note in plain.stdout, (
+        f"the census does not print the note the page quotes it as printing: "
+        f"{plain.stdout!r}")
 
-    # Without tostring the keys arrive as numbers and the reader refuses them;
-    # without ascii_downcase the state words do. Both are the recipe's job.
-    for name, broken in (("tostring", filter_text.replace(".number | tostring", ".number")),
-                         ("ascii_downcase",
-                          filter_text.replace(".state | ascii_downcase", ".state"))):
-        _assert_broken_filter(tmp_path, name, broken, payload)
+    as_json = run_noni("census", "--repo", str(world.project), "--only",
+                      "ordering-closed", "--json", cwd=world.project, env=world.env)
+    _checked(as_json, "the --json census run")
+    assert note not in as_json.stdout, (
+        f"--json mode prints the note the page says it never prints: "
+        f"{as_json.stdout!r}")
+    assert as_json.stdout.strip(), "--json mode printed no stream at all"
 
-
-def _assert_broken_filter(tmp_path: Path, name: str, broken: str, payload: Path) -> None:
-    """One variant of the recipe, with one required conversion removed.
-
-    A filter that breaks ``jq`` outright is the same failure to the reader as one
-    that emits a map the census refuses: no usable file. The empty document is
-    what jq leaves behind, and the census calls that a map that answers nothing,
-    so it counts as a refusal for the same reason -- the recipe did not produce
-    the map the page promises.
-    """
-    from noni.census_ordering import ISSUE_STATE_STATES
-    from noni.census_ordering_readers import load_issue_state
-
-    filter_text = _issue_state_filter()
-    assert broken != filter_text, f"the page's filter no longer names {name}"
-    faulty = _jq(broken, payload)
-    assert faulty.returncode != 0 or faulty.stdout.strip() not in ("", "{}", "{\n}"), (
-        f"the recipe without {name} produced no usable map either: "
-        f"rc={faulty.returncode} stderr={faulty.stderr.strip()!r}"
-    )
-    bad = tmp_path / f"bad-{name}.json"
-    bad.write_text(faulty.stdout, encoding="utf-8")
-    verdict = load_issue_state(bad, ISSUE_STATE_STATES, _file_kind, _identity, _strict_json)
-    assert verdict.problem is not None or verdict.map != {"7": "closed", "12": "open"}, (
-        f"a filter without {name} still produced the map the page promises, so "
-        f"the assertion above pins nothing"
-    )
 
 
 def test_the_page_says_what_is_skipped_without_the_state_file() -> None:
@@ -337,45 +327,43 @@ def test_the_page_names_the_three_prerequisites() -> None:
 
 # --- helpers used only by this module ---------------------------------------
 
-def _jq(filter_text: str, payload: Path):
-    import subprocess
+def _note_from_product() -> str:
+    """The ordering-closed note, assembled from the census's own source.
 
-    return subprocess.run(["jq", filter_text, str(payload)], capture_output=True,
-                          text=True, env=run_env(), timeout=60)
-
-
-def _file_kind(path: Path) -> tuple[str, str | None]:
-    if path.is_symlink():
-        return "symlink", "a symlink, which the census will not follow"
-    if path.is_dir():
-        return "directory", "a directory"
-    if not path.exists():
-        return "absent", "no such file"
-    return "regular", None
-
-
-def _identity(text: str) -> str:
-    return text
-
-
-def _strict_json(raw: bytes) -> object:
-    from noni.census_json import load_json_strict
-
-    return load_json_strict(raw)
-
-
-def _issue_state_filter() -> str:
-    """The jq filter the page's recipe carries, read out of the page.
-
-    Located by its two obligations: a key built with ``tostring`` and a value
-    built with ``ascii_downcase``. A page that reworded the recipe into prose fails
-    here rather than letting the recipe test read a filter out of thin air.
+    The sentence is written in the run's body across two string literals, so this
+    reads the print call out of ``census_run.py`` and joins them. Quoting the
+    literal here instead would let the page and this test agree with each other
+    while both drifted away from the tool.
     """
-    joined = ISSUE_STATE_RECIPE.search(_page())
-    assert joined is not None, (
-        "the page no longer carries a jq recipe that builds a map with tostring "
-        "and ascii_downcase")
-    match = re.search(r"'([^']*from_entries[^']*)'", joined.group(0))
-    assert match, (
-        f"the recipe's filter is not quoted where the page prints it: {joined.group(0)!r}")
-    return match.group(1)
+    source = (REPO / "src" / "noni" / "census_run.py").read_text(encoding="utf-8")
+    match = re.search(r'print\("(note: ordering-closed was not evaluated[^"]*)"\s*'
+                      r'([^)]*)\)', source, re.S)
+    assert match, "the census no longer prints the ordering-closed note this test cites"
+    parts = re.findall(r'"((?:[^"\\]|\\.)*)"', match.group(0))
+    assert parts and parts[0].startswith("note: ordering-closed was not evaluated"), parts
+    return "".join(parts)
+
+
+def test_reroot_state_git_keeps_the_c_option_and_moves_only_its_value():
+    """The re-rooting replaces the value after ``-C``, never ``-C`` itself.
+
+    Dropping the option together with its target leaves ``git push -u origin
+    main`` to run in the launcher's cwd, which is the reader's *project* tree: the
+    harness would push the code repository and still report the page's exit 0.
+    Checked at argv level, because a whole-route run cannot tell the two trees
+    apart when both hold a branch called ``main``.
+    """
+    state = Path("/scratch/project/.noni-state")
+    argv = ["git", "-C", STATE_DIR, "push", "-u", "origin", "main"]
+    rerooted = reroot_state_git(argv, state)
+    assert rerooted == ["git", "-C", str(state), "push", "-u", "origin", "main"], rerooted
+    assert rerooted[:2] == ["git", "-C"], (
+        f"the re-rooted line lost its -C, so it would run against the project: "
+        f"{rerooted}")
+    # The verb and its arguments are untouched, so a page that named the wrong
+    # verb still fails the way a reader would see it.
+    assert rerooted[3:] == argv[3:]
+    # A line that names no state directory is returned unchanged: the launcher
+    # must not invent a -C for a command the page wrote without one.
+    plain = ["git", "config", "user.name", "Casey"]
+    assert reroot_state_git(plain, state) == plain

@@ -6,8 +6,9 @@ which covers what that block cannot: how to install noni when no package index
 carries it, where the state root may live, and the two routes to it.
 
 `docs/PRODUCT.md` §7 is the binding statement of the state-root rule; this page
-is the commands. `tests/test_quickstart.py` materialises every tree this page
-names and runs every command in it.
+is the commands. Every tree this page names and every command in it is run
+against a throwaway repository by the suite, so a step that stopped working
+fails a test rather than a first run.
 
 ## Install noni
 
@@ -93,19 +94,18 @@ echo "/.noni-state/" >> .gitignore
 The ignore rule is what keeps the direction out of the code repository: with it
 the state clone is invisible to `git add .` in the project, and the state
 repository's own history stays the only place the direction is committed. It is
-a line you add once, to the project's `.gitignore`; this page's test runs it in
-a scratch tree rather than editing this repository's ignore file.
+a line you add once, to the project's `.gitignore`.
 
-Give the clone an identity, and create its branch once. A clone of a repository
-that has never held a commit has no branch at all, and a writer that commits
-into it leaves git's own complaint about a missing upstream inside its message.
-So make the first commit before any writer runs: the writer commits its own
-record and carries the branch into existence, and the push then has something
-to name.
+Give the clone an identity, and make its first commit. A clone of a repository
+that has never held a commit has no branch at all, so there would be nothing for
+a first push to name; the writers commit their own records onto that branch and
+the push at the end of this section sends them. One empty commit is the simplest
+way to create the branch, and it carries no content:
 
 ```bash
 git -C .noni-state config user.name "Casey"
 git -C .noni-state config user.email "casey@example.invalid"
+git -C .noni-state commit --allow-empty -m "direction: first commit"
 ```
 
 Now every command names the state clone. Same flags, same writers, same census
@@ -123,10 +123,16 @@ noni census --repo .noni-state
 
 `<record-id>` is the `<date>-<slug>` of a record in the ledger: the ordering
 artifact cites a decision that exists, so run the `decide` line first and read
-the id off the name it printed (`2026-11-02-release-scope`). Sessions come next:
-`register` allocates its own session id and prints it (`registered session <id>
--> ...`) -- you never choose it, and `claim`, `release` and `close` all take it
-as `--session-id`. Run it the same way, with `--repo .noni-state`. The census reads only the tree `--repo`
+the id off the name it printed (`2026-11-02-release-scope`). Sessions come next.
+`register` allocates its own session id and prints it, so you never choose one,
+and `claim`, `release` and `close` all take that id as `--session-id`:
+
+```bash
+noni register --repo .noni-state --identity developer
+noni claim --repo .noni-state --session-id <session-id> --task "#12"
+```
+
+The census reads only the tree `--repo`
 names, so the code repository's tracked files never enter it — and its hygiene
 class scans the tree it audits, which here is the state clone.
 
@@ -162,10 +168,14 @@ switches the class on.
 example-corp
 ```
 
-Keep it untracked. It is the half of the public-repo hygiene rule the committed
-patterns cannot carry, because the names themselves must not be committed;
-`docs/PUBLISHING.md` step 1 is the checklist that uses it, and running its
-`scripts/public_safety.py` is the gate, not a clean census.
+Keep it untracked, and say so in the tree's `.gitignore` the way this repository
+does, with a rule for the file's own name (`/.noni-scrub-denylist`): it is the
+half of the public-repo hygiene rule the committed patterns cannot carry, because
+the names themselves must not be committed. `docs/PUBLISHING.md` step 1 is the
+checklist that uses it, and the gate it runs is
+`python scripts/public_safety.py` — not a clean census. That CLI exits 2 when the
+class was not active, so it cannot report a false "clean" on a tree whose
+deny-list is absent, corrupt or empty.
 
 ## The --issue-state map, and what the census skips without it
 

@@ -146,8 +146,8 @@ the anti-fabrication rule (the agent never answers for the operator) are in
 `scripts/census.sh <state-root>/noni/decisions` is read-only, jq-based, and
 exits with an honest code. It is a bash script: run it as `bash
 scripts/census.sh <dir>` or, since it carries its executable bit and its bash
-shebang, as `scripts/census.sh <dir>` — never under `python3`, which reads its
-braces as Python. Its one argument is the ledger directory of the
+shebang, as `scripts/census.sh <dir>`. Why no interpreter may stand in front of
+it is in `references/census.md`. Its one argument is the ledger directory of the
 state root (`--repo` plus `noni/decisions`): there is no current-directory
 default, so a run with no argument is the usage error `2`.
 

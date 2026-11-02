@@ -27,12 +27,14 @@ page that drifts fails and the product that renames fails, in the same place.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 from docs_commands import block_commands, read
 from docs_promises import (
     DENYLIST_STATES,
     DOC_PAGES,
+    ISSUE_STATE_FILTER,
     ISSUE_STATE_RECIPE,
     PUBLISHING,
     QUICKSTART,
@@ -43,7 +45,7 @@ from docs_promises import (
 )
 
 # Every page whose commands a reader may copy, as (path, text) pairs, read once.
-ALL_PAGES: tuple[tuple[object, str], ...] = tuple(
+ALL_PAGES: tuple[tuple[Path, str], ...] = tuple(
     (path, read(path)) for path in (*DOC_PAGES, *SKILL_PAGES)
 )
 
@@ -61,13 +63,8 @@ _PYTHON_OVER_SH = re.compile(r"\bpython3?\b[^\n|;&]*?\S+\.sh\b", re.IGNORECASE)
 # being flagged as the claim it retracts.
 _BARE_PIP_INSTALL = re.compile(r"pip install noni\b(?![-/\w])")
 
-# The two names a page may use for the deny-list file, both derived from the
-# product's own constants (checked below rather than literal-matched here).
-PAGE_LABEL = {README: "README.md", QUICKSTART: "docs/QUICKSTART.md"}
-
-
-def _label(path: object) -> str:
-    return str(path.relative_to(README.parent)) if hasattr(path, "relative_to") else str(path)
+def _label(path: Path) -> str:
+    return str(path.relative_to(README.parent))
 
 
 def _command_lines(path: object, text: str) -> list[str]:
@@ -224,20 +221,15 @@ def test_the_deny_list_states_are_all_named() -> None:
     empty`` is the one a reader who created a file of comments hits and cannot
     explain from the row alone, because the file exists.
     """
-    from noni import census_hygiene, public_safety
-
     # The state words are the product's rendering, not this test's invention.
     source = (README.parent / "src" / "noni" / "census_hygiene.py").read_text(encoding="utf-8")
     for word in DENYLIST_STATES:
         assert word in source, f"the product no longer renders the state {word!r}"
     for page in (read(QUICKSTART), *[t for p, t in ALL_PAGES
                                     if str(p).endswith("skills/census/SKILL.md")]):
-        assert any(word in page for word in DENYLIST_STATES), (
-            "the deny-list section names none of the inactive states")
-    quickstart = read(QUICKSTART)
-    assert "present but empty" in quickstart or "empty" in quickstart, (
-        "the quickstart does not say a file with no usable entries is still inactive")
-    assert public_safety is not None and census_hygiene is not None
+        missing = [word for word in DENYLIST_STATES if word not in page]
+        assert not missing, (
+            f"the deny-list section does not name every inactive state: {missing}")
 
 
 def test_the_deny_list_entry_format_is_shown() -> None:
@@ -284,6 +276,32 @@ def test_the_readme_stays_within_its_own_cap_besides_the_link() -> None:
     lines = read(README).count("\n")
     assert lines <= README_LINE_LIMIT, (
         f"README.md is {lines} lines; the cap is {README_LINE_LIMIT}")
+
+
+def test_the_issue_state_recipe_carries_every_flag_the_reader_needs() -> None:
+    """The one recipe the census has no producer for is pinned flag by flag.
+
+    ``gh issue list`` defaults its fields and its output format, so a recipe that
+    quietly lost ``--json number,state`` prints a table no ``jq`` filter reads and
+    a recipe that lost the redirect leaves the map on the terminal instead of in
+    the file ``--issue-state`` opens. The filter itself is pinned by
+    ``tests/test_quickstart.py``, which runs it; this pins the command line around
+    it, which nothing else can.
+    The command is read as the page prints it (fence lines joined, before
+    ``shlex`` strips the quoting), so a flag lost from the printed line is caught
+    here while ``tests/test_quickstart.py`` runs the filter itself.
+    """
+    blocks = [" ".join(block) for block in bash_blocks_text(read(QUICKSTART))]
+    recipe = [block for block in blocks
+              if re.search(r"(?<![\w-])gh\s+issue\s+list\b", block)]
+    assert len(recipe) == 1, (
+        f"the quickstart must print exactly one gh issue list recipe, got {recipe}")
+    joined = " ".join(recipe)
+    for token in ("--json", "number,state", "--jq", "> issue-state.json"):
+        assert token in joined, (
+            f"the gh+jq recipe does not name {token!r} as printed: {joined!r}")
+    assert ISSUE_STATE_FILTER in joined, (
+        f"the recipe's filter is not the one the census's reader accepts: {joined!r}")
 
 
 def test_the_issue_state_recipe_is_documented_once_and_named() -> None:

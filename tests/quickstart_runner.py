@@ -37,7 +37,8 @@ import pytest
 from _harness import REPO, subprocess_env
 from conftest import NONI_ENV_VARS
 from docs_commands import block_commands
-from docs_promises import QUICKSTART, STATE_DIR, bash_blocks, bash_blocks_text, section_body
+from docs_promises import QUICKSTART, STATE_DIR, bash_blocks_text, section_body
+from readme_support import _command_words
 
 # The clone directory the page's install commands name, and the placeholder it
 # clones from. The clone is materialised rather than fetched (the same choice
@@ -50,10 +51,6 @@ CLONE_URL = "github.com/OWNER/noni"
 # placeholder for the reader's tree, the harness supplies the real directory.
 READER_DIR = "your-project"
 
-# The state clone inside the project. Re-exported under the harness's own name
-# so the launcher's checks read against one spelling of the path.
-_STATE_DIR = STATE_DIR
-
 # The command vocabulary the page is allowed to print, as program-and-subcommand
 # words. Every command the page prints is one of these; anything else is
 # refused rather than exec'd, which is what keeps a rewritten block from running
@@ -62,7 +59,7 @@ _STATE_DIR = STATE_DIR
 # reader to run, and has to be made on purpose.
 LAUNCHABLE: frozenset[tuple[str, ...]] = frozenset({
     ("cd",),
-    ("git", "config"), ("git", "clone"), ("git", "push"),
+    ("git", "commit"), ("git", "config"), ("git", "clone"), ("git", "push"),
     ("noni", "decide"), ("noni", "register"), ("noni", "claim"),
     ("noni", "order"), ("noni", "census"),
     ("python3", "-m"), ("echo",),
@@ -88,9 +85,26 @@ class World:
         self.clone = tmp_path / CLONE_DIR
         self.project = tmp_path / READER_DIR
         self.origin = tmp_path / "origin"
-        self.state = self.project / _STATE_DIR
+        self.state = self.project / STATE_DIR
         self.venv = tmp_path / "venv"
         self.noni = self.venv / "bin" / "noni"
+        # Placeholder values a running tree produces (see ``substitute``): the id
+        # register printed, read back off the file it wrote, so the page's claim
+        # line names the session the register line actually allocated.
+        self.placeholders: dict[str, str] = {}
+
+    def collect_session_id(self) -> None:
+        """Take the page's ``<session-id>`` from the register file on disk.
+
+        Read from the state clone's own sessions directory, not from stdout: the
+        value the next page command must carry is the file the writer committed,
+        and reading it back proves that file exists where ``--repo`` points.
+        """
+        files = sorted((self.state / "noni" / "sessions").glob("*.md"))
+        assert files, (
+            "the page's register line wrote no session file under the state clone, "
+            "so the claim line that follows cannot name a real session id")
+        self.placeholders["<session-id>"] = files[-1].stem
 
 
 def run_env() -> dict[str, str]:
@@ -107,7 +121,6 @@ def run_env() -> dict[str, str]:
     env["GIT_CONFIG_GLOBAL"] = os.devnull
     env["GIT_CONFIG_SYSTEM"] = os.devnull
     env["PYTHONDONTWRITEBYTECODE"] = "1"
-    env.pop("PYTHONPATH", None)
     return env
 
 
@@ -219,52 +232,40 @@ def build_world(tmp_path: Path) -> World:
 
 
 def words(argv: list[str]) -> tuple[str, ...]:
-    """The program and subcommand words of one line, as the README harness reads them.
+    """The program and subcommand words of one page line.
 
-    The program plus its first word, where a word is a token that names no path
-    and opens no option: ``git config user.name Casey`` reduces to ``('git',
-    'config')`` and ``noni census --repo .`` to ``('noni', 'census')``. The
-    program alone is the answer for a shell built-in (``cd your-project`` is
-    ``('cd',)``: its argument is a directory, not a subcommand). An option takes
-    the next token as its value, so ``git -C .noni-state config user.name
-    Casey`` is ``('git', 'config')`` and ``python3 -m pip install`` is
-    ``('python3', '-m')``. The token shapes that end the walk are the ones this
-    page's commands carry (a path, a URL, an scp-style remote, a config key, a
-    redirect), so the dispatch selects on the program and subcommand without
-    being fooled by an argument.
+    ``readme_support._command_words`` is the shared walk; this names the two rules
+    this page's commands need and the README's do not carry:
+
+    - **An option consumes its value**, so ``git -C .noni-state config user.name
+      Casey`` is ``('git', 'config')`` and ``python3 -m pip install`` is
+      ``('python3', '-m')``. Without it the token after a flag could be read as
+      the subcommand the allow-list decides on.
+    - **A token may end the walk on ``@``, ``:`` or ``>``** as well as the shared
+      pair, because this page prints an scp-style remote, a URL and a redirect.
+
+    The dispatch selects on the program and subcommand without being fooled by an
+    argument.
     """
-    if not argv:
-        return ()
-    if argv[0] == "cd":
-        return ("cd",)
-    built: list[str] = [argv[0]]
-    index = 1
-    while index < len(argv):
-        token = argv[index]
-        if token.startswith("-"):
-            # An option: its value (the next token) is not the subcommand.
-            index += 1
-            if not token.startswith("--") or "=" not in token:
-                index += 1
-            if token == "-m":
-                built.append(token)
-            continue
-        if any(part in token for part in (".", "/", "@", ":", ">")):
-            break
-        built.append(token)
-        break
-    return tuple(built)
+    return _command_words(argv, option_takes_value=True,
+                          end_words_on=(".", "/", "@", ":", ">"))
 
 
-def substitute(argv: list[str]) -> list[str]:
+def substitute(argv: list[str], extra: dict[str, str] | None = None) -> list[str]:
     """Fill the page's placeholders with the values the reader would supply.
 
     Token by token, never by rejoining the line: one argv entry may hold spaces
     the reader quoted (``q1=Wait a week``), and a join-and-resplit would hand the
     program those words as separate arguments -- a different command from the one
     on the page.
+
+    ``extra`` carries the values a running tree produces rather than a reader
+    typing (the session id ``register`` printed, which its own ``claim`` line
+    then names): a fixed placeholder there would name a file the register step
+    cannot have made, and the launch would fail on the fixture, not on the page.
     """
-    return [PLACEHOLDER_VALUES.get(token, token) for token in argv]
+    values = {**PLACEHOLDER_VALUES, **(extra or {})}
+    return [values.get(token, token) for token in argv]
 
 
 def route_commands(label: str) -> list[list[str]]:
@@ -275,11 +276,6 @@ def route_commands(label: str) -> list[list[str]]:
     """
     body = section_body(QUICKSTART.read_text(encoding="utf-8"), label)
     return [argv for block in bash_blocks_text(body) for argv in block_commands(block)]
-
-
-def page_commands() -> list[list[str]]:
-    """Every command the page prints, in the order a reader meets them."""
-    return [argv for block in bash_blocks(QUICKSTART) for argv in block_commands(block)]
 
 
 def launch(world: World, argv: list[str], cwd: Path, *,
@@ -295,7 +291,7 @@ def launch(world: World, argv: list[str], cwd: Path, *,
     outside :data:`LAUNCHABLE` is refused, so a block that gained a command the
     page does not mean fails instead of running it.
     """
-    argv = substitute(argv)
+    argv = substitute(argv, getattr(world, "placeholders", None))
     key = words(argv)
     assert key in LAUNCHABLE, f"the page prints a command this harness will not run: {argv}"
     if key == ("cd",):
@@ -316,6 +312,8 @@ def launch(world: World, argv: list[str], cwd: Path, *,
         # where the project sits. The subcommand the page chose is kept as
         # printed, so a wrong one still fails the way a reader would see it.
         argv = reroot_state_git(argv, world.state)
+    elif argv[0] == "noni":
+        argv = reroot_state_repo(argv, world.state)
     program = argv[0]
     if program == "noni":
         program = str(world.noni)
@@ -343,7 +341,7 @@ def append_ignore_rule(world: World, argv: list[str]) -> subprocess.CompletedPro
     payload = re.match(r"echo\s+(.+?)\s+>>", joined)
     assert payload, f"the ignore-rule line echoes nothing: {joined!r}"
     entry = payload.group(1).strip().strip("'\"")
-    assert _STATE_DIR in entry, f"the ignore rule does not name the state directory: {joined!r}"
+    assert STATE_DIR in entry, f"the ignore rule does not name the state directory: {joined!r}"
     (world.project / ".gitignore").write_text(entry + "\n", encoding="utf-8")
     return subprocess.CompletedProcess(argv, 0, "", "")
 
@@ -352,13 +350,43 @@ def reroot_state_git(argv: list[str], state: Path) -> list[str]:
     """Point one page ``git`` line at the real state clone.
 
     The page writes ``git -C .noni-state <verb> ...``; under the harness the
-    project lives at a generated path, so the clone's directory argument has to
-    become its absolute path. The verb and its arguments are untouched, so a page
-    that named the wrong verb still fails the way a reader would see it.
+    project lives at a generated path, so the *token after* ``-C`` has to become
+    the clone's absolute path. ``-C`` itself stays: dropping it (or dropping it
+    together with its value) would leave ``git <verb> ...`` to run in the
+    launcher's cwd, which is the reader's *project* tree, and a ``push -u origin
+    main`` would then be made against the code repository instead of the state
+    clone. The verb and its arguments are untouched, so a page that named the
+    wrong verb still fails the way a reader would see it.
     """
     for index, token in enumerate(argv):
-        if token == _STATE_DIR and index >= 2:
+        if token == STATE_DIR and index >= 2:
             return [*argv[:index], str(state), *argv[index + 1:]]
+    return argv
+
+
+def reroot_state_repo(argv: list[str], state: Path) -> list[str]:
+    """Point one page ``noni`` line's ``--repo`` at the real state clone.
+
+    The page writes ``noni register --repo .noni-state ...`` from the project's
+    root, which is exactly what a reader types. The writer resolves its own
+    commits with ``git -C <repo>``, and the project's ``.gitignore`` (which the
+    page's own line just wrote) hides the clone from the project's git, so the
+    launch has to name the clone's real path or the session verbs would commit
+    against the project tree the ignore rule covers. Only the value of
+    ``--repo`` moves; every other token is untouched, so a page that named the
+    wrong flag or a missing value still fails the way a reader would see it.
+
+    The relative path is refused rather than re-rooted: ``--repo .`` names the
+    project, and silently retargeting it would make a Route A launch measure the
+    state clone.
+    """
+    try:
+        index = argv.index("--repo")
+    except ValueError:
+        return argv
+    assert index + 1 < len(argv), f"the page prints --repo with no value: {argv}"
+    if argv[index + 1] == STATE_DIR:
+        return [*argv[:index + 1], str(state), *argv[index + 2:]]
     return argv
 
 
@@ -376,7 +404,7 @@ def state_clone(world: World, argv: list[str], state: bool) -> subprocess.Comple
         assert any(CLONE_URL in token for token in argv), (
             f"the install clone must name the page's placeholder URL: {argv}")
         return subprocess.CompletedProcess(argv, 0, "", "")
-    assert len(argv) == 4 and argv[3] == _STATE_DIR, (
-        f"the page's state clone must name the {_STATE_DIR} target: {argv}")
-    return git(world.project, "clone", "-q", str(world.origin), _STATE_DIR,
+    assert len(argv) == 4 and argv[3] == STATE_DIR, (
+        f"the page's state clone must name the {STATE_DIR} target: {argv}")
+    return git(world.project, "clone", "-q", str(world.origin), STATE_DIR,
                env=world.env)

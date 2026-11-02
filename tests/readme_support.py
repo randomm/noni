@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import os
 import re
-import shlex
 import shutil
 import subprocess
 import sys
@@ -25,6 +24,7 @@ from pathlib import Path
 import pytest
 from _harness import REPO, _git, subprocess_env
 from conftest import NONI_ENV_VARS
+from docs_commands import block_commands, fenced_pairs
 
 README = REPO / "README.md"
 CONTRIBUTING = REPO / "CONTRIBUTING.md"
@@ -165,25 +165,15 @@ def _readme_text() -> str:
 def _fenced_blocks(text: str) -> list[tuple[str, list[str]]]:
     """The (info string, lines) pairs of every fenced code block in ``text``.
 
-    Parsed by hand rather than with a Markdown library: the README is small,
-    the fence style is fixed, and a test must not gain a dependency to read
-    the page it is checking.
+    The shared fence reader is ``docs_commands.fenced_pairs`` (README, quickstart
+    and the promises modules all read fences the same way); this wraps it with the
+    README's own failure text. An unterminated fence is a malformed page, not a
+    partial read.
     """
-    blocks: list[tuple[str, list[str]]] = []
-    current: tuple[str, list[str]] | None = None
-    for line in text.splitlines():
-        fence = re.fullmatch(r"(`{3,}|~{3,})\s*(\S*)\s*", line)
-        if fence and current is None:
-            current = (fence.group(2), [])
-            continue
-        if fence and current is not None and line.startswith(fence.group(1)[0]):
-            blocks.append(current)
-            current = None
-            continue
-        if current is not None:
-            current[1].append(line)
-    assert current is None, "README.md has an unterminated code fence"
-    return blocks
+    try:
+        return fenced_pairs(text)
+    except AssertionError as exc:
+        pytest.fail(f"README.md: {exc}")
 
 
 def _try_it_block() -> list[str]:
@@ -272,24 +262,14 @@ def _argv_for_run(argv: list[str], clone: Path, repo: Path) -> list[str]:
 def _block_commands(lines: list[str]) -> list[list[str]]:
     """The commands of one block as argv lists, continuations joined.
 
-    Split with ``posix=True``, so quotes are removed the way a reader's shell
-    removes them: the argv this returns is what gets exec'd, and a value that
-    reached the script carrying literal quote characters would be a different
-    command from the one on the page.
+    The single implementation is ``docs_commands.block_commands``, shared with the
+    quickstart's runner: it drops the page's own ``#`` prose lines, joins
+    backslash continuations and splits with ``posix=True``, so quotes are removed
+    the way a reader's shell removes them. The argv it returns is what gets
+    exec'd, and a value that reached the script carrying literal quote characters
+    would be a different command from the one on the page.
     """
-    commands: list[list[str]] = []
-    pending: list[str] = []
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        continued = stripped.endswith("\\")
-        pending.append(stripped[:-1].rstrip() if continued else stripped)
-        if not continued:
-            commands.append(shlex.split(" ".join(pending), posix=True))
-            pending = []
-    assert not pending, "try-it block ends in a line continuation"
-    return commands
+    return block_commands(lines)
 
 
 def _block_words(argv: list[str]) -> tuple[str, ...]:
@@ -304,18 +284,47 @@ def _block_words(argv: list[str]) -> tuple[str, ...]:
     the page uses to enter a directory. Ordered, so a permitted ``git config`` is
     not also a permit for any other git subcommand. A token carrying a dot or a
     slash (a path, a URL, a config key, a directory name) ends the words.
+
+    This is the shared reader behind ``quickstart_runner.words``, which adds this
+    page's two extra rules (an option consumes its value, and ``@``/``:``/``>``
+    also end the walk); the rules are kept separate because the README's own
+    allow-list is matched against the shape defined here.
+    """
+    return _command_words(argv)
+
+
+def _command_words(argv: list[str], *, option_takes_value: bool = False,
+                   end_words_on: tuple[str, ...] = (".", "/"),
+                   keep: tuple[tuple[str, ...], ...] = (("git", "clone"),),
+                   ) -> tuple[str, ...]:
+    """The shared walk behind :func:`_block_words` and the quickstart's reader.
+
+    One loop, three knobs: whether an option swallows the token after it (the
+    quickstart's pages print ``git -C <dir> <verb>``, where the verb -- not the
+    directory -- is the subcommand), which characters mark a token as a path
+    (the quickstart prints an scp-style remote, a URL and a redirect), and which
+    two-word forms survive intact.
     """
     if not argv:
         return ()
     if argv[0] == "cd":
         return ("cd",)
-    if argv[0] == "git" and len(argv) > 1 and argv[1] == "clone":
-        return ("git", "clone")
+    for pair in keep:
+        if argv[0] == pair[0] and tuple(argv[1:1 + len(pair) - 1]) == pair[1:]:
+            return pair
     words = [argv[0]]
-    for token in argv[1:]:
+    index = 1
+    while index < len(argv):
+        token = argv[index]
         if token.startswith("-"):
+            if not option_takes_value:
+                index += 1
+                continue
+            index += 2 if not (token.startswith("--") and "=" in token) else 1
+            if token == "-m":
+                words.append(token)
             continue
-        if any(part in token for part in (".", "/")):
+        if any(part in token for part in end_words_on):
             break
         words.append(token)
         break

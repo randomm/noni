@@ -37,6 +37,31 @@ _FENCE = re.compile(r"(`{3,}|~{3,})\s*(\S*)\s*")
 _COMMENT = "#"
 
 
+def fenced_pairs(text: str) -> list[tuple[str, list[str]]]:
+    """The ``(info string, lines)`` pairs of every fenced block, unfiltered.
+
+    The shared fence reader: :func:`fenced_blocks` filters these by info string,
+    and ``readme_support._fenced_blocks`` keeps the pairs so a caller can select
+    more than one kind of block from one parse. An unterminated fence is a
+    malformed page, raised rather than handed over as a partial read.
+    """
+    blocks: list[tuple[str, list[str]]] = []
+    current: tuple[str, list[str]] | None = None
+    for line in text.splitlines():
+        fence = _FENCE.fullmatch(line)
+        if fence and current is None:
+            current = (fence.group(2), [])
+            continue
+        if fence and current is not None and line.startswith(fence.group(1)[0]):
+            blocks.append(current)
+            current = None
+            continue
+        if current is not None:
+            current[1].append(line)
+    assert current is None, "page has an unterminated code fence"
+    return blocks
+
+
 def fenced_blocks(text: str, *, info: str | None = "bash") -> list[list[str]]:
     """The lines of every fenced block of the page, one list per block.
 
@@ -45,22 +70,8 @@ def fenced_blocks(text: str, *, info: str | None = "bash") -> list[list[str]]:
     fence is a malformed page, not a partial read: the page that leaves a block
     open would silently hand its whole tail to the caller as commands.
     """
-    blocks: list[list[str]] = []
-    current: tuple[str, list[str]] | None = None
-    for line in text.splitlines():
-        fence = _FENCE.fullmatch(line)
-        if fence and current is None:
-            current = (fence.group(2), [])
-            continue
-        if fence and current is not None and line.startswith(fence.group(1)[0]):
-            if info is None or current[0] == info:
-                blocks.append(current[1])
-            current = None
-            continue
-        if current is not None:
-            current[1].append(line)
-    assert current is None, "page has an unterminated code fence"
-    return blocks
+    return [lines for block_info, lines in fenced_pairs(text)
+            if info is None or block_info == info]
 
 
 def comment_lines(lines: list[str]) -> list[str]:

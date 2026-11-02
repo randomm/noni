@@ -28,6 +28,17 @@ The claim writer:
 The session must be registered first (the register file must exist); a claim
 on an unregistered session exits 1.
 
+A session that has ended claims nothing further. When the file's own
+`- status:` field reads a terminal state — the four listed under **status** in
+`references/register.md`, the same set the census treats as inactive — the run is
+refused with exit 2, the status is named in the message, and nothing is
+written. The check runs after the file has been read as UTF-8 (so a file no
+parser can read is still reported as malformed, not as terminal) and before the
+duplicate-row check (so a terminal session reads as terminal whichever task is
+named). It is a write-time refusal on the file this run was pointed at: rows an
+earlier session left in a file that has since gone terminal are not touched and
+are not a new reportable state — the census keeps ignoring terminal sessions.
+
 ### Without the commit: `--no-commit`
 
 For a caller that stages and commits itself, `--no-commit` appends the row and
@@ -144,7 +155,7 @@ tables are in `references/census.md`.
 |---|---|
 | `0` | claim committed (and pushed, with `--push`), or appended and left uncommitted with `--no-commit` |
 | `1` | the register file for `--session-id` does not exist (register first) |
-| `2` | the session file is malformed (no `- claims:` marker, not readable as UTF-8) or the session already claims the same task |
+| `2` | the session file is malformed (no `- claims:` marker, not readable as UTF-8), the session already claims the same task, or the session's status is terminal; see the terminal-status paragraph above for what each refusal writes |
 | `3` | push failed after 3 fetch-rebase-push attempts; also a failed fetch, a detached HEAD, an unresolvable branch, a git call that timed out, or a `git add`/`git commit` that git refused (the row is left in the worktree or the index, unstaged or staged as the failure says) |
 | `4` | usage error: bad `--task` or `--branch` value, `--no-commit` with `--push`, or a `--repo` that is not a directory |
 | `5` | rebase conflict; see the abort post-condition above |
@@ -201,6 +212,13 @@ there is nothing to commit into. The census reads the working tree, so the
 removal is visible in this clone and invisible to every other one until it is
 committed and pushed.
 
+A refusal (exit 1, 2 or 4) removes no row: the file keeps the bytes it had.
+When git refuses the commit (exit 3) the row is already gone from the work
+tree, and the one line on stderr names the cause in noni's words — the four
+states are under "Committing a session file" in `references/register.md` —
+followed by the path this run left written but uncommitted and, after it, what
+git said, sanitised.
+
 ## Closing a session
 
 `close.py --repo REPO --session-id SID [--no-commit] [--push]` sets the
@@ -212,7 +230,14 @@ Only the status line moves — the identity, the claims, the timestamps and ever
 other byte stay as they were. The file is never deleted. Closing is idempotent:
 a session already in a terminal state (`closed`, `done`, `superseded`, `ended`)
 needs no commit, so a second close exits 0, leaves HEAD unmoved, and prints
-`<id>.md was already closed (status=X); nothing to do`.
+`<id>.md was already closed (status=X); nothing to do`. That no-op is not a
+refusal — it writes nothing and keeps the exit 0 it always had.
+
+A refusal (exit 1, 2 or 4) moves no line. When git refuses the commit (exit 3)
+the status line is already written, and the one line on stderr names the cause
+in noni's words — the four states are under "Committing a session file" in
+`references/register.md` — followed by the path this run left written but
+uncommitted and, after it, what git said, sanitised.
 
 | code | meaning |
 |---|---|

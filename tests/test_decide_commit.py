@@ -109,6 +109,13 @@ def test_no_commit_supersede_writes_both_paths_without_moving_head(tmp_path):
     target_rel = f"noni/decisions/{BASELINE_ID}.json"
     assert new_rel in proc.stdout and target_rel in proc.stdout
     assert "uncommitted" in proc.stdout and "census" in proc.stdout.lower()
+    # AC3: the line also says what the target now holds, so a run aborted here
+    # knows to restore that file as well as delete the new record (the one line
+    # names both paths and the status, so the operator needs no second command).
+    status_lines = [line for line in proc.stdout.splitlines()
+                    if target_rel in line]
+    assert len(status_lines) == 1, proc.stdout
+    assert "superseded" in status_lines[0], proc.stdout
     assert _read(repo, BASELINE_ID)["status"] == "superseded"
     # The censuses read the working tree, so the edited target is exactly what
     # an uncommitted supersede looks like: the 'left uncommitted' line is the

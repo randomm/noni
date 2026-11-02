@@ -4,9 +4,12 @@ Extracted from the claim suite: the input validation chain and the refusals it
 raises before any write, asserted through the CLI's exit codes."""
 
 import subprocess
+from pathlib import Path
 
 from _harness import (
+    _claim_module,
     _git,
+    _git_env_with_identity,
     run_claim,
 )
 from claim_fixtures import (
@@ -118,6 +121,52 @@ def test_claim_refuses_a_repo_that_is_a_file(tmp_path):
     )
 
 
+def _claim_git_argv(tmp_path: Path, branch: str,
+                    monkeypatch) -> list[list[str]]:
+    """Every git argv a --push claim run makes, recorded at claim.py's own seam.
+
+    The push loop is driven through ``claim_mod._git``, so replacing it records
+    the exact argv the run would have handed git without touching a remote: the
+    guard's promise is about argv ('no argument a leading dash'), and an
+    assertion on an exit code alone cannot tell a ref from an option. The tree
+    is real (``_make_session``), so the commit path runs for real up to the
+    point the loop would push. The identity is pinned the way the subprocess
+    launchers pin it: the suite's conftest clears the author and committer
+    variables, so an in-process run that did not pin one would observe git's
+    identity refusal instead of the push under test.
+    """
+    claim_mod = _claim_module()
+    repo = _make_session(tmp_path)
+    for name, value in _git_env_with_identity().items():
+        monkeypatch.setenv(name, value)
+    calls: list[list[str]] = []
+
+    def recording(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        calls.append(list(args))
+        # The commit plumbing runs for real; only this loop's own verbs are
+        # scripted. A push that succeeds keeps the run out of the retry path.
+        if args and args[0] in ("push", "fetch", "rebase"):
+            return subprocess.CompletedProcess(["git"] + list(args), 0, "", "")
+        return original(list(args), cwd)
+
+    original = claim_mod._git
+    claim_mod._git = recording
+    try:
+        # In-process: the argv lives on this module's git seam, so the driver
+        # is this module's main() too (run_claim spawns a subprocess, whose
+        # git this recorder cannot see).
+        code = claim_mod.main([
+            "--repo", str(repo), "--session-id", SESSION_ID, "--task", "#42",
+            "--branch", branch, "--push",
+        ])
+    finally:
+        claim_mod._git = original
+    assert code == 0, (code, calls)
+    assert any(args and args[0] == "push" for args in calls), (
+        f"the run never reached the push, so the argv proves nothing: {calls}")
+    return calls
+
+
 def test_branch_with_slash_or_dots_is_refused(tmp_path):
     """A --branch that is not a safe ref name (slash, dots, empty) is
     refused (exit 4) before git sees it."""
@@ -133,6 +182,101 @@ def test_branch_with_slash_or_dots_is_refused(tmp_path):
     # here; the guard is what this test pins).
     proc = run_claim(repo, SESSION_ID, "#43", branch="main")
     assert proc.returncode == 0, f"safe branch: expected exit 0, got {proc.returncode}: {proc.stderr}"
+
+
+def test_a_leading_dash_branch_is_refused_before_git_sees_it(tmp_path):
+    """The regression, on argv and on the CLI: a leading dash never reaches git.
+
+    ``git push origin <name>`` reads a leading-dash argument as a push option
+    (``--force``, ``--receive-pack=...``). claim.py's own old regex admitted
+    it (``^[A-Za-z0-9._-]+$`` places no anchor against a leading dash), so a
+    name that got in reached the shared loop unchecked.
+
+    Two routes are pinned. Driven through ``main()`` the value arrives as a
+    real argv element (argparse's own ``--branch=<value>`` form hands it over
+    verbatim -- the separate-token form argparse refuses before any guard of
+    ours runs), the module's git seam records every argv, and the assertion is
+    "no git call at all was made", which an exit code alone cannot say. Driven
+    through the CLI the same value is refused with the usage code, naming the
+    argument and the value, and nothing is claimed on disk.
+    """
+    for value in ("--force", "-receive-pack=evil"):
+        repo = _make_session(tmp_path / f"dash-{value.strip('-')}")
+        claim_mod = _claim_module()
+        calls: list[list[str]] = []
+
+        def recording(args: list[str], cwd: Path,
+                      calls: list[list[str]] = calls) -> subprocess.CompletedProcess[str]:
+            calls.append(list(args))
+            return subprocess.CompletedProcess(["git"] + list(args), 0, "", "")
+
+        original = claim_mod._git
+        claim_mod._git = recording
+        try:
+            code = claim_mod.main([
+                "--repo", str(repo), "--session-id", SESSION_ID, "--task", "#42",
+                f"--branch={value}", "--push",
+            ])
+        finally:
+            claim_mod._git = original
+        assert code == 4, f"--branch {value!r}: expected exit 4, got {code}: {calls}"
+        assert calls == [], f"a refused --branch must never reach git: {calls}"
+        # The CLI route: same value, same usage refusal, and the refusal names
+        # both the argument and the value the operator typed.
+        proc = run_claim(repo, SESSION_ID, "#42", **{"branch": f"={value}"})
+        assert proc.returncode == 4, (
+            f"--branch {value!r}: expected the exit-4 usage refusal, got "
+            f"{proc.returncode}: {proc.stderr}")
+        assert "branch" in proc.stderr.lower(), proc.stderr
+        assert value in proc.stderr, (
+            f"the refusal must name the bad value: {proc.stderr}")
+        # Nothing was claimed: a usage refusal lands before any write.
+        body = _session_path(repo).read_text(encoding="utf-8")
+        assert "- claim:" not in body, f"{value!r}: {body}"
+
+
+def test_a_validated_branch_reaches_git_only_as_an_explicit_refspec(tmp_path,
+                                                                    monkeypatch):
+    """The live path stays live: a good --branch is pushed, as a refspec only.
+
+    Paired with the refusal test above: a guard that refused everything would
+    pass it and fail this one. The recorded push argv is exactly
+    ``push origin refs/heads/main:refs/heads/main`` -- no bare name, so nothing
+    for git to read as an option, and no leading dash anywhere on the argv.
+    """
+    calls = _claim_git_argv(tmp_path, "main", monkeypatch)
+    pushes = [args for args in calls if args and args[0] == "push"]
+    assert pushes, calls
+    for args in pushes:
+        assert args == ["push", "origin",
+                        "refs/heads/main:refs/heads/main"], args
+
+
+def test_a_refusing_push_loop_names_the_branch_and_never_calls_git(tmp_path):
+    """The boundary inside the loop: a refused branch means zero git calls.
+
+    The two CLI refusals above never reach the loop, so they cannot show what
+    the loop itself does. Entered directly with a name both paths would have
+    rejected, the loop reports the bad branch in claim.py's own voice with
+    claim.py's push code and makes no git call at all -- no fetch, no rebase,
+    no push, so no option and no state change behind the operator's back.
+    """
+    claim_mod = _claim_module()
+    calls: list[list[str]] = []
+
+    def recording(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        calls.append(list(args))
+        return subprocess.CompletedProcess(["git"] + list(args), 0, "", "")
+
+    original = claim_mod._git
+    claim_mod._git = recording
+    try:
+        code = claim_mod._push_with_retry(Path("/does-not-matter"), "--force",
+                                          attempts=2)
+    finally:
+        claim_mod._git = original
+    assert code == claim_mod.EXIT_PUSH_FAILED, code
+    assert calls == [], f"a refused branch must never reach git: {calls}"
 
 
 def test_same_task_claim_twice_is_refused(tmp_path):
@@ -158,6 +302,75 @@ def test_invalid_utf8_session_is_refused_without_traceback(tmp_path):
     proc = run_claim(repo, SESSION_ID, "#42")
     assert proc.returncode == 2, f"expected exit 2, got {proc.returncode}: {proc.stderr}"
     assert "Traceback" not in proc.stderr, f"unhandled exception: {proc.stderr}"
+
+
+def test_a_terminal_session_claims_nothing(tmp_path):
+    """AC4: a session whose status has ended claims nothing further (exit 2).
+
+    ``close`` is final, and the census ignores a terminal session's claims, so a
+    row appended here would be invisible work: the run refuses before writing
+    anything rather than leaving a claim nobody counts. Every status the census
+    treats as ended is driven, not just 'closed', because the refusal is one set
+    (``_session_git.TERMINAL_STATUSES``) and a set a test only samples can lose
+    a member silently. Each case asserts the bytes are unchanged and uncommitted
+    -- a refusal that wrote and committed a row would be the half-applied state
+    this issue is about, with a nicer message on it.
+    """
+    for settled in ("closed", "done", "superseded", "ended"):
+        repo = _make_session(tmp_path / settled)
+        body = _session_path(repo).read_text(encoding="utf-8")
+        body = body.replace("- status: active", f"- status: {settled}")
+        _session_path(repo).write_text(body, encoding="utf-8")
+        _git(repo, "commit", "-q", "-am", f"settle {settled}")
+
+        proc = run_claim(repo, SESSION_ID, "#42")
+
+        assert proc.returncode == 2, f"{settled}: expected exit 2, got {proc.returncode}: {proc.stderr}"
+        assert settled in proc.stderr.lower(), f"{settled}: {proc.stderr}"
+        assert "terminal" in proc.stderr.lower(), f"{settled}: {proc.stderr}"
+        # Nothing was written: the file still holds exactly the committed bytes.
+        assert _session_path(repo).read_text(encoding="utf-8") == body
+        assert _git_text(repo, "status", "--porcelain") == "", f"{settled}: left dirty"
+
+
+def test_a_terminal_refusal_precedes_the_duplicate_check(tmp_path):
+    """Which refusal a terminal session gets when its task is also a duplicate.
+
+    Both guards answer exit 2, but only one of them names the state the operator
+    has to act on, and the order is what makes the message true: a run that
+    reported 'already claims #42' for a closed session would be describing a
+    live session. The duplicate row is planted before the status is settled, so
+    the duplicate is genuinely there and the message that comes back is the
+    terminal one.
+    """
+    repo = _make_session(tmp_path, claims=["#42"])
+    body = _session_path(repo).read_text(encoding="utf-8")
+    _session_path(repo).write_text(
+        body.replace("- status: active", "- status: closed"), encoding="utf-8")
+    _git(repo, "commit", "-q", "-am", "close it")
+
+    proc = run_claim(repo, SESSION_ID, "#42")
+
+    assert proc.returncode == 2, proc.stderr
+    assert "closed" in proc.stderr.lower(), proc.stderr
+
+
+def test_a_session_with_no_status_field_still_claims(tmp_path):
+    """The refusal is a status check, not a shape check. A register file with no
+    '- status:' line at all is not terminal (the census has its own way of
+    reading a file like that), and refusing it here would turn a file claim.py
+    has always accepted into one the writer will not touch."""
+    repo = _make_session(tmp_path)
+    body = _session_path(repo).read_text(encoding="utf-8")
+    _session_path(repo).write_text(
+        "".join(line + "\n" for line in body.splitlines() if "- status:" not in line),
+        encoding="utf-8")
+    _git(repo, "commit", "-q", "-am", "drop the status line")
+
+    proc = run_claim(repo, SESSION_ID, "#42")
+
+    assert proc.returncode == 0, proc.stderr
+    assert "- claim: #42" in _session_path(repo).read_text(encoding="utf-8")
 
 
 def test_detached_head_push_is_refused(tmp_path):

@@ -103,6 +103,12 @@ same working copy recognise the session it already owns.
   tree is a caller that intends to write more than one session here and commit
   them itself, so it gets a fresh allocation and the existing marker stays where
   it was — an opted-out run cannot steal the working copy's session.
+- **A commit that fails puts the marker back.** When the file was written, the
+  marker written, and git refused the commit (exit 3), the marker is restored to
+  the bytes it held before this run — including no marker at all when this run
+  created one. The session file stays on disk and is named in the message; the
+  working copy is never left marked for a session git never received, so the
+  next run does not continue a session that exists only locally.
 
 ## Committing a session file
 
@@ -117,6 +123,21 @@ path names a file inside that repository and not one beside the caller's
 working directory. Every git call is bounded by a timeout, makes no signing
 promise, runs no repository hooks, and refuses the external transports a remote
 could name.
+
+### Commit refused by git
+
+When git refuses the commit the writer already wrote its file (exit 3 for all
+four writers), the one line on stderr names the cause in noni's own words —
+this branch has no upstream configured, the upstream branch no longer exists on
+origin, the file already holds the bytes this run wrote so git found nothing to
+commit, or git refused for some other reason — and quotes what git said after
+it, sanitised and bounded. This is the one place those four states are written
+out; the other pages point here. The writer's headline names the path it left
+written but uncommitted, so an operator aborting the run knows what to restore:
+the file for all four writers, and for `register.py` the marker as well, which
+the run restores itself. When the marker cannot be put back, that line says so
+and names the marker, because a marker still naming a session git never
+received is the state the restore exists to prevent.
 
 `--push` pushes the branch `git rev-parse --abbrev-ref HEAD` names, with
 fetch-rebase-push in at most 3 attempts; a detached HEAD is refused rather than
@@ -136,6 +157,9 @@ A session's `status` is the whole of its lifecycle, and two verbs move it:
   the file. A session already in a terminal state is a no-op (exit 0, no commit).
   The file is never deleted: it is the session's record, and the census reads
   history for its deleted-file check.
+
+A claim on a session whose status is terminal is refused by `claim.py` (exit 2,
+the status named) before anything is written; see `references/claim.md`.
 
 Both take `--no-commit` and `--push`, and both share `claim.py`'s push contract:
 fetch-rebase-push in at most 3 attempts, exit 3 when the attempts run out or a

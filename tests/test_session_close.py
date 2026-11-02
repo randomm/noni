@@ -10,6 +10,7 @@ module rather than copied.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -34,6 +35,14 @@ BODY = """# session {sid}
   - claim: #1
   - claim: #2
 """
+
+
+_PATH = os.environ.get("PATH", "/usr/bin:/bin")
+# The identity-free environment a refused commit needs: no global config for git
+# to find a committer in, and no GIT_AUTHOR_* / GIT_COMMITTER_* (the suite's
+# autouse fixture already cleared those, and a launcher that puts them back is
+# exactly what this test switches off). Everything else the child needs comes
+# from the harness launcher.
 
 
 def _origin_tip(origin: Path, branch: str = "main") -> str:
@@ -67,6 +76,60 @@ def _repo_with_session(tmp_path, sid="2026-10-01-aaaaaa", status="active", name=
             "commit", "-q", "-m", f"register: {sid}")
     _git_ok(clone, "push", "-q", "origin", "main")
     return clone, session
+
+
+def test_a_commit_that_was_refused_names_the_cause_in_noni_words(tmp_path):
+    """AC2: when the commit is refused after the file was written, stderr is one
+    noni-worded sentence, not a git dump.
+
+    The refusal is reached the way an operator reaches it -- with the tree's own
+    committer identity missing -- which is also the honest state (a state
+    repository prepared on a machine that never configured a committer). The two
+    halves of the promise are asserted separately: what the message is (a clause
+    naming the cause, and git's words after it on the same line), and what it is
+    not (a raw ``git status --porcelain`` block, whose ``XY path`` rows are the
+    tell). The file stays written and the run exits 3 with a hint that names the
+    path to commit by hand, which is the half-applied state told about honestly.
+    """
+    clone, session = _repo_with_session(tmp_path, name="clone-refused")
+    head_before = _git_ok(clone, "rev-parse", "HEAD").stdout.strip()
+    # No identity in the child's environment, so git itself refuses the commit.
+    proc = run_from(clone, CLOSE, "--repo", str(clone),
+                    "--session-id", "2026-10-01-aaaaaa", identity=False,
+                    env={"GIT_CONFIG_GLOBAL": "/dev/null", "PATH": _PATH})
+
+    assert proc.returncode == close_mod.EXIT_PUSH_FAILED, f"{proc.returncode}: {proc.stderr}"
+    err = proc.stderr
+    assert "git could not commit" in err, err
+    assert "the change is written" in err, err  # the file's state, said plainly
+    assert "noni/sessions/2026-10-01-aaaaaa.md" in err, err
+    assert "commit" in err and "by hand" in err, err  # the hint names the fix
+    # Not a dump: git's status block is XY-prefixed rows, and none of them appear.
+    assert " M noni/" not in err and "A  noni/" not in err, err
+    assert "no upstream configured" in err or "nothing to commit" in err \
+        or "git refused the commit" in err or "git said:" in err, err
+    # The file was written (the honest part of the message) and nothing landed.
+    assert "- status: closed" in session.read_text(encoding="utf-8")
+    assert _git_ok(clone, "rev-parse", "HEAD").stdout.strip() == head_before
+
+
+def test_a_commit_that_was_refused_leaves_only_the_written_file(tmp_path):
+    """AC1, the failure side: a refused commit leaves one dirty path and nothing
+    else. The writer's whole promise in a failure is that the tree holds exactly
+    the change it made -- no partial edit of another field, no half-written
+    sibling, no other path staged -- so a later ``git add -A`` cannot sweep
+    something the run touched into a commit by accident."""
+    clone, _ = _repo_with_session(tmp_path, name="clone-dirty")
+    (clone / "unrelated.txt").write_text("somebody else\n", encoding="utf-8")
+
+    proc = run_from(clone, CLOSE, "--repo", str(clone),
+                    "--session-id", "2026-10-01-aaaaaa", identity=False,
+                    env={"GIT_CONFIG_GLOBAL": "/dev/null", "PATH": _PATH})
+
+    assert proc.returncode == close_mod.EXIT_PUSH_FAILED, f"{proc.returncode}: {proc.stderr}"
+    rows = _git_ok(clone, "status", "--porcelain").stdout.splitlines()
+    assert [r for r in rows if "noni/" in r] == ["M  noni/sessions/2026-10-01-aaaaaa.md"], rows
+    assert "?? unrelated.txt" in rows, rows
 
 
 def test_close_sets_the_status_line_and_leaves_every_other_byte_alone(tmp_path):

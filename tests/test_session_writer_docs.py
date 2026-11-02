@@ -29,6 +29,7 @@ from _harness import CLOSE, RELEASE, REPO, _script_ast
 # exit-code split; the docs that carry their tables are the operator contract.
 SKILL_MD = REPO / "skills" / "sessions-claims" / "SKILL.md"
 REGISTER_REF = REPO / "skills" / "sessions-claims" / "references" / "register.md"
+CLAIM_REF = REPO / "skills" / "sessions-claims" / "references" / "claim.md"
 
 WRITERS: tuple[tuple[str, object], ...] = (("close", CLOSE), ("release", RELEASE))
 
@@ -276,3 +277,88 @@ def test_the_writers_publish_their_constants_without_importing_them():
                     if isinstance(node, ast.ImportFrom) for alias in node.names}
         assert "EXIT_REBASE_CONFLICT" not in imported, (
             f"{verb}.py imports the conflict code instead of publishing it")
+
+
+def test_every_named_section_a_page_points_at_actually_exists():
+    """A pointer to a heading that does not exist is a dead end, not a reference.
+
+    Two pointers in the operator-facing pages named a "Fields" heading (the real
+    one is "The field semantics") and an untitled "commit-refusal paragraph", and
+    nothing checked either way: an operator who followed one found nothing, and an
+    editor who retitles a heading breaks the same way silently. So every pointer
+    these pages make is resolved here against the headings the target really
+    carries, and a rename that leaves a pointer behind fails the suite instead of
+    the reader.
+
+    Prose stays single-sourced: the pages paraphrase and point, and this is what
+    makes the pointing worth doing.
+    """
+    pages = {"SKILL.md": SKILL_MD,
+             "references/register.md": REGISTER_REF,
+             "references/claim.md": CLAIM_REF}
+    headings = {name: _heading_texts(path) for name, path in pages.items()}
+    checked = 0
+    for name, path in pages.items():
+        for target_page, section in _section_pointers(path):
+            assert target_page in headings, f"{name} points at unknown {target_page}"
+            assert section in headings[target_page], (
+                f'{name} points at "{section}" in {target_page}, which that page '
+                f"does not head (its headings: {sorted(headings[target_page])})"
+            )
+            checked += 1
+    # The check must be live: a parser that matched nothing would pass it and leave
+    # the dead pointers it exists to catch sitting in the pages.
+    assert checked >= 5, f"only {checked} pointers resolved; the parser found too few"
+
+
+def _heading_texts(path) -> set[str]:
+    """The text of every heading in ``path``, at any level.
+
+    Group 2 of a two-group pattern, taken whole to the end of the line: an earlier
+    version captured the hashes and printed those, which made this set look
+    populated while containing no heading text at all -- a gate that cannot fail is
+    worse than no gate.
+    """
+    return {match.group(2).rstrip()
+            for match in re.finditer(r"^(#{1,6}) +(.*)$",
+                                     path.read_text(encoding="utf-8"),
+                                     re.MULTILINE)}
+
+
+def _section_pointers(path) -> list[tuple[str, str]]:
+    r"""Each ``"Section" ... in references/x.md`` pointer the page makes.
+
+    Two phrasings are matched, because these pages use both: a section name
+    followed directly by the file, and the same preceded by the word "under"
+    -- and either may carry the chained form that names a parent section
+    between the two, where both names are pointers and both must resolve. An
+    earlier version matched only the innermost pair, so a pointer to a heading
+    that did not exist passed the gate simply by sitting in front of one that
+    did. The backquote around the file name is optional so a plain mention
+    still resolves.
+    """
+    text = path.read_text(encoding="utf-8")
+    found: list[tuple[str, str]] = []
+    quoted = r'"([^"\n]{3,60})"'
+    # The connector is part of the phrasing, not whitespace: these pages write
+    # '"Section" in `file`', and a pattern that expected the backquoted file right
+    # after the closing quote matched nothing at all (a gate whose parser finds no
+    # pointers passes, which is why the count below is asserted).
+    connector = r"\s+(?:in|under|of|see)\s+"
+    file_part = r"`?([\w/.-]+\.md)`?"
+    patterns = (
+        # "Section" [under "Parent"] in file
+        re.compile(quoted + r"(?:\s+under\s+" + quoted + r")?" + connector
+                   + file_part),
+        # under "Section" [under "Parent"] in file
+        re.compile(r"under\s+" + quoted + r"(?:\s+under\s+" + quoted + r")?"
+                   + connector + file_part),
+    )
+    for pattern in patterns:
+        for match in pattern.finditer(text):
+            named = match.group(3)
+            page = named if named.startswith("references/") else f"references/{named}"
+            found.append((page, match.group(1)))
+            if match.group(2):
+                found.append((page, match.group(2)))
+    return found

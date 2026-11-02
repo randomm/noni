@@ -51,6 +51,11 @@ Every refusal (2, 3 or 4) leaves the ledger and the target untouched: writes hap
 only after every check passes, each file goes to a temp file in its own directory and
 moves into place with os.replace, and a commit failure rolls both paths back. ``by``
 is git config user.name; ``date`` is --date or this run's UTC clock.
+
+``--no-commit`` with ``--supersedes`` writes both files and prints one line naming
+both paths and saying the target's status is now ``superseded``: a run that is then
+aborted leaves an edited target, so restoring the chain means restoring that file and
+deleting the new record, not just deleting the record.
 """
 
 from __future__ import annotations
@@ -61,10 +66,9 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
-from . import gitwrite, labels
+from . import _decide_flags, gitwrite, labels
 
 # The git helper and the atomic writer live beside this file in the package and
 # are an ordinary package import: inside an installed wheel there is no sibling
@@ -93,7 +97,6 @@ EXIT_COMMIT_FAILED: int = 5
 # census accepts as a plain path segment (census.sh reports a basename outside
 # ^[A-Za-z0-9._-]+\.json$ as 10:bad-name). Dashes only: the split is not ambiguous.
 SLUG_RE = re.compile(r"[a-z0-9-]+")
-DATE_FLAG_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 ID_RE = re.compile(r"\d{4}-\d{2}-\d{2}-[a-z0-9-]+")
 
 # Status is derived from the answers; it is the one field of an existing record this
@@ -226,35 +229,17 @@ def _validate_usage(args: argparse.Namespace) -> tuple[str, list[dict], list[str
     if not args.asked_by.strip():
         return _fail(EXIT_USAGE, "--asked-by is empty", "name the agent role or session that asked")
 
-    if args.date is None:
-        date_part = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    elif not DATE_FLAG_RE.fullmatch(args.date):
-        return _fail(EXIT_USAGE, f"--date {args.date!r} is not YYYY-MM-DD",
-                     "pass the record date as --date 2026-10-26")
-    else:
-        try:
-            datetime.strptime(args.date, "%Y-%m-%d")
-        except ValueError:
-            return _fail(EXIT_USAGE, f"--date {args.date!r} is not a real calendar date",
-                         "pass a date that exists, e.g. --date 2026-10-26")
-        date_part = args.date
-
-    if not 1 <= len(args.question) <= 4:
-        return _fail(EXIT_USAGE,
-                     f"{len(args.question)} --question flag(s); a record carries 1-4 questions",
-                     "ask between one and four questions, each as --question q1=<text>")
-    questions: list[tuple[str, str]] = []
-    seen: set[str] = set()
-    for value in args.question:
-        qid, sep, text = value.partition("=")
-        qid = qid.strip()
-        if not sep or not qid or not text:
-            return _fail(EXIT_USAGE, f"--question {value!r} is not an ID=TEXT pair",
-                         "write it as --question q1=<the question as asked>")
-        if qid in seen:
-            return _fail(EXIT_USAGE, f"--question id {qid!r} is used twice", "give each question its own id")
-        seen.add(qid)
-        questions.append((qid, text))
+    date_part, refused = _decide_flags.parse_date(args.date, fail=_fail,
+                                                   exit_usage=EXIT_USAGE)
+    if refused is not None:
+        return refused
+    questions, refused = _decide_flags.parse_questions(args.question, fail=_fail,
+                                                       exit_usage=EXIT_USAGE)
+    if refused is not None:
+        return refused
+    # The ids --question asked, kept here because --option and --answer are
+    # checked against them just below.
+    seen = {qid for qid, _text in questions}
 
     answers: list[tuple[str, str]] = []
     options, problem = _parse_pairs(args.option, "--option")
@@ -279,21 +264,11 @@ def _validate_usage(args: argparse.Namespace) -> tuple[str, list[dict], list[str
     answered_ids = {oid for oid, _value in answers}
     unanswered = [qid for qid, _text in questions if qid not in answered_ids]
     if args.supersedes is not None:
-        if unanswered:
-            return _fail(
-                EXIT_USAGE,
-                f"--supersedes {args.supersedes!r} with {len(unanswered)} unanswered question(s) "
-                f"({', '.join(unanswered)}) would leave the chain with no answer",
-                "answer every question with --answer ID=<answer>, or record the "
-                "decline as an open chain-root record without --supersedes",
-            )
-        if args.date is None:
-            # A supersede carries the date of the record it replaces, so without
-            # --date there is nothing to place it in the chain it corrects.
-            return _fail(EXIT_USAGE,
-                         "--supersedes needs --date: a supersede carries the date of "
-                         "the record it replaces",
-                         "pass the target's date, e.g. --date 2026-10-26")
+        refused = _decide_flags.check_supersede(args.supersedes, args.date,
+                                                questions, answers, fail=_fail,
+                                                exit_usage=EXIT_USAGE)
+        if refused is not None:
+            return refused
         if not ID_RE.fullmatch(args.supersedes):
             return _fail(EXIT_USAGE, f"--supersedes {args.supersedes!r} is not a record id",
                          "a record id is YYYY-MM-DD-<slug>, e.g. 2026-10-01-steer-order")
@@ -463,9 +438,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.no_commit:
         # The census reads the working tree, so these files read as uncommitted (an
         # edited target is census.sh exit 12): name both paths, and say that
-        # committing them is the caller's job.
-        print(f"{labels.DECIDE}: wrote {', '.join(rels)}; left uncommitted: commit "
-              "these paths before running the census")
+        # committing them is the caller's job. A supersede also names what the
+        # second path now holds: the target's status is superseded, so an operator
+        # who aborts the run knows to restore that file as well as delete the new
+        # record, or the chain is left with no live record.
+        left = (f"; {target_rel} now holds status {STATUS_SUPERSEDED}"
+                if target is not None else "")
+        print(f"{labels.DECIDE}: wrote {', '.join(rels)}{left}; left uncommitted: "
+              "commit these paths before running the census")
         return EXIT_OK
     added = _git(repo, "add", "--", *rels)
     if added.returncode != 0:

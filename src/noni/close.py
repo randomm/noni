@@ -49,9 +49,9 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import _session_git, labels
+from . import _session_git, _session_push, claim, labels
 
-STATUS_PREFIX = "- status:"
+STATUS_PREFIX = _session_git.STATUS_FIELD
 CLOSED_STATUS = "closed"
 
 # Every return path in this module names one of these constants, and the
@@ -91,8 +91,8 @@ def _set_status(body: str) -> str:
             terminator = "\n" if line.endswith("\n") else ""
             lines[index] = f"{indent}{STATUS_PREFIX} {CLOSED_STATUS}{terminator}"
             return "".join(lines)
-    # _parse_status already found this line in the same body; a body with no
-    # status line never reaches here.
+    # The shared field reader (``_session_git.session_status``) found this line
+    # in the same body; a body with no status line never reaches here.
     raise AssertionError("caller guarantees a status line")
 
 
@@ -149,7 +149,7 @@ def main(argv: list[str] | None = None) -> int:
                      f"repair {rel} or restore it from git (git -C {repo.name} "
                      f"checkout HEAD -- {rel}), then close it")
 
-    fields = _parse_status(body)
+    fields = _session_git.session_status(body)
     if fields is None:
         return _fail(EXIT_SESSION_MALFORMED,
                      f"{session_file.name} is malformed: it carries no "
@@ -192,39 +192,25 @@ def main(argv: list[str] | None = None) -> int:
     if not ok:
         return _fail(EXIT_PUSH_FAILED,
                      f"git could not commit {rel} (the change is written): {why}",
-                     f"run 'git status --porcelain -- {rel}' and commit that path "
-                     "by hand, or re-run close.py once git answers")
+                     f"commit {rel} by hand, or re-run close.py once git answers")
     print(f"{labels.CLOSE}: closed session {session_id} in {session_file.name}")
 
     if not args.push:
         return EXIT_OK
-    branch, why = _session_git.current_branch(repo)
+    branch, why = _session_push.current_branch(repo)
     if branch is None:
         return _fail(EXIT_PUSH_FAILED, f"push refused: {why}",
                      "close.py has no --branch flag: check out a branch and "
                      "re-run with --push, or push this commit by hand")
-    return _session_git.fetch_rebase_push(
+    return _session_push.fetch_rebase_push(
         repo, branch, label=labels.CLOSE, exit_push_failed=EXIT_PUSH_FAILED,
         exit_rebase_conflict=EXIT_REBASE_CONFLICT,
         exit_rebase_refused=EXIT_REBASE_REFUSED,
+        # The rebase wording is claim's, published as the shared push contract
+        # (references/claim.md): the three writers that push must tell an agent
+        # scripting on rc 5 or 6 the same thing.
+        messages=claim._REBASE_MESSAGES,
     )
-
-
-def _parse_status(body: str) -> str | None:
-    """The value of the '- status:' field line, or None when the file has none.
-
-    Last occurrence wins, the way the census's own parser reads a repeated
-    field: this writer needs one answer, and it must be the one a census run on
-    the same bytes would act on.
-    """
-    found: str | None = None
-    for line in body.splitlines():
-        line = line.strip()
-        if line.startswith(STATUS_PREFIX):
-            value = line[len(STATUS_PREFIX):].strip()
-            if value:
-                found = value
-    return found
 
 
 if __name__ == "__main__":

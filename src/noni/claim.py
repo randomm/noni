@@ -24,7 +24,8 @@ Exit codes:
     1  the register file for --session-id does not exist (register first)
     2  the session file is malformed and the claim cannot be appended, or
        the session already claims the same task (a task can only be claimed
-       once per session)
+       once per session), or the session's status is terminal (closed, done,
+       superseded or ended) and the run refuses before writing anything
     3  git push failed after 3 fetch-rebase-push attempts (also a fetch
        failure, a detached HEAD, an unresolvable branch, or a git call that
        timed out)
@@ -59,7 +60,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import _session_git, labels
+from . import _session_git, _session_push, labels
 
 CLAIM_PREFIX = "- claim: "
 # The push loop's bound and attempt count are the session writers' shared
@@ -104,10 +105,13 @@ GIT_OUTPUT_LIMIT: int = 500
 # would let a task like '#42\n' write a two-line row.
 TASK_RE = re.compile(r"^\S+$")
 
-# --branch must be a safe ref name: a single path segment with no slashes, no
-# "..", and no ref-name specials, so a malformed --branch never reaches git.
-# fullmatch for the same trailing-newline reason as TASK_RE.
-BRANCH_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+# --branch must be a safe ref name that the push loop itself would accept.
+# The check lives in ``_session_push.unsafe_branch_reason`` -- the one validator
+# every path into the push passes through -- so the explicit ``--branch`` here
+# and the name discovered from the tree cannot be guarded by two patterns that
+# drift apart. The single-segment rule below is this command's own addition on
+# top of the shared validator.
+BRANCH_SEGMENT_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 def _safe(text: str, limit: int = GIT_OUTPUT_LIMIT) -> str:
@@ -165,54 +169,19 @@ def _append_claim(path: Path, task: str, body: str) -> int:
     return EXIT_OK
 
 
-def _stopped_state_dir(repo: Path) -> tuple[Path | None, bool]:
-    """Locate a rebase this clone is actually stopped in.
+def _run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """This command's git seam, in the shape ``_session_push`` injects.
 
-    Returns (dir, indeterminate). ``dir`` is the state directory (see
-    REBASE_STATE_DIRS) holding a genuinely stopped rebase, or None; it is set
-    only when the directory carries positive evidence of being stopped: both
-    head-name and onto read back non-empty, which is what a live stopped
-    rebase always leaves and what a stray directory does not. ``indeterminate``
-    says the question could not be answered: a probe could not run or a state
-    file could not be read.
-
-    Existence alone is not evidence: a directory whose files cannot be read is
-    somebody else's leftover and aborting it would reset the caller's worktree
-    and index. Probes go through 'git rev-parse --git-path', which resolves the
-    directories wherever the git dir lives (plain clone, worktree, GIT_DIR).
+    The shared rebase verdict takes one callable for every git call it makes (its
+    state probes and its abort alike) and hands it the repo as its first
+    argument; claim.py's own git helper takes the argument list first, so this
+    adapter is what lets the verdict drive claim.py's git and nobody else's.
     """
-    indeterminate = False
-    for name in REBASE_STATE_DIRS:
-        probe = _git(["rev-parse", "--git-path", name], repo)
-        if probe.returncode != 0:
-            # One line, not one per failed probe: outside a repository every
-            # probe fails and git's own text repeated twice is noise.
-            indeterminate = True
-            print(
-                f"{labels.CLAIM}: cannot probe rebase state: {_safe(probe.stderr.strip())}",
-                file=sys.stderr,
-            )
-            break
-        state = Path(probe.stdout.strip())
-        if not state.is_absolute():
-            # --git-path prints a path relative to the working tree git
-            # resolved for this call, which is the clone itself.
-            state = repo / state
-        try:
-            head_name = (state / "head-name").read_text(encoding="utf-8", errors="replace")
-            onto = (state / "onto").read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            # Absent is an answer (nothing stopped here); unreadable is not.
-            if state.is_dir():
-                indeterminate = True
-            continue
-        if head_name.strip() and onto.strip():
-            return state, indeterminate
-    return None, indeterminate
+    return _git(list(args), repo)
 
 
 def _push_with_retry(repo: Path, branch: str, attempts: int = MAX_PUSH_ATTEMPTS) -> int:
-    """fetch-rebase-push with at most `attempts` attempts.
+    """fetch-rebase-push with at most `attempts` attempts, via the shared loop.
 
     The losing pusher ends rebased-and-pushed (both claims land); the census
     then flags the double-claim. Returns EXIT_OK on success, EXIT_PUSH_FAILED
@@ -222,40 +191,21 @@ def _push_with_retry(repo: Path, branch: str, attempts: int = MAX_PUSH_ATTEMPTS)
     the timeout with the state left indeterminate. Every path that can have
     entered a rebase attempts an abort, so a timeout that landed mid-rebase
     does not leave the clone wedged.
+
+    The loop itself is ``_session_push.fetch_rebase_push``'s (its docstring
+    states the attempts, the branch validation and the three verdicts), driven
+    through ``_run_git`` so every call it makes is this command's own git and
+    nothing else: claim.py keeps one git seam, not a copy of the loop. The
+    wording is this command's own table, so the operator reads claim's voice.
     """
-    for attempt in range(1, attempts + 1):
-        if attempt > 1:
-            # A previous push was rejected: fetch, rebase onto the latest tip,
-            # push again.
-            fetch = _git(["fetch", "origin"], repo)
-            if fetch.returncode != 0:
-                print(f"{labels.CLAIM}: fetch failed: " + _safe(fetch.stderr.strip()), file=sys.stderr)
-                return EXIT_PUSH_FAILED
-            rebase = _git(["rebase", "origin/" + branch], repo)
-            if rebase.returncode != 0:
-                if rebase.returncode == GIT_TIMEOUT_RC:
-                    # A killed rebase says nothing about conflicts on its own,
-                    # but it may have stopped before it was killed, so the
-                    # state still decides the report: an unresolved abort is
-                    # what wedges the next command.
-                    return _classify_rebase_failure(repo, rebase, timed_out=True)
-                return _classify_rebase_failure(repo, rebase)
-        push = _git(["push", "origin", branch], repo)
-        if push.returncode == 0:
-            return EXIT_OK
-        if push.returncode == GIT_TIMEOUT_RC:
-            print(
-                f"{labels.CLAIM}: push attempt " + str(attempt) + "/" + str(attempts)
-                + " timed out: " + _safe(push.stderr.strip()),
-                file=sys.stderr,
-            )
-            continue
-        print(
-            f"{labels.CLAIM}: push attempt " + str(attempt) + "/" + str(attempts) + " rejected: "
-            + _safe(push.stderr.strip() or push.stdout.strip()),
-            file=sys.stderr,
-        )
-    return EXIT_PUSH_FAILED
+    return _session_push.fetch_rebase_push(
+        repo, branch, attempts, label=labels.CLAIM,
+        exit_push_failed=EXIT_PUSH_FAILED,
+        exit_rebase_conflict=EXIT_REBASE_CONFLICT,
+        exit_rebase_refused=EXIT_REBASE_REFUSED,
+        messages=_REBASE_MESSAGES,
+        run_git=_run_git,
+    )
 
 
 def _report(code: int, *lines: str) -> int:
@@ -270,80 +220,40 @@ def _report(code: int, *lines: str) -> int:
     return code
 
 
-def _classify_rebase_failure(
-    repo: Path, rebase: subprocess.CompletedProcess[str], timed_out: bool = False
-) -> int:
-    """Turn a failed 'git rebase origin/<branch>' into an exit code.
-
-    The two cases are not the same bug. A rebase that started and stopped
-    leaves the clone mid-rebase, so anything the caller runs next (register.py
-    above all) commits on top of a half-finished rebase: claim.py aborts it
-    and hands back exit 5. A rebase git never started left nothing to clean
-    up, so running an abort there would be noise: exit 6 says commit or
-    stash and re-run.
-
-    ``timed_out`` marks a rebase killed by GIT_TIMEOUT rather than refused by
-    git: the wording keeps the timeout visible (a slow remote is not a
-    conflict) and it reports as the push class, while the state probe still
-    decides whether an abort has to run first.
-    """
-    detail = _safe(rebase.stderr.strip() or rebase.stdout.strip()).splitlines()
-    quoted = " ".join(detail[:3])
-    state, indeterminate = _stopped_state_dir(repo)
-    if state is None and indeterminate:
-        # The probe could not answer, so this run claims no knowledge of the
-        # clone's state and asserts nothing about it: an unrunnable probe must
-        # not become "not stopped", because a real conflict would then be
-        # reported as a refusal whose hint cannot resolve it.
-        return _report(
-            EXIT_REBASE_REFUSED,
-            f"{labels.CLAIM}: rebase failed and its state cannot be read, so no abort "
-            "was attempted: " + quoted,
-            f"{labels.CLAIM}: fix: run 'git status' and 'git rebase --abort' by hand in "
-            + repo.name + ", then re-run claim",
-        )
-    if state is not None:
-        abort = _git(["rebase", "--abort"], repo)
-        if abort.returncode != 0:
-            # The clone is still mid-rebase: say so plainly, and keep git's own
-            # rebase output, because this is the one path where the caller most
-            # needs to know the clone is wedged and what git said about it.
-            return _report(
-                EXIT_REBASE_CONFLICT,
-                f"{labels.CLAIM}: rebase conflict and git rebase --abort failed: "
-                + _safe(abort.stderr.strip()),
-                f"{labels.CLAIM}: git said: " + quoted,
-                f"{labels.CLAIM}: the clone is still mid-rebase in " + repo.name
-                + "; run git rebase --abort by hand",
-            )
-        if timed_out:
-            return _report(
-                EXIT_PUSH_FAILED,
-                f"{labels.CLAIM}: rebase timed out after " + str(GIT_TIMEOUT)
-                + "s and was stopped in a conflict, so it was aborted: " + quoted,
-            )
-        return _report(
-            EXIT_REBASE_CONFLICT,
-            f"{labels.CLAIM}: rebase conflict: someone else changed the same session "
-            "file, so the rebase stopped: " + quoted,
-            f"{labels.CLAIM}: fix: fetch origin, resolve the conflict in the session "
-            "file, then re-run claim; the claim commit is intact on "
-            + repo.name,
-        )
-    if timed_out:
-        # Nothing stopped, so nothing to abort: this is the push class the
-        # timeout belongs to.
-        return _report(
-            EXIT_PUSH_FAILED,
-            f"{labels.CLAIM}: rebase timed out after " + str(GIT_TIMEOUT)
-            + "s: " + quoted,
-        )
-    return _report(
-        EXIT_REBASE_REFUSED,
-        f"{labels.CLAIM}: rebase refused (it never started): " + quoted,
-        f"{labels.CLAIM}: fix: commit or stash the uncommitted changes in this clone, "
-        "then re-run claim; this run started no rebase, so the claim commit is intact",
-    )
+# The wording this command's rebase reports carry, handed to the shared verdict
+# so delegating the reading of the state changes nothing an operator reads. The
+# {name} slot is the repository's directory name, as in every other hint here.
+_REBASE_MESSAGES = {
+    "state_unreadable": (
+        "rebase failed and its state cannot be read, so no abort was attempted: "
+        "{quoted}",
+        "fix: run 'git status' and 'git rebase --abort' by hand in {name}, then "
+        "re-run claim",
+        "note: 'git rev-parse --git-path' could not probe the rebase state, so "
+        "this run reports no knowledge of it",
+    ),
+    "abort_failed": (
+        "rebase conflict and git rebase --abort failed: {abort}",
+        "git said: {quoted}",
+        "the clone is still mid-rebase in {name}; run git rebase --abort by hand",
+    ),
+    "timeout_stopped": (
+        "rebase timed out after {seconds}s and was stopped in a conflict, so it "
+        "was aborted: {quoted}",
+    ),
+    "conflict": (
+        "rebase conflict: someone else changed the same session file, so the "
+        "rebase stopped: {quoted}",
+        "fix: fetch origin, resolve the conflict in the session file, then re-run "
+        "claim; the claim commit is intact on {name}",
+    ),
+    "timeout": ("rebase timed out after {seconds}s: {quoted}",),
+    "refused": (
+        "rebase refused (it never started): {quoted}",
+        "fix: commit or stash the uncommitted changes in this clone, then re-run "
+        "claim; this run started no rebase, so the claim commit is intact",
+    ),
+}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -384,13 +294,20 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_USAGE
 
     branch = args.branch
-    if branch is not None and not BRANCH_RE.fullmatch(branch):
-        print(
-            f"{labels.CLAIM}: --branch {branch!r} is not a safe ref name "
-            "(expected a single segment of letters, digits, ., _ or -)",
-            file=sys.stderr,
-        )
-        return EXIT_USAGE
+    if branch is not None:
+        # The shared validator first (the one the push loop itself applies, so
+        # no --branch value can be refused here and admitted there, or the
+        # reverse), then this command's own single-segment rule.
+        reason = _session_push.unsafe_branch_reason(branch)
+        if not reason and not BRANCH_SEGMENT_RE.fullmatch(branch):
+            reason = "not a single path segment (no slashes) of letters, digits, ., _ or -"
+        if reason:
+            print(
+                f"{labels.CLAIM}: --branch {branch!r} is {reason} "
+                "(expected a single segment of letters, digits, ., _ or -)",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE
 
     # Refused before anything is written: with --no-commit there is no commit
     # to push, so a run that asked for both cannot mean one thing.
@@ -417,6 +334,31 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"{labels.CLAIM}: {session_file.name} is not readable as UTF-8 "
             f"({exc.__class__.__name__}); cannot check for a duplicate claim",
+            file=sys.stderr,
+        )
+        return EXIT_SESSION_MALFORMED
+    # A session that has ended claims nothing further. The check is a write-time
+    # refusal only: it reads this file's own status field, and claim rows an
+    # earlier session left in a file that has since gone terminal are the
+    # census's business, not this command's. The status is read after the UTF-8
+    # check (so a file no parser can read is still reported as malformed, not as
+    # terminal) and before the duplicate-row check (so a terminal session is
+    # reported as terminal whichever task is named), and nothing is written
+    # before it passes. TERMINAL_STATUSES is the census's own set, shared with
+    # close.py rather than copied.
+    status = _session_git.session_status(existing)
+    if status is not None and _session_git.is_terminal_status(status):
+        settled = status.strip().lower()
+        print(
+            f"{labels.CLAIM}: {session_file.name} is {settled}; a session whose "
+            "status is terminal cannot claim a new task (close is final: the "
+            "census ignores a terminal session's claims)",
+            file=sys.stderr,
+        )
+        print(
+            f"{labels.CLAIM}: fix: claim from a session whose status is active, "
+            f"or re-register (--repo {args.repo} --identity IDENTITY) and claim "
+            "from the new session",
             file=sys.stderr,
         )
         return EXIT_SESSION_MALFORMED

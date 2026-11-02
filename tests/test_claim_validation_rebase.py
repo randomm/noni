@@ -22,6 +22,7 @@ from claim_fixtures import (
     _git_blob,
     _git_text,
 )
+from claim_rebase_support import _stopped_rebase_git
 
 
 def _rebase_state_paths(repo: Path) -> list[Path]:
@@ -463,3 +464,30 @@ def test_git_output_is_sanitised_and_bounded() -> None:
     assert len(bounded) < len(huge), "git output must be bounded before the terminal"
     assert bounded.startswith("x" * 50) and "truncated" in bounded, bounded[-40:]
     assert claim_mod._safe("short") == "short"
+
+
+def test_a_rebase_result_never_waited_on_is_not_the_timeout_class(
+        tmp_path: Path, monkeypatch) -> None:
+    """``returncode=None`` on the rebase is not a killed rebase.
+
+    The loop reads the timeout verdict as ``returncode == GIT_TIMEOUT_RC``, and
+    a ``CompletedProcess`` carries ``None`` for a call that was launched and
+    never waited on. Read as a timeout the run prints 'rebase timed out' for a
+    call nobody measured and exits 3 without classifying the clone's state;
+    read as an ordinary refusal it takes the verdict's probes, which is the
+    honest path -- and here it finds a stopped rebase, so the code is the
+    conflict code and the abort really runs. A text-shaped sentinel (``'124'``
+    from a stream that never parsed as an int) is the same non-answer.
+    """
+    claim_mod = _claim_module()
+
+    for shape in (None, str(claim_mod.GIT_TIMEOUT_RC)):
+        calls: list[list[str]] = []
+        monkeypatch.setattr(claim_mod, "_git",
+                            _stopped_rebase_git(tmp_path, shape, calls))
+        code = claim_mod._push_with_retry(tmp_path, "main", attempts=2)
+        assert code == claim_mod.EXIT_REBASE_CONFLICT, (shape, code, calls)
+        assert ["rebase", "origin/main"] in calls, calls
+        assert ["rebase", "--abort"] in calls, (
+            f"a stopped clone is aborted whichever shape the rebase answered "
+            f"with: {calls}")

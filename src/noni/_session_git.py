@@ -5,8 +5,9 @@ register.py, claim.py, close.py and release.py all write one file under
 here, once, so no writer keeps its own copy of a git call:
 
   atomic_write(path, text)              -- same-directory temp file, os.replace
-  session_name(sid)                     -- the one repo-relative name a writer
-                                       commits: ``noni/sessions/<sid>.md``
+  writer_name(sid)                      -- the one repo-relative name a writer
+                                       commits: ``noni/sessions/<sid>.md``, or
+                                       ``""`` for an id it will not accept
   stage_and_commit(repo, name, msg)     -- three steps, in this order:
       1. ``git -C <abspath(repo)> reset -q -- <name>``
                                       the writer's own index entry back to HEAD
@@ -25,9 +26,11 @@ here, once, so no writer keeps its own copy of a git call:
 a path the caller spells from wherever it happens to be standing. That is a
 contract rather than a guess: the primitive never resolves a caller's path
 against the process working directory, so no reading of a relative ``--repo``
-can survive into the pathspec. :func:`session_name` builds the name, and
-:func:`relative_name` is the one guard that refuses a name which does not
-stand inside the root. The writers take the refusal before they write a byte.
+can survive into the pathspec. :func:`writer_name` is the one validated
+derivation of that name -- it asks the session id the questions a name cannot
+answer for itself -- and :func:`relative_name` is the guard :func:`stage_and_commit`
+runs on whatever name it is handed, including one a caller built by hand. The
+writers take the refusal before they write a byte.
 The push loop is not here: it lives in :mod:`noni._session_push`, which imports
 these primitives from here. A re-export would be a cycle, so the writers import
 that module directly for their ``--push``.
@@ -65,12 +68,8 @@ import subprocess
 import tempfile
 import unicodedata
 from pathlib import Path, PurePosixPath
-from typing import Literal
 
 from . import gitenv
-
-# What :func:`stopped_state` answers about one probed rebase state directory.
-StoppedStateAnswer = Literal["stopped", "absent", "unreadable"]
 
 # Statuses that end a session. A claim from a session in one of these states
 # no longer counts toward the double-claim check, and close.py calls a session
@@ -80,10 +79,13 @@ StoppedStateAnswer = Literal["stopped", "absent", "unreadable"]
 # a status added on one side without the other is that test's failure.
 TERMINAL_STATUSES: frozenset[str] = frozenset({"closed", "done", "superseded", "ended"})
 
-# The two directories a stopped rebase can leave: the merge backend writes
-# rebase-merge/, the am backend writes rebase-apply/, so the classifier probes
-# both.
-REBASE_STATE_DIRS: tuple[str, ...] = ("rebase-merge", "rebase-apply")
+# Where the session files live, as a name inside the state root. The four
+# writers and the census read this one directory; a writer's file is always
+# ``<this>/<session-id>.md``, so :func:`writer_name` is the only place the
+# spelling is written. The suffix is part of the shape a name must have: every
+# caller of :func:`relative_name` stages one session file.
+SESSIONS_REL = "noni/sessions"
+SESSION_SUFFIX = ".md"
 
 GIT_TIMEOUT = 60
 # What a killed git call reports. No caller may read a git answer from it.
@@ -104,6 +106,39 @@ GIT_OUTPUT_LIMIT = 500
 # is what keeps free text out of ``git commit -m``. fullmatch, not match: '$'
 # also matches before a trailing newline.
 TOKEN_RE = re.compile(r"^[^\s/\\]+$")
+
+# A name that contains a control character can never reach git as an argv
+# element: ``subprocess`` refuses an embedded NUL with ``ValueError``. A caller
+# that got such a name as far as a git call would turn ``stage_and_commit``'s
+# never-raises promise into a traceback, so control characters are refused where
+# the name is judged, not where they crash.
+CONTROL_CHARS = frozenset(chr(code) for code in range(0x20)) | frozenset({"\x7f"})
+
+# The one wording for a refused name: the sentence :func:`stage_and_commit`
+# returns and every writer prints, and the fix line that goes under it. Both
+# live here so the primitive's backstop and the four writers cannot say two
+# different things about the same refusal. ``{name}`` is the offender as the
+# caller spelled it; ``{arg}`` names the argument the operator typed.
+NAME_REFUSAL = ("cannot commit {name}: the session writers commit only a path "
+                "inside the state root (never an absolute path, never one that "
+                "leaves it, never a path outside {directory}, and never a name "
+                "carrying a control character)")
+NAME_REFUSAL_HINT = ("pass {arg} as one file name under {directory}, without "
+                     "its .md suffix and with no path separator in it")
+
+
+def name_refusal(name: object, *, arg: str = "--session-id",
+                 directory: str = SESSIONS_REL) -> tuple[str, str]:
+    """The ``(headline, hint)`` pair for one refused name, from the one pair.
+
+    Four writers and the primitive each print this refusal, and a caller that
+    composed its own sentence would be the drift this helper exists to prevent.
+    ``arg`` names the argument the operator actually typed, so the hint says
+    which argument to fix instead of pointing at a state root that was fine.
+    """
+    return (NAME_REFUSAL.format(name=name, directory=directory),
+            NAME_REFUSAL_HINT.format(arg=arg, directory=directory))
+
 
 
 def safe_text(text: str, limit: int = GIT_OUTPUT_LIMIT) -> str:
@@ -254,15 +289,15 @@ def atomic_write(path: Path, text: str) -> None:
         raise
 
 
-# Where the session files live, as a name inside the state root. The four
-# writers and the census read this one directory; a writer's file is always
-# ``<this>/<session-id>.md``, so :func:`session_name` is the only place the
-# spelling is written.
-SESSIONS_REL = "noni/sessions"
+def writer_name(session_id: str) -> str:
+    """The name a session's own file carries inside the state root, or ``""``.
 
-
-def session_name(session_id: str) -> str:
-    """The name a session's own file carries inside the state root.
+    One validated derivation for the four writers: the id must be a single token
+    (see :func:`valid_token` -- no whitespace, no path separator, nothing that
+    can reach another directory from inside a name) and must not begin with a
+    ``.``, which would make the file a hidden one no census listing reports. An
+    id that fails either answers ``""``, and the caller refuses on its own usage
+    code rather than writing a file at a name it cannot defend.
 
     One function because four writers must stage, print and probe the same
     string: the file write location (``repo / name``), the pathspec, the failure
@@ -270,11 +305,13 @@ def session_name(session_id: str) -> str:
     commit primitive takes -- never a path the caller spelled from its own cwd
     (see :func:`stage_and_commit`).
     """
-    return f"{SESSIONS_REL}/{session_id}.md"
+    if not valid_token(session_id) or session_id.startswith("."):
+        return ""
+    return f"{SESSIONS_REL}/{session_id}{SESSION_SUFFIX}"
 
 
 def relative_name(name: str | PurePosixPath) -> str:
-    """``name`` normalised, or ``""`` when it does not name a path inside the root.
+    """``name`` normalised, or ``""`` when it is not a session file inside the root.
 
     The contract :func:`stage_and_commit` relies on, written down where a caller
     can check it before it writes anything: the name it hands the commit
@@ -286,21 +323,39 @@ def relative_name(name: str | PurePosixPath) -> str:
     of it arrives at a path whose first component is ``..`` -- refused whatever
     the rest of it spells.
 
-    Three shapes are refused: an absolute path (git accepts an absolute pathspec
+    Four shapes are refused: an absolute path (git accepts an absolute pathspec
     from outside the ``-C`` tree, returns 0 and stages nothing, so a silent
     nothing-landed is the exact fault the primitive must not be able to produce);
-    a name that walks out of the root; and the empty name or the root itself,
-    because a writer commits one file and not a tree.
+    a name that walks out of the root; the empty name or the root itself,
+    because a writer commits one file and not a tree; and a name carrying a
+    control character, because such an argv element makes ``subprocess`` raise
+    ``ValueError`` and this module's promise is that a bad name comes back as
+    ``(False, why)``.
 
-    The backslash is a separator here and not a character in a name: ``a\\b`` is
-    a path on Windows, and a pathspec that is really one bizarre POSIX filename
-    would be committed rather than refused.
+    Two shapes are refused on top of the path rules because every caller of this
+    function stages one session file: a name that is not under
+    :data:`SESSIONS_REL`, and one that does not end in :data:`SESSION_SUFFIX`.
+    The writers all build their name with :func:`writer_name`, and the one
+    remaining caller that takes a name from a command line -- ``register.py``'s
+    ``--file`` -- admits only a name equal to one of those two. So the shape
+    check costs no caller anything and makes the primitive's answer about the
+    name it can actually commit.
+
+    A backslash is a character of a POSIX file name, not a separator: ``a\\b`` is
+    one bizarre filename on this platform and two components on Windows, and the
+    judgement made here is the POSIX one. A writer's own id cannot carry one
+    (:func:`valid_token` refuses it), so the only name this admits with a
+    backslash is one somebody spelled by hand -- and it is refused as an
+    ordinary file name under the root rather than silently re-read as a path into
+    a subdirectory.
 
     Returns ``""`` rather than raising: the caller's one ``if not rel`` has to
     cover every way a path can be wrong, including the refusal this module makes
     on the caller's behalf for a state root it has not looked at yet.
     """
-    text = str(name).replace("\\", "/")
+    text = str(name)
+    if any(ch in CONTROL_CHARS for ch in text):
+        return ""
     if text.startswith("/"):
         return ""
     # ``os.path.normpath`` is the collapse: it resolves every ``.`` and ``..``
@@ -314,13 +369,19 @@ def relative_name(name: str | PurePosixPath) -> str:
     if not normalised.parts or normalised.parts[0] == "..":
         # '' and '.' both answer with no parts: neither names a file.
         return ""
-    return normalised.as_posix()
+    posix = normalised.as_posix()
+    # ``normpath('noni/sessions/.md')`` is 'noni/sessions/.md' and a name that
+    # is the root itself normalises to 'noni/sessions': both are caught here
+    # rather than by a comparison against the root.
+    if not posix.startswith(f"{SESSIONS_REL}/") or not posix.endswith(SESSION_SUFFIX):
+        return ""
+    return posix
 
 
 def stage_and_commit(repo: Path, name: str | PurePosixPath, message: str) -> tuple[bool, str]:
     """Commit exactly ``name`` under ``message``; ``(True, "")`` or ``(False, why)``.
 
-    ``name`` is a path inside the state root -- what :func:`session_name`
+    ``name`` is a path inside the state root -- what :func:`writer_name`
     returns -- and the three steps are the primitive (see the module docstring):
     reset the path's own index entry, add it, then ``commit --only`` that path.
     A file nobody had committed before is committed by these same three steps,
@@ -337,9 +398,14 @@ def stage_and_commit(repo: Path, name: str | PurePosixPath, message: str) -> tup
     ``ValueError``, so the caller's one ``if not ok`` covers every way this can
     fail and no writer guards a git call with its own except:
 
-    * the name is not one inside the state root -- :func:`relative_name`'s
-      verdict, said in noni's words. A writer asks the same question before it
-      writes, so this half is the backstop rather than the usual path;
+    * the name is not one the primitive will commit -- :func:`relative_name`'s
+      verdict (absolute, outside the root, not a ``.md`` file under
+      :data:`SESSIONS_REL`, or carrying a control character), said in noni's
+      words from :data:`NAME_REFUSAL`. A writer asks the same question before it
+      writes, so this half is the backstop rather than the usual path. The
+      control-character half is what keeps the never-raises promise: an argv
+      element carrying a NUL makes ``subprocess`` raise ``ValueError``, so such
+      a name must never be handed to git;
     * the state root is itself a symlink -- :func:`linked_state_root`'s.
 
     Any git refusal also comes back as ``(False, one noni-worded line)``: this
@@ -352,9 +418,7 @@ def stage_and_commit(repo: Path, name: str | PurePosixPath, message: str) -> tup
     """
     rel = relative_name(name)
     if not rel:
-        return False, (f"cannot commit {name}: the session writers commit only a "
-                       "path inside the state root (never an absolute path and "
-                       "never one that leaves it)")
+        return False, name_refusal(name)[0]
     linked, why = linked_state_root(repo)
     if linked is not None:
         return False, f"cannot commit {rel}: {why}"
@@ -430,36 +494,7 @@ def _safe(text: str) -> str:
     return "" if cleaned.strip() == "" else cleaned
 
 
-def stopped_state(repo: Path, probed: Path) -> tuple[Path | None, StoppedStateAnswer]:
-    """One probed rebase state directory: ``(dir, answer)``, answer in three kinds.
-
-    ``"stopped"`` when the directory carries positive evidence of a live
-    stopped rebase -- both ``head-name`` and ``onto`` read back non-empty,
-    which is what a stopped rebase always leaves and what a stray directory
-    does not; ``"absent"`` when there is nothing stopped here; ``"unreadable"``
-    when the question could not be answered because a state file could not be
-    read. Existence alone is not evidence: a directory whose files cannot be
-    read is somebody else's leftover, and aborting it would reset the caller's
-    worktree and index -- which is why unreadable is its own answer and not
-    folded into either of the others.
-
-    ``probed`` is what ``git rev-parse --git-path`` printed, which is relative
-    to the working tree that call resolved (the clone itself), so a relative
-    answer is joined to ``repo`` here rather than by each caller.
-    """
-    state = probed if probed.is_absolute() else repo / probed
-    try:
-        head_name = (state / "head-name").read_text(encoding="utf-8", errors="replace")
-        onto = (state / "onto").read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        # Absent is an answer (nothing stopped here); unreadable is not.
-        return None, "unreadable" if state.is_dir() else "absent"
-    if head_name.strip() and onto.strip():
-        return state, "stopped"
-    return None, "absent"
-
-
-# The push loop lives in :mod:`noni._session_push`, which imports these
-# primitives from here. A re-export here would be a cycle, so the writers import
-# that module directly.
+# The push loop lives in :mod:`noni._session_push` and the rebase-state probe in
+# :mod:`noni._session_rebase_state`, both of which import these primitives from
+# here. A re-export would be a cycle, so callers import those modules directly.
 

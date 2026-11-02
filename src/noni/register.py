@@ -39,13 +39,22 @@ Exit codes:
     3  git could not commit what this run wrote, or a --push failed after 3
        fetch-rebase-push attempts (also a fetch failure, a detached HEAD, or an
        unresolvable branch)
-    4  --status or --identity is not a single token, or --no-commit was combined
-       with --push (there would be nothing committed to push)
+    4  --status or --identity is not a single token, the session name this run
+       allocated is not one file under noni/sessions/ (a name the writer derived
+       itself, so the hint names --identity rather than blaming --repo or a
+       symlink), or --no-commit was combined with --push (there would be nothing
+       committed to push)
 
 The --file rule, in both directions: this run's allocation and the marked
 session's file are the only paths the writer admits, and each may name a
 different file, so the two are not the same input. A foreign path — neither
 this run's allocation nor the marked session's file — is exit 2.
+
+The session id is minted once per run and that one string names the file
+written, the pathspec, the marker, the commit subject and the printed line. The
+marker's text is read back as an input, not a fact: text that is not a valid
+session id is not a marker for a session, so the run says so, treats the working
+copy as unmarked, and allocates afresh — it never builds a path from marker text.
 
 --no-commit writes through the same validation chain and runs no git at all,
 then prints exactly ``register.py: <path> left uncommitted``; --push pushes the
@@ -63,7 +72,7 @@ import argparse
 import sys
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from . import _marker, _session_git, _session_push, claim, labels
 
@@ -73,7 +82,7 @@ from . import _marker, _session_git, _session_push, claim, labels
 
 # Where session files live, relative to the state root. The one spelling is the
 # primitive's (``_session_git.SESSIONS_REL``) and a writer's file is always
-# ``_session_git.session_name(sid)``: the write location, the git pathspec and
+# ``_session_git.writer_name(sid)``: the write location, the git pathspec and
 # every message are derived from that one name, so a relative ``--repo`` cannot
 # make two of them name different files.
 SESSIONS_REL = _session_git.SESSIONS_REL
@@ -197,15 +206,15 @@ def _resolve_target(allocated: str, marked: str | None,
     if args.file is None:
         return allocated
     name = _session_git.relative_name(args.file)
-    admitted = [allocated] if marked is None else [
-        allocated, _session_git.session_name(marked)]
+    marked_name = _session_git.writer_name(marked) if marked is not None else ""
+    admitted = [allocated] if not marked_name else [allocated, marked_name]
     if name not in admitted:
         return _fail(
             EXIT_USAGE,
             f"refusing to write {args.file}: the writer writes only the name it "
             f"allocated ({allocated})"
-            + ("" if marked is None else f" or the marked session's file "
-                                         f"({_session_git.session_name(marked)})"),
+            + ("" if not marked_name else f" or the marked session's file "
+                                          f"({marked_name})"),
             "drop --file (the writer allocates the path), pass this run's allocation, "
             "or pass the session this working copy is marked for",
         )
@@ -275,21 +284,31 @@ def main(argv: list[str] | None = None) -> int:
                      "drop one of the two")
 
     sessions_dir = repo / SESSIONS_REL
-    # The one name this run owns, derived before anything is written: the file
-    # location (``repo / name``), the git pathspec, the printed rel and every
-    # message all come from this string, so a relative ``--repo`` cannot make two
-    # of them name different files. Refused here, before the sessions directory
-    # is created, the file is written or the marker is touched: a refusal may
-    # never leave a written file and a marker behind (the #57 contract), which is
-    # why this sits ahead of every write below rather than beside the commit.
-    name = _session_git.session_name(_make_session_id())
-    rel = _session_git.relative_name(name)
+    # The session id this run owns, minted ONCE here and threaded through every
+    # use of it: the name it writes (``repo / rel``), the git pathspec, the
+    # marker's contents, the commit subject and the printed line all name this
+    # one string. Minting twice would let the printed id and the committed id
+    # disagree, which is exactly the drift the name contract exists to prevent.
+    # The id is the allocator's own (see :func:`_make_session_id`: a UTC date,
+    # a hyphen and six hex characters), so it cannot be a bad one from a
+    # command line -- the guard below is the backstop that keeps the derivation
+    # single rather than a second path to a name. Refused here, before the
+    # sessions directory is created, the file is written or the marker is
+    # touched: a refusal may never leave a written file and a marker behind (the
+    # #57 contract), which is why this sits ahead of every write below rather
+    # than beside the commit.
+    session_id = _make_session_id()
+    rel = _session_git.writer_name(session_id)
     if not rel:
-        return _fail(EXIT_GIT, f"cannot commit {name}: the session writers commit "
-                               "only a path inside the state root (never an "
-                               "absolute path and never one that leaves it)",
-                     f"pass the state root itself, not a symlink to it, then "
-                     f"re-run register.py --repo {args.repo}")
+        # The allocator's own answer is not a name it can commit: register's
+        # argument code, because the fault is in a bad argument rather than in
+        # git (EXIT_GIT would blame --repo or a symlink for a name the writer
+        # derived itself), and the hint names --identity, the argument that
+        # decides the session this run allocates.
+        headline, hint = _session_git.name_refusal(
+            f"{SESSIONS_REL}/{session_id}{_session_git.SESSION_SUFFIX}",
+            arg="--identity")
+        return _fail(EXIT_BAD_ARGS, headline, hint)
 
     if not sessions_dir.exists():
         # The sessions dir is created on first registration: a fresh repo has
@@ -304,13 +323,30 @@ def main(argv: list[str] | None = None) -> int:
                          f"check that {repo} is writable, then re-run register.py")
 
     marker = _marker.marker_path(repo)
+    # The marker is the working copy's own uncommitted file, so its text is an
+    # input rather than a fact: it names the id this working copy owns, and a
+    # name built from it is a name nobody validated. ``writer_name`` is the same
+    # gate a command-line id passes, so a marker that reads back ``../../x`` --
+    # hand-edited, or left by an earlier run on a tree that was moved -- cannot
+    # put a path outside the state root into a read, a pathspec or a message.
+    # The documented marker contract is that the marker holds the id this command
+    # wrote (see the module docstring: it is written by this command and read by
+    # no census), so text that is not one is not a marker for a session at all:
+    # the run says so, treats the working copy as unmarked, allocates afresh and
+    # re-marks it for the session it actually writes. That is the branch that
+    # matches the documented contract; a name is never built from marker text.
     marked = _marker.read_marker(marker)
+    if marked is not None and not _session_git.writer_name(marked):
+        print(f"{labels.REGISTER}: {_marker.MARKER_NAME} names "
+              f"{marked!r}, which is not a session id; ignoring it and allocating "
+              "a new session", file=sys.stderr)
+        marked = None
     # The reuse question, answered only for a marked file that exists and has
     # not ended: a marker naming a file that is gone is no evidence of a
     # session (see the module docstring), and neither is one whose status is
     # terminal -- in both cases this working copy starts a fresh session and the
     # marker is rewritten for it.
-    marked_file = repo / _session_git.session_name(marked) if marked is not None else None
+    marked_file = repo / _session_git.writer_name(marked) if marked else None
     reuse = False
     if marked_file is not None and marked_file.is_file():
         try:
@@ -362,9 +398,8 @@ def main(argv: list[str] | None = None) -> int:
         return target
 
     # A new session: write, and only then mark this working copy with
-    # the id whose file is on disk.
-    session_id = PurePosixPath(target).name.removesuffix(".md")
-    target_file = repo / target
+    # the id this run allocated -- the same string, never a re-derived one.
+    target_file = repo / rel
     host = args.host or session_id
     # Default to the repo's basename, not an absolute machine-local path:
     # the register file is committed to a public repo, so the worktree field

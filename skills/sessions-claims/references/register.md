@@ -88,6 +88,12 @@ same working copy recognise the session it already owns.
   itself, so two worktrees of one repository never share a session. The path is
   built from `--repo` and never through `git rev-parse`, `GIT_DIR` or
   `GIT_WORK_TREE`, so the marker belongs to the tree the operator named.
+- **What it holds.** One session id: the id this command allocated, and nothing
+  else. The id is read back as an input, not a fact — it passes the same gate a
+  `--session-id` on the command line passes (one token, no path separator, no
+  leading dot). Text that is not a session id is not a marker for a session: the
+  run says so on stderr, treats the working copy as unmarked, allocates a new
+  session and re-marks the tree for it. No path is ever built from marker text.
 - **What the next register does with it.** An active marked session is
   continued (exit 0, nothing written, no commit) when the identity matches, and
   refused (exit 1, both identities named) when it does not. A marked session in
@@ -123,12 +129,16 @@ The path git is handed is a path *inside* the state root — `noni/sessions/
 carrying no component of a relative `--repo`. The writer derives that one name and
 uses it for the file it writes (`<repo>/<name>`), for the pathspec and for every
 message, so `--repo` alone decides which repository is written and the process
-directory has no say in it. A name that is absolute, or that leaves the root with
-`..`, is refused before anything is written: an absolute pathspec is what `git
-add` accepts from outside the `-C` tree, exiting 0 and staging nothing, so a
-writer that admitted one would report a commit that carried no file. Every git
-call is bounded by a timeout, makes no signing promise, runs no repository hooks,
-and refuses the external transports a remote could name.
+directory has no say in it. The id is minted once per `register.py` run and that
+single string names the file, the pathspec, the marker, the commit subject and the
+printed line. A name that is absolute, that leaves the root with `..`, that is not
+a `.md` file under `noni/sessions/`, or that carries a control character, is
+refused before anything is written: an absolute pathspec is what `git add` accepts
+from outside the `-C` tree, exiting 0 and staging nothing, so a writer that
+admitted one would report a commit that carried no file, and a name carrying a
+control character would make the git call itself raise rather than report. Every
+git call is bounded by a timeout, makes no signing promise, runs no repository
+hooks, and refuses the external transports a remote could name.
 
 ### Commit refused by git
 

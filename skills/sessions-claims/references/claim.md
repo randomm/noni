@@ -50,7 +50,11 @@ The validation chain is the same one the committing path runs, in the same
 order, and nothing is written before it passes: the register file must exist
 (exit 1), the session file must carry the `- claims:` marker and must not
 already claim the task (exit 2, including when an earlier row was itself left
-uncommitted), and `--task` must be a single token (exit 4).
+uncommitted), and `--task` must be a single token (exit 4). `--session-id` is
+validated the same way by all four writers: it must be one token with no leading
+dot, so a value that would name a file outside `noni/sessions/` (a `..` that
+walks out of the state root, a path separator, embedded whitespace) is refused
+with exit 4 and nothing is written.
 
 `--branch` is validated under `--no-commit` and otherwise ignored: an unsafe
 value exits 4, a valid one changes nothing, because there is no push to
@@ -157,7 +161,7 @@ tables are in `references/census.md`.
 | `1` | the register file for `--session-id` does not exist (register first) |
 | `2` | the session file is malformed (no `- claims:` marker, not readable as UTF-8), the session already claims the same task, or the session's status is terminal; see the terminal-status paragraph above for what each refusal writes |
 | `3` | push failed after 3 fetch-rebase-push attempts; also a failed fetch, a detached HEAD, an unresolvable branch, a git call that timed out, or a `git add`/`git commit` that git refused (the row is left in the worktree or the index, unstaged or staged as the failure says) |
-| `4` | usage error: bad `--task` or `--branch` value, `--no-commit` with `--push`, a `--repo` that is not a directory, or a `--repo` that is a symlink (refused, never followed — the message names the real path) |
+| `4` | usage error: bad `--task`, `--session-id` or `--branch` value (`--session-id` must name one file under `noni/sessions/`, so whitespace, a path separator, a `..` walk out of the state root or a leading dot is refused), `--no-commit` with `--push`, a `--repo` that is not a directory, or a `--repo` that is a symlink (refused, never followed — the message names the real path) |
 | `5` | rebase conflict; see the abort post-condition above |
 | `6` | rebase refused, or its state could not be read; see the hints above |
 
@@ -204,7 +208,7 @@ report for the task go away.
 | `1` | the register file for `--session-id` does not exist (register first) |
 | `2` | the session does not hold that task, or the file is unreadable, not UTF-8, carries no `- claims:` marker, holds the row twice, `--repo` names no directory, or `--repo` is a symlink (refused, never followed) |
 | `3` | git could not commit the change, or `--push` failed after 3 fetch-rebase-push attempts (also a fetch failure, a detached HEAD, or an unresolvable branch) |
-| `4` | `--task` or `--session-id` is not a single token, or `--no-commit` was combined with `--push` |
+| `4` | `--task` or `--session-id` is not a single token (`--session-id` is also the name of one file under `noni/sessions/`, so a path separator or a `..` walk out of the state root is refused), or `--no-commit` was combined with `--push` |
 
 `--no-commit` runs no git at all and prints `release.py: <path> left
 uncommitted`; a working copy with no git directory answers the same line, since
@@ -245,7 +249,7 @@ uncommitted and, after it, what git said, sanitised.
 | `1` | the register file for `--session-id` does not exist (register first) |
 | `2` | the file is unreadable, not UTF-8, carries no `- status:` field line, `--repo` names no directory, or `--repo` is a symlink (refused, never followed) |
 | `3` | git could not commit the change, or `--push` failed after 3 fetch-rebase-push attempts |
-| `4` | `--session-id` is not a single token, or `--no-commit` was combined with `--push` |
+| `4` | `--session-id` is not a single token with no leading dot (the name of one file under `noni/sessions/`, so a path separator or a `..` walk out of the state root is refused), or `--no-commit` was combined with `--push` |
 
 ## What "claim" does not mean
 

@@ -22,10 +22,11 @@ point is the classification of a given pathspec rather than the run that produce
 one. Under the explicit-name contract a caller cannot hand the primitive a
 ``--repo`` component at all -- :func:`noni._session_git.relative_name` refuses a
 name that is absolute or that leaves the root, and a caller builds its name with
-:func:`noni._session_git.session_name` -- so the doubled spelling is planted here
+:func:`noni._session_git.writer_name` -- so the doubled spelling is planted here
 as the classifier's own pathspec argument. That is precisely the reading this
 suite was written to catch: a pathspec that named the decoy instead of the run's
-own file, which is what the old ``rel_of`` heuristic could still produce.
+own file, which is what the old cwd-joining heuristic could still produce (no
+such helper is in the package any more).
 
 All cases run on the nested-state fixture (project, git-ignored clone, decoy
 committed at the doubled path, origin holding ``main``) with the process cwd

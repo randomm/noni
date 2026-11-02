@@ -349,13 +349,24 @@ def test_failure_hints_name_their_code_and_carry_no_traceback(tmp_path):
     assert "Traceback" not in usage.stderr, usage.stderr
 
 
-def test_non_token_arguments_exit_four(tmp_path):
+def test_non_token_session_id_exits_four(tmp_path):
+    """The session id shares the wording the four writers agree on.
+
+    A --session-id is both a commit-message token and a file name, so it is
+    refused by the one derivation (``_session_git.writer_name``) and reported in
+    the one sentence (``_session_git.NAME_REFUSAL``), not in a per-writer token
+    sentence that could drift from the primitive's. --task keeps the token
+    wording: it names a row, never a path.
+    """
     clone, _ = _repo_with_session(tmp_path)
-    for bad in ("a b", "a/b", ""):
+    for bad in ("a b", "a/b", "", "sub/../../../victim", ".hidden"):
         proc = run_release(clone, bad, "#1")
         assert proc.returncode == release_mod.EXIT_USAGE, (bad, proc.returncode)
-        assert "not a single token" in proc.stderr, proc.stderr
+        assert "inside the state root" in proc.stderr, (bad, proc.stderr)
+        assert "--session-id" in proc.stderr, (bad, proc.stderr)
+        assert "Traceback" not in proc.stderr, (bad, proc.stderr)
 
+    for bad in ("a b", "a/b", ""):
         proc = run_release(clone, "2026-10-01-aaaaaa", bad)
         assert proc.returncode == release_mod.EXIT_USAGE, (bad, proc.returncode)
         assert "not a single token" in proc.stderr, proc.stderr

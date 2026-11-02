@@ -123,15 +123,16 @@ def main(argv: list[str] | None = None) -> int:
                      "pass the state root itself, not a symlink to it")
 
     # Both tokens reach git or the file: the task goes into the commit message
-    # ("release: <task>") and both name a row and a path, so neither may carry
-    # whitespace or a path separator. Refused before any read or write.
+    # ("release: <task>") and the session id names a row and a path, so neither
+    # may carry whitespace or a path separator. The id is validated by the one
+    # derivation the four writers share (which also refuses a leading dot -- a
+    # hidden file the census's listing would not report). Refused before any read
+    # or write.
     session_id = args.session_id.strip()
-    if not _session_git.valid_token(session_id):
-        return _fail(EXIT_USAGE,
-                     f"--session-id {args.session_id!r} is not a single token "
-                     "(no whitespace, no path separator)",
-                     "pass the session id, the file name under noni/sessions/ "
-                     "without its .md suffix")
+    rel = _session_git.writer_name(session_id)
+    if not rel:
+        headline, hint = _session_git.name_refusal(f"--session-id {args.session_id!r}")
+        return _fail(EXIT_USAGE, headline, hint)
     task = args.task.strip()
     if not _session_git.valid_token(task):
         return _fail(EXIT_USAGE,
@@ -144,19 +145,11 @@ def main(argv: list[str] | None = None) -> int:
                      "nothing committed to push)",
                      "drop one of the two")
 
-    # The one name this run owns, derived before any read or write: the write
-    # location (``repo / name``), the pathspec, the failure wording and the hint
-    # all name this string, which is relative to the state root and carries no
-    # component of a relative --repo. Refused before the register is looked for,
-    # so a refusal never leaves a written file behind.
-    rel = _session_git.relative_name(_session_git.session_name(session_id))
-    if not rel:
-        return _fail(EXIT_USAGE, f"--repo {args.repo}: the session writers commit "
-                                 "only a path inside the state root (never an "
-                                 "absolute path and never one that leaves it)",
-                     "pass the state root itself, not a symlink to it, and a "
-                     "session id that is the file name under noni/sessions/ "
-                     "without its .md suffix")
+    # The write location (``repo / rel``), the pathspec, the failure wording and
+    # the hint all name the string derived above, which is relative to the state
+    # root and carries no component of a relative --repo. The refusal above ran
+    # before the register was looked for, so a refusal never leaves a written
+    # file behind.
     session_file = repo / rel
     if not session_file.is_file():
         return _fail(EXIT_SESSION_MISSING, f"register file not found: {session_file}",

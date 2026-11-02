@@ -37,7 +37,7 @@ def _tracked_session(repo: Path) -> Path:
     target = repo / "noni" / "sessions" / "2026-10-01-dddddd.md"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("- status: active\n", encoding="utf-8")
-    ok, why = _session_git.stage_and_commit(repo, _session_git.session_name("2026-10-01-dddddd"),
+    ok, why = _session_git.stage_and_commit(repo, _session_git.writer_name("2026-10-01-dddddd"),
                                             "register: d")
     if not ok:
         raise AssertionError(f"the fixture could not commit its baseline: {why}")
@@ -75,11 +75,6 @@ def _repo(tmp_path: Path, *, isolated: bool = True) -> Path:
 def _git_cached(root: Path) -> list[str]:
     """The paths ``root``'s index holds against HEAD (the staged set)."""
     return _git_ok(root, "diff", "--cached", "--name-only").stdout.split()
-
-
-def _session_name(session_id: str) -> str:
-    """The name a session's own file carries, straight from the product."""
-    return _session_git.session_name(session_id)
 
 
 def _commit_files(repo: Path, rev: str = "HEAD") -> list[str]:

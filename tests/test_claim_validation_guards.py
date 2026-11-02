@@ -1,7 +1,11 @@
 """The guards of claim.py: a task, a branch, a duplicate, a detached HEAD.
 
 Extracted from the claim suite: the input validation chain and the refusals it
-raises before any write, asserted through the CLI's exit codes."""
+raises before any write, asserted through the CLI's exit codes. The guard on
+``--session-id`` itself lives in ``test_claim_session_id_guard.py``, which is
+about the derivation the four writers share rather than about claim's own
+arguments.
+"""
 
 import subprocess
 from pathlib import Path

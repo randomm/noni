@@ -31,12 +31,11 @@ from ._session_git import (
     GIT_TIMEOUT,
     GIT_TIMEOUT_RC,
     MAX_PUSH_ATTEMPTS,
-    REBASE_STATE_DIRS,
     _detail,
     _safe,
     git,
-    stopped_state,
 )
+from ._session_rebase_state import REBASE_STATE_DIRS, stopped_state
 
 # The shape every git seam in this module has: the repo first, then the git
 # argv, and a bounded CompletedProcess back. The two injectable parameters below

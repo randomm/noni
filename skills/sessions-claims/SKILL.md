@@ -132,7 +132,8 @@ left uncommitted with `--no-commit`); `1` no such session file; `2` the session
 does not hold the task, or the file is unreadable or carries no `- claims:`
 marker, or `--repo` names no directory or is a symlink (refused, never
 followed); `3` git could not commit; `4` a `--task`/`--session-id` that is not one
-token, or `--no-commit`
+token with no leading dot (the id is also the name of one file under
+`noni/sessions/`), or `--no-commit`
 with `--push`; `5` the `--push` rebase started and stopped on a session-file
 conflict (this run aborts it); `6` the rebase never started (the hint names
 committing or stashing) or its state could not be read. `5` and `6` are
@@ -164,7 +165,8 @@ uncommitted with `--no-commit`), or already closed; `1` no such session file;
 `2` the file is unreadable or carries no `- status:` line, or `--repo` names no
 directory or is a symlink (refused, never followed); `3` git could not commit, or
 `--push` failed; `4` a `--session-id`
-that is not one token, or `--no-commit` with `--push`; `5` the `--push` rebase
+that is not one token with no leading dot (the id is also the name of one file
+under `noni/sessions/`), or `--no-commit` with `--push`; `5` the `--push` rebase
 started and stopped on a session-file conflict (this run aborts it); `6` the
 rebase never started (the hint names committing or stashing) or its state could
 not be read. `5` and `6` are `claim.py`'s codes, and mean the same thing here.
@@ -222,7 +224,7 @@ is stopped. Exit codes (the full table, with the abort post-condition, is in
 | `1` | the register file for `--session-id` does not exist (register first) |
 | `2` | the session file is malformed (no `- claims:` marker, not readable as UTF-8), the session already claims the same task, or the session's status is terminal; see the paragraph above for what each refusal writes |
 | `3` | push failed after 3 fetch-rebase-push attempts; also a failed fetch, a detached HEAD, an unresolvable branch, a git call that timed out, or a `git add`/`git commit` that git refused |
-| `4` | usage error: bad `--task` or `--branch` value, `--no-commit` with `--push`, a `--repo` that is not a directory, or a `--repo` that is a symlink (refused, never followed — the message names the real path) |
+| `4` | usage error: bad `--task`, `--session-id` or `--branch` value (`--session-id` must name one file under `noni/sessions/`, so whitespace, a path separator, a `..` walk out of the state root or a leading dot is refused), `--no-commit` with `--push`, a `--repo` that is not a directory, or a `--repo` that is a symlink (refused, never followed — the message names the real path) |
 | `5` | rebase conflict: the rebase started and stopped; the script aborts it, which leaves the clone on the branch it was invoked on at the claim commit it made (if the abort itself fails, the message says the clone needs manual cleanup) |
 | `6` | rebase refused: the rebase never started (the hint names committing or stashing), or its state could not be read (no abort run, and the message says so) |
 

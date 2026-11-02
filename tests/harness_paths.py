@@ -30,6 +30,7 @@ PRODUCT_MODULES = (
     "integrations/adapter_protocol.py",
     "integrations/github-issues/github_issues_adapter.py",
     "src/noni/_session_git.py",
+    "src/noni/_session_rebase_state.py",
     "src/noni/_commit_cause.py",
     "src/noni/_marker.py",
     "src/noni/_session_push.py",

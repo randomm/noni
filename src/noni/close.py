@@ -25,7 +25,9 @@ Exit codes:
     3  git could not commit the change, or --push failed after 3
        fetch-rebase-push attempts (also a fetch failure, a detached HEAD, or an
        unresolvable branch)
-    4  --session-id is not a single token, or --no-commit was combined with
+    4  --session-id is not a single token with no leading dot (the name of one
+       file under noni/sessions/, so a path separator or a '..' walk out of the
+       state root is refused here), or --no-commit was combined with
        --push (there would be nothing committed to push)
     5  the --push rebase started and stopped on a conflict in the session file;
        this run aborts the rebase, so the clone is left on its branch with the
@@ -122,35 +124,27 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(EXIT_USAGE, f"--repo {args.repo}: {why}",
                      "pass the state root itself, not a symlink to it")
 
-    # The session id goes into the commit message ("close: <session-id>"), so it
-    # must be one token: no whitespace, no path separator. Refused before any
-    # read or write.
+    # The session id is the name of one file under noni/sessions/ and also goes
+    # into the commit message ("close: <session-id>"), so it is validated by the
+    # one derivation the four writers share, before any read or write: no
+    # whitespace, no path separator, no leading dot (a hidden file the census's
+    # listing would not report).
     session_id = args.session_id.strip()
-    if not _session_git.valid_token(session_id):
-        return _fail(EXIT_USAGE,
-                     f"--session-id {args.session_id!r} is not a single token "
-                     "(no whitespace, no path separator)",
-                     "pass the session id, the file name under noni/sessions/ "
-                     "without its .md suffix")
+    rel = _session_git.writer_name(session_id)
+    if not rel:
+        headline, hint = _session_git.name_refusal(f"--session-id {args.session_id!r}")
+        return _fail(EXIT_USAGE, headline, hint)
     if args.no_commit and args.push:
         return _fail(EXIT_USAGE,
                      "--no-commit cannot be combined with --push (there would be "
                      "nothing committed to push)",
                      "drop one of the two")
 
-    # The one name this run owns, derived before any read or write: the write
-    # location (``repo / name``), the pathspec, the failure wording and the hint
-    # all name this string, which is relative to the state root and carries no
-    # component of a relative --repo. Refused before the register is looked for,
-    # so a refusal never leaves a written file behind.
-    rel = _session_git.relative_name(_session_git.session_name(session_id))
-    if not rel:
-        return _fail(EXIT_USAGE, f"--repo {args.repo}: the session writers commit "
-                                 "only a path inside the state root (never an "
-                                 "absolute path and never one that leaves it)",
-                     "pass the state root itself, not a symlink to it, and a "
-                     "session id that is the file name under noni/sessions/ "
-                     "without its .md suffix")
+    # The write location (``repo / rel``), the pathspec, the failure wording and
+    # the hint all name the string derived above, which is relative to the state
+    # root and carries no component of a relative --repo. The refusal above ran
+    # before the register was looked for, so a refusal never leaves a written
+    # file behind.
     session_file = repo / rel
     if not session_file.is_file():
         return _fail(EXIT_SESSION_MISSING, f"register file not found: {session_file}",

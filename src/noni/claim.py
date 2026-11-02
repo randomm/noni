@@ -30,9 +30,11 @@ Exit codes:
        failure, a detached HEAD, an unresolvable branch, or a git call that
        timed out)
     4  the task reference is not a non-empty token (empty, whitespace-only,
-       or with embedded whitespace), --branch is not a safe ref name,
-       --no-commit was combined with --push, --repo is not a directory, or
-       --repo is a symlink (refused, never followed)
+       or with embedded whitespace), --session-id is not a single token with no
+       leading dot (the name of one file under noni/sessions/, so a path
+       separator or a '..' walk out of the state root is refused here), --branch
+       is not a safe ref name, --no-commit was combined with --push, --repo is
+       not a directory, or --repo is a symlink (refused, never followed)
     5  the rebase hit a conflict: the rebase started and stopped mid-flight,
        so claim.py ran git rebase --abort, which leaves HEAD on the branch it
        was invoked on, at the claim commit this run made (the abort resets
@@ -331,23 +333,20 @@ def main(argv: list[str] | None = None) -> int:
         )
         return EXIT_USAGE
 
-    # The one name this run owns, derived before any read or write: the write
-    # location (``repo / name``), the pathspec, the failure wording and the
-    # nothing-to-commit probe all name this string, which is relative to the
-    # state root and carries no component of a relative --repo. A name that does
-    # not sit inside the root is refused before the register is looked for, so a
-    # refusal never leaves a written file behind, and the session id's own token
-    # guard above is what keeps this derivation out of reach of a ``..``.
-    rel = _session_git.relative_name(_session_git.session_name(args.session_id))
+    # The one name this run owns, derived before any read or write by the single
+    # validated derivation the four writers share: the write location
+    # (``repo / rel``), the pathspec, the failure wording and the nothing-to-commit
+    # probe all name this string, which is relative to the state root and carries
+    # no component of a relative --repo. The guard refuses an id that is not one
+    # token, that carries a path separator, or that begins with a dot (a hidden
+    # file the census's listing would not report), so a ``..`` in --session-id
+    # cannot reach a path outside the root. Refused before the register is looked
+    # for, so a refusal never leaves a written file behind.
+    rel = _session_git.writer_name(args.session_id.strip())
     if not rel:
-        return _report(
-            EXIT_USAGE,
-            f"{labels.CLAIM}: --repo {args.repo}: the session writers commit only "
-            "a path inside the state root (never an absolute path and never one "
-            "that leaves it)",
-            "pass the state root itself, not a symlink to it, and a session id "
-            "that is the file name under noni/sessions/ without its .md suffix",
-        )
+        headline, hint = _session_git.name_refusal(f"--session-id {args.session_id!r}")
+        return _report(EXIT_USAGE, f"{labels.CLAIM}: {headline}",
+                       f"{labels.CLAIM}: fix: {hint}")
     session_file = repo / rel
     if not session_file.is_file():
         print(f"{labels.CLAIM}: register file not found: {session_file} (register the session first)", file=sys.stderr)

@@ -8,10 +8,13 @@ project directory.
 
 Every launcher the four writer suites had built its ``--repo`` from an absolute
 ``tmp_path``, so no test ever sent the relative form and the bug was invisible:
-``_session_git.rel_of`` joined the caller-relative ``--repo`` to the state path
-and left the ``--repo`` component in the answer, so ``git -C <state> add --
+the old derivation joined the caller-relative ``--repo`` to the state path and
+left the ``--repo`` component in the answer, so ``git -C <state> add --
 st/noni/sessions/x.md`` named a path the state clone does not hold. Each of the
-four writers exited 3 with its file written and uncommitted.
+four writers exited 3 with its file written and uncommitted. No such helper
+exists any more -- the writers build the name once with
+:func:`noni._session_git.writer_name` -- which is why these tests hold: they pin
+the fault the removed helper used to produce.
 
 One module holds all four verbs rather than one test in each suite, because the
 property is the shared primitive's and every launcher in it is the same

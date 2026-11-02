@@ -1,16 +1,19 @@
 # The sessions census
 
 `scripts/census-sessions.sh` is the read-only arbiter for the session
-register. It never writes; it reads `noni/sessions/*.md` and reports an
-honest exit code. Output goes to stdout only (no writes under `noni/census/`).
+register — a bash wrapper, run under `bash` or through its own executable bit,
+never under `python3` (the interpreter it needs is the one it execs itself, the
+`NONI_PYTHON` default named in the exit-3 row below). It never writes; it reads
+`noni/sessions/*.md` and reports an honest exit code. Output goes to stdout only
+(no writes under `noni/census/`).
 
 ## Usage
 
 ```
-scripts/census-sessions.sh <state-root>/noni/sessions
+bash scripts/census-sessions.sh <state-root>/noni/sessions
 
 # equivalent entry point (the steering-ledger census dispatches here)
-census.sh --sessions <state-root>/noni/sessions
+bash scripts/census.sh --sessions <state-root>/noni/sessions
 ```
 
 The one argument is the sessions directory of the state root — the directory
@@ -26,7 +29,7 @@ so a second directory is a usage error (`2`) too, naming every path given.
 |---|---|
 | `0` | clean — every session file valid, no double-claims, all claims have a register file |
 | `2` | usage: no sessions directory was given, more than one was given, or the one given is not a directory (the state root is named by the caller, never by the cwd) |
-| `3` | python3 not found on the reading machine (missing dependency) |
+| `3` | the interpreter the wrapper execs (named by `NONI_PYTHON`, else `python3`) is not found on the reading machine (missing dependency) |
 | `30` | double-claim: two active claims on the same task from different identities |
 | `31` | a claim row was committed without a register file (work is not blocked — report only) |
 | `32` | a session file is malformed (missing required field, or a claim row with no task reference) |

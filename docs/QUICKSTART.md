@@ -1,0 +1,222 @@
+# Quickstart
+
+Two pages tell a first-time reader how to run noni: the README's try-it block,
+which records one decision and reads the census in five minutes, and this page,
+which covers what that block cannot: how to install noni when no package index
+carries it, where the state root may live, and the two routes to it.
+
+`docs/PRODUCT.md` §7 is the binding statement of the state-root rule; this page
+is the commands. `tests/test_quickstart.py` materialises every tree this page
+names and runs every command in it.
+
+## Install noni
+
+noni is not published. `pip install noni` installs some other project's wheel,
+so the two routes that work both name this repository:
+
+```bash
+git clone https://github.com/OWNER/noni noni
+python3 -m pip install ./noni
+```
+
+The git URL of your own fork is an equally good target for the second line, and
+`python3 -m pip install -e ./noni` is the editable form. Neither route puts a
+package index between you and the code, and neither is a release: the wheel is
+the same code the clone carries.
+
+The wrappers under `skills/<skill>/scripts/` import the package rather than
+carrying logic, so one of three states has to hold before any of them runs:
+installed as above, installed editable, or `PYTHONPATH=<clone>/src`. A wrapper
+whose package is missing says so on one line and exits 3; it does not raise.
+
+`noni` and the wrapper paths are the same code and print the same bytes. Use
+whichever the rest of this page makes shorter to type.
+
+## The state root
+
+Every `noni/` path a tool reads or writes resolves from `--repo`, the one flag
+that names the state root. Nothing else does: not the tool's own location, not
+the current directory beyond `--repo`'s default, and no environment variable. A
+`--repo` that is missing or is not a directory stops the command with a clear
+message and that tool's own argument-refusal code.
+
+Two routes. Both are supported, and both are covered below.
+
+- **In-project state** (the default): the state root is the project's own
+  repository, so state sits at `<project>/noni/` and is committed with the
+  project. Every tool works without `--repo`.
+- **A separate private state repository**: the state root is a clone of a
+  second repository carrying the same `noni/` layout, and every command names
+  it with `--repo .noni-state`. Clone it *inside* the project folder and add
+  the ignore rule below, so an agent confined to the project folder can reach
+  it. Choose it when the code repository is public and the direction should not
+  be published with it.
+
+## Route A: state inside the project
+
+From the root of your own repository, with the identity the writers commit
+under:
+
+```bash
+cd your-project
+git config user.name "Casey"
+git config user.email "casey@example.invalid"
+noni decide --repo . --slug release-scope --scope release --asked-by team-lead \
+  --question "q1=Ship the beta this week?" \
+  --option "q1=Ship it" --option "q1=Wait a week" \
+  --answer "q1=Wait a week"
+noni census --repo .
+```
+
+The record lands at `noni/decisions/<date>-release-scope.json`, committed in
+the same step the writer wrote it. The census reads the tree and recomputes
+everything from git history plus those files, so a first run reports the two
+warnings a tree without operator configuration carries — the inactive deny-list
+and the ledger with nothing to arbitrate — and still ends `verdict ok`.
+`git status --porcelain` is empty after the census: it never writes.
+
+## Route B: a separate private state repository
+
+The state repository is an ordinary git repository whose tracked content is the
+`noni/` layout. Nothing about it is special except that it is private and that
+every command names it.
+
+Create the empty repository on your forge, then clone it inside the project and
+tell your project's git to ignore the directory:
+
+```bash
+cd your-project
+git clone git@forge.example:you/your-project-direction.git .noni-state
+echo "/.noni-state/" >> .gitignore
+```
+
+The ignore rule is what keeps the direction out of the code repository: with it
+the state clone is invisible to `git add .` in the project, and the state
+repository's own history stays the only place the direction is committed. It is
+a line you add once, to the project's `.gitignore`; this page's test runs it in
+a scratch tree rather than editing this repository's ignore file.
+
+Give the clone an identity, and create its branch once. A clone of a repository
+that has never held a commit has no branch at all, and a writer that commits
+into it leaves git's own complaint about a missing upstream inside its message.
+So make the first commit before any writer runs: the writer commits its own
+record and carries the branch into existence, and the push then has something
+to name.
+
+```bash
+git -C .noni-state config user.name "Casey"
+git -C .noni-state config user.email "casey@example.invalid"
+```
+
+Now every command names the state clone. Same flags, same writers, same census
+as Route A, with one path added:
+
+```bash
+noni decide --repo .noni-state --slug release-scope --scope release \
+  --asked-by team-lead \
+  --question "q1=Ship the beta this week?" \
+  --option "q1=Ship it" --option "q1=Wait a week" \
+  --answer "q1=Wait a week"
+noni order --repo .noni-state add 12 --decision <record-id>
+noni census --repo .noni-state
+```
+
+`<record-id>` is the `<date>-<slug>` of a record in the ledger: the ordering
+artifact cites a decision that exists, so run the `decide` line first and read
+the id off the name it printed (`2026-11-02-release-scope`). Sessions come next:
+`register` allocates its own session id and prints it (`registered session <id>
+-> ...`) -- you never choose it, and `claim`, `release` and `close` all take it
+as `--session-id`. Run it the same way, with `--repo .noni-state`. The census reads only the tree `--repo`
+names, so the code repository's tracked files never enter it — and its hygiene
+class scans the tree it audits, which here is the state clone.
+
+Then push the branch, once. The writers commit locally (and fetch-rebase-push
+onto the branch they find, with `--push`); on a repository whose branch has
+never existed the only thing to push is what the commands above just committed,
+and `-u` is what makes every later push and pull of that branch work without
+naming the remote again.
+
+```bash
+git -C .noni-state push -u origin main
+```
+
+## The deny-list, and why --strict fails on a fresh attach
+
+`--strict` promotes every warn class to a failure at its own code, `hygiene`
+(50) included. A freshly attached project has no deny-list, so the hygiene
+class is inactive, and a `--strict` run fails on it even though nothing in the
+tree is wrong. The row is honest about the state it found: `deny-list class
+inactive (absent)`, or `corrupt`, or `present but empty`.
+
+The file is `.noni-scrub-denylist`, one entry per line, held at the root of the
+tree being audited — `<project>/.noni-scrub-denylist` on Route A,
+`.noni-state/.noni-scrub-denylist` on Route B. `NONI_SCRUB_DENYLIST` names a
+different file when the tree carries no default of its own. Blank lines and
+lines starting with `#` are not entries, so a file that holds only those is
+`present but empty` and still inactive: at least one usable entry is what
+switches the class on.
+
+```
+# one name per line: an operator name, an external project or tool name,
+# or a hostname the scan must never find in a tracked file
+example-corp
+```
+
+Keep it untracked. It is the half of the public-repo hygiene rule the committed
+patterns cannot carry, because the names themselves must not be committed;
+`docs/PUBLISHING.md` step 1 is the checklist that uses it, and running its
+`scripts/public_safety.py` is the gate, not a clean census.
+
+## The --issue-state map, and what the census skips without it
+
+The census never contacts a tracker. Whether an ordered issue is closed reaches
+it only through `--issue-state FILE`: a JSON object mapping each issue number,
+spelled as a bare decimal string, to `"open"` or `"closed"`. Without the flag
+the `ordering-closed` (46) class is not evaluated at all, so a run with no rows
+from it does not mean every ordered issue is open.
+
+The census says so out loud when you look at it in human-readable mode: one
+line, `note: ordering-closed was not evaluated: no --issue-state FILE was
+given`, printed beside the report. `--json` mode prints no such line — that
+stream is findings and a summary, and a notice about a class that did not run
+is neither — so read the note from a run without `--json`, and keep the
+ordering group in the run (`--only` must name an ordering class, or name none).
+
+The census ships no producer. A tracker with a command line and `jq` produce
+one:
+
+```bash
+gh issue list --json number,state --jq \
+  'map({key: (.number | tostring), value: (.state | ascii_downcase)}) | from_entries' \
+  > issue-state.json
+noni census --repo . --issue-state issue-state.json
+```
+
+Two details in that recipe are the whole of its correctness. `.number |
+tostring` is what makes the key the bare decimal string the census looks up:
+`"007"`, `"+7"`, `0` and a non-ASCII digit are all refused as
+`ordering-malformed` (15) rather than read as silence. `.state | ascii_downcase`
+is what makes the value one of the two words the file may name; anything else
+is the same refusal.
+
+A map may be partial — an issue the file does not mention earns a
+`cannot-tell` row of the same class, not a clean bill — and a run whose tree
+holds no `noni/direction/order.json` earns no ordering rows at all, because the
+ordering layer is optional.
+
+## Prerequisites
+
+Three things outside noni decide whether a first run works:
+
+- **`jq`** for `census.sh`, the ledger shim, which exits 3 naming the machine
+  when it is missing. The unified census (`census.py`) does not need it.
+- **A git identity in the state tree**: `git config user.name` and
+  `user.email` are read from the tree `--repo` names, not from your shell's
+  directory. `decide.py` refuses with exit 3 and names the command that fixes
+  it; the writers need `user.email` for the commit itself. On Route B that
+  means the state clone, not the project.
+- **A Python 3 on the reading machine** for `census-sessions.sh`, which runs
+  the interpreter named by `NONI_PYTHON` and defaults to `python3`. That
+  interpreter also has to import the package, so the wrappers under
+  `skills/<skill>/scripts/` need the install above or `PYTHONPATH=<clone>/src`
+  whichever route you took.

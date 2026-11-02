@@ -223,6 +223,17 @@ The same rule extends to the classes that report their own absence:
   every finding the run already collected is still reported. The scan runs
   in-process over the census's own git tree — the `--ledger` / `--sessions`
   overrides never re-target it.
+
+  The file that switches the deny-list half on is `.noni-scrub-denylist`, one
+  entry per line, kept at the root of the tree being audited (so
+  `<project>/.noni-scrub-denylist`, or `.noni-scrub-denylist` at the state root
+  `--repo` names), and `NONI_SCRUB_DENYLIST` names another file when the tree
+  carries no default of its own. Blank lines and `#` comments are not entries,
+  so a file holding only those reads as `present but empty` and leaves the class
+  inactive: it needs at least one usable entry. It stays untracked by design —
+  the names it guards must not be committed — which is why `--strict` fails on a
+  freshly attached tree and why `docs/PUBLISHING.md` step 1 runs
+  `scripts/public_safety.py` rather than trusting a clean census.
 - **The deletion classes report what they could not check.** A
   `--sessions`/`--ledger` override that points outside the audited git tree
   switches off the append-only question for that group; both say so in a
@@ -245,7 +256,9 @@ The same rule extends to the classes that report their own absence:
   `--strict` promotes it to 46. And when `--issue-state` was not given at all,
   the class is not evaluated: the run prints one `note:` line saying so in
   human-readable mode, and says nothing in `--json` mode, where the NDJSON
-  stream is findings and a notice about a class that did not run is not one.
+  stream is findings and a notice about a class that did not run is not one. A
+  recipe that produces the file with a tracker command line and `jq` is in
+  `docs/QUICKSTART.md`.
   A missing `noni/direction/order.json` is not a finding at all — the ordering
   layer is optional — so an attached project that has never ordered anything
   adds no ordering rows to its census.

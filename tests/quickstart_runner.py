@@ -89,6 +89,11 @@ PLACEHOLDER_VALUES = {
     "<record-id>": "2026-11-02-release-scope",
 }
 
+# Every command of the golden list, flattened: the literal set :func:`launch`
+# compares its argv against before the two moves below touch it, so a command no
+# section prints never reaches an exec.
+_ALL_GOLDEN: list[list[str]] = [argv for label in GOLDEN for argv in GOLDEN[label]]
+
 
 def golden(label: tuple[str, ...]) -> list[list[str]]:
     """The literal commands the golden list pins for one page section."""
@@ -131,15 +136,36 @@ def reroot(argv: list[str], state: Path) -> list[str]:
     The page writes ``git -C .noni-state <verb> ...`` and ``noni ... --repo
     .noni-state ...`` from the project's root, which is what a reader types; the
     harness knows where the project sits and the page cannot. Only the value of the
-    anchor moves, and only the first anchor, because the commands that carry one
-    are the golden ones above -- each of which names the state directory exactly
-    once, in the anchor position.
+    anchor moves.
+
+    The preconditions the mapping is defined over are asserted here rather than
+    assumed from the list it happens to run on: a command that names the state
+    directory as a whole token must name it exactly once, and exactly as the value of
+    the one ``-C`` / ``--repo`` anchor being moved. A golden line that broke either
+    shape would leave the mapping guessing which of two tokens to move, so it raises
+    instead. The page's ``git clone`` of the state repository is the one golden
+    command exempted: it names the directory as its target and the launcher handles
+    it before this mapping, in :func:`state_clone`.
     """
-    for position, token in enumerate(argv):
-        if token in ("-C", "--repo") and position + 1 < len(argv):
-            if argv[position + 1] == STATE_DIR:
-                return [*argv[:position + 1], str(state), *argv[position + 2:]]
-    return list(argv)
+    anchors = [position for position, token in enumerate(argv)
+               if token in ("-C", "--repo") and position + 1 < len(argv)
+               and argv[position + 1] == STATE_DIR]
+    if STATE_DIR in argv and argv[1:2] != ["clone"]:
+        # The page's state ``git clone`` is the one golden command that names the
+        # directory as its own target rather than as an anchor value; the launcher
+        # dispatches it before it ever reaches this mapping (see ``state_clone``).
+        assert argv.count(STATE_DIR) == 1, (
+            f"a command names the state directory more than once, so the re-rooting "
+            f"has no single value to move: {argv}")
+        assert len(anchors) == 1, (
+            f"the command names the state directory outside a -C/--repo value, so "
+            f"there is no anchor to move: {argv}")
+    elif any(token in ("-C", "--repo") for token in argv):
+        assert not anchors, f"an anchor names the state directory: {argv}"
+    if not anchors:
+        return list(argv)
+    position = anchors[0]
+    return [*argv[:position + 1], str(state), *argv[position + 2:]]
 
 
 def state_dir_commands() -> list[list[str]]:
@@ -224,6 +250,8 @@ def launch(world: World, argv: list[str],
     known list, and the program a ``noni`` line names is the console script the
     fixture's install produced.
     """
+    assert argv in _ALL_GOLDEN, (
+        f"launch() was handed an argv no golden list prints: {argv}")
     if argv[0] == "cd":
         # The one step into a directory the page cannot name: every launched command
         # already runs with the cwd the page's cd would have landed in.

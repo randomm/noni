@@ -1,4 +1,4 @@
-"""The trees the quickstart's page describes, built once per test module.
+"""The trees the quickstart's page describes, built once per session.
 
 The page names four things a reader creates: a clone of this repository, their own
 repository, a private state repository with an origin, and a venv holding the
@@ -6,14 +6,18 @@ installed package. This module builds them, and owns the preconditions the launc
 depend on -- the env nothing ambient reaches, the seed commit that stands in for the
 forge, and the install step whose product every page command runs through.
 
-**The topology is module-scoped and the scratch is per-test.** The venv install is
-the expensive step (a ``python -m venv`` plus a ``pip install`` of the clone) and
-every page command needs the same installed console script, so it runs once per
-module. A test that *mutates* the trees -- running the page's writers, or a hostile
-``PYTHONPATH`` decoy -- takes its own scratch from :func:`fresh_scratch`, which
-reuses the installed venv and the materialised clone and builds a new project,
-origin and seed in a fresh directory. A module-scoped world handed to two route runs
-would let the second see the first one's ledger.
+**The install is session-scoped and the scratch is per-test.** The venv install is
+the expensive step (a ``python -m venv`` plus a ``pip install`` of the clone), every
+page command needs the same installed console script, and the quickstart's test
+modules all need a console script of the *same* tree, so the ``installed`` and
+``world`` fixtures in ``tests/conftest.py`` build the install once for the session
+and hand it to every module under one name -- the pair of module-scoped copies they
+used to each declare could drift to two different clones of the same checkout. A test
+that *mutates* the trees -- running the page's writers, or a hostile ``PYTHONPATH``
+decoy -- takes its own scratch from :func:`fresh_scratch`, which reuses the installed
+venv and the materialised clone and builds a new project, origin and seed in a fresh
+directory. A shared world handed to two route runs would let the second see the first
+one's ledger.
 
 :func:`run_env` is the module's one claim about the launched commands themselves:
 the page sells the install as what makes ``noni`` runnable and states its guarantee

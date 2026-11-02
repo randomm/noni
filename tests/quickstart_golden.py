@@ -29,7 +29,7 @@ The install and recipe sections are listed too, because a reader copies them and
 the suite must notice a change in them. Two of these commands are not *launched*:
 the ``git clone`` of the OWNER URL and the ``python3 -m pip install ./noni`` that
 follows it stand for the fixture's materialised clone and its venv install (see
-:func:`quickstart_topology.build_world`), and the ``gh issue list`` recipe is run
+:func:`quickstart_topology.build_installed_world`), and the ``gh issue list`` recipe is run
 by ``jq`` over a planted payload rather than by ``gh``
 (:func:`quickstart_runner.recipe_gh_argv`). The comparison is over all of them;
 only the launching chooses.

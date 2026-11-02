@@ -36,13 +36,8 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
-import subprocess
-import sys
-from collections.abc import Iterator
 from pathlib import Path
 
-import pytest
 from _harness import REPO
 from docs_commands import comment_lines, fenced_blocks, placeholder_words, read
 from docs_promises import (
@@ -51,6 +46,11 @@ from docs_promises import (
     STATE_DIR,
 )
 from harness_runners import run_noni
+from quickstart_gate import (
+    GATE_DENYLIST_INACTIVE_EXIT,
+    gate_page_sentences,
+    run_gate_on_tree_with_no_denylist,
+)
 from quickstart_golden import COVERED_SECTIONS, GOLDEN
 from quickstart_runner import (
     World,
@@ -60,39 +60,11 @@ from quickstart_runner import (
     route_commands,
     run_route_b,
 )
-from quickstart_topology import (
-    InstalledWorld,
-    build_installed_world,
-    fresh_scratch,
-    run_env,
-)
 
 from noni import public_safety
 
 # The harness's must-succeed wrapper, under the short name the assertions below use.
 _checked = checked
-
-
-@pytest.fixture(scope="module")
-def installed(tmp_path_factory: pytest.TempPathFactory) -> Iterator[InstalledWorld]:
-    """The module's one venv install of the clone, shared by every launch below.
-
-    The install is the page's own step and every command needs its console script,
-    so it runs once for the module; the trees a test mutates come from
-    :func:`world` and are per-test. The directory is removed on teardown -- /tmp is
-    tmpfs here, and an installed venv left behind is not scratch, it is a leak.
-    """
-    root = tmp_path_factory.mktemp("quickstart-install")
-    try:
-        yield build_installed_world(root)
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
-
-
-@pytest.fixture
-def world(installed: InstalledWorld, tmp_path: Path) -> World:
-    """One scratch set of the page's trees, over the module's install."""
-    return fresh_scratch(installed, tmp_path / "scratch")
 
 
 def _page() -> str:
@@ -271,6 +243,28 @@ def test_the_state_route_leaves_the_origin_holding_the_writers_commits(world: Wo
     assert "noni" in pushed.stdout.split(), (
         f"the state branch holds no noni/ directory: {pushed.stdout!r}"
     )
+    # The same promise, read off the origin rather than the clone: the remote the
+    # clone pushes to is the fixture's origin, nothing redirects that push, and the
+    # origin's own main is the commit the clone names.
+    url = git(world.state, "config", "--get", "remote.origin.url", env=world.env)
+    _checked(url, "the state clone's origin URL")
+    assert url.stdout.strip() == str(world.origin), (
+        f"the state clone does not push to the fixture's origin: "
+        f"{url.stdout!r} {url.stderr!r}")
+    pushurl = git(world.state, "config", "--get", "remote.origin.pushurl",
+                  env=world.env)
+    assert pushurl.returncode == 1 and not pushurl.stdout and not pushurl.stderr, (
+        "a pushurl would redirect the page's first push away from the origin these "
+        f"tests read: rc={pushurl.returncode} stdout={pushurl.stdout!r} "
+        f"stderr={pushurl.stderr!r}")
+    origin_main = git(world.origin, "rev-parse", "main", env=world.env)
+    state_main = git(world.state, "rev-parse", "main", env=world.env)
+    _checked(origin_main, "the origin's main")
+    _checked(state_main, "the state clone's main")
+    assert origin_main.stdout.strip() == state_main.stdout.strip(), (
+        "the clone's main is not the commit the origin holds, so the writers' "
+        f"commits are not on the origin: origin {origin_main.stdout.strip()!r} "
+        f"clone {state_main.stdout.strip()!r}")
 
 
 def test_the_ordering_note_appears_in_human_mode_and_not_in_json(world: World) -> None:
@@ -375,7 +369,9 @@ def test_the_page_names_the_deny_list_a_strict_run_needs() -> None:
             f"the deny-list section does not mention {phrase!r}")
 
 
-def test_the_deny_list_states_are_named_and_the_gate_refuses_an_inactive_class() -> None:
+def test_the_deny_list_states_are_named_and_the_gate_refuses_an_inactive_class(
+    tmp_path: Path,
+) -> None:
     """All three inactive states appear where the deny-list is documented, and the
     gate the page names really refuses to report clean without one.
 
@@ -386,21 +382,21 @@ def test_the_deny_list_states_are_named_and_the_gate_refuses_an_inactive_class()
     (``tests/test_docs_promises.py``) rather than quietly shrinking the set here.
 
     The second half is the page's exit-code sentence: ``That CLI exits 2 when the
-    class was not active, so it cannot report a false "clean"``. The code is read
-    off the wrapper, not typed, and the run happens in a tree with no deny-list at
-    all -- the case a first run is in.
+    class was not active, so it cannot report a false "clean"``. The argv is the
+    golden DENYLIST command rather than one typed here, and the run happens in a
+    throwaway committed tree under ``tmp_path`` rather than in this checkout. The
+    gate picks the tree it audits by the wrapper's own location, so a run whose cwd
+    is ``REPO`` scans this checkout and its verdict moves with an untracked
+    ``.noni-scrub-denylist`` here -- green in CI, red on the operator's machine, for
+    one page. :mod:`quickstart_gate` builds the scratch tree and pins the exit.
     """
     quickstart = _page()
     for word in DENYLIST_STATES:
         assert word in quickstart, (
             f"the deny-list section does not name every inactive state: {word!r}")
-    expected = _gate_not_active_code()
-    assert f"exits {expected}" in quickstart, (
-        f"the page no longer states the gate's exit {expected} for an inactive "
-        "deny-list class")
-    proc = subprocess.run([sys.executable, "scripts/public_safety.py"],
-                          capture_output=True, text=True, cwd=REPO,
-                          env=_gate_env_without_denylist(), timeout=180)
+    gate_page_sentences()
+    expected = GATE_DENYLIST_INACTIVE_EXIT
+    proc = run_gate_on_tree_with_no_denylist(tmp_path)
     assert proc.returncode == expected, (
         f"the publishing gate reported {proc.returncode} on a tree with no "
         f"deny-list; the page promises {expected}\n"
@@ -435,38 +431,6 @@ def test_the_page_names_the_three_prerequisites() -> None:
 
 
 # --- helpers used only by this module ---------------------------------------
-
-def _gate_env_without_denylist() -> dict[str, str]:
-    """The launch env with any deny-list pointer removed.
-
-    The page's promise is about a tree that has no deny-list yet, which is what a
-    first run has; a host variable or an untracked default file naming one would
-    make the gate's refusal below a different experiment than the one the page
-    describes. conftest clears the variable per test, so this is belt-and-braces
-    over the one env builder the quickstart harness uses.
-    """
-    env = run_env()
-    env.pop(public_safety.DENYLIST_ENV_VAR, None)
-    return env
-
-
-def _gate_not_active_code() -> int:
-    """The gate's exit code for an inactive deny-list, read off the wrapper's source.
-
-    Read rather than typed, so the page's sentence and the CLI cannot agree with
-    each other while both drift from the code. The branch is the one that prints
-    "deny-list class inactive", and the number the wrapper returns for it is the
-    line right after that print -- the code before it belongs to the violations
-    case, so matching on the refusal is what keeps the two from being confused.
-    """
-    source = (REPO / "scripts" / "public_safety.py").read_text(encoding="utf-8")
-    match = re.search(r'deny-list class inactive[^\n]*\n\s*return (\d+)', source)
-    assert match, (
-        "scripts/public_safety.py no longer returns a code of its own after the "
-        "inactive-deny-list refusal, so the exit code the quickstart documents "
-        "is unpinned")
-    return int(match.group(1))
-
 
 def _note_from_product() -> str:
     """The ordering-closed note, assembled from the census's own source.

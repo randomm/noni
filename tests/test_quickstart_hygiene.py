@@ -1,28 +1,35 @@
-"""The launcher's env, pinned where the whole-route runs cannot see it.
+"""The launcher's env and its one move, pinned where the route runs cannot see them.
 
-``tests/test_quickstart.py`` runs the page; this module checks the one claim the
-launcher makes about the environment it hands those commands: **nothing ambient
-reaches them**. The page's guarantee is that the commands work because the install
-step put the package where the interpreter finds it, and it names the alternative
-(``PYTHONPATH=<clone>/src``) as a *separate* state a reader may be in. A launch that
-inherited the harness's own ``src/`` pin -- which is what makes the suite's child
-processes measure this tree -- would pass on an environment the reader does not
-have, and coverage's hook would have a measured child writing a data file into a
-tree the page promises the census leaves clean.
+``tests/test_quickstart.py`` runs the page; this module checks the two things a
+whole-route run cannot see from the inside: the environment the launcher hands those
+commands, and the precondition of the one mapping it applies to their argv.
 
-Two tests, one assertion seen from both sides: what the launcher hands a command
+The env claim is that **nothing ambient reaches a launch**. The page's guarantee is
+that the commands work because the install step put the package where the interpreter
+finds it, and it names the alternative (``PYTHONPATH=<clone>/src``) as a *separate*
+state a reader may be in. A launch that inherited the harness's own ``src/`` pin --
+which is what makes the suite's child processes measure this tree -- would pass on an
+environment the reader does not have, and coverage's hook would have a measured child
+writing a data file into a tree the page promises the census leaves clean.
+
+Four tests, the env one seen from both sides: what the launcher hands a command
 carries neither variable, and the value it does not carry is one that would have
 killed the launch. A strip that removed nothing looks identical to a strip that
 removed something unless the inherited value is hostile, so the second test plants a
 ``PYTHONPATH`` naming a ``noni`` package that raises on import, and pairs the clean
 run with the inherited one that must die.
+
+The mapping claim is the re-rooting's: a command that names the state directory
+anywhere the mapping cannot move it is refused rather than guessed at. The page is
+this repository's own reviewed file, so that refusal is not a hostile-input defence;
+it is the one case where the harness would otherwise be picking a tree on its
+reader's behalf, and the malformed argv below is how the refusal is shown to fire.
 """
 
 from __future__ import annotations
 
 import os
 import subprocess
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -32,15 +39,18 @@ from docs_promises import PUBLISHING, STATE_DIR
 from quickstart_golden import GOLDEN
 from quickstart_runner import (
     World,
-    build_installed_world,
-    fresh_scratch,
     launch,
     reroot,
     route_commands,
     state_dir_commands,
     substitute,
 )
-from quickstart_topology import AMBIENT_LAUNCH_VARS, InstalledWorld, run_env
+from quickstart_topology import (
+    AMBIENT_LAUNCH_VARS,
+    InstalledWorld,
+    fresh_scratch,
+    run_env,
+)
 
 # The words the decoy package prints. One owner: the assertion on the inherited
 # run and the file that raises share them, so the pairing cannot drift apart and
@@ -52,24 +62,6 @@ _DECOY_RAISES = 'raise RuntimeError("noni imported from an ambient PYTHONPATH")'
 # harmless, so the shadow is a whole package.
 _DECOY_MODULES = ("__init__.py", "cli.py", "census.py", "census_cli.py",
                   "census_report.py", "census_run.py", "public_safety.py")
-
-
-@pytest.fixture(scope="module")
-def installed(tmp_path_factory: pytest.TempPathFactory) -> Iterator[InstalledWorld]:
-    """The module's one venv install of the clone (see ``tests/test_quickstart.py``)."""
-    root = tmp_path_factory.mktemp("quickstart-hygiene")
-    try:
-        yield build_installed_world(root)
-    finally:
-        import shutil
-
-        shutil.rmtree(root, ignore_errors=True)
-
-
-@pytest.fixture
-def world(installed: InstalledWorld, tmp_path: Path) -> World:
-    """One scratch set of the page's trees, over the module's install."""
-    return fresh_scratch(installed, tmp_path / "scratch")
 
 
 def _census_line() -> list[str]:
@@ -121,6 +113,29 @@ def test_the_state_re_rooting_is_applied_to_the_commands_that_name_the_clone() -
 
 def _all_golden_commands() -> list[list[str]]:
     return [argv for label in GOLDEN for argv in GOLDEN[label]]
+
+
+def test_reroot_refuses_an_argv_it_cannot_move_unambiguously() -> None:
+    """The re-rooting refuses a malformed argv instead of choosing a token.
+
+    The mapping is defined over the golden list, and the test above shows every
+    golden command satisfies it. This is the other half: the shape itself is a
+    precondition the helper checks, so a future golden line that names the clone
+    twice, or names it somewhere other than a ``-C`` / ``--repo`` value, stops the
+    run at the mapping rather than letting it re-root one of two candidates -- the
+    one decision here that would silently point a writer at the wrong tree.
+    """
+    state = Path("/scratch/project/.noni-state")
+    duplicated = ["git", "-C", STATE_DIR, "mv", STATE_DIR, "other"]
+    with pytest.raises(AssertionError, match="more than once"):
+        reroot(duplicated, state)
+    no_anchor = ["git", "add", STATE_DIR]
+    with pytest.raises(AssertionError, match="outside a -C/--repo value"):
+        reroot(no_anchor, state)
+    # An argv that never names the clone is not the malformed case: it passes
+    # through untouched, which is what the commands with no state path rely on.
+    assert reroot(["noni", "census", "--repo", "."], state) == [
+        "noni", "census", "--repo", "."]
 
 
 def _rooted_commands() -> list[list[str]]:

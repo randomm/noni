@@ -137,6 +137,16 @@ not a git work tree). The codes are not interchangeable — each is that tool's
 existing refusal, and a caller tells a wrong path from a fault of the tree by
 which one it gets.
 
+The four session writers (`register`, `claim`, `close`, `release`) refuse one
+further state the same way: a `--repo` that is itself a symlink. `git` works on
+the resolved path of the tree it is pointed at, so a linked state root is where
+the writer's own path arithmetic and git's stop agreeing, and the marker and the
+audit trail would be kept against a path nobody named. The run stops with a
+message naming the real path of the state root, on the same code that tool
+already uses for a wrong path: 2 for `register`, 4 for `claim`, `close` and
+`release`. A project directory reached *through* a link is not this state: only
+a `--repo` that is itself a link is refused.
+
 Results are recomputed on demand by the census (no `census/` directory). The
 census is read-only: running it leaves `git status --porcelain` empty. Trends,
 if ever wanted, are recomputed from git history (E5).

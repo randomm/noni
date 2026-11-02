@@ -113,6 +113,14 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(EXIT_USAGE, f"--repo {args.repo} is not a directory",
                      "pass the repository root that holds noni/sessions/")
 
+    # A state root that is itself a symlink is refused here, before the register
+    # is read or written (see _session_git.linked_state_root for why the two
+    # path readings disagree), on this command's own usage code.
+    linked, why = _session_git.linked_state_root(repo)
+    if linked is not None:
+        return _fail(EXIT_USAGE, f"--repo {args.repo}: {why}",
+                     "pass the state root itself, not a symlink to it")
+
     # Both tokens reach git or the file: the task goes into the commit message
     # ("release: <task>") and both name a row and a path, so neither may carry
     # whitespace or a path separator. Refused before any read or write.
@@ -136,7 +144,13 @@ def main(argv: list[str] | None = None) -> int:
                      "drop one of the two")
 
     session_file = repo / "noni" / "sessions" / f"{session_id}.md"
-    rel = session_file.relative_to(repo).as_posix()
+    # The one derivation of the path this run owns: the pathspec, the failure
+    # wording and the hint all name this string, which is relative to the state
+    # root and carries no component of a relative --repo.
+    rel, why = _session_git.repo_relative_path(repo, session_file)
+    if rel is None:
+        return _fail(EXIT_USAGE, f"--repo {args.repo}: {why}",
+                     "pass the state root itself, not a symlink to it")
     if not session_file.is_file():
         return _fail(EXIT_SESSION_MISSING, f"register file not found: {session_file}",
                      f"register the session first (register.py --repo {repo} "

@@ -284,6 +284,17 @@ def main(argv: list[str] | None = None) -> int:
             f"{labels.CLAIM}: --repo {args.repo} is not a directory",
             "pass the repository root that holds noni/sessions/",
         )
+
+    # A state root that is itself a symlink is refused here, before the register
+    # is read or written (see _session_git.linked_state_root for why the two
+    # path readings disagree), on this command's own usage code.
+    linked, linked_why = _session_git.linked_state_root(repo)
+    if linked is not None:
+        return _report(
+            EXIT_USAGE,
+            f"{labels.CLAIM}: --repo {args.repo}: {linked_why}",
+            "pass the state root itself, not a symlink to it",
+        )
     task = args.task.strip()
     if not task or not TASK_RE.fullmatch(task):
         print(
@@ -320,6 +331,19 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_USAGE
 
     session_file = repo / "noni" / "sessions" / f"{args.session_id}.md"
+    # The one derivation of the path this run owns, taken before any read or
+    # write: the pathspec, the failure wording and the nothing-to-commit probe
+    # all name this string, which is relative to the state root and carries no
+    # component of a relative --repo. A state root the writers refuse (outside
+    # the tree, or reached through a symlink) is refused here, before the
+    # register is looked for, so it is never reported as a missing session.
+    rel, why = _session_git.repo_relative_path(repo, session_file)
+    if rel is None:
+        return _report(
+            EXIT_USAGE,
+            f"{labels.CLAIM}: --repo {args.repo}: {why}",
+            "pass the state root itself, not a symlink to it",
+        )
     if not session_file.is_file():
         print(f"{labels.CLAIM}: register file not found: {session_file} (register the session first)", file=sys.stderr)
         return EXIT_REGISTER_MISSING
@@ -403,7 +427,6 @@ def main(argv: list[str] | None = None) -> int:
     # already claims the task, and this file passed both checks), so it is
     # reported as the failure-to-advance class it is: exit 3, with the row's
     # staged state named so the caller knows what to clean up.
-    rel = session_file.relative_to(repo).as_posix()
     ok, why = _session_git.stage_and_commit(repo, session_file, "claim: " + task)
     if not ok:
         print(

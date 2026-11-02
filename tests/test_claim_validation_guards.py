@@ -3,14 +3,17 @@
 Extracted from the claim suite: the input validation chain and the refusals it
 raises before any write, asserted through the CLI's exit codes."""
 
+import os
 import subprocess
 from pathlib import Path
 
 from _harness import (
+    CLAIM,
     _claim_module,
     _git,
     _git_env_with_identity,
     run_claim,
+    run_from,
 )
 from claim_fixtures import (
     SESSION_ID,
@@ -22,6 +25,24 @@ from claim_fixtures import (
     _make_session,
     _session_path,
 )
+from session_git_support import (
+    STATE_DIR,
+    _assert_writer_left_nothing_behind,
+    _committed_names,
+    _nested_state,
+    _strip_identity,
+    _tracked_bytes,
+)
+
+# The environment a refused commit needs: no global config for git to read a
+# committer out of (the launcher is asked not to add the identity pair).
+_PATH = os.environ.get("PATH", "/usr/bin:/bin")
+
+# The session and the one path every commit below must consist of. The fixture
+# gives the clone a decoy at the doubled spelling of this path, so a claim that
+# admitted that path shows up in the name set rather than passing quietly.
+GUARD_SID = "2026-10-01-cccccc"
+GUARD_REL = f"noni/sessions/{GUARD_SID}.md"
 
 
 def test_task_with_whitespace_is_refused(tmp_path):
@@ -389,3 +410,74 @@ def test_detached_head_push_is_refused(tmp_path):
     proc = run_claim(repo, SESSION_ID, "#43", push=True)
     assert proc.returncode == 3, f"expected exit 3 for detached-HEAD push, got {proc.returncode}: {proc.stderr}"
     assert "detached" in proc.stderr.lower()
+
+
+# --- the private-state route named as a reader names it (issue #66) -----------
+#
+# ``_claim_from`` above passes an absolute ``str(root)``, the form every launcher
+# in this suite builds. A reader of docs/PRODUCT.md 7 names the private state root
+# as a clone nested in the project and git-ignored by it, from the project
+# directory: ``--repo .noni-state``. With that spelling claim's pathspec used to
+# keep the --repo component, so the row was appended and the commit was refused
+# for a path the clone does not hold, and the wording named that doubled path.
+
+def _claim_relative_run(project: Path, sid: str, task: str,
+                        refused: bool = False) -> subprocess.CompletedProcess[str]:
+    """claim.py from the project cwd, ``--repo`` naming the nested clone by name.
+
+    ``refused`` strips the child's git identity so git itself refuses the commit.
+    """
+    if refused:
+        return run_from(project, CLAIM, "--repo", STATE_DIR, "--session-id", sid,
+                        "--task", task, identity=False,
+                        env={"GIT_CONFIG_GLOBAL": "/dev/null", "PATH": _PATH})
+    return run_from(project, CLAIM, "--repo", STATE_DIR, "--session-id", sid,
+                    "--task", task)
+
+
+def test_claim_appends_the_row_with_a_relative_repo(tmp_path):
+    """AC1/AC7: relative --repo exits 0, the row lands in the clone, and the
+    commit is exactly the one repo-relative session path."""
+    project, state, session = _nested_state(tmp_path, GUARD_SID, name="claim-relative")
+
+    proc = _claim_relative_run(project, GUARD_SID, "#42")
+    assert proc.returncode == 0, f"{proc.returncode}: {proc.stderr}"
+
+    assert "- claim: #42" in session.read_text(encoding="utf-8"), "row not on disk"
+    assert "- claim: #42" in _git_text(state, "show", f"HEAD:{GUARD_REL}"), (
+        "the row is not in the commit"
+    )
+    assert _git_text(state, "log", "-1", "--format=%s").strip() == "claim: #42"
+    assert _committed_names(state) == [GUARD_REL], (
+        "the commit moved paths other than the one session file"
+    )
+    assert _git_text(state, "status", "--porcelain") == ""
+
+
+def test_claim_with_a_relative_repo_names_the_repo_relative_path_when_refused(tmp_path):
+    """AC2/AC4/AC6/AC8: a refused relative-repo claim names ``noni/sessions/
+    <sid>.md`` in the wording it owes -- ``( <rel>, which this run staged)`` --
+    never a path beginning with the --repo component, and never blames a missing
+    upstream for a commit git refused."""
+    project, state, session = _nested_state(tmp_path, GUARD_SID, name="claim-refused")
+    _strip_identity(state)
+    head_before = _git_text(state, "rev-parse", "HEAD").strip()
+    tracked_before = _tracked_bytes(state)
+
+    proc = _claim_relative_run(project, GUARD_SID, "#42", refused=True)
+
+    assert proc.returncode == 3, f"{proc.returncode}: {proc.stderr}"
+    err = proc.stderr
+    assert f"({GUARD_REL}, which this run staged)" in err, err
+    assert f"{STATE_DIR}/noni/sessions" not in err, (
+        f"the wording names a path built by joining the relative --repo to the "
+        f"state path: {err}"
+    )
+    assert "no upstream configured" not in err, (
+        f"a refused commit was classified as a missing upstream: {err}"
+    )
+    # The row is on disk, and the clone holds no commit this run made and stages
+    # nothing but the one path it owns.
+    assert "- claim: #42" in session.read_text(encoding="utf-8")
+    assert _git_text(state, "rev-parse", "HEAD").strip() == head_before
+    _assert_writer_left_nothing_behind(state, tracked_before, [GUARD_REL])

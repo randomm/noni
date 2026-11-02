@@ -238,6 +238,18 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(EXIT_USAGE, f"--repo {args.repo} is not a directory",
                      "pass the repository root that holds (or will hold) noni/sessions/")
 
+    # A state root that is itself a symlink is refused here, before the sessions
+    # directory is created and before any marker is read: git works on the
+    # resolved path of the tree it is handed while this writer's path arithmetic
+    # stays unresolved (a file about to be created cannot be resolved), so the
+    # two readings disagree and the marker would be kept against a path nobody
+    # named. The refusal is a usage error, the code register.py already uses for
+    # a wrong path (docs/PRODUCT.md 7).
+    linked, why = _session_git.linked_state_root(repo)
+    if linked is not None:
+        return _fail(EXIT_USAGE, f"--repo {args.repo}: {why}",
+                     "pass the state root itself, not a symlink to it")
+
     # Both tokens reach git or the file: the session this run allocates goes
     # into the commit message ("register: <session-id>") and the identity into
     # the file's identity field, so neither may carry whitespace or a path
@@ -373,7 +385,15 @@ def main(argv: list[str] | None = None) -> int:
         _warn_unmarked(marker)
         return EXIT_OK
 
-    rel = target.relative_to(repo).as_posix()
+    # The one derivation of the path this run owns: the string register prints
+    # in its failure wording and its hint is the string `stage_and_commit` below
+    # hands git as the pathspec, so a relative --repo cannot make them name two
+    # different files.
+    rel, path_why = _session_git.repo_relative_path(repo, target)
+    if rel is None:
+        return _fail(EXIT_GIT, f"cannot commit {target}: {path_why}",
+                     f"pass the state root itself, not a symlink to it, then "
+                     f"re-run register.py --repo {args.repo}")
     ok, why = _session_git.stage_and_commit(repo, target, f"register: {session_id}")
     if not ok:
         # The file is on disk and the marker was written for it; the marker goes

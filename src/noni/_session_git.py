@@ -242,15 +242,46 @@ def atomic_write(path: Path, text: str) -> None:
         raise
 
 
-def rel_of(repo: Path, path: Path) -> str:
-    """``path`` as a repo-relative posix path, the form every git call here takes.
+def _tree_root(repo: Path) -> tuple[str, str]:
+    """The two absolute spellings of ``repo``'s directory: (abspath, realpath).
 
-    A relative ``path`` names a file inside ``repo`` — that is what a caller
-    holding ``--repo`` and a repo-relative name means — so it is joined to
-    ``repo`` rather than resolved against the process's working directory.
-    ``Path.resolve()`` is not usable for this: it resolves a path that does not
+    ``os.path.abspath`` does not touch the filesystem, so it is the one that
+    keeps a path about to be created inside the tree (see :func:`rel_of`);
+    ``os.path.realpath`` resolves every symlink and is the answer the prefix test
+    needs. Both are asked at once because the caller is a writer that is about to
+    hand one of these strings to ``git -C``.
+    """
+    absolute = os.path.abspath(str(repo))
+    return absolute, os.path.realpath(absolute)
+
+
+def rel_of(repo: Path, path: Path) -> str:
+    """``path`` as a path relative to the state root: the one form git's pathspec takes.
+
+    What comes back is handed to ``git -C <repo>`` as a pathspec, so it names the
+    file from the *state root* and nothing else: ``noni/sessions/x.md``, never
+    ``st/noni/sessions/x.md``. A pathspec carrying a component of a relative
+    ``--repo`` names a path doubled inside the state clone, git finds no such
+    path there, and the writer's own file goes uncommitted.
+
+    Two spellings of ``path`` are admitted, because the callers hold both, and
+    the rule that tells them apart is whether ``path`` was built from ``repo``:
+
+    * it was (``repo / 'noni' / 'sessions' / x``, which is what the four session
+      writers pass). For a relative ``--repo`` such a path is the caller's own
+      spelling of a file inside the state root, so it is read against the cwd --
+      where the caller launched from -- and taken apart against the state root.
+      The ``--repo`` prefix the caller carried then falls out of the answer
+      instead of being joined a second time and left in it.
+    * it was not (a bare name such as ``Path('noni/sessions/x.md')``). That is a
+      name *inside* the state root, so it is joined to ``repo`` and the cwd is
+      never consulted. Reading it against the cwd instead is a disaster on a tree
+      that carries its own ``noni/`` directory: the write lands in a *different*
+      repository and the commit is one nobody asked for.
+
+    ``Path.resolve()`` is not usable for either: it resolves a path that does not
     exist yet by walking up to the nearest directory that does, so the file a
-    writer is about to create resolves to the directory above the repository —
+    writer is about to create resolves to the directory above the repository --
     and a path outside a repo has no repo-relative form at all.
 
     The comparison is made on absolute, normalised paths (``os.path.abspath``,
@@ -258,14 +289,88 @@ def rel_of(repo: Path, path: Path) -> str:
     contain is refused with ``ValueError`` rather than quietly producing a
     relative path that git would read against some other tree.
     """
-    root = os.path.abspath(str(repo))
-    candidate = str(path)
-    absolute = candidate if os.path.isabs(candidate) else os.path.join(root, candidate)
-    absolute = os.path.abspath(absolute)
+    root, _resolved = _tree_root(repo)
+    candidate = os.path.normpath(str(path))
+    if os.path.isabs(candidate):
+        absolute = os.path.abspath(candidate)
+    elif _below(candidate, os.path.normpath(str(repo))):
+        # Built from --repo: the caller named the file from outside the state
+        # root, so the cwd is the place that spelling resolves against.
+        absolute = os.path.abspath(candidate)
+    else:
+        # A name the caller means to live inside the state root.
+        absolute = os.path.join(root, candidate)
     prefix = root + os.sep
     if absolute != root and not absolute.startswith(prefix):
         raise ValueError(f"{path} is not inside {repo}")
     return os.path.relpath(absolute, root).replace(os.sep, "/")
+
+
+def _below(candidate: str, root: str) -> bool:
+    """Whether the normalised ``candidate`` sits under the normalised ``root``.
+
+    Compared component by component, not as a string prefix: ``'st/x'`` begins
+    with ``'s'`` as text and does not as a path, and a sibling directory whose
+    name merely starts with the state root's name is not inside it. A ``root`` of
+    ``'.'`` (the documented default ``--repo``) carries no components, so nothing
+    is ever read as built from it: a bare name is a bare name, as it should be.
+    """
+    parts, base = Path(candidate).parts, Path(root).parts
+    return bool(base) and len(base) < len(parts) and parts[:len(base)] == base
+
+
+def repo_relative_path(repo: Path, path: Path) -> tuple[str | None, str]:
+    """``path`` as one pathspec for ``git -C <repo>``: ``(rel, why)``, one of the two.
+
+    The derivation a writer needs before it prints a single word about its
+    commit, because the same string names the file in the failure wording, in
+    the hint and in the nothing-to-commit probe. Writers build their candidate as
+    ``repo / SESSIONS_REL / name`` and then re-derive the same path for their
+    message; a relative ``--repo`` makes the two derivations land on different
+    strings, so this answers for both and the caller keeps one.
+
+    Two refusals, both ``(None, why)`` rather than a raised ``ValueError``: this
+    is the one call a writer makes before it has printed anything, and the
+    caller's single ``if not rel`` has to cover every way the path can be wrong.
+
+    * the path is not inside the state root — :func:`rel_of`'s own refusal;
+    * the state root is itself a symlink — :func:`linked_state_root`'s, which
+      names the real path of the tree so the operator has something to look at.
+    """
+    try:
+        rel = rel_of(repo, path)
+    except ValueError as exc:
+        return None, str(exc)
+    linked, why = linked_state_root(repo)
+    if linked is not None:
+        return None, why
+    return rel, ""
+
+
+def linked_state_root(repo: Path) -> tuple[Path | None, str]:
+    """``(link, why)`` when ``repo`` is itself a symlink, else ``(None, "")``.
+
+    The one place the rule is written, so the refusal a caller makes before it
+    touches the tree and the one the commit primitive makes cannot drift apart.
+
+    ``git`` works on the resolved path of the tree ``-C`` names, while a writer's
+    own path arithmetic stays unresolved -- a file it is about to create cannot
+    be resolved without walking up to a directory that does exist (see
+    :func:`rel_of`). A state root that is itself a link is where the two readings
+    disagree, and the resolved path is what :mod:`noni._marker` would keep the
+    working-copy marker at and what anyone auditing the commit later would have
+    to match against a path nobody named on the command line. So the writer
+    refuses and names ``resolved``, the one thing the operator can go and look
+    at, rather than quietly following the link.
+
+    A project directory *reached through* a link is not this state: only the
+    ``--repo`` component itself is examined, never the cwd it is read against.
+    """
+    absolute = os.path.abspath(str(repo))
+    if not (Path(absolute).is_symlink() or os.path.islink(str(repo))):
+        return None, ""
+    return Path(absolute), (f"--repo {repo} is a symlink to {os.path.realpath(absolute)}: "
+                            "the session writers refuse a state root that is a symlink")
 
 
 def _failure_line(repo: Path,
@@ -297,16 +402,15 @@ def stage_and_commit(
     git said, sanitised and bounded (see
     :func:`noni._commit_cause.commit_failed`): a writer that stops here has
     already written its file, and the operator who aborts the run reads one
-    sentence, not git's status block. A path outside the repository is
-    answered the same way rather than as a raised ``ValueError``: the helper's
-    promise is that it never hands back anything but a verdict, so the caller's
-    one ``if not ok`` covers every way this can fail and no writer has to guard
-    a git call with its own except.
+    sentence, not git's status block. A path outside the repository, and a state
+    root reached through a symlink, are answered the same way rather than as a
+    raised ``ValueError``: the helper's promise is that it never hands back
+    anything but a verdict, so the caller's one ``if not ok`` covers every way
+    this can fail and no writer has to guard a git call with its own except.
     """
-    try:
-        rel = rel_of(repo, path)
-    except ValueError as exc:
-        return False, f"cannot commit {path}: {exc}"
+    rel, why = repo_relative_path(repo, path)
+    if rel is None:
+        return False, f"cannot commit {path}: {why}"
     reset = git(repo, "reset", "-q", "--", rel)
     if reset.returncode != 0:
         return False, _detail(reset, f"git reset failed for {rel}")

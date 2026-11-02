@@ -31,7 +31,8 @@ Exit codes:
        timed out)
     4  the task reference is not a non-empty token (empty, whitespace-only,
        or with embedded whitespace), --branch is not a safe ref name,
-       --no-commit was combined with --push, or --repo is not a directory
+       --no-commit was combined with --push, --repo is not a directory, or
+       --repo is a symlink (refused, never followed)
     5  the rebase hit a conflict: the rebase started and stopped mid-flight,
        so claim.py ran git rebase --abort, which leaves HEAD on the branch it
        was invoked on, at the claim commit this run made (the abort resets
@@ -330,20 +331,24 @@ def main(argv: list[str] | None = None) -> int:
         )
         return EXIT_USAGE
 
-    session_file = repo / "noni" / "sessions" / f"{args.session_id}.md"
-    # The one derivation of the path this run owns, taken before any read or
-    # write: the pathspec, the failure wording and the nothing-to-commit probe
-    # all name this string, which is relative to the state root and carries no
-    # component of a relative --repo. A state root the writers refuse (outside
-    # the tree, or reached through a symlink) is refused here, before the
-    # register is looked for, so it is never reported as a missing session.
-    rel, why = _session_git.repo_relative_path(repo, session_file)
-    if rel is None:
+    # The one name this run owns, derived before any read or write: the write
+    # location (``repo / name``), the pathspec, the failure wording and the
+    # nothing-to-commit probe all name this string, which is relative to the
+    # state root and carries no component of a relative --repo. A name that does
+    # not sit inside the root is refused before the register is looked for, so a
+    # refusal never leaves a written file behind, and the session id's own token
+    # guard above is what keeps this derivation out of reach of a ``..``.
+    rel = _session_git.relative_name(_session_git.session_name(args.session_id))
+    if not rel:
         return _report(
             EXIT_USAGE,
-            f"{labels.CLAIM}: --repo {args.repo}: {why}",
-            "pass the state root itself, not a symlink to it",
+            f"{labels.CLAIM}: --repo {args.repo}: the session writers commit only "
+            "a path inside the state root (never an absolute path and never one "
+            "that leaves it)",
+            "pass the state root itself, not a symlink to it, and a session id "
+            "that is the file name under noni/sessions/ without its .md suffix",
         )
+    session_file = repo / rel
     if not session_file.is_file():
         print(f"{labels.CLAIM}: register file not found: {session_file} (register the session first)", file=sys.stderr)
         return EXIT_REGISTER_MISSING
@@ -427,7 +432,7 @@ def main(argv: list[str] | None = None) -> int:
     # already claims the task, and this file passed both checks), so it is
     # reported as the failure-to-advance class it is: exit 3, with the row's
     # staged state named so the caller knows what to clean up.
-    ok, why = _session_git.stage_and_commit(repo, session_file, "claim: " + task)
+    ok, why = _session_git.stage_and_commit(repo, rel, "claim: " + task)
     if not ok:
         print(
             f"{labels.CLAIM}: git could not commit the claim row "

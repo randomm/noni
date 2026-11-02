@@ -19,9 +19,13 @@ because both did their damage where an exit code could not see it:
 
 The classifier is driven directly here, with the pathspec handed in, because the
 point is the classification of a given pathspec rather than the run that produced
-one: on the fixed primitive every caller-derived path is already repo-relative
-(``rel_of`` folds a caller's doubled spelling back onto the real file), so this
-seam is where the two readings can be put side by side on one identical tree.
+one. Under the explicit-name contract a caller cannot hand the primitive a
+``--repo`` component at all -- :func:`noni._session_git.relative_name` refuses a
+name that is absolute or that leaves the root, and a caller builds its name with
+:func:`noni._session_git.session_name` -- so the doubled spelling is planted here
+as the classifier's own pathspec argument. That is precisely the reading this
+suite was written to catch: a pathspec that named the decoy instead of the run's
+own file, which is what the old ``rel_of`` heuristic could still produce.
 
 All cases run on the nested-state fixture (project, git-ignored clone, decoy
 committed at the doubled path, origin holding ``main``) with the process cwd
@@ -141,8 +145,7 @@ def test_the_three_git_steps_name_the_repo_relative_pathspec(relative_state):
     _move_status_line(session)
     _asked, restore = _asking_the_primitive()
     try:
-        ok, why = _session_git.stage_and_commit(Path(STATE_DIR), Path(STATE_DIR) / REL,
-                                                "close: x")
+        ok, why = _session_git.stage_and_commit(Path(STATE_DIR), REL, "close: x")
     finally:
         asked = restore()
 
@@ -170,8 +173,7 @@ def test_a_refused_commit_on_a_relative_repo_clone_names_the_refusal(relative_st
     # bytes back is the state release.py and close.py hit when the row or status
     # they were asked to set was already set: staged, staged-and-HEAD equal, and
     # git refusing the empty commit.
-    ok, why = _session_git.stage_and_commit(Path(STATE_DIR), Path(STATE_DIR) / REL,
-                                            "close: x")
+    ok, why = _session_git.stage_and_commit(Path(STATE_DIR), REL, "close: x")
 
     assert ok is False, "precondition: git must refuse the empty commit"
     assert _commit_cause.NO_UPSTREAM not in why, (

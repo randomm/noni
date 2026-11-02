@@ -26,16 +26,17 @@ into the commit is a name-set failure rather than a silent success.
 
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 
 from _harness import CLAIM, CLOSE, REGISTER, RELEASE, _git_ok, run_from
-from session_git_support import STATE_DIR, _committed_names, _nested_state
-
-# The identity-free environment a refused commit needs: no global config for git
-# to read a committer out of, and the PATH the harness pins.
-_PATH = os.environ.get("PATH", "/usr/bin:/bin")
+from session_git_support import (
+    _PATH,
+    STATE_DIR,
+    _committed_names,
+    _nested_state,
+    _strip_identity,
+)
 
 # One session id per verb's fixture; no writer in this file reuses another's tree.
 SID = "2026-10-01-cccccc"
@@ -55,12 +56,6 @@ def _refused_run(cwd: Path, script: Path, *args: str) -> subprocess.CompletedPro
     """
     return run_from(cwd, script, *args, identity=False,
                     env={"GIT_CONFIG_GLOBAL": "/dev/null", "PATH": _PATH})
-
-
-def _strip_identity(state: Path) -> None:
-    """Take the clone's own committer identity away, so the commit is refused."""
-    _git_ok(state, "config", "--unset", "user.name")
-    _git_ok(state, "config", "--unset", "user.email")
 
 
 def _assert_names_the_repo_relative_path(err: str) -> None:

@@ -12,13 +12,13 @@ defaults, refusals and idempotency paths.
 
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 
 from _harness import REGISTER, _git_ok, run_from
 from register_refusal_fixtures import _fields, _git_repo, _sid_of
 from session_git_support import (
+    _PATH,
     STATE_DIR,
     _assert_writer_left_nothing_behind,
     _committed_names,
@@ -26,10 +26,6 @@ from session_git_support import (
     _strip_identity,
     _tracked_bytes,
 )
-
-# The environment a refused commit needs: no global config for git to read a
-# committer out of (the launcher is asked not to add the identity pair).
-_PATH = os.environ.get("PATH", "/usr/bin:/bin")
 
 REGISTER_STATE_DIR = "register-state-root"
 REGISTER_CWD_DIR = "register-cwd"

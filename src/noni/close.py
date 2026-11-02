@@ -21,7 +21,7 @@ Exit codes:
     1  the session file for --session-id does not exist (register it first)
     2  the file exists but cannot be read, is not UTF-8, or is malformed for
        this writer (no '- status:' field line to set), or --repo names no
-       directory
+       directory or is a symlink (refused, never followed)
     3  git could not commit the change, or --push failed after 3
        fetch-rebase-push attempts (also a fetch failure, a detached HEAD, or an
        unresolvable branch)
@@ -138,14 +138,20 @@ def main(argv: list[str] | None = None) -> int:
                      "nothing committed to push)",
                      "drop one of the two")
 
-    session_file = repo / "noni" / "sessions" / f"{session_id}.md"
-    # The one derivation of the path this run owns: the pathspec, the failure
-    # wording and the hint all name this string, which is relative to the state
-    # root and carries no component of a relative --repo.
-    rel, why = _session_git.repo_relative_path(repo, session_file)
-    if rel is None:
-        return _fail(EXIT_USAGE, f"--repo {args.repo}: {why}",
-                     "pass the state root itself, not a symlink to it")
+    # The one name this run owns, derived before any read or write: the write
+    # location (``repo / name``), the pathspec, the failure wording and the hint
+    # all name this string, which is relative to the state root and carries no
+    # component of a relative --repo. Refused before the register is looked for,
+    # so a refusal never leaves a written file behind.
+    rel = _session_git.relative_name(_session_git.session_name(session_id))
+    if not rel:
+        return _fail(EXIT_USAGE, f"--repo {args.repo}: the session writers commit "
+                                 "only a path inside the state root (never an "
+                                 "absolute path and never one that leaves it)",
+                     "pass the state root itself, not a symlink to it, and a "
+                     "session id that is the file name under noni/sessions/ "
+                     "without its .md suffix")
+    session_file = repo / rel
     if not session_file.is_file():
         return _fail(EXIT_SESSION_MISSING, f"register file not found: {session_file}",
                      f"register the session first (register.py --repo {repo} "
@@ -202,7 +208,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{labels.CLOSE}: {session_file} left uncommitted")
         return EXIT_OK
 
-    ok, why = _session_git.stage_and_commit(repo, session_file, f"close: {session_id}")
+    ok, why = _session_git.stage_and_commit(repo, rel, f"close: {session_id}")
     if not ok:
         return _fail(EXIT_PUSH_FAILED,
                      f"git could not commit {rel} (the change is written): {why}",

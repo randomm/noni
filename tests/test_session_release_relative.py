@@ -16,12 +16,12 @@ four writers share.
 
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 
 from _harness import RELEASE, _git_ok, run_from
 from session_git_support import (
+    _PATH,
     STATE_DIR,
     _assert_writer_left_nothing_behind,
     _committed_names,
@@ -31,10 +31,6 @@ from session_git_support import (
 )
 
 from noni import release as release_mod
-
-# The environment a refused commit needs: no global config for git to read a
-# committer out of (the launcher is asked not to add the identity pair).
-_PATH = os.environ.get("PATH", "/usr/bin:/bin")
 
 RELEASE_RELATIVE_SID = "2026-10-01-cccccc"
 RELEASE_REL = f"noni/sessions/{RELEASE_RELATIVE_SID}.md"

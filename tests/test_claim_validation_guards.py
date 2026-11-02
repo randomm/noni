@@ -3,7 +3,6 @@
 Extracted from the claim suite: the input validation chain and the refusals it
 raises before any write, asserted through the CLI's exit codes."""
 
-import os
 import subprocess
 from pathlib import Path
 
@@ -26,6 +25,7 @@ from claim_fixtures import (
     _session_path,
 )
 from session_git_support import (
+    _PATH,
     STATE_DIR,
     _assert_writer_left_nothing_behind,
     _committed_names,
@@ -33,10 +33,6 @@ from session_git_support import (
     _strip_identity,
     _tracked_bytes,
 )
-
-# The environment a refused commit needs: no global config for git to read a
-# committer out of (the launcher is asked not to add the identity pair).
-_PATH = os.environ.get("PATH", "/usr/bin:/bin")
 
 # The session and the one path every commit below must consist of. The fixture
 # gives the clone a decoy at the doubled spelling of this path, so a claim that

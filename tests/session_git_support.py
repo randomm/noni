@@ -37,7 +37,8 @@ def _tracked_session(repo: Path) -> Path:
     target = repo / "noni" / "sessions" / "2026-10-01-dddddd.md"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("- status: active\n", encoding="utf-8")
-    ok, why = _session_git.stage_and_commit(repo, target, "register: d")
+    ok, why = _session_git.stage_and_commit(repo, _session_git.session_name("2026-10-01-dddddd"),
+                                            "register: d")
     if not ok:
         raise AssertionError(f"the fixture could not commit its baseline: {why}")
     shown = _git_ok(repo, "rev-list", "--count", "HEAD").stdout.strip()
@@ -69,6 +70,16 @@ def _repo(tmp_path: Path, *, isolated: bool = True) -> Path:
     _git_ok(repo, "-c", "user.name=Replay", "-c", "user.email=replay@fixture.invalid",
             "commit", "-q", "-m", "initial commit")
     return repo
+
+
+def _git_cached(root: Path) -> list[str]:
+    """The paths ``root``'s index holds against HEAD (the staged set)."""
+    return _git_ok(root, "diff", "--cached", "--name-only").stdout.split()
+
+
+def _session_name(session_id: str) -> str:
+    """The name a session's own file carries, straight from the product."""
+    return _session_git.session_name(session_id)
 
 
 def _commit_files(repo: Path, rev: str = "HEAD") -> list[str]:
@@ -141,7 +152,7 @@ STATE_BODY = ("# session {sid}\n\n- identity: dev\n- host/worktree: host (repo)\
 
 def _nested_state(tmp_path: Path, sid: str, *, status: str = "active",
                   name: str = "project", decoy: bool = True,
-                  upstream: bool = True) -> tuple[Path, Path, Path]:
+                  upstream: bool = True, nested: bool = False) -> tuple[Path, Path, Path]:
     """The private-state route as a reader sets it up: (project, state root, session file).
 
     The project is a git repository; the state root is a *separate* git
@@ -158,6 +169,11 @@ def _nested_state(tmp_path: Path, sid: str, *, status: str = "active",
     ``upstream`` gives the clone an origin and pushes ``main``, so a refused
     commit is classified by what actually went wrong rather than by the absence
     of an upstream.
+
+    ``nested`` adds a third tree: a ``deep`` directory inside the project, which
+    is the cwd the ``--repo ..`` cases launch from. From there the state root is
+    ``../st``: a ``--repo`` whose every component points *up*, the form that
+    breaks a cwd-reading derivation rather than merely doubling it.
     """
     project = tmp_path / name
     project.mkdir(parents=True)
@@ -195,6 +211,30 @@ def _nested_state(tmp_path: Path, sid: str, *, status: str = "active",
         _git_ok(tmp_path, "init", "-q", "--bare", str(origin))
         _git_ok(state, "remote", "add", "origin", str(origin))
         _git_ok(state, "push", "-q", "-u", "origin", "main")
+    if nested:
+        # The directory the ``--repo ..`` cases launch from: two levels inside
+        # the project, so the state root is ``../st`` -- every component of the
+        # --repo points up, which is the shape a cwd-reading derivation cannot
+        # survive. It is a git repository carrying one committed decoy file, and
+        # that is the whole point: if a writer resolves anything against the cwd
+        # it finds a real tree to commit into, and the name-set assertion on the
+        # *state* clone is what sees the write go to the wrong repository. An
+        # untracked decoy would not do -- an untracked file is not a path a
+        # commit can carry, so a stray commit here would look like success.
+        deep = project / "deep"
+        deep.mkdir(parents=True)
+        _git_ok(deep, "init", "-q", "-b", "main")
+        _git_ok(deep, "config", "user.name", "Replay")
+        _git_ok(deep, "config", "user.email", "replay@fixture.invalid")
+        (deep / "untouched.md").write_text("cwd file\n", encoding="utf-8")
+        # noni/ is hidden because a stray write there is the fault being measured,
+        # and coverage's per-process data files are hidden because the launcher
+        # runs the child with COVERAGE_PROCESS_START set: both are noise beside a
+        # tree whose own content is one committed file.
+        (deep / ".gitignore").write_text("noni/\n.coverage*\n", encoding="utf-8")
+        _git_ok(deep, "add", "untouched.md", ".gitignore")
+        _git_ok(deep, "-c", "user.name=Replay", "-c", "user.email=replay@fixture.invalid",
+                "commit", "-q", "-m", "the cwd tree")
     return project, state, session
 
 
@@ -271,3 +311,30 @@ def _strip_identity(state: Path) -> None:
     """
     _git_ok(state, "config", "--unset", "user.name")
     _git_ok(state, "config", "--unset", "user.email")
+
+
+def _pinned_allocation_driver(tmp_path: Path, session_id: str) -> Path:
+    """A driver that runs register.main() with ``_make_session_id`` pinned.
+
+    register's own token guard refuses a ``--file`` it did not allocate, so the
+    only way to hand the writer a name its guard refuses is to fix what the
+    allocator produces. The driver is written under ``tmp_path`` and puts src/ on
+    ``sys.path`` itself, so nothing is created inside the shipped skills/ tree and
+    register.py is never modified; the child runs under ``sys.executable`` with the
+    harness env, which keeps it inside the coverage measurement.
+    """
+    from _harness import SRC
+
+    driver_dir = tmp_path / "_name_refusal_driver"
+    driver_dir.mkdir(exist_ok=True)
+    driver = driver_dir / "drive_register.py"
+    driver.write_text(
+        "import os\n"
+        "import sys\n"
+        f"sys.path.insert(0, {str(SRC)!r})\n"
+        "from noni import register\n"
+        "register._make_session_id = lambda: os.environ['NONI_TEST_SESSION_ID']\n"
+        "raise SystemExit(register.main(sys.argv[1:]))\n",
+        encoding="utf-8",
+    )
+    return driver

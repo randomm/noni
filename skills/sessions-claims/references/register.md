@@ -118,11 +118,17 @@ that path's index entry, add it, then `git commit --only -- <path>`. Every other
 staged entry is left staged and uncommitted, so a writer never sweeps an
 unrelated change into its commit and never unstages somebody else's.
 
-A path handed to git is made absolute against `--repo` first, so a relative
-path names a file inside that repository and not one beside the caller's
-working directory. Every git call is bounded by a timeout, makes no signing
-promise, runs no repository hooks, and refuses the external transports a remote
-could name.
+The path git is handed is a path *inside* the state root — `noni/sessions/
+<session-id>.md` — never a path read against the caller's working directory, and
+carrying no component of a relative `--repo`. The writer derives that one name and
+uses it for the file it writes (`<repo>/<name>`), for the pathspec and for every
+message, so `--repo` alone decides which repository is written and the process
+directory has no say in it. A name that is absolute, or that leaves the root with
+`..`, is refused before anything is written: an absolute pathspec is what `git
+add` accepts from outside the `-C` tree, exiting 0 and staging nothing, so a
+writer that admitted one would report a commit that carried no file. Every git
+call is bounded by a timeout, makes no signing promise, runs no repository hooks,
+and refuses the external transports a remote could name.
 
 ### Commit refused by git
 

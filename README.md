@@ -37,6 +37,9 @@ missing or is not a directory stops the command with a clear message.
 
 ## Try it in five minutes
 
+The full first run, including a separate private state repository, is in
+[docs/QUICKSTART.md](docs/QUICKSTART.md). The short version:
+
 Clone noni next to your project, go to the root of your own repository, and
 run its scripts with `--repo .` naming that repository. Nothing is copied into
 your project, and the census's hygiene checker stays present beside the scripts
@@ -60,10 +63,11 @@ python3 ../noni/skills/census/scripts/census.py --repo .
 
 Run these from a release of noni you trust: they execute its scripts.
 
-Installing is the other route, and the same code either way: `pip install
-noni` gives one `noni` command in place of a path per tool (`noni decide`,
-`noni census`, `noni register`, `noni claim`, `noni release`, `noni close`,
-`noni order`), and both routes
+Installing is the other route, and the same code either way. There is no PyPI
+package: `pip install noni` buys a different project's wheel. Install from the
+clone you just made (or from its git URL) and you get one `noni` command in
+place of a path per tool (`noni decide`, `noni census`, `noni register`,
+`noni claim`, `noni release`, `noni close`, `noni order`), and both routes
 print the same bytes. `noni --help` names the seven subcommands.
 
 The census is read-only: it never writes, so `git status --porcelain` is empty
@@ -114,7 +118,8 @@ Shipped, and covered by the test suite: the steering ledger with its supersede
 chain, the session register with its claim, release and close verbs, the
 ordering artifact, the
 unified census with its honest exit codes, and the `noni` package that carries
-them (`pip install noni`, then `noni <tool>`).
+them (installed from a clone or a git URL, then `noni <tool>`: there is no
+PyPI package).
 
 Not yet: the direction features above the ordering artifact (release trains,
 standing direction). The epic map (E1-E5) lives in `docs/PRODUCT.md` §8, which

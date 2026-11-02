@@ -25,6 +25,7 @@ allow.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -217,3 +218,42 @@ def run_sessions_census():
         )
         return proc.returncode, proc.stdout, proc.stderr
     return _run
+
+
+# --- the quickstart harness's shared topology --------------------------------
+#
+# Both quickstart test modules (tests/test_quickstart.py and
+# tests/test_quickstart_hygiene.py) launch the page's commands, and each used to
+# declare its own module-scoped copy of these two fixtures: two venv installs of the
+# same checkout per run, free to drift apart in their teardown (one removed its
+# root, the other forgot to). They live here at session scope, because the install is
+# the expensive step and every module needs a console script of the *same* tree; the
+# bodies stay in tests/quickstart_topology.py, which owns how the trees are built.
+# conftest.py is the only module pytest collects fixtures from outside a test file,
+# so this is the one place the pair can have a single owner.
+
+
+@pytest.fixture(scope="session")
+def installed(tmp_path_factory):
+    """The session's one venv install of the materialised clone, for every launch.
+
+    The install is the page's own step and every quickstart command needs its console
+    script, so it runs once for the session; the trees a test mutates come from
+    :func:`world` and are per-test. The directory is removed on teardown -- /tmp is
+    tmpfs here, and an installed venv left behind is not scratch, it is a leak.
+    """
+    from quickstart_topology import build_installed_world
+
+    root = tmp_path_factory.mktemp("quickstart-install")
+    try:
+        yield build_installed_world(root)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+@pytest.fixture
+def world(installed, tmp_path):
+    """One scratch set of the page's trees, over the session's install."""
+    from quickstart_topology import fresh_scratch
+
+    return fresh_scratch(installed, tmp_path / "scratch")

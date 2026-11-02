@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import os
 import re
-import shlex
 import shutil
 import subprocess
 import sys
@@ -25,6 +24,7 @@ from pathlib import Path
 import pytest
 from _harness import REPO, _git, subprocess_env
 from conftest import NONI_ENV_VARS
+from docs_commands import block_commands, fenced_pairs
 
 README = REPO / "README.md"
 CONTRIBUTING = REPO / "CONTRIBUTING.md"
@@ -165,25 +165,15 @@ def _readme_text() -> str:
 def _fenced_blocks(text: str) -> list[tuple[str, list[str]]]:
     """The (info string, lines) pairs of every fenced code block in ``text``.
 
-    Parsed by hand rather than with a Markdown library: the README is small,
-    the fence style is fixed, and a test must not gain a dependency to read
-    the page it is checking.
+    The shared fence reader is ``docs_commands.fenced_pairs`` (README, quickstart
+    and the promises modules all read fences the same way); this wraps it with the
+    README's own failure text. An unterminated fence is a malformed page, not a
+    partial read.
     """
-    blocks: list[tuple[str, list[str]]] = []
-    current: tuple[str, list[str]] | None = None
-    for line in text.splitlines():
-        fence = re.fullmatch(r"(`{3,}|~{3,})\s*(\S*)\s*", line)
-        if fence and current is None:
-            current = (fence.group(2), [])
-            continue
-        if fence and current is not None and line.startswith(fence.group(1)[0]):
-            blocks.append(current)
-            current = None
-            continue
-        if current is not None:
-            current[1].append(line)
-    assert current is None, "README.md has an unterminated code fence"
-    return blocks
+    try:
+        return fenced_pairs(text)
+    except AssertionError as exc:
+        pytest.fail(f"README.md: {exc}")
 
 
 def _try_it_block() -> list[str]:
@@ -272,38 +262,36 @@ def _argv_for_run(argv: list[str], clone: Path, repo: Path) -> list[str]:
 def _block_commands(lines: list[str]) -> list[list[str]]:
     """The commands of one block as argv lists, continuations joined.
 
-    Split with ``posix=True``, so quotes are removed the way a reader's shell
-    removes them: the argv this returns is what gets exec'd, and a value that
-    reached the script carrying literal quote characters would be a different
-    command from the one on the page.
+    The single implementation is ``docs_commands.block_commands``, shared with the
+    quickstart's runner: it drops the page's own ``#`` prose lines, joins
+    backslash continuations and splits with ``posix=True``, so quotes are removed
+    the way a reader's shell removes them. The argv it returns is what gets
+    exec'd, and a value that reached the script carrying literal quote characters
+    would be a different command from the one on the page.
     """
-    commands: list[list[str]] = []
-    pending: list[str] = []
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        continued = stripped.endswith("\\")
-        pending.append(stripped[:-1].rstrip() if continued else stripped)
-        if not continued:
-            commands.append(shlex.split(" ".join(pending), posix=True))
-            pending = []
-    assert not pending, "try-it block ends in a line continuation"
-    return commands
+    return block_commands(lines)
 
 
 def _block_words(argv: list[str]) -> tuple[str, ...]:
-    """The command words of one line: the program, plus its subcommand.
+    """The command words of one README line: the program, plus its subcommand.
 
-    ``git config user.name Casey`` reduces to ``('git', 'config')`` and
-    ``python3 ../noni/skills/.../decide.py ...`` to ``('python3',)``, which is
-    what the allow-list above matches against: the question is which programs a
-    page may tell a reader to run, not which flags or targets it passes. The one
-    exception is ``git clone <url> <dir>``, a fetch from outside the reader's
-    repository, which keeps its two words; ``cd`` is exempt as the one built-in
-    the page uses to enter a directory. Ordered, so a permitted ``git config`` is
-    not also a permit for any other git subcommand. A token carrying a dot or a
-    slash (a path, a URL, a config key, a directory name) ends the words.
+    The rules are fixed in this body, not passed in: the allow-list above is the
+    page's command vocabulary, so a caller that could re-parameterise the walk
+    could re-word a line into something the vocabulary permits. The README's
+    rules:
+
+    - ``git config user.name Casey`` reduces to ``('git', 'config')`` and
+      ``python3 ../noni/skills/.../decide.py ...`` to ``('python3',)``, which is
+      what the allow-list matches against: the question is which programs a page
+      may tell a reader to run, not which flags or targets it passes.
+    - ``git clone <url> <dir>`` is the one two-word form that survives intact, as
+      the fetch from outside the reader's repository; ``cd`` is the one built-in
+      and keeps its single word.
+    - A token carrying a dot or a slash (a path, a URL, a config key, a directory
+      name) ends the words, so a permitted ``git config`` is not also a permit for
+      any other git subcommand.
+    - An option does *not* consume its value here: the README's block carries no
+      ``-C``, so the first word after any flags is the subcommand.
     """
     if not argv:
         return ()
@@ -311,11 +299,11 @@ def _block_words(argv: list[str]) -> tuple[str, ...]:
         return ("cd",)
     if argv[0] == "git" and len(argv) > 1 and argv[1] == "clone":
         return ("git", "clone")
-    words = [argv[0]]
+    words: list[str] = [argv[0]]
     for token in argv[1:]:
         if token.startswith("-"):
             continue
-        if any(part in token for part in (".", "/")):
+        if "." in token or "/" in token:
             break
         words.append(token)
         break

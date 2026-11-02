@@ -229,11 +229,16 @@ post-condition and its one exception.
 ## The sessions census
 
 ```
-scripts/census-sessions.sh <state-root>/noni/sessions
+bash scripts/census-sessions.sh <state-root>/noni/sessions
 
 # equivalent entry point (the steering-ledger census dispatches here)
-census.sh --sessions <state-root>/noni/sessions
+bash scripts/census.sh --sessions <state-root>/noni/sessions
 ```
+
+Both are bash wrappers, so `bash <path>` always runs them whatever the file mode
+a checkout landed at; the direct form works where the executable bit is set.
+Neither runs under `python3`: the interpreter they need is the one they exec
+themselves, and `references/census.md` is the page that states that rule.
 
 The one argument is the sessions directory of the state root (`--repo` plus
 `noni/sessions`); there is no current-directory default, so a run with no
@@ -252,7 +257,9 @@ Read-only, NDJSON on stdout, honest exit code:
 | `32` | a session file is malformed (missing required field, or a claim row with no task reference) |
 
 The wrapper runs the interpreter named by `NONI_PYTHON` when that variable is
-set, and `python3` otherwise.
+set, and `python3` otherwise. `references/census.md` states the same rule for
+the exit-3 row, which is the one a reader misreads as a hint to run the wrapper
+under `python3`.
 
 When several classes fire at once, the lowest code wins (`30 < 31 < 32`);
 every check runs in a single pass and all findings are always in the NDJSON

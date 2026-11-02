@@ -1,6 +1,11 @@
 # The census
 
-`scripts/census.sh` is the read-only, jq-based arbiter for the ledger. It never
+`scripts/census.sh` is the read-only, jq-based arbiter for the ledger. It is a
+bash script, so it runs under `bash` or through its own executable bit and its
+bash shebang — never under `python3`, which reads its braces as Python and dies
+on a syntax error before any check runs. This is the one page that states that
+rule for this shim; `SKILL.md` and the sessions shim's reference point here.
+It never
 writes; it reads `noni/decisions/*.json`, the git history, and reports an honest
 exit code. It enforces the invariants that git and the files can prove. What
 git cannot prove — that an answer was the operator's, not an agent's — the
@@ -10,10 +15,14 @@ census does not check and does not claim to (see
 ## Usage
 
 ```
-scripts/census.sh <state-root>/noni/decisions   the decisions census (E1)
-scripts/census.sh --sessions <state-root>/noni/sessions  the sessions census (E2)
-scripts/census.sh --help         the usage and exit-code table
+bash scripts/census.sh <state-root>/noni/decisions   the decisions census (E1)
+bash scripts/census.sh --sessions <state-root>/noni/sessions  the sessions census (E2)
+bash scripts/census.sh --help         the usage and exit-code table
 ```
+
+Each line is one bash script, so `bash <path>` is the form that always runs:
+it works whatever the file mode a checkout happened to land at. The direct form
+(`scripts/census.sh <dir>`) is the same script where the executable bit is set.
 
 The one argument each check takes is the state directory of the state root —
 the directory `--repo` names for the writers — and neither check has a

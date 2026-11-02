@@ -144,7 +144,10 @@ the anti-fabrication rule (the agent never answers for the operator) are in
 ## Census
 
 `scripts/census.sh <state-root>/noni/decisions` is read-only, jq-based, and
-exits with an honest code. Its one argument is the ledger directory of the
+exits with an honest code. It is a bash script: run it as `bash
+scripts/census.sh <dir>` or, since it carries its executable bit and its bash
+shebang, as `scripts/census.sh <dir>`. Why no interpreter may stand in front of
+it is in `references/census.md`. Its one argument is the ledger directory of the
 state root (`--repo` plus `noni/decisions`): there is no current-directory
 default, so a run with no argument is the usage error `2`.
 
@@ -168,7 +171,7 @@ The table above is `census.sh`. The unified census reports a recordless
 
 The exit-code contract and how to read the report are in `references/census.md`.
 
-The census also dispatches the sessions check (E2): `census.sh --sessions
+The census also dispatches the sessions check (E2): `bash census.sh --sessions
 <state-root>/noni/sessions` reaches into the sibling `sessions-claims` skill via
 the relative path `../../sessions-claims/scripts/census-sessions.sh`. That is a
 documented dependency: with no override, `sessions-claims` must be installed at

@@ -42,6 +42,7 @@ from docs_promises import (
     SKILL_PAGES,
     STATE_DIR,
     bash_blocks_text,
+    expected_denylist_states,
 )
 
 # Every page whose commands a reader may copy, as (path, text) pairs, read once.
@@ -212,6 +213,24 @@ def test_the_deny_list_is_named_where_the_reader_meets_it() -> None:
     # met the row recognises the thing the page tells them to create.
     assert "hygiene" in quickstart.lower() and "--strict" in quickstart, (
         "the quickstart names the file without the check that reports it")
+
+
+def test_the_deny_list_state_words_are_exactly_the_documented_set() -> None:
+    """The derived set is exactly the three words, no more and no fewer.
+
+    ``docs_promises`` derives the words from the two product sources that render
+    them, so a rename on either side changes the tuple; the expected set is the
+    other half of that claim, and without it a rename that dropped a word would
+    leave every page test below passing on the shrunken set. The comparison lives
+    here rather than at the helper's import so that a failure is one red test with
+    a message, not a collection error in every module that imports the helper.
+    """
+    assert set(DENYLIST_STATES) == set(expected_denylist_states()), (
+        f"the deny-list state words derived from the product are "
+        f"{sorted(DENYLIST_STATES)}, not the set every page that documents the "
+        f"inactive class has to name: {sorted(expected_denylist_states())}")
+    assert len(DENYLIST_STATES) == len(set(DENYLIST_STATES)), (
+        f"a state word is derived twice: {DENYLIST_STATES}")
 
 
 def test_the_deny_list_states_are_all_named() -> None:

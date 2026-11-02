@@ -313,6 +313,13 @@ def _block_words(argv: list[str]) -> tuple[str, ...]:
     return tuple(words)
 
 
+# The token characters that end a quickstart line's command words: the README's
+# dot and slash, plus the scp-style remote (``@``, ``:``), the URL (``:``) and the
+# redirect (``>``) this page prints. Data for the reader below, so the rule the
+# function applies is a thing a test can read.
+QUICKSTART_WORD_ENDS: tuple[str, ...] = (".", "/", "@", ":", ">")
+
+
 def _quickstart_words(argv: list[str]) -> tuple[str, ...]:
     """The command words of one quickstart line, by that page's own fixed rules.
 
@@ -322,20 +329,46 @@ def _quickstart_words(argv: list[str]) -> tuple[str, ...]:
     parameters lets a caller re-word a line into something the other page's
     allow-list permits.
 
+    **This body is the README-side copy of the rules, not a re-export of the
+    launcher's.** A comparison between a function and itself measures nothing, so
+    the README reader implements the grammar here (``QUICKSTART_WORD_ENDS`` is its
+    data) and :func:`test_the_words_readers_of_the_two_pages_agree_on_every_quickstart_command`
+    cross-checks it against ``quickstart_runner.words`` -- which the launcher itself
+    decides on -- on every command the page actually prints. The cross-check is then
+    a claim about two independent implementations, and a page line on which they
+    disagree is a failure rather than a tautology. The rules:
+
     - **An option consumes its value**: this page prints
       ``git -C .noni-state config user.name Casey``, where the verb -- not the
       directory -- is the subcommand, and ``python3 -m pip install``, where the
       ``-m`` belongs to the command.
-    - **A token ends the walk** when it carries ``@``, ``:``, ``>``, a dot or a
-      slash: this page prints an scp-style remote, a URL and a redirect.
-
-    ``quickstart_runner.words`` is the launcher's copy of these rules (the import
-    below is what keeps the two in step), and ``tests/test_quickstart.py`` asserts
-    the pair agree on every line the page prints.
+    - **A token ends the walk** when it carries any character of
+      :data:`QUICKSTART_WORD_ENDS`: this page prints an scp-style remote, a URL and
+      a redirect.
     """
-    from quickstart_runner import words
-
-    return words(argv)
+    if not argv:
+        return ()
+    if argv[0] == "cd":
+        return ("cd",)
+    if argv[0] == "git" and len(argv) > 1 and argv[1] == "clone":
+        return ("git", "clone")
+    found: list[str] = [argv[0]]
+    index = 1
+    while index < len(argv):
+        token = argv[index]
+        if token.startswith("-"):
+            # An option consumes the token after it, unless it carries its own value
+            # with ``=``. The message option keeps its word: the gate for the
+            # branch-creating line reads it as part of that line's shape.
+            index += 1 if (token.startswith("--") and "=" in token) else 2
+            if token == "-m":
+                found.append(token)
+            continue
+        if any(part in token for part in QUICKSTART_WORD_ENDS):
+            break
+        found.append(token)
+        break
+    return tuple(found)
 
 
 def _script_name(argv: list[str]) -> str:

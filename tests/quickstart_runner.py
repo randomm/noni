@@ -30,7 +30,12 @@ from pathlib import Path
 import pytest
 from docs_commands import block_commands
 from docs_promises import QUICKSTART, STATE_DIR, bash_blocks_text, section_body
-from quickstart_gates import LAUNCHABLE, gate_page_command, guard_route_b_push
+from quickstart_gates import (
+    LAUNCHABLE,
+    config_value,
+    gate_page_command,
+    guard_route_b_push,
+)
 from quickstart_topology import (
     CLONE_URL,
     READER_DIR,
@@ -47,12 +52,14 @@ __all__ = [
     "World",
     "build_world",
     "checked",
+    "config_value",
     "git",
     "launch",
     "reroot_state_git",
     "reroot_state_repo",
     "route_commands",
     "run_env",
+    "run_route_b",
     "state_clone",
     "substitute",
     "words",
@@ -146,6 +153,31 @@ def route_commands(label: str) -> list[list[str]]:
     """
     body = section_body(QUICKSTART.read_text(encoding="utf-8"), label)
     return [argv for block in bash_blocks_text(body) for argv in block_commands(block)]
+
+
+def run_route_b(world: World) -> list[list[str]]:
+    """Every Route B command the page prints, launched in order and checked.
+
+    The one walk both quickstart test modules drive. It lives here rather than in
+    either module because the two halves of the ordering are what make the walk
+    measure the page: the project identity comes from the page's own config lines
+    (which run in the Route B block, not as fixture calls), the register line's
+    session id has to be read off disk *after* that line and *before* the claim line
+    that names it, and the snapshot that makes that read mean "this run added one"
+    has to be taken before the register line runs. Two copies of that sequence drift
+    -- one drops the snapshot, the other gains a config call the page never printed
+    -- and then the two modules are no longer running the same route.
+    """
+    commands = route_commands("Route B")
+    assert commands, "the quickstart no longer has a Route B command block"
+    for argv in commands:
+        if words(argv)[:2] == ("noni", "register"):
+            world.mark_sessions()
+        proc = launch(world, argv, world.project, state=True)
+        checked(proc, f"Route B command {argv}")
+        if words(argv)[:2] == ("noni", "register"):
+            world.collect_session_id()
+    return commands
 
 
 def launch(world: World, argv: list[str], cwd: Path, *,
@@ -242,17 +274,30 @@ def reroot_state_git(argv: list[str], state: Path) -> list[str]:
     here rather than passing through: an unanchored reference runs against the
     launcher's cwd (the project), which is the confusion this helper exists to prevent,
     and a whole-route run cannot tell the two trees apart when both hold a branch
-    called ``main``.
+    called ``main``. The test is as exact as its ``--repo`` twin's: the token appears
+    once, and once as a ``-C`` value. A second ``-C`` makes the line ambiguous about
+    which tree the verb runs in (git takes the last), so a harness that re-rooted the
+    first and let the second stand would launch the verb somewhere other than where
+    the guard just read the remote.
     """
-    if STATE_DIR not in argv:
+    occurrences = [index for index, token in enumerate(argv) if token == STATE_DIR]
+    if not occurrences:
         return argv
-    anchors = [index for index, token in enumerate(argv)
-               if token == "-C" and index + 1 < len(argv) and argv[index + 1] == STATE_DIR]
-    assert anchors, (
+    assert len(occurrences) == 1, (
+        f"a page git line names the state directory {STATE_DIR!r} "
+        f"{len(occurrences)} times, so the page does not decide which tree the "
+        f"verb runs in: {argv}")
+    anchors = [index for index, token in enumerate(argv) if token == "-C"]
+    assert len(anchors) == 1, (
+        f"a page git line names the state directory once but carries "
+        f"{len(anchors)} -C options, so the anchor for the re-rooting is ambiguous: "
+        f"{argv}")
+    index = anchors[0]
+    assert index + 1 < len(argv), f"the page prints -C with no value: {argv}"
+    assert occurrences[0] == index + 1, (
         f"a page git line references the state directory {STATE_DIR!r} with no "
         f"'-C {STATE_DIR}' anchor, so the harness cannot point it at the real "
         f"clone: {argv}")
-    index = anchors[0]
     return [*argv[:index + 1], str(state), *argv[index + 2:]]
 
 
@@ -274,24 +319,33 @@ def reroot_state_repo(argv: list[str], state: Path) -> list[str]:
     Like its ``-C`` twin, a line that names the state directory anywhere other than as
     the value of ``--repo`` fails closed: such a line has no anchor to move, and
     passing it through would run it against the project while the run still reported
-    the page's exit 0.
+    the page's exit 0. The test is exact rather than "the token appears once
+    somewhere": **the state directory has to appear exactly once, and exactly as the
+    value of ``--repo``**. A second ``--repo`` or a second ``.noni-state`` leaves the
+    line ambiguous about which tree the writer was told to open (an argument parser
+    takes one of the repeats, a positional is a different question again), and a
+    launch that guessed would commit the page's record into the wrong clone while
+    still reporting the page's exit 0.
     """
-    anchored = False
-    try:
-        index = argv.index("--repo")
-    except ValueError:
-        index = -1
-    if index >= 0:
-        assert index + 1 < len(argv), f"the page prints --repo with no value: {argv}"
-        if argv[index + 1] == STATE_DIR:
-            anchored = True
-            if argv.count(STATE_DIR) == 1:
-                return [*argv[:index + 1], str(state), *argv[index + 2:]]
-    assert anchored or STATE_DIR not in argv, (
+    occurrences = [index for index, token in enumerate(argv) if token == STATE_DIR]
+    if not occurrences:
+        return argv
+    assert len(occurrences) == 1, (
+        f"a page noni line names the state directory {STATE_DIR!r} "
+        f"{len(occurrences)} times, so the page does not decide which tree the "
+        f"writer opens: {argv}")
+    anchors = [index for index, token in enumerate(argv) if token == "--repo"]
+    assert len(anchors) == 1, (
+        f"a page noni line names the state directory once but carries "
+        f"{len(anchors)} --repo flags, so the anchor for the re-rooting is "
+        f"ambiguous: {argv}")
+    index = anchors[0]
+    assert index + 1 < len(argv), f"the page prints --repo with no value: {argv}"
+    assert occurrences[0] == index + 1, (
         f"a page noni line references the state directory {STATE_DIR!r} outside "
         f"the value of --repo, so the harness cannot point it at the real clone: "
         f"{argv}")
-    return argv
+    return [*argv[:index + 1], str(state), *argv[index + 2:]]
 
 
 def state_clone(world: World, argv: list[str],

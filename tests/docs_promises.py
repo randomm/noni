@@ -89,16 +89,25 @@ def _denylist_state_words() -> tuple[str, ...]:
 
 
 # The three words, in the order the page lists them. The expected set is stated
-# here as well as derived so a rename on either side is a hard failure rather
-# than a tuple that quietly changed shape: the tuple must be exactly these words.
+# here as data rather than asserted at import: a module-level ``assert`` would red
+# every module that imports this one (both quickstart test modules, the promises
+# test, the try-it harness) for a problem that is one test's claim, and a failed
+# import is a collection error that hides the message. The exact-set comparison is
+# ``test_the_deny_list_state_words_are_exactly_the_documented_set``, and
+# ``DENYLIST_STATES`` below is what it reads.
 _EXPECTED_DENYLIST_STATES: tuple[str, ...] = ("absent", "corrupt", "present but empty")
 
 DENYLIST_STATES: tuple[str, ...] = _denylist_state_words()
 
-assert set(DENYLIST_STATES) == set(_EXPECTED_DENYLIST_STATES), (
-    f"the deny-list state words derived from the product are "
-    f"{sorted(DENYLIST_STATES)}, not the set every page that documents the "
-    f"inactive class has to name: {sorted(_EXPECTED_DENYLIST_STATES)}")
+
+def expected_denylist_states() -> tuple[str, ...]:
+    """The closed set of inactive state words any page must name.
+
+    A function rather than a bare constant so the comparison happens at assertion
+    time, in the test that owns the claim, and its message reaches the reader as a
+    failure rather than as an import error.
+    """
+    return _EXPECTED_DENYLIST_STATES
 
 # One line of the page's gh + jq recipe: the filter that turns tracker output
 # into the map the census accepts. Matched by the two conversions it owes the

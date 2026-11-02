@@ -49,33 +49,17 @@ from harness_runners import run_noni
 from quickstart_runner import (
     World,
     build_world,
+    checked,
     git,
     launch,
     route_commands,
+    run_route_b,
     words,
 )
-from quickstart_runner import checked as _checked
 
-
-def _run_route_b(world: World) -> list[list[str]]:
-    """Launch every Route B command, checked, with the session id taken after register.
-
-    The one walk both Route B tests need: the exit-code test and the
-    origin-contents test drive the same commands in the same order, and the
-    register line's session id has to be read off disk before the claim line that
-    names it. Sharing the walk keeps the two from diverging into runs that prove
-    different things.
-    """
-    commands = route_commands("Route B")
-    assert commands, "the quickstart no longer has a Route B command block"
-    for argv in commands:
-        if words(argv)[:2] == ("noni", "register"):
-            world.mark_sessions()
-        proc = launch(world, argv, world.project, state=True)
-        _checked(proc, f"Route B command {argv}")
-        if words(argv)[:2] == ("noni", "register"):
-            world.collect_session_id()
-    return commands
+# The harness's must-succeed wrapper, under the short name the assertions below use
+# (the module also exports it as ``checked`` for its own walker).
+_checked = checked
 
 
 @pytest.fixture
@@ -187,7 +171,7 @@ def test_route_b_commands_all_exit_zero(world: World) -> None:
     the wrong path, a writer pointed at the project instead of the state clone --
     and each is observed here rather than assumed.
     """
-    commands = _run_route_b(world)
+    commands = run_route_b(world)
 
     assert (world.state / "noni" / "decisions").is_dir(), "no ledger under the state clone"
     assert (world.project / ".gitignore").is_file(), "the ignore rule was never written"
@@ -224,7 +208,7 @@ def test_the_state_route_leaves_the_origin_holding_the_writers_commits(world: Wo
     branch sees the ledger; a run that committed locally and never landed anywhere
     would pass the exit-code assertions above.
     """
-    _run_route_b(world)
+    run_route_b(world)
     pushed = git(world.origin, "ls-tree", "--name-only", "main", env=world.env)
     _checked(pushed, "origin main tree")
     assert "noni" in pushed.stdout.split(), (
@@ -286,7 +270,11 @@ def test_the_ordering_note_appears_in_human_mode_and_not_in_json(world: World) -
     assert "ordering rows at all" in page, (
         "the page no longer says what a tree with no ordering artifact earns from "
         "the ordering group, so a zero count below proves nothing")
-    assert summary.get("counts", {}).get("ordering-closed", 0) == 0, (
+    counts = summary["counts"]
+    assert isinstance(counts, dict), (
+        f"the summary row carries no counts mapping, so the zero below proves "
+        f"nothing: {summary}")
+    assert counts.get("ordering-closed", 0) == 0, (
         f"a tree with no ordering artifact produced ordering-closed findings: "
         f"{summary}")
     assert not [row for row in rows if row.get("kind") == "finding"], rows

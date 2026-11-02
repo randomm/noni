@@ -28,15 +28,14 @@ from docs_promises import PUBLISHING, QUICKSTART, STATE_DIR
 from quickstart_runner import (
     World,
     build_world,
-    git,
+    gate_page_command,
     launch,
     reroot_state_git,
     reroot_state_repo,
     route_commands,
     words,
 )
-from readme_support import _quickstart_words
-from test_quickstart import _checked
+from readme_support import _block_words, _quickstart_words
 
 
 @pytest.fixture()
@@ -109,25 +108,178 @@ def test_reroot_state_repo_has_the_same_anchor_test_as_its_c_twin():
         reroot_state_repo(["noni", "census", STATE_DIR], state)
 
 
-def test_the_words_readers_of_the_two_pages_agree_on_every_quickstart_command():
-    """The two closed word-readers, checked against each other on the real page.
+def test_an_ambiguous_state_reference_is_refused_not_guessed_at() -> None:
+    """A page line that names the state directory twice is an assertion, not a guess.
 
-    ``readme_support`` carries two functions now, each with its rules fixed in its
-    body (no knobs a caller could use to re-word a line into something an
-    allow-list permits): ``_block_words`` reads the README's block, and
-    ``_quickstart_words`` reads this page's. The second is the launcher's reader,
-    so the risk the split introduces is drift between the pair. This closes it on
-    the only input that matters: every command the page actually prints has to
-    reduce the same way under both readers, and the README's rules have to keep
-    reducing its own ``git config`` line to the two-word form its allow-list
-    matches.
+    The anchor rule is "exactly once, exactly as the ``--repo`` value", and the two
+    ways a line broke it before were both silent. A second ``--repo`` left the helper
+    to re-root the first one and hand the writer a line with two --repo values (git
+    and argparse each take one of them, and not necessarily the moved one), so the
+    record was committed into whichever tree the parser preferred while the run still
+    reported the page's exit 0. A second ``.noni-state`` in a position the helper does
+    not move -- a positional, or a ``--git-dir`` rather than a ``-C`` -- was passed
+    through untouched, which is the unanchored case under a different spelling. Both
+    are asserted for ``--repo`` and for its ``-C`` twin, and the negative half pins
+    that a line which names the state directory nowhere is still returned unchanged.
+    """
+    state = Path("/scratch/project/.noni-state")
+    duplicated_repo = [
+        # --repo given twice, the state directory as the second value
+        ["noni", "register", "--repo", ".", "--repo", STATE_DIR],
+        # --repo given twice, the state directory as the first value
+        ["noni", "register", "--repo", STATE_DIR, "--repo", "."],
+        # one --repo, and the state directory also sits as a positional
+        ["noni", "census", "--repo", ".", STATE_DIR],
+        # one --repo, and the state directory also sits as a second --repo value
+        ["noni", "census", "--repo", STATE_DIR, STATE_DIR],
+    ]
+    for argv in duplicated_repo:
+        with pytest.raises(AssertionError):
+            reroot_state_repo(argv, state)
+    # The same line with a second token that merely *contains* the state name is not
+    # a second mention of the tree: the count is on whole tokens, and an answer that
+    # happens to quote the directory is the page's prose, not a path the writer opens.
+    quoted = ["noni", "claim", "--repo", STATE_DIR, "--answer", "q1=" + STATE_DIR]
+    assert reroot_state_repo(quoted, state) == [
+        "noni", "claim", "--repo", str(state), "--answer", "q1=" + STATE_DIR], quoted
+    # A page line that does not name the state directory at all is passed through
+    # untouched: the helper adds no anchor the page did not print.
+    for argv in (["noni", "census", "--repo", "."],
+                 ["noni", "decide", "--slug", "release-scope"]):
+        assert reroot_state_repo(argv, state) == argv
+
+    duplicated_c = [
+        # -C given twice: git takes the last, so re-rooting the first moves nothing
+        ["git", "-C", STATE_DIR, "-C", ".", "push", "-u", "origin", "main"],
+        # the state directory as a positional next to a -C that names something else
+        ["git", "-C", ".", "push", "-u", "origin", "main", STATE_DIR],
+        # the state directory named by --git-dir instead of -C: no anchor to move,
+        # so the verb would run against the launcher's cwd and still report exit 0
+        ["git", "--git-dir", STATE_DIR, "push", "-u", "origin", "main"],
+    ]
+    for argv in duplicated_c:
+        with pytest.raises(AssertionError):
+            reroot_state_git(argv, state)
+    assert reroot_state_git(["git", "commit", "--allow-empty", "-m", "x"], state) == [
+        "git", "commit", "--allow-empty", "-m", "x"]
+
+
+def test_the_config_gate_walks_past_options_rather_than_trusting_a_position() -> None:
+    """The identity-key gate reads the key git reads, not the word after ``config``.
+
+    ``git`` re-interprets what follows ``config``: an option there changes what the
+    next word means, so a gate that checked "the token at index 2" would screen a word
+    git does not treat as the key and let the real one through unexamined. Each case
+    below carries a key that the harness may set, a transport token that it may not,
+    or both, in an option position or in a value an option consumed; the expectation is
+    what the gate has to do about it.
+    """
+    def allows(argv):
+        try:
+            gate_page_command(("git", "config"), argv)
+        except AssertionError:
+            return False
+        return True
+
+    identity = ["user.name", "Casey"]
+    # The page's own lines pass, and a read-only query is not a write: the gate does
+    # not refuse the page reading a key it may not set.
+    assert allows(["git", "config", *identity])
+    assert allows(["git", "-C", ".noni-state", "config", "user.email",
+                   "casey@example.invalid"])
+    assert allows(["git", "config", "--get", "user.name"])
+    assert allows(["git", "config", "--get-all", "user.email"])
+    assert allows(["git", "config", "--get", "remote.origin.url"])
+    assert allows(["git", "config", "--get", "user.name", "Casey"])
+    assert allows(["git", "config", "user.name", "Casey", "--null"])
+    # A key outside the identity pair is refused, wherever it sits.
+    assert not allows(["git", "config", "core.sshCommand", "ssh -i /tmp/k"])
+    assert not allows(["git", "config", "url.https://x/.insteadOf", "git@x:"])
+    assert not allows(["git", "config", "URL.X.INSTEADOF", "git@x:"])
+    assert not allows(["git", "config", "remote.origin.pushurl", "/tmp/elsewhere"])
+    assert not allows(["git", "config", "remote.origin.pushURL", "/tmp/elsewhere"])
+    # A value-taking option consumes its value, so the token after it is not the key,
+    # and a flag that redirects the write is refused rather than exec'd.
+    assert not allows(["git", "config", "-f", "/tmp/other", *identity])
+    assert not allows(["git", "config", "user.name", "Casey", "--file", "/tmp/x"])
+    assert not allows(["git", "config", "--unknown-flag", "user.name"])
+    # The smuggling cases: a transport name, a path, or the state directory in an
+    # option position, in a value an option consumed, or past the key -- with a
+    # permitted-looking key in the visible slot each time.
+    assert not allows(["git", "config", "--get", "remote.origin.pushurl"])
+    assert not allows(["git", "config", "--get-urlmatch", "remote.origin.pushurl",
+                       "push"])
+    assert not allows(["git", "config", "--get", "user.name", "Casey",
+                       "--get-urlmatch", "remote.origin.pushurl"])
+    assert not allows(["git", "config", "-f", "user.name", "--push", "origin", "x"])
+    assert not allows(["git", "config", "--get", "user.name", "url.evil/.insteadOf"])
+    assert not allows(["git", "config", "user.name", "Casey", "--get-urlmatch",
+                       "remote.origin.pushurl"])
+    assert not allows(["git", "config", "--get=remote.origin.pushurl", "user.name"])
+    assert not allows(["git", "config", "user.name", "Casey", "/tmp/evil"])
+    assert not allows(["git", "config", "user.name", "Casey", STATE_DIR])
+    # --push is git's remote-writing form and the page has no use for it: refused in
+    # every position, including behind a permitted key.
+    assert not allows(["git", "config", "--push", "user.name"])
+    assert not allows(["git", "config", "user.name", "Casey", "--push"])
+    assert not allows(["git", "config", "user.name", "Casey", "--push", "origin"])
+    assert not allows(["git", "config", "--get", "user.name", "Casey", "--push"])
+    assert not allows(["git", "config", "--push=user.name"])
+    # A line with no key at all is refused rather than treated as a no-op.
+    assert not allows(["git", "config"])
+    assert not allows(["git", "config", "--get"])
+
+
+def test_the_words_readers_of_the_two_pages_agree_on_every_quickstart_command():
+    """Two independent readers of one grammar, cross-checked on the real page.
+
+    ``readme_support`` carries three closed readers, each with its rules fixed in
+    its own body (no knobs a caller could use to re-word a line into something an
+    allow-list permits): ``_block_words`` reads the README's block with the README's
+    rules, ``_quickstart_words`` reads this page with this page's rules, and
+    ``quickstart_runner.words`` is the launcher's copy of the quickstart's rules --
+    the one the allow-list is actually decided on.
+
+    The pair that matters is the last two: they read the same grammar for the same
+    page, so a comparison between them is a measurement only while neither delegates
+    to the other. Both have their walk written out in their own body, which is what
+    makes the cross-check below able to fail -- and the cross-check runs on the only
+    input that matters, every command the page actually prints, plus the shapes the
+    page does not print today and could gain (a token carrying each word-ending
+    character, an option that consumes a value, ``-m``, ``--flag=value``).
     """
     commands = [argv for label in ("Install", "Route A", "Route B")
                 for argv in route_commands(label)]
     assert commands, "the page yields no commands to compare the readers on"
     for argv in commands:
         assert _quickstart_words(argv) == words(argv), argv
-    # The README reader keeps its own shape: options do not consume values there.
+    # The shapes above are what the page prints; these are the shapes it could gain,
+    # so a reader that drifted only on an unprinted form is caught too.
+    for argv in ("git", "python3", "noni", "echo"):
+        for token in ("a.b", "a/b", "a@b", "a:b", "a>b"):
+            assert _quickstart_words([argv, "sub", token]) == words([argv, "sub", token])
+    for argv in (["git", "-C", ".noni-state", "config", "user.name", "Casey"],
+                 ["python3", "-m", "pip", "install", "./noni"],
+                 ["git", "commit", "--allow-empty", "-m", "first"],
+                 ["git", "push", "--force-with-lease=refs/heads/main", "origin", "main"]):
+        assert _quickstart_words(argv) == words(argv), argv
+    # Neither reader is the other by reference: a body that re-exported its sibling
+    # would satisfy every assertion above and measure nothing.
+    for reader in (_quickstart_words, words):
+        assert reader.__code__.co_filename != (
+            (_quickstart_words if reader is words else words).__code__.co_filename), (
+            f"{reader.__name__} is the other reader's body, so the cross-check "
+            "above compares a function with itself")
+    # The README reader keeps its own shape: an option is skipped, not skipped *over*,
+    # so the word after ``-C`` is the one its walk stops on -- the directory, where
+    # the quickstart's walk (which lets an option consume its value) reaches the verb.
+    # That difference is the two pages' grammar, and it is why the cross-check above is
+    # a measurement rather than a tautology: on the quickstart's own line the two
+    # readers must agree, and on a shape only the README's rules could print they must
+    # not, or one of the two bodies has silently become the other's.
+    assert _block_words(["git", "-C", "x", "config"]) == ("git", "x")
+    assert _quickstart_words(["git", "-C", "x", "config"]) == ("git", "config")
+    assert _block_words(["git", "-C", ".noni-state", "config"]) == ("git",)
     assert _quickstart_words(["git", "-C", ".noni-state", "config"]) == ("git", "config")
 
 
@@ -282,50 +434,3 @@ def test_a_hostile_pythonpath_kills_a_launch_that_inherits_it(
         "PYTHONPATH, so the clean run above proves nothing: "
         f"{inherited.returncode} {inherited.stderr[:300]!r}")
 
-
-def _run_route_b(world: World) -> list[list[str]]:
-    """The page's Route B block, run in order. Shared by its two assertions."""
-    _checked(git(world.project, "config", "user.name", "Casey", env=world.env),
-             "set project identity")
-    _checked(git(world.project, "config", "user.email", "casey@example.com", env=world.env),
-             "set project email")
-    commands = route_commands("Route B")
-    for argv in commands:
-        proc = launch(world, argv, world.project, state=True)
-        assert proc.returncode == 0, (
-            f"Route B command {argv} exited {proc.returncode}\n"
-            f"stdout: {proc.stdout}\nstderr: {proc.stderr}")
-        # The register line's placeholder is the file that line just wrote; it is
-        # read back from disk before the claim line that names it runs.
-        if argv[:2] == ["noni", "register"]:
-            world.collect_session_id()
-    return commands
-
-
-def test_the_launcher_refuses_a_push_that_names_another_remote(world: World) -> None:
-    """A Route B push may only name this fixture's origin and its main.
-
-    The state clone is the private tree in the page's story, so the one command
-    that can write outside the scratch trees is guarded at both ends: the argv's
-    remote and branch, and the clone's ``remote.origin.url`` as the git config
-    reports it. A page (or a rewrite of one) that addressed some other remote is
-    refused rather than run, and a run that had quietly rewritten the clone's
-    origin -- a ``--pushurl``, a ``set-url`` -- is refused by the same gate.
-    """
-    from quickstart_gates import guard_route_b_push
-
-    def guard(argv):
-        guard_route_b_push(world.state, ("git", "push"), argv, True, world.origin,
-                           world.env, _checked)
-
-    _run_route_b(world)  # stand the state clone up, as the page's own commands do
-    push = ["git", "-C", str(world.state), "push", "-u", "origin", "main"]
-    guard(push)  # the page's line passes
-    with pytest.raises(AssertionError, match="origin main"):
-        guard(["git", "-C", str(world.state), "push", "evil", "main"])
-    # An origin the fixture did not create is the other half of the same gate.
-    elsewhere = world.origin.parent / "elsewhere"
-    _checked(git(world.state, "remote", "set-url", "origin", str(elsewhere),
-                 env=world.env), "plant a second origin")
-    with pytest.raises(AssertionError, match="fixture origin"):
-        guard(push)

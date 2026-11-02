@@ -1,18 +1,26 @@
-"""The trees the quickstart's page describes, built once per test.
+"""The trees the quickstart's page describes, built once per test module.
 
 The page names four things a reader creates: a clone of this repository, their own
 repository, a private state repository with an origin, and a venv holding the
-installed package. This module builds them, and owns the preconditions the
-launcher's measurements depend on -- the env nothing ambient reaches, the seed
-commit that stands in for the forge, and the install step whose product every page
-command runs through.
+installed package. This module builds them, and owns the preconditions the launches
+depend on -- the env nothing ambient reaches, the seed commit that stands in for the
+forge, and the install step whose product every page command runs through.
+
+**The topology is module-scoped and the scratch is per-test.** The venv install is
+the expensive step (a ``python -m venv`` plus a ``pip install`` of the clone) and
+every page command needs the same installed console script, so it runs once per
+module. A test that *mutates* the trees -- running the page's writers, or a hostile
+``PYTHONPATH`` decoy -- takes its own scratch from :func:`fresh_scratch`, which
+reuses the installed venv and the materialised clone and builds a new project,
+origin and seed in a fresh directory. A module-scoped world handed to two route runs
+would let the second see the first one's ledger.
 
 :func:`run_env` is the module's one claim about the launched commands themselves:
 the page sells the install as what makes ``noni`` runnable and states its guarantee
 as the commands working with ``PYTHONPATH`` unset, so a launch that inherited the
 harness's own ``src/`` pin would pass on an environment the reader does not have.
-The two additions :func:`make_venv` needs for pip's own sake are applied there, not
-here, so nothing the page launches can inherit them.
+The two additions :func:`install_venv` needs for pip's own sake are applied there,
+not here, so nothing the page launches can inherit them.
 """
 
 from __future__ import annotations
@@ -54,16 +62,23 @@ _GIT_IDENTITY = ("-c", "user.name=Replay", "-c", "user.email=replay@fixture.inva
 
 
 class World:
-    """The trees the page describes: the clone, the project, and the origin."""
+    """One scratch set of the trees the page describes, over a shared install.
 
-    def __init__(self, tmp_path: Path) -> None:
+    Built by :func:`fresh_scratch`: the venv and the clone come from the module's
+    :func:`InstalledWorld` and are shared read-only, and everything the page's
+    commands write -- the project, the state clone inside it, and the bare origin
+    that stands in for the forge -- is created afresh in ``scratch``.
+    """
+
+    def __init__(self, scratch: Path, venv: Path, clone: Path) -> None:
         self.env = run_env()
-        self.clone = tmp_path / CLONE_DIR
-        self.project = tmp_path / READER_DIR
-        self.origin = tmp_path / "origin"
+        self.scratch = scratch
+        self.clone = clone
+        self.venv = venv
+        self.noni = venv / "bin" / "noni"
+        self.project = scratch / READER_DIR
+        self.origin = scratch / "origin"
         self.state = self.project / STATE_DIR
-        self.venv = tmp_path / "venv"
-        self.noni = self.venv / "bin" / "noni"
         # Placeholder values a running tree produces (see
         # ``quickstart_runner.substitute``): the id register printed, read back off
         # the file it wrote, so the page's claim line names the session the register
@@ -97,6 +112,16 @@ class World:
             "the page's register line wrote no session file under the state clone, "
             "so the claim line that follows cannot name a real session id")
         self.placeholders["<session-id>"] = files[-1].stem
+
+
+class InstalledWorld:
+    """The module's shared install: the venv holding the clone's package."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.clone = root / CLONE_DIR
+        self.venv = root / "venv"
+        self.noni = self.venv / "bin" / "noni"
 
 
 def run_env() -> dict[str, str]:
@@ -178,7 +203,8 @@ def seed_origin(origin: Path, env: dict[str, str], branch: str = "main") -> None
     the seed's own push with ``-u`` rather than by ``init`` of the bare repository: a
     bare ``init -b`` checks that branch out, and git then refuses a push to the
     branch its own ``HEAD`` names. ``tests/harness_git.py``'s ``build_bare_origin``
-    makes the same choice for the same reason.
+    makes the same choice for the same reason. The seed tree is a sibling the caller
+    can delete; nothing the page reads lives in it.
     """
     init_bare(origin, env, branch)
     seed = origin.parent / "seed"
@@ -198,8 +224,8 @@ def materialise_clone(dest: Path) -> None:
                                                   "noni.egg-info", ".worktrees"))
 
 
-def make_venv(world: World) -> None:
-    """The page's install step, run once: a venv holding the clone's package.
+def install_venv(installed: InstalledWorld) -> None:
+    """The page's install step, run once per module: a venv holding the clone's package.
 
     The venv and pip themselves are the two steps the suite launches that are not a
     command on the page (the page's reader gets a working pip from their own
@@ -208,37 +234,51 @@ def make_venv(world: World) -> None:
     the tree being measured) and coverage's hook (so the suite's subprocess coverage
     still fires). :func:`run_env` keeps both out of every launch, which is where the
     page's guarantee lives; nothing added here reaches a page command, and the
-    ``noni --help`` that ``build_world`` runs under the clean env is what proves it.
+    ``noni --help`` that :func:`build_installed_world` runs under the clean env is
+    what proves it.
     """
-    env = dict(world.env)
+    env = run_env()
     env["PYTHONPATH"] = str(SRC)
     env["COVERAGE_PROCESS_START"] = COVERAGE_PROCESS_START
-    checked(subprocess.run([sys.executable, "-m", "venv", str(world.venv)],
+    checked(subprocess.run([sys.executable, "-m", "venv", str(installed.venv)],
                            capture_output=True, text=True, env=env, timeout=300),
             "python -m venv")
-    checked(subprocess.run([str(world.venv / "bin" / "pip"), "install", "--quiet",
-                            "--disable-pip-version-check", str(world.clone)],
+    checked(subprocess.run([str(installed.venv / "bin" / "pip"), "install", "--quiet",
+                            "--disable-pip-version-check", str(installed.clone)],
                            capture_output=True, text=True, env=env, timeout=600),
             "pip install of the clone")
 
 
-def build_world(tmp_path: Path) -> World:
-    """The page's topology, standing and installed: clone, project, state origin.
+def build_installed_world(root: Path) -> InstalledWorld:
+    """The module's shared install: the clone materialised, the venv holding it.
 
-    The install step runs here rather than in one test because every command the page
-    prints needs the same installed console script, and a per-test install would
-    measure pip rather than the page several times over.
+    The console script is then run under the *launch* env, which carries no
+    ``PYTHONPATH`` at all: a venv whose package came from an inherited path rather
+    than from the install would fail here, naming the install rather than a page
+    command.
     """
-    world = World(tmp_path)
-    materialise_clone(world.clone)
+    root.mkdir(parents=True, exist_ok=True)
+    installed = InstalledWorld(root)
+    materialise_clone(installed.clone)
+    install_venv(installed)
+    probe = World(root / "probe", installed.venv, installed.clone)
+    init_repo(probe.project, probe.env)
+    checked(subprocess.run([str(installed.noni), "--help"], capture_output=True,
+                           text=True, env=probe.env, timeout=120, cwd=probe.project),
+            "noni --help")
+    return installed
+
+
+def fresh_scratch(installed: InstalledWorld, scratch: Path) -> World:
+    """A per-test set of the mutable trees, over the module's install.
+
+    The project, its state clone and the forge's bare origin are built here, in a
+    directory the caller owns and removes: two route runs against one project would
+    otherwise see each other's ledger, and the page's own writers are what put it
+    there. The venv and the clone are the shared, read-only half.
+    """
+    scratch.mkdir(parents=True, exist_ok=True)
+    world = World(scratch, installed.venv, installed.clone)
     init_repo(world.project, world.env)
     seed_origin(world.origin, world.env)
-    make_venv(world)
-    # The proof that the install was the real thing: the console script the install
-    # step produced runs under the *launch* env, which carries no PYTHONPATH at all.
-    # A venv whose package came from an inherited path rather than from the install
-    # would fail here, naming the install rather than a page command.
-    checked(subprocess.run([str(world.noni), "--help"], capture_output=True, text=True,
-                           env=world.env, timeout=120, cwd=world.project),
-            "noni --help")
     return world

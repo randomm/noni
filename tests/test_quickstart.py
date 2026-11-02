@@ -5,27 +5,28 @@ minutes are not enough: it carries the install forms (there is no package index
 to install from), both state-root routes, the ignore rule, the one-time first
 push, the deny-list file and the ``--issue-state`` recipe. The enforcement rule
 of ``docs/PRODUCT.md`` §6 says prose is convention, not enforcement, so this
-module reads the page as data and runs it: every fenced command in every route is
-launched against a tree the page describes, and each has to exit 0.
+module reads the page as data and runs it.
 
-The three layers are separate, each on the seam that makes the other two
-readable: ``docs_commands`` and ``docs_promises`` turn the page into argv over a
-declared set of files, ``quickstart_runner`` builds the trees and launches one
-argv, and this module holds only what the page claims. What each test pins, and
-why only this test can:
+The harness has two halves, and each answers a different question:
 
-- the commands are the page's own, parsed out of its fences, so a rewrite that
-  quietly drops the ``git push -u`` step or the ignore rule fails here rather
-  than leaving a reader to discover it;
-- the placeholders the page asks the reader to fill are substituted with real
-  values, not deleted: a command that only works because a flag went missing is
-  not the command on the page;
-- the ``--issue-state`` recipe is run through ``jq`` and handed to the census's
-  own reader, so the two shapes it refuses -- a padded or numeric key, a state
-  word it may not name -- cannot come back into the recipe unnoticed;
-- the deny-list section names the file, its location, and the fact that a file
-  holding only blanks and comments is still inactive: the state a reader who
-  "just created the file" lands in and cannot explain from the census row.
+- **Is this the page we reviewed?** :mod:`quickstart_golden` holds a literal list
+  of the commands the page prints, per section, in order, and
+  :func:`quickstart_runner.route_commands` compares the parsed page against it
+  before anything runs. A change to the page is reviewed by updating that list,
+  which puts a human on the diff. Placeholders (``<record-id>``,
+  ``<session-id>``) and the OWNER URL stay literal tokens in the list, because
+  they are what the page prints.
+- **Does the page do what it says?** Each test below runs the golden commands in
+  the topology the page describes and checks the outcome the page claims: exit 0
+  everywhere, one committed record, a census that ends on its verdict line, a
+  state clone whose upstream the page's ``-u`` push set, and an origin holding the
+  writers' commits.
+
+The page is this repository's own reviewed file, so nothing here defends against
+the page: no allow-list of launchable words, no ``git config`` grammar, no push
+guard. Those defended against a hostile page and each review round found a new
+bypass in them; the golden list makes the question they asked impossible to ask,
+because a command that is not in the list is never launched.
 
 The launches run in throwaway trees under ``tmp_path`` with no ambient git state,
 exactly like the README try-it harness, and never touch this repository.
@@ -35,6 +36,10 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
+import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -46,33 +51,86 @@ from docs_promises import (
     STATE_DIR,
 )
 from harness_runners import run_noni
+from quickstart_golden import COVERED_SECTIONS, GOLDEN
 from quickstart_runner import (
     World,
-    build_world,
     checked,
     git,
     launch,
     route_commands,
     run_route_b,
-    words,
+)
+from quickstart_topology import (
+    InstalledWorld,
+    build_installed_world,
+    fresh_scratch,
+    run_env,
 )
 
-# The harness's must-succeed wrapper, under the short name the assertions below use
-# (the module also exports it as ``checked`` for its own walker).
+from noni import public_safety
+
+# The harness's must-succeed wrapper, under the short name the assertions below use.
 _checked = checked
 
 
+@pytest.fixture(scope="module")
+def installed(tmp_path_factory: pytest.TempPathFactory) -> Iterator[InstalledWorld]:
+    """The module's one venv install of the clone, shared by every launch below.
+
+    The install is the page's own step and every command needs its console script,
+    so it runs once for the module; the trees a test mutates come from
+    :func:`world` and are per-test. The directory is removed on teardown -- /tmp is
+    tmpfs here, and an installed venv left behind is not scratch, it is a leak.
+    """
+    root = tmp_path_factory.mktemp("quickstart-install")
+    try:
+        yield build_installed_world(root)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 @pytest.fixture
-def world(tmp_path: Path) -> World:
-    """The page's topology, standing and installed: clone, project, state origin."""
-    return build_world(tmp_path)
+def world(installed: InstalledWorld, tmp_path: Path) -> World:
+    """One scratch set of the page's trees, over the module's install."""
+    return fresh_scratch(installed, tmp_path / "scratch")
 
 
 def _page() -> str:
     return read(QUICKSTART)
 
 
-# --- The page's shape -------------------------------------------------------
+# --- Is this the page we reviewed? ------------------------------------------
+
+def test_the_page_prints_exactly_the_golden_commands():
+    """The whole page, section by section, equals the literal list in the harness.
+
+    This is the gate that replaced the sandbox defence: the page is our own
+    reviewed file, so what the suite enforces is that it has not changed out from
+    under the review. The comparison covers every section the harness claims, in
+    the order the page prints them, and the fence census below covers the case the
+    section list cannot -- a new bash fence under a heading no key selects.
+    """
+    for label in COVERED_SECTIONS:
+        route_commands(label)
+
+
+def test_no_bash_fence_lives_outside_the_sections_the_golden_list_covers():
+    """Every command-bearing fence on the page belongs to a section that is pinned.
+
+    Without this, a fence added under an unlisted heading would be neither compared
+    nor launched, and the page could grow a step the suite never runs while every
+    test above stayed green.
+    """
+    from docs_commands import block_commands, fenced_pairs
+
+    printed = [argv for info, lines in fenced_pairs(_page()) if info == "bash"
+               for argv in block_commands(lines)]
+    listed = [argv for label in GOLDEN for argv in GOLDEN[label]]
+    assert printed == listed, (
+        f"the page prints {len(printed)} fenced commands and the golden list covers "
+        f"{len(listed)}; the difference is a fence no test runs:\n"
+        f"  page:   {printed}\n  golden: {listed}")
+
 
 def test_the_quickstart_page_is_linked_and_within_its_size():
     """The page exists, the README names it by exact path, and it stays short.
@@ -109,15 +167,15 @@ def test_the_page_covers_both_routes_the_issue_named():
 def test_no_comment_line_is_a_command_the_page_means_to_run():
     """The comment exemption cannot hide a real command.
 
-    The runner skips lines beginning ``#`` because a shell never runs those. If
-    a placeholder of the page's own ever landed inside such a line, the
-    substitution in the launcher would silently stop covering it, so the shape of
-    the block is checked rather than trusted.
+    The reader drops lines beginning ``#`` because a shell never runs those. If a
+    placeholder of the page's own ever landed inside such a line, the substitution
+    would silently stop covering it, so the shape of the block is checked rather
+    than trusted.
     """
     for block in fenced_blocks(_page(), info="bash"):
         for line in comment_lines(block):
             assert not placeholder_words(line), (
-                f"a placeholder sits in a comment line, which the runner skips: {line!r}"
+                f"a placeholder sits in a comment line, which the reader skips: {line!r}"
             )
 
 
@@ -142,13 +200,12 @@ def test_route_a_commands_all_exit_zero(world: World) -> None:
     """Every command of the in-project route runs and exits 0, and the outcome
     the page claims for it is there: one committed record, a census that ends
     with its verdict line, and a project tree the census left clean."""
-    commands = route_commands("Route A")
-    assert commands, "the quickstart no longer has a Route A command block"
+    commands = route_commands(("Route A",))
     census_lines: list[str] = []
     for argv in commands:
         proc = launch(world, argv, world.project)
         _checked(proc, f"Route A command {argv}")
-        if words(argv)[:2] == ("noni", "census"):
+        if argv[:2] == ["noni", "census"]:
             census_lines = proc.stdout.splitlines()
     assert census_lines, "the Route A block never runs the census"
     assert census_lines[-1].startswith("summary: ") and census_lines[-1].endswith(
@@ -171,7 +228,7 @@ def test_route_b_commands_all_exit_zero(world: World) -> None:
     the wrong path, a writer pointed at the project instead of the state clone --
     and each is observed here rather than assumed.
     """
-    commands = run_route_b(world)
+    run_route_b(world)
 
     assert (world.state / "noni" / "decisions").is_dir(), "no ledger under the state clone"
     assert (world.project / ".gitignore").is_file(), "the ignore rule was never written"
@@ -197,8 +254,8 @@ def test_route_b_commands_all_exit_zero(world: World) -> None:
         f"the page's first push did not set the branch's upstream to origin/main, "
         f"so the later --push runs have no remote-tracking branch: "
         f"{upstream.stdout!r} {upstream.stderr!r}")
-    assert [a for a in commands if words(a)[:2] == ("noni", "census")], \
-        "the Route B block never runs the census"
+    assert [a for a in route_commands(("Route B",))
+            if a[:2] == ["noni", "census"]], "the Route B block never runs the census"
 
 
 def test_the_state_route_leaves_the_origin_holding_the_writers_commits(world: World) -> None:
@@ -228,7 +285,7 @@ def test_the_ordering_note_appears_in_human_mode_and_not_in_json(world: World) -
     An assertion that only looked for the note's absence would be satisfied by a
     census that never read anything, which is the vacuity this pins shut.
     """
-    for argv in route_commands("Route A"):
+    for argv in route_commands(("Route A",)):
         _checked(launch(world, argv, world.project), f"Route A command {argv}")
 
     plain = run_noni("census", "--repo", str(world.project), "--only", "ordering-closed",
@@ -280,7 +337,6 @@ def test_the_ordering_note_appears_in_human_mode_and_not_in_json(world: World) -
     assert not [row for row in rows if row.get("kind") == "finding"], rows
 
 
-
 def test_the_page_says_what_is_skipped_without_the_state_file() -> None:
     """The page states the census's own note text, and that it is human-readable
     output only.
@@ -307,8 +363,6 @@ def test_the_page_names_the_deny_list_a_strict_run_needs() -> None:
     inactive. The name is read from the product's own constant, so a rename fails
     the page rather than letting it document a file that no longer exists.
     """
-    from noni import public_safety
-
     text = _page()
     assert public_safety.DENYLIST_FILENAME in text, (
         f"the page does not name {public_safety.DENYLIST_FILENAME!r}")
@@ -319,6 +373,40 @@ def test_the_page_names_the_deny_list_a_strict_run_needs() -> None:
     for phrase in (*DENYLIST_STATES, "#"):
         assert phrase in text or phrase in lowered, (
             f"the deny-list section does not mention {phrase!r}")
+
+
+def test_the_deny_list_states_are_named_and_the_gate_refuses_an_inactive_class() -> None:
+    """All three inactive states appear where the deny-list is documented, and the
+    gate the page names really refuses to report clean without one.
+
+    ``absent`` and ``corrupt`` are the two a reader guesses; ``present but empty``
+    is the one a reader who wrote a file of comments hits and cannot explain from
+    the row alone, because the file exists. The words are the product's rendering,
+    derived from the two sources that write them, so a rename fails the pages
+    (``tests/test_docs_promises.py``) rather than quietly shrinking the set here.
+
+    The second half is the page's exit-code sentence: ``That CLI exits 2 when the
+    class was not active, so it cannot report a false "clean"``. The code is read
+    off the wrapper, not typed, and the run happens in a tree with no deny-list at
+    all -- the case a first run is in.
+    """
+    quickstart = _page()
+    for word in DENYLIST_STATES:
+        assert word in quickstart, (
+            f"the deny-list section does not name every inactive state: {word!r}")
+    expected = _gate_not_active_code()
+    assert f"exits {expected}" in quickstart, (
+        f"the page no longer states the gate's exit {expected} for an inactive "
+        "deny-list class")
+    proc = subprocess.run([sys.executable, "scripts/public_safety.py"],
+                          capture_output=True, text=True, cwd=REPO,
+                          env=_gate_env_without_denylist(), timeout=180)
+    assert proc.returncode == expected, (
+        f"the publishing gate reported {proc.returncode} on a tree with no "
+        f"deny-list; the page promises {expected}\n"
+        f"stdout: {proc.stdout}\nstderr: {proc.stderr}")
+    assert "deny-list class inactive" in proc.stderr, (
+        f"the gate's refusal did not name the class it skipped: {proc.stderr!r}")
 
 
 def test_the_page_says_no_package_index_carries_noni() -> None:
@@ -347,6 +435,38 @@ def test_the_page_names_the_three_prerequisites() -> None:
 
 
 # --- helpers used only by this module ---------------------------------------
+
+def _gate_env_without_denylist() -> dict[str, str]:
+    """The launch env with any deny-list pointer removed.
+
+    The page's promise is about a tree that has no deny-list yet, which is what a
+    first run has; a host variable or an untracked default file naming one would
+    make the gate's refusal below a different experiment than the one the page
+    describes. conftest clears the variable per test, so this is belt-and-braces
+    over the one env builder the quickstart harness uses.
+    """
+    env = run_env()
+    env.pop(public_safety.DENYLIST_ENV_VAR, None)
+    return env
+
+
+def _gate_not_active_code() -> int:
+    """The gate's exit code for an inactive deny-list, read off the wrapper's source.
+
+    Read rather than typed, so the page's sentence and the CLI cannot agree with
+    each other while both drift from the code. The branch is the one that prints
+    "deny-list class inactive", and the number the wrapper returns for it is the
+    line right after that print -- the code before it belongs to the violations
+    case, so matching on the refusal is what keeps the two from being confused.
+    """
+    source = (REPO / "scripts" / "public_safety.py").read_text(encoding="utf-8")
+    match = re.search(r'deny-list class inactive[^\n]*\n\s*return (\d+)', source)
+    assert match, (
+        "scripts/public_safety.py no longer returns a code of its own after the "
+        "inactive-deny-list refusal, so the exit code the quickstart documents "
+        "is unpinned")
+    return int(match.group(1))
+
 
 def _note_from_product() -> str:
     """The ordering-closed note, assembled from the census's own source.

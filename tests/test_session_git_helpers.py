@@ -8,6 +8,10 @@ mid-write must leave the previous bytes, never a truncated file — and for the
 small helpers the writers compose: the terminal-status copy that must not drift
 from the census's two copies, ``valid_token``, ``safe_text``.
 
+The commit primitive's own path guard is here too, on the one shape its two
+narrow questions cannot see: a link at ``noni``, above both the session file and
+its directory.
+
 The behavioural proof for the child environment lives in
 ``tests/test_writer_git_env.py``; this pins the same property one level down, so a
 helper that dropped its ``env=`` fails here even before a writer is run.
@@ -20,7 +24,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from _harness import _git_env_with_identity
+from _harness import _git_env_with_identity, _git_ok
+from session_git_support import _repo
 
 from noni import _session_git, gitenv
 from noni import census as census_mod
@@ -153,6 +158,45 @@ def test_atomic_write_gives_a_new_file_the_mode_the_umask_allows(tmp_path):
     target.chmod(0o600)
     _session_git.atomic_write(target, "text again\n")
     assert oct(os.stat(target).st_mode & 0o777) == "0o600"
+
+
+# --- the commit primitive's path guard ---------------------------------------
+
+
+def test_stage_and_commit_refuses_a_link_at_noni_above_the_session(tmp_path):
+    """The one guard the primitive owns that a caller cannot skip, on the shape the
+    two narrow questions cannot see.
+
+    ``stage_and_commit`` lstat's the session file and its directory so a caller that
+    ran no check of its own cannot drive a link through the primitive. Neither of
+    those answers sees a link standing at ``noni``, the directory above both: a
+    plain ``lstat`` resolves every intermediate component, so the sessions directory
+    and the file under it still answer "directory" and "regular file". Without the
+    walk up to the state root, git -- not noni -- would be what objected ("beyond a
+    symbolic link", on a code no page documents) after the bytes had landed outside
+    the clone.
+    """
+    repo = _repo(tmp_path)
+    (repo / "noni" / "sessions").mkdir(parents=True)
+    (repo / "noni" / "sessions" / "tracked.md").write_text("- status: active\n",
+                                                            encoding="utf-8")
+    target = tmp_path / "outside-tree"
+    target.mkdir()
+    os.replace(repo / "noni" / "sessions", target / "sessions")
+    (repo / "noni").rmdir()
+    (repo / "noni").symlink_to(target)
+    head_before = _git_ok(repo, "rev-parse", "HEAD").stdout.strip()
+
+    ok, why = _session_git.stage_and_commit(repo, "noni/sessions/tracked.md", "nope")
+
+    assert ok is False, why
+    assert "symlink" in why, why
+    assert str(repo / "noni") in why, "the refusal names the linked directory"
+    assert "fatal:" not in why.lower(), f"git's error, not noni's: {why}"
+    assert (repo / "noni").is_symlink(), "the primitive replaced the tree link"
+    assert (target / "sessions" / "tracked.md").read_text(
+        encoding="utf-8") == "- status: active\n", "the primitive wrote through it"
+    assert _git_ok(repo, "rev-parse", "HEAD").stdout.strip() == head_before
 
 
 # --- terminal statuses: the copy that must not drift -------------------------

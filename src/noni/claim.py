@@ -34,7 +34,11 @@ Exit codes:
        leading dot (the name of one file under noni/sessions/, so a path
        separator or a '..' walk out of the state root is refused here), --branch
        is not a safe ref name, --no-commit was combined with --push, --repo is
-       not a directory, or --repo is a symlink (refused, never followed)
+       not a directory, or --repo is a symlink (refused, never followed), or the
+       session file, or any directory from the state root down to it (its
+       noni/sessions directory and the noni above it), is not a plain path this
+       writer may follow (a symlink is never read or written through, and a
+       refusal writes nothing)
     5  the rebase hit a conflict: the rebase started and stopped mid-flight,
        so claim.py ran git rebase --abort, which leaves HEAD on the branch it
        was invoked on, at the claim commit this run made (the abort resets
@@ -63,7 +67,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import _session_git, _session_push, labels
+from . import _session_git, _session_guard, _session_push, labels
 from ._session_rebase_state import (  # noqa: F401  (re-exported: one definition,
     # read by this module's classifier and by the
     # tests' post-condition helper)
@@ -218,6 +222,15 @@ def _push_with_retry(repo: Path, branch: str, attempts: int = MAX_PUSH_ATTEMPTS)
     )
 
 
+def _fail_usage(code: int, headline: str, hint: str) -> int:
+    """One usage refusal in claim's own label.
+
+    :func:`noni._session_guard.session_write` prints through the caller's printer so
+    every writer keeps its own prefix; this is that printer for this command.
+    """
+    return _report(code, f"{labels.CLAIM}: {headline}", f"{labels.CLAIM}: fix: {hint}")
+
+
 def _report(code: int, *lines: str) -> int:
     """Print one report to stderr and return its exit code.
 
@@ -355,6 +368,14 @@ def main(argv: list[str] | None = None) -> int:
         return _report(EXIT_USAGE, f"{labels.CLAIM}: {headline}",
                        f"{labels.CLAIM}: fix: {hint}")
     session_file = repo / rel
+    # Both paths this run would read and append to, refused before either is touched:
+    # asked after the name was derived and before is_file(), so a dangling link is
+    # this refusal rather than the misleading 'register file not found' below
+    # (noni._session_guard).
+    refused = _session_guard.session_write(_fail_usage, EXIT_USAGE,
+                                           session_file.parent, session_file)
+    if refused is not None:
+        return refused
     if not session_file.is_file():
         print(f"{labels.CLAIM}: register file not found: {session_file} (register the session first)", file=sys.stderr)
         return EXIT_REGISTER_MISSING

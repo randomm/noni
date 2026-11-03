@@ -93,7 +93,11 @@ hostname, because the register file is committed to a public repo. Explicit
 Exit codes: `0` registered, or the marked active session continued; `1` the
 marked file belongs to another identity; `2` a path this run did not allocate, or
 a marked file that cannot be read or carries no readable `- status:` value, or
-`--repo` naming no directory or being a symlink (refused, never followed); `3` git
+`--repo` naming no directory or being a symlink (refused, never followed), or the
+session file this run would write, or any directory from the state root down to it
+(its `noni/sessions/` directory and the `noni/` above it), not being a plain path
+this writer may follow (a symlink is never followed, and nothing is
+created before the refusal); `3` git
 could not commit; `4` a `--identity`/`--status` that is not one token, the
 session name this run allocated is not one file under `noni/sessions/` (a name
 the writer derived itself, so the hint names `--identity` and does not blame
@@ -137,7 +141,10 @@ Exit codes: `0` the row is gone and committed (and pushed with `--push`, or
 left uncommitted with `--no-commit`); `1` no such session file; `2` the session
 does not hold the task, or the file is unreadable or carries no `- claims:`
 marker, or `--repo` names no directory or is a symlink (refused, never
-followed); `3` git could not commit; `4` a `--task`/`--session-id` that is not one
+followed), or the session file, or any directory from the state root down to it
+(its `noni/sessions/` directory and the `noni/` above it), is not a plain path
+this writer may follow (a symlink is never followed, and nothing is written
+before the refusal); `3` git could not commit; `4` a `--task`/`--session-id` that is not one
 token with no leading dot (the id is also the name of one file under
 `noni/sessions/`), or `--no-commit`
 with `--push`; `5` the `--push` rebase started and stopped on a session-file
@@ -169,7 +176,10 @@ under "Committing a session file" in `references/register.md`).
 Exit codes: `0` closed and committed (and pushed with `--push`, or left
 uncommitted with `--no-commit`), or already closed; `1` no such session file;
 `2` the file is unreadable or carries no `- status:` line, or `--repo` names no
-directory or is a symlink (refused, never followed); `3` git could not commit, or
+directory or is a symlink (refused, never followed), or the session file, or any
+directory from the state root down to it (its `noni/sessions/` directory and the
+`noni/` above it), is not a plain path this writer may follow (a symlink
+is never followed, and nothing is written before the refusal); `3` git could not commit, or
 `--push` failed; `4` a `--session-id`
 that is not one token with no leading dot (the id is also the name of one file
 under `noni/sessions/`), or `--no-commit` with `--push`; `5` the `--push` rebase

@@ -40,7 +40,8 @@ some other git fault). :func:`stage_and_commit` asks it for that line only when 
 commit is refused, importing it there rather than at module scope, so no compile-time
 cycle exists between the two. Caller-supplied text in a printed refusal (a name, an
 argument, a path) goes through :func:`safe_text` first, so no escape sequence reaches
-the terminal.
+the terminal. The commit also refuses a link it would have followed, asking the
+state root, the session file and its directory first (noni._session_paths).
 
 The set of statuses that end a session lives here too, as
 :data:`TERMINAL_STATUSES`, so the four writers agree on what "already closed" means,
@@ -66,7 +67,7 @@ import tempfile
 import unicodedata
 from pathlib import Path, PurePosixPath
 
-from . import gitenv
+from . import _session_paths, gitenv
 
 # Statuses that end a session. A claim from a session in one of these states
 # no longer counts toward the double-claim check, and close.py calls a session
@@ -104,13 +105,11 @@ GIT_OUTPUT_LIMIT = 500
 # also matches before a trailing newline.
 TOKEN_RE = re.compile(r"^[^\s/\\]+$")
 
-# A name that contains a control character can never reach git as an argv element:
-# ``subprocess`` refuses an embedded NUL with ``ValueError``, so control characters are
-# refused where the name is judged, not where they crash. Every Unicode category-C code
-# point: C0 and DEL, C1, the format characters (zero-width joiners, bidi overrides) and
-# the surrogates -- the same test :func:`safe_text` drops text with, so a name the
-# writers refuse and text they print are judged the one way.
 def _is_control_char(ch: str) -> bool:
+    """Whether ``ch`` is a category-C character, which no argv element carries.
+
+    The same test :func:`safe_text` drops text with, so the two are judged alike.
+    """
     return unicodedata.category(ch)[0] == "C"
 
 
@@ -141,9 +140,8 @@ def name_refusal(name: object, *, arg: str = "--session-id",
     instead of pointing at a state root that was fine.
 
     Both fields carry caller-supplied text -- a name from a command line or a
-    working-copy marker, or an argument name -- and this pair goes straight to stderr,
-    so each is rendered through :func:`safe_text`: an escape sequence in a name cannot
-    reach the terminal and be acted on there.
+    working-copy marker, or an argument name -- and this pair goes to stderr, so
+    each is rendered through :func:`safe_text`.
     """
     return (safe_text(NAME_REFUSAL.format(name=name, directory=directory)),
             safe_text(NAME_REFUSAL_HINT.format(arg=arg, directory=directory)))
@@ -393,16 +391,15 @@ def stage_and_commit(repo: Path, name: str | PurePosixPath, message: str) -> tup
     it named on the command line. The two together are what make ``--repo`` the
     only thing that decides the target repository.
 
-    Two refusals, both ``(False, one noni-worded line)`` rather than a raised
+    Three refusals, all ``(False, one noni-worded line)`` rather than a raised
     ``ValueError``, so the caller's one ``if not ok`` covers every way this can fail
     and no writer guards a git call with its own except: the name is not one the
-    primitive will commit (:func:`relative_name`'s verdict, said in noni's words from
-    :data:`NAME_REFUSAL`, sanitised like every other line this module prints), or the
-    state root is itself a symlink (:func:`linked_state_root`'s). A writer asks the
-    name question before it writes, so the first half is the backstop rather than the
-    usual path, and it is also what keeps the never-raises promise: an argv element
-    carrying a NUL or a lone surrogate makes ``subprocess`` raise, so such a name
-    must never be handed to git.
+    primitive will commit (:func:`relative_name`'s verdict, in noni's words from
+    :data:`NAME_REFUSAL`), the state root is itself a symlink
+    (:func:`linked_state_root`'s), or the session file or its directory is no path
+    this writer may follow (:mod:`noni._session_paths`). The name half is a
+    backstop, and it keeps the never-raises promise ``subprocess`` would break on an
+    argv element carrying a NUL or a surrogate.
 
     Any git refusal also comes back as ``(False, one noni-worded line)``: this
     helper owns no exit code, so the caller names the class of failure and prints
@@ -421,6 +418,10 @@ def stage_and_commit(repo: Path, name: str | PurePosixPath, message: str) -> tup
     linked, why = linked_state_root(repo)
     if linked is not None:
         return False, f"cannot commit {rel}: {why}"
+    # The writers ask these two before they write; asking them here too means a
+    # caller that skipped its own guard cannot drive a link through the primitive.
+    if (refused := _session_paths.write_refusal(repo, rel)) is not None:
+        return False, f"cannot commit {rel}: {refused[0]}"
     reset = git(repo, "reset", "-q", "--", rel)
     if reset.returncode != 0:
         return False, _detail(reset, f"git reset failed for {rel}")
@@ -465,8 +466,7 @@ def _failure_line(repo: Path,
     """The default commit-failure namer: the classifier's line, imported when asked.
 
     Deferred to the call rather than bound at import: ``_commit_cause`` asks git
-    through :func:`git` in this module, so a module-level reference between the two
-    would be taken while one of them is still running its own import.
+    through :func:`git` here, so a module-level reference would be taken mid-import.
     """
     from . import _commit_cause
     return _commit_cause.commit_failed(repo, result, rel)

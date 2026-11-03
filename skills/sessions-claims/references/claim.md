@@ -161,7 +161,7 @@ tables are in `references/census.md`.
 | `1` | the register file for `--session-id` does not exist (register first) |
 | `2` | the session file is malformed (no `- claims:` marker, not readable as UTF-8), the session already claims the same task, or the session's status is terminal; see the terminal-status paragraph above for what each refusal writes |
 | `3` | push failed after 3 fetch-rebase-push attempts; also a failed fetch, a detached HEAD, an unresolvable branch, a git call that timed out, or a `git add`/`git commit` that git refused (the row is left in the worktree or the index, unstaged or staged as the failure says) |
-| `4` | usage error: bad `--task`, `--session-id` or `--branch` value (`--session-id` must name one file under `noni/sessions/`, so whitespace, a path separator, a `..` walk out of the state root or a leading dot is refused), `--no-commit` with `--push`, a `--repo` that is not a directory, or a `--repo` that is a symlink (refused, never followed — the message names the real path) |
+| `4` | usage error: bad `--task`, `--session-id` or `--branch` value (`--session-id` must name one file under `noni/sessions/`, so whitespace, a path separator, a `..` walk out of the state root or a leading dot is refused), `--no-commit` with `--push`, a `--repo` that is not a directory, a `--repo` that is a symlink (refused, never followed — the message names the real path), or a session file, or any directory from the state root down to it (its `noni/sessions/` directory and the `noni/` above it), that is not a plain path this writer may follow (a symlink is never read or written through, and nothing is written before the refusal) |
 | `5` | rebase conflict; see the abort post-condition above |
 | `6` | rebase refused, or its state could not be read; see the hints above |
 
@@ -206,7 +206,7 @@ report for the task go away.
 |---|---|
 | `0` | the row is removed and committed (and pushed with `--push`), or removed and left uncommitted with `--no-commit` |
 | `1` | the register file for `--session-id` does not exist (register first) |
-| `2` | the session does not hold that task, or the file is unreadable, not UTF-8, carries no `- claims:` marker, holds the row twice, `--repo` names no directory, or `--repo` is a symlink (refused, never followed) |
+| `2` | the session does not hold that task, or the file is unreadable, not UTF-8, carries no `- claims:` marker, holds the row twice, `--repo` names no directory, or `--repo` is a symlink (refused, never followed), or the session file, or any directory from the state root down to it (its `noni/sessions/` directory and the `noni/` above it), is not a plain path this writer may follow (a symlink is never read or written through, and nothing is written before the refusal) |
 | `3` | git could not commit the change, or `--push` failed after 3 fetch-rebase-push attempts (also a fetch failure, a detached HEAD, or an unresolvable branch) |
 | `4` | `--task` or `--session-id` is not a single token (`--session-id` is also the name of one file under `noni/sessions/`, so a path separator or a `..` walk out of the state root is refused), or `--no-commit` was combined with `--push` |
 
@@ -247,7 +247,7 @@ uncommitted and, after it, what git said, sanitised.
 |---|---|
 | `0` | the status line was written and committed (and pushed with `--push`), or the session was already closed, or the change was left uncommitted with `--no-commit` |
 | `1` | the register file for `--session-id` does not exist (register first) |
-| `2` | the file is unreadable, not UTF-8, carries no `- status:` field line, `--repo` names no directory, or `--repo` is a symlink (refused, never followed) |
+| `2` | the file is unreadable, not UTF-8, carries no `- status:` field line, `--repo` names no directory, or `--repo` is a symlink (refused, never followed), or the session file, or any directory from the state root down to it (its `noni/sessions/` directory and the `noni/` above it), is not a plain path this writer may follow (a symlink is never read or written through, and nothing is written before the refusal) |
 | `3` | git could not commit the change, or `--push` failed after 3 fetch-rebase-push attempts |
 | `4` | `--session-id` is not a single token with no leading dot (the name of one file under `noni/sessions/`, so a path separator or a `..` walk out of the state root is refused), or `--no-commit` was combined with `--push` |
 

@@ -31,9 +31,12 @@ Exit codes:
     1  --file names the marked session's file and that file carries a different
        identity (never write into another session's file)
     2  --file names a path this run neither allocated nor found in the marker,
-       or --repo names no directory or is a symlink (refused, never followed),
-       or the session file could not be written, or the marked session's file
-       carries no readable status (never continued, never overwritten)
+       or --repo names no directory or is a symlink (refused, never followed), or
+       the session file it would write, or any directory above it down to the
+       state root (its noni/sessions dir and the noni above it), is no plain path
+       (a symlink is never followed, and a refusal creates nothing), or it could
+       not be written, or the marked file carries no readable status (never
+       continued, never overwritten)
     3  git could not commit what this run wrote, or a --push failed after 3
        fetch-rebase-push attempts (also a fetch failure, a detached HEAD, or an
        unresolvable branch)
@@ -53,8 +56,7 @@ marker, the commit subject and the printed line. The marker's text is an input, 
 fact: text that is not a valid session id is not a marker for a session, so the run says
 so, treats the working copy as unmarked, and allocates afresh -- it builds no path from
 it. The marked file is read once, strictly: a file whose bytes cannot be decoded, or whose
-``- status:`` line has no readable value, is refused with exit 2 rather than continued or
-replaced.
+``- status:`` line has no readable value, is refused with exit 2 rather than continued.
 
 --no-commit writes through the same validation chain and runs no git at all, then prints
 exactly ``register.py: <path> left uncommitted``; --push pushes the branch ``git
@@ -73,7 +75,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import _marker, _session_git, _session_push, claim, labels
+from . import _marker, _session_git, _session_guard, _session_push, claim, labels
+from . import _session_fields as _fields
 
 # Where session files live, relative to the state root. The one spelling is the
 # primitive's, and a writer's file is always ``_session_git.writer_name(sid)``: the write
@@ -100,21 +103,13 @@ def _make_session_id() -> str:
 
 
 def _parse_fields(body: str) -> dict[str, str]:
-    """Parse the '- key: value' field lines of a register file.
+    """The '- key: value' field lines of a register file, as a dict.
 
-    A line that does not match the field shape is left for the census to flag;
-    registration needs only identity and status to be present.
+    :func:`noni._session_fields.parse_fields` holds the grammar; this is the name
+    register's own tests and callers use, so the parser can live with the other
+    session-file readers without stranding them.
     """
-    fields: dict[str, str] = {}
-    for line in body.splitlines():
-        line = line.strip()
-        if not line.startswith("- "):
-            continue
-        key, sep, value = line[2:].partition(":")
-        if not sep:
-            continue
-        fields[key.strip()] = value.strip()
-    return fields
+    return _fields.parse_fields(body)
 
 
 def _fail(code: int, headline: str, hint: str) -> int:
@@ -340,6 +335,8 @@ def main(argv: list[str] | None = None) -> int:
                      "drop one of the two")
 
     sessions_dir = repo / SESSIONS_REL
+    if (refused := _session_guard.session_write(_fail, EXIT_USAGE, sessions_dir)):
+        return refused
     # The session id this run owns, minted ONCE here and threaded through every use of it
     # (the name written, the pathspec, the marker's contents, the commit subject, the
     # printed line): two mints would let the printed id and the committed id disagree.
@@ -427,6 +424,9 @@ def main(argv: list[str] | None = None) -> int:
     # allocated. The name written is the one _resolve_target admitted -- this run's
     # allocation, never a name from the marker.
     target_file = repo / target
+    if (refused := _session_guard.session_write(_fail, EXIT_USAGE, None,
+                                               target_file)):
+        return refused
     host = args.host or session_id
     # Default to the repo's basename, not an absolute machine-local path: the register
     # file is committed to a public repo, so the worktree field must stay generic (an

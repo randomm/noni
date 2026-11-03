@@ -40,7 +40,8 @@ some other git fault). :func:`stage_and_commit` asks it for that line only when 
 commit is refused, importing it there rather than at module scope, so no compile-time
 cycle exists between the two. Caller-supplied text in a printed refusal (a name, an
 argument, a path) goes through :func:`safe_text` first, so no escape sequence reaches
-the terminal. The commit also refuses a link it would have followed, asking the
+the terminal, and a path goes through :func:`safe_path` on top of it, so one path can
+never print more lines than the refusal has. The commit also refuses a link it would have followed, asking the
 state root, the session file and its directory first (noni._session_paths).
 
 The set of statuses that end a session lives here too, as
@@ -64,10 +65,11 @@ import re
 import stat
 import subprocess
 import tempfile
-import unicodedata
 from pathlib import Path, PurePosixPath
 
 from . import _session_paths, gitenv
+from ._safe_text import CONTROL_CHARS, safe_text
+from ._safe_text import TEXT_LIMIT as GIT_OUTPUT_LIMIT  # re-export: the limit names
 
 # Statuses that end a session. A claim from a session in one of these states
 # no longer counts toward the double-claim check, and close.py calls a session
@@ -91,31 +93,12 @@ GIT_TIMEOUT_RC = 124
 # Attempts the push loop makes before it reports failure.
 MAX_PUSH_ATTEMPTS = 3
 
-# How much of git's own output the push loop and the classifier echo. These
-# streams are not this process's words (a fetch or push against an origin can
-# forward remote-side and credential-helper text) and an agent pipes them
-# straight into tool output, so they are sanitised and bounded rather than
-# printed raw.
-GIT_OUTPUT_LIMIT = 500
-
 # A session id or a task reference is one token of a commit message, so it is
 # validated before it reaches git: no whitespace, no path separator. Every
 # writer here builds its message as a fixed prefix plus one such token, which
 # is what keeps free text out of ``git commit -m``. fullmatch, not match: '$'
 # also matches before a trailing newline.
 TOKEN_RE = re.compile(r"^[^\s/\\]+$")
-
-def _is_control_char(ch: str) -> bool:
-    """Whether ``ch`` is a category-C character, which no argv element carries.
-
-    The same test :func:`safe_text` drops text with, so the two are judged alike.
-    """
-    return unicodedata.category(ch)[0] == "C"
-
-
-CONTROL_CHARS = frozenset(chr(cp) for cp in range(0x20, 0x100000)
-                          if _is_control_char(chr(cp))) | \
-    frozenset(map(chr, range(0x20))) | frozenset({"\x7f"})
 
 # The one wording for a refused name: the sentence :func:`stage_and_commit`
 # returns and every writer prints, and the fix line that goes under it. Both
@@ -145,23 +128,6 @@ def name_refusal(name: object, *, arg: str = "--session-id",
     """
     return (safe_text(NAME_REFUSAL.format(name=name, directory=directory)),
             safe_text(NAME_REFUSAL_HINT.format(arg=arg, directory=directory)))
-
-
-def safe_text(text: str, limit: int = GIT_OUTPUT_LIMIT) -> str:
-    """Render git's own output for the terminal: bounded, no control bytes.
-
-    Control characters other than newline and space are dropped, so an ANSI or
-    OSC sequence cannot reach the terminal, and the tail past ``limit`` is
-    dropped so one huge blob cannot crowd out everything else.
-    """
-    kept = []
-    for ch in text:
-        if ch == "\n" or ch == " " or not _is_control_char(ch):
-            kept.append(ch)
-    cleaned = "".join(kept)
-    if len(cleaned) > limit:
-        return cleaned[:limit] + "... [truncated]"
-    return cleaned
 
 
 def git(repo: Path, *args: str, _run=subprocess.run) -> subprocess.CompletedProcess[str]:
@@ -256,6 +222,17 @@ def valid_token(token: str) -> bool:
     return bool(token) and TOKEN_RE.fullmatch(token) is not None
 
 
+def session_id_rel(session_id: str) -> str:
+    """The path a session's file sits at, relative to the state root.
+
+    :func:`writer_name` is the answer a writer commits (and the one it refuses a bad
+    id with); this is the same path a caller uses for its write location, its
+    ``mkdir`` and its path guards. One spelling, so the directory a writer creates
+    and the directory the guard inspects cannot be two different directories.
+    """
+    return f"{SESSIONS_REL}/{session_id}{SESSION_SUFFIX}"
+
+
 def file_mode(path: Path) -> int:
     """The mode a file this writer creates should carry: ``path``'s own when it exists
     (replacing a file is no reason to change who can read it), else world-readable as
@@ -310,7 +287,7 @@ def writer_name(session_id: str) -> str:
     """
     if not valid_token(session_id) or session_id.startswith("."):
         return ""
-    return relative_name(f"{SESSIONS_REL}/{session_id}{SESSION_SUFFIX}") or ""
+    return relative_name(session_id_rel(session_id)) or ""
 
 
 def relative_name(name: str | PurePosixPath) -> str:
@@ -488,9 +465,14 @@ def _said(result: subprocess.CompletedProcess[str]) -> str:
     return " ".join(said.split())
 
 
-def _safe(text: str) -> str:
-    """git's words, sanitised, or ``""`` when nothing legible remains."""
-    cleaned = safe_text((text or "").strip())
+def _safe(text: str, limit: int = GIT_OUTPUT_LIMIT) -> str:
+    """git's words, sanitised, or ``""`` when nothing legible remains.
+
+    ``limit`` is the module's own rendering bound, and the one reason the constant is
+    re-exported from :mod:`noni._safe_text` rather than referenced there: the push
+    loop and the classifier echo bounded shares of git's output through here.
+    """
+    cleaned = safe_text((text or "").strip(), limit)
     return "" if cleaned.strip() == "" else cleaned
 
 

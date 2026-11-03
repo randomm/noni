@@ -149,7 +149,8 @@ a `--repo` that is itself a link is refused.
 
 The same four writers refuse a session file that is a symlink, and any directory
 from the state root down to it — `noni/sessions/` and the `noni/` that holds it —
-that is not a directory at all (a link, a plain file, a socket or a device).
+that is not a plain path this writer may follow (a link, a plain file, a socket or
+a device, none of them read or written through).
 `is_file()` follows a link, so a symlinked session file reads as present and the
 writer's atomic replace lands on the link's target: the link is replaced by a
 regular file holding bytes the run composed, and a symlinked `noni/sessions/` — or
@@ -165,8 +166,8 @@ paths beneath the state root are examined, never an ancestor of the state root.
 
 The check is `lstat`, never `is_file()`: a dangling link is a refusal, not a
 missing session. The symlinked session file, the symlinked `noni/sessions/` and the
-symlinked `noni/` are answered with the code each tool already uses for a wrong
-path: 2 for `register`, 4 for `claim`, `close` and `release`.
+symlinked `noni/` are answered with the same codes as the state-root refusal above:
+2 for `register`, 4 for `claim`, `close` and `release`.
 
 Results are recomputed on demand by the census (no `census/` directory). The
 census is read-only: running it leaves `git status --porcelain` empty. Trends,

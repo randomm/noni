@@ -372,8 +372,8 @@ def main(argv: list[str] | None = None) -> int:
     # asked after the name was derived and before is_file(), so a dangling link is
     # this refusal rather than the misleading 'register file not found' below
     # (noni._session_guard).
-    refused = _session_guard.session_write(_fail_usage, EXIT_USAGE,
-                                           session_file.parent, session_file)
+    refused = _session_guard.session_write(_fail_usage, EXIT_USAGE, repo,
+                                           rel)
     if refused is not None:
         return refused
     if not session_file.is_file():

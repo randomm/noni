@@ -19,7 +19,7 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-from . import gitenv, targetschema
+from . import _path_kind, gitenv, targetschema
 
 # The target's field types live beside this file in the package and are an
 # ordinary package import: inside an installed wheel there is no sibling file to
@@ -38,6 +38,8 @@ def refuse_target_fields(record: dict, target_id: str,
 
 
 GIT_TIMEOUT = 60
+# The word a refusal uses for a path that is a link, so the file and the directory question
+# (noni._session_paths) spell it alike.
 # What run_git hands back for a call that never answered. No caller may read a
 # git answer from it: every probe treats it as a refusal, never as rc 0.
 GIT_TIMEOUT_RC = 124
@@ -192,16 +194,12 @@ def path_kind(path: Path) -> str | None:
     through a link or onto one of those leaves the tree holding what no census can
     read. A path that is absent (``lstat`` raising) is None: that is the state a
     record is written into.
+
+    A refused ``lstat`` is read as "absent", which is what a caller about to CREATE a
+    file wants. A caller about to read or replace a path it believes exists wants the
+    other reading and asks :func:`noni._path_kind.inspected_file_kind` instead.
     """
-    try:
-        mode = os.lstat(path).st_mode
-    except OSError:
-        return None
-    if stat.S_ISLNK(mode):
-        return "is a symlink"
-    if not stat.S_ISREG(mode):
-        return "is not a regular file"
-    return None
+    return _path_kind.kind_of(path)[0]
 
 
 def refuse_git_timeout(label: str,

@@ -11,11 +11,13 @@ The two moves, and why each is a plain mapping rather than a rule with a defence
 beside it:
 
 - **Placeholder substitution.** ``<record-id>`` is the id the reader reads off the
-  ``decide`` line's own output, and ``<session-id>`` is the id ``register`` printed,
-  so the harness reads the second off the file that line committed. Applied token
-  by token, never by rejoining the line: one argv entry holds spaces the reader
-  quoted (``q1=Wait a week``), and a join-and-resplit would hand the program those
-  words separately -- a different command from the one on the page.
+  ``decide`` line's own output and ``<session-id>`` is the id ``register`` printed,
+  so the harness reads each off the file that line committed (see
+  :meth:`quickstart_topology.World.collect_record_id` and
+  :meth:`quickstart_topology.World.collect_session_id`). Applied token by token,
+  never by rejoining the line: one argv entry holds spaces the reader quoted
+  (``q1=Wait a week``), and a join-and-resplit would hand the program those words
+  separately -- a different command from the one on the page.
 - **Re-rooting.** The page names the state clone by its path *inside* the project
   (``.noni-state``) and the scratch project lives at a generated path, so the value
   of ``-C`` / ``--repo`` becomes the clone's real path. Only that value moves;
@@ -58,10 +60,10 @@ from quickstart_topology import (
 
 __all__ = [
     "ORDERING_NOW",
-    "PLACEHOLDER_VALUES",
     "World",
     "build_installed_world",
     "checked",
+    "date_arg",
     "fresh_scratch",
     "git",
     "golden",
@@ -81,13 +83,19 @@ __all__ = [
 # both quickstart test modules, so the pair cannot drift to different instants.
 ORDERING_NOW = "2026-10-27T12:00:00Z"
 
-# The placeholders the page asks the reader to fill from their own run, mapped to
-# the value the harness plants. ``<session-id>`` is not here: its value comes from
-# the running tree (see ``World.collect_session_id``), and a fixed value would name
-# a file the register line cannot have made.
-PLACEHOLDER_VALUES = {
-    "<record-id>": "2026-11-02-release-scope",
-}
+# Both placeholders the page asks the reader to fill take their value from the
+# running tree (see ``World.collect_record_id`` and ``World.collect_session_id``):
+# each names a file a writer committed, so a fixed value would name one no run can
+# have made. There is deliberately no fallback mapping for them, and no such name in
+# this module. ``<record-id>`` used to carry the literal
+# ``2026-11-02-release-scope`` (#70): decide dates the id it writes by the day it
+# ran, so that literal named a real record on one day only and the page's ordering
+# line exited 4 ever after. A literal cannot be caught by a walk that collects,
+# either -- the collector overwrites it -- so the two names being absent is the
+# defence, together with the launcher's refusal of an unfilled placeholder (see
+# :func:`substitute`): with nothing to plant, a stale id stops the run at the
+# launcher instead of reaching a writer where it would be reported as a record that
+# does not exist.
 
 # Every command of the golden list, flattened: the literal set :func:`launch`
 # compares its argv against before the two moves below touch it, so a command no
@@ -124,10 +132,61 @@ def route_commands(label: tuple[str, ...]) -> list[list[str]]:
     return commands
 
 
-def substitute(argv: list[str], extra: dict[str, str] | None = None) -> list[str]:
-    """Fill the page's placeholders with the values the reader would supply."""
-    values = {**PLACEHOLDER_VALUES, **(extra or {})}
-    return [values.get(token, token) for token in argv]
+def substitute(argv: list[str], extra: dict[str, str] | None = None,
+               *, fill: bool = True) -> list[str]:
+    """Fill the page's placeholders with the values the reader would supply.
+
+    The only values are the ones a running tree produced, handed in as ``extra``
+    (``world.placeholders``). ``fill`` is the two readings of one mapping: the
+    launcher's, which refuses a placeholder with no value (a writer handed the page's
+    own ``<record-id>`` reports a record that does not exist, which is the misleading
+    half of #70), and a test's, which leaves the token visible so the page's shape
+    can be asserted. One mapping, two honest readings, and no caller silently
+    substituting a value it invented: the launched token is always the value the
+    collector wrote under the page's own key.
+    """
+    values = dict(extra or {})
+    filled = [values.get(token, token) for token in argv]
+    if fill:
+        _assert_filled(filled)
+    return filled
+
+
+def _assert_filled(filled: list[str]) -> None:
+    """Refuse a filled argv that still carries one of the page's ``<...>`` words.
+
+    A value read off disk can be absent -- a collector that did not run, a walk that
+    skipped the writer -- and passing the page's literal word to ``noni order``
+    produces a refusal about a record that "matches no record file", pointing the
+    reader at the wrong sentence. Naming the command and the word here is the honest
+    failure. The caller is :func:`substitute` with ``fill`` on, which is the
+    launcher's reading; only the commands the launcher execs reach it, since the
+    dispatch cases return before any substitution.
+    """
+    from docs_commands import placeholder_words
+
+    left = [token for token in filled if placeholder_words(token)]
+    assert not left, (
+        f"the harness would launch {' '.join(filled[:2])} with the unfilled "
+        f"placeholder {left}: the collector that fills it did not run")
+
+
+def date_arg(world: World, argv: list[str]) -> list[str]:
+    """The decide line's argv with the harness's ``--date`` appended, if it names one.
+
+    The page's decide line prints no ``--date``, so decide takes the date part of
+    the record id from today's UTC clock. That is right for the reader and wrong for
+    the suite: a test wants the record under a date it chose, so it says so on the
+    world (``World.decide_date``) and the argument is appended here -- **after** the
+    golden comparison in :func:`launch`, which is the same place the two other moves
+    are applied. The page's printed line and the golden list therefore stay as
+    reviewed, and the date control reaches the child on its argv (in-process
+    monkeypatching cannot: the writers run as subprocesses).
+    """
+    if world.decide_date is None or argv[:2] != ["noni", "decide"]:
+        return list(argv)
+    assert "--date" not in argv, f"a golden decide line already names --date: {argv}"
+    return [*argv, "--date", world.decide_date]
 
 
 def reroot(argv: list[str], state: Path) -> list[str]:
@@ -205,17 +264,65 @@ def run_route_b(world: World) -> list[list[str]]:
     ran. Two copies of that sequence drift -- one drops the snapshot, the other gains
     a config call the page never printed -- and then the two modules stop running the
     same route.
+
+    The two collector pairs are hooked the same way, around the line that produces
+    the id, and each line that *consumes* an id is checked against the token the
+    launcher filled for it. That is the only place a stale id can be seen for what it
+    is: a collector overwrites whatever value a mapping held, so a comparison of argv
+    against the collected id is true of a planted literal and a correct one alike,
+    while the writer's own refusal -- exit 4, "no decision record ... is in the
+    ledger" -- is the reader's actual symptom (#70).
     """
     _checked_identity(world)
     commands = route_commands(("Route B",))
     for argv in commands:
         if argv[:2] == ["noni", "register"]:
             world.mark_sessions()
+        if argv[:2] == ["noni", "decide"]:
+            world.mark_decisions()
         proc = launch(world, argv, world.project)
         checked(proc, f"Route B command {argv}")
         if argv[:2] == ["noni", "register"]:
             world.collect_session_id()
+        if argv[:2] == ["noni", "decide"]:
+            world.collect_record_id()
+        if argv[:2] in _ID_CONSUMERS:
+            _assert_consumed_id(argv, substitute(argv, world.placeholders))
     return commands
+
+
+# The two lines that carry an id a collector produced rather than one the reader
+# typed: the ordering writer's ``--decision`` and the claim writer's ``--session-id``.
+_ID_CONSUMERS: tuple[tuple[str, ...], ...] = (("noni", "order"), ("noni", "claim"))
+
+# The flag each consumer carries its id in, keyed by the command pair.
+_ID_FLAGS = {("noni", "order"): "--decision", ("noni", "claim"): "--session-id"}
+
+
+def _assert_consumed_id(argv: list[str], filled: list[str]) -> None:
+    """Pin the exact token a writer was launched with for the id it must name.
+
+    The caller has already checked the exit code and already built ``filled`` with
+    :func:`substitute`, the launcher's own filling -- so what is asserted here is
+    the very token that reached ``exec``, not a re-derivation that could agree with
+    a planted value. Two refusals, both of them #70's shapes: a golden line whose id
+    token was filled in at the source (the golden list must carry the page's
+    placeholder, never a value), and a filled token that is no id a writer could have
+    produced. The second is the one a plain "argv equals collected id" comparison
+    cannot see -- a collector overwrites whatever a mapping held, so a planted
+    literal satisfies that comparison and still names a record that does not exist.
+    """
+    from docs_commands import placeholder_words
+
+    flag = _ID_FLAGS[tuple(argv[:2])]
+    position = argv.index(flag)
+    assert placeholder_words(argv[position + 1]) == [argv[position + 1]], (
+        f"{argv[1]} names {flag} {argv[position + 1]!r}, which is not the page's "
+        f"placeholder token: the golden line has been filled in at the source")
+    launched = filled[position + 1]
+    assert placeholder_words(launched) == [], (
+        f"{argv[1]} would be launched with {flag} {launched!r}, which is no id a "
+        f"writer can have produced")
 
 
 def _checked_identity(world: World) -> None:
@@ -263,7 +370,8 @@ def launch(world: World, argv: list[str],
         return append_ignore_rule(world, argv)
     if argv[0] == "git" and argv[1] == "clone":
         return state_clone(world, argv)
-    argv = reroot(substitute(argv, world.placeholders), world.state)
+    argv = reroot(substitute(date_arg(world, argv), world.placeholders),
+                  world.state)
     program = str(world.noni) if argv[0] == "noni" else argv[0]
     return _exec(program, argv, cwd, world.env)
 

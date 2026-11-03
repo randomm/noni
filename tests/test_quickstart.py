@@ -202,7 +202,14 @@ def test_route_b_commands_all_exit_zero(world: World) -> None:
     """
     run_route_b(world)
 
-    assert (world.state / "noni" / "decisions").is_dir(), "no ledger under the state clone"
+    records = sorted((world.state / "noni" / "decisions").glob("*.json"))
+    assert len(records) == 1, (
+        f"the state route wrote {len(records)} records, not the one the page's "
+        f"decide line commits: {[p.name for p in records]}")
+    collected = world.placeholders.get("<record-id>")
+    assert collected == records[0].stem, (
+        f"the id the collector put on the ordering line is not the record the "
+        f"decide line wrote: collected {collected!r}, on disk {records[0].name!r}")
     assert (world.project / ".gitignore").is_file(), "the ignore rule was never written"
     assert STATE_DIR + "/" in (world.project / ".gitignore").read_text(encoding="utf-8"), \
         "the ignore rule does not name the state directory"

@@ -270,8 +270,8 @@ def _index_matches_head(repo: Path, rel: str | None) -> bool | None:
     staged (its reset and add steps ran) answers honestly: the bytes are in the
     index, and if they equal HEAD's there is nothing to commit.
 
-    Both probes carry the one pathspec this writer owns (``rel``, the form
-    ``_session_git.rel_of`` produces), as every other step of
+    Both probes carry the one pathspec this writer owns (``rel``, the name
+    :func:`noni._session_git.writer_name` produces), as every other step of
     ``stage_and_commit`` does: the question is whether *this* file's bytes
     changed, and a whole-tree probe would re-stat the entire work tree to answer
     a question about one path -- and would report somebody else's dirty file as

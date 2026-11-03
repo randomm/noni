@@ -64,11 +64,16 @@ construction. The writer allocates the path and then refuses to write any
 path it did not allocate:
 
 - `register.py --file <path>` where `<path>` is neither the path this run
-  allocated nor the marked session's file → exit 2 (refused). The allocated id
-  is minted once per run, so `--file` is only meaningful within the same run as
-  the allocation — pass the freshly-allocated path as printed in the
-  `registered session <id>` output, or the path of the session this working copy
-  is marked for. A path belonging to some other session is refused, not written.
+  allocated nor the marked session's file → exit 2 (refused). One rule, both
+  pages: `--file` is admitted only for this run's allocation, or for the marked
+  name on the route that reuses it. The allocated id is minted once per run, so
+  `--file` is only meaningful within the same run as the allocation — pass the
+  freshly-allocated path as printed in the `registered session <id>` output, or
+  the path of the session this working copy is marked for. A run that allocates —
+  `--no-commit`, or one whose marked session has ended, whose file is gone, or
+  whose file has no readable `- status:` value — admits only the name it
+  allocated: the marked file is the target of the reuse route alone. A path
+  belonging to some other session is refused, not written.
 - A file that already exists with a different identity → exit 1 (refused).
 - A file that already exists with the same identity → exit 0 (idempotent no-op).
 
@@ -88,6 +93,12 @@ same working copy recognise the session it already owns.
   itself, so two worktrees of one repository never share a session. The path is
   built from `--repo` and never through `git rev-parse`, `GIT_DIR` or
   `GIT_WORK_TREE`, so the marker belongs to the tree the operator named.
+- **What it holds.** One session id: the id this command allocated, and nothing
+  else. The id is read back as an input, not a fact — it passes the same gate a
+  `--session-id` on the command line passes (one token, no path separator, no
+  leading dot). Text that is not a session id is not a marker for a session: the
+  run says so on stderr, treats the working copy as unmarked, allocates a new
+  session and re-marks the tree for it. No path is ever built from marker text.
 - **What the next register does with it.** An active marked session is
   continued (exit 0, nothing written, no commit) when the identity matches, and
   refused (exit 1, both identities named) when it does not. A marked session in
@@ -98,7 +109,9 @@ same working copy recognise the session it already owns.
   marker, and says so on stderr (`no noni-session was written under <path>`) —
   the session is registered but the next run in this working copy will not find
   it. A marked file that cannot be read is a refusal (exit 2), never an
-  overwrite.
+  overwrite, and a `- status:` line with no readable value is refused the same
+  way: register allocates afresh rather than continue a session it cannot tell is
+  active.
 - **`--no-commit` does not mark.** Asking for the file to be left in the work
   tree is a caller that intends to write more than one session here and commit
   them itself, so it gets a fresh allocation and the existing marker stays where
@@ -118,11 +131,21 @@ that path's index entry, add it, then `git commit --only -- <path>`. Every other
 staged entry is left staged and uncommitted, so a writer never sweeps an
 unrelated change into its commit and never unstages somebody else's.
 
-A path handed to git is made absolute against `--repo` first, so a relative
-path names a file inside that repository and not one beside the caller's
-working directory. Every git call is bounded by a timeout, makes no signing
-promise, runs no repository hooks, and refuses the external transports a remote
-could name.
+The path git is handed is a path *inside* the state root — `noni/sessions/
+<session-id>.md` — never a path read against the caller's working directory, and
+carrying no component of a relative `--repo`. The writer derives that one name and
+uses it for the file it writes (`<repo>/<name>`), for the pathspec and for every
+message, so `--repo` alone decides which repository is written and the process
+directory has no say in it. The id is minted once per `register.py` run and that
+single string names the file, the pathspec, the marker, the commit subject and the
+printed line. A name that is absolute, that leaves the root with `..`, that is not
+a `.md` file under `noni/sessions/`, or that carries a control character, is
+refused before anything is written: an absolute pathspec is what `git add` accepts
+from outside the `-C` tree, exiting 0 and staging nothing, so a writer that
+admitted one would report a commit that carried no file, and a name carrying a
+control character would make the git call itself raise rather than report. Every
+git call is bounded by a timeout, makes no signing promise, runs no repository
+hooks, and refuses the external transports a remote could name.
 
 ### Commit refused by git
 

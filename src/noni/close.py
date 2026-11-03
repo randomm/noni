@@ -21,11 +21,13 @@ Exit codes:
     1  the session file for --session-id does not exist (register it first)
     2  the file exists but cannot be read, is not UTF-8, or is malformed for
        this writer (no '- status:' field line to set), or --repo names no
-       directory
+       directory or is a symlink (refused, never followed)
     3  git could not commit the change, or --push failed after 3
        fetch-rebase-push attempts (also a fetch failure, a detached HEAD, or an
        unresolvable branch)
-    4  --session-id is not a single token, or --no-commit was combined with
+    4  --session-id is not a single token with no leading dot (the name of one
+       file under noni/sessions/, so a path separator or a '..' walk out of the
+       state root is refused here), or --no-commit was combined with
        --push (there would be nothing committed to push)
     5  the --push rebase started and stopped on a conflict in the session file;
        this run aborts the rebase, so the clone is left on its branch with the
@@ -114,24 +116,36 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(EXIT_USAGE, f"--repo {args.repo} is not a directory",
                      "pass the repository root that holds noni/sessions/")
 
-    # The session id goes into the commit message ("close: <session-id>"), so it
-    # must be one token: no whitespace, no path separator. Refused before any
-    # read or write.
+    # A state root that is itself a symlink is refused here, before the register
+    # is read or written (see _session_git.linked_state_root for why the two
+    # path readings disagree), on this command's own usage code.
+    linked, why = _session_git.linked_state_root(repo)
+    if linked is not None:
+        return _fail(EXIT_USAGE, f"--repo {args.repo}: {why}",
+                     "pass the state root itself, not a symlink to it")
+
+    # The session id is the name of one file under noni/sessions/ and also goes
+    # into the commit message ("close: <session-id>"), so it is validated by the
+    # one derivation the four writers share, before any read or write: no
+    # whitespace, no path separator, no leading dot (a hidden file the census's
+    # listing would not report).
     session_id = args.session_id.strip()
-    if not _session_git.valid_token(session_id):
-        return _fail(EXIT_USAGE,
-                     f"--session-id {args.session_id!r} is not a single token "
-                     "(no whitespace, no path separator)",
-                     "pass the session id, the file name under noni/sessions/ "
-                     "without its .md suffix")
+    rel = _session_git.writer_name(session_id)
+    if not rel:
+        headline, hint = _session_git.name_refusal(f"--session-id {args.session_id!r}")
+        return _fail(EXIT_USAGE, headline, hint)
     if args.no_commit and args.push:
         return _fail(EXIT_USAGE,
                      "--no-commit cannot be combined with --push (there would be "
                      "nothing committed to push)",
                      "drop one of the two")
 
-    session_file = repo / "noni" / "sessions" / f"{session_id}.md"
-    rel = session_file.relative_to(repo).as_posix()
+    # The write location (``repo / rel``), the pathspec, the failure wording and
+    # the hint all name the string derived above, which is relative to the state
+    # root and carries no component of a relative --repo. The refusal above ran
+    # before the register was looked for, so a refusal never leaves a written
+    # file behind.
+    session_file = repo / rel
     if not session_file.is_file():
         return _fail(EXIT_SESSION_MISSING, f"register file not found: {session_file}",
                      f"register the session first (register.py --repo {repo} "
@@ -188,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{labels.CLOSE}: {session_file} left uncommitted")
         return EXIT_OK
 
-    ok, why = _session_git.stage_and_commit(repo, session_file, f"close: {session_id}")
+    ok, why = _session_git.stage_and_commit(repo, rel, f"close: {session_id}")
     if not ok:
         return _fail(EXIT_PUSH_FAILED,
                      f"git could not commit {rel} (the change is written): {why}",

@@ -30,8 +30,11 @@ Exit codes:
        failure, a detached HEAD, an unresolvable branch, or a git call that
        timed out)
     4  the task reference is not a non-empty token (empty, whitespace-only,
-       or with embedded whitespace), --branch is not a safe ref name,
-       --no-commit was combined with --push, or --repo is not a directory
+       or with embedded whitespace), --session-id is not a single token with no
+       leading dot (the name of one file under noni/sessions/, so a path
+       separator or a '..' walk out of the state root is refused here), --branch
+       is not a safe ref name, --no-commit was combined with --push, --repo is
+       not a directory, or --repo is a symlink (refused, never followed)
     5  the rebase hit a conflict: the rebase started and stopped mid-flight,
        so claim.py ran git rebase --abort, which leaves HEAD on the branch it
        was invoked on, at the claim commit this run made (the abort resets
@@ -61,6 +64,11 @@ import sys
 from pathlib import Path
 
 from . import _session_git, _session_push, labels
+from ._session_rebase_state import (  # noqa: F401  (re-exported: one definition,
+    # read by this module's classifier and by the
+    # tests' post-condition helper)
+    REBASE_STATE_DIRS,
+)
 
 CLAIM_PREFIX = "- claim: "
 # The push loop's bound and attempt count are the session writers' shared
@@ -86,10 +94,12 @@ EXIT_USAGE: int = 4
 EXIT_REBASE_CONFLICT: int = 5
 EXIT_REBASE_REFUSED: int = 6
 
-# The two directories a stopped rebase can leave: the merge backend writes
-# rebase-merge/, the am backend writes rebase-apply/, so the classifier probes
-# both. The tests' post-condition helper reads this same constant.
-REBASE_STATE_DIRS: tuple[str, ...] = ("rebase-merge", "rebase-apply")
+# The two directories a stopped rebase can leave (rebase-merge/, written by the
+# merge backend, and rebase-apply/, written by the am backend) are defined once,
+# in :mod:`noni._session_rebase_state`, which is where the probe reads them. The
+# import above brings that one definition into this module's name space rather
+# than restating the pair, so the push loop, this module's classifier and the
+# tests' post-condition helper all read one list.
 
 # How much of git's own output the push loop and the classifier echo. These
 # streams are not this process's words (a fetch or push against an origin can
@@ -284,6 +294,17 @@ def main(argv: list[str] | None = None) -> int:
             f"{labels.CLAIM}: --repo {args.repo} is not a directory",
             "pass the repository root that holds noni/sessions/",
         )
+
+    # A state root that is itself a symlink is refused here, before the register
+    # is read or written (see _session_git.linked_state_root for why the two
+    # path readings disagree), on this command's own usage code.
+    linked, linked_why = _session_git.linked_state_root(repo)
+    if linked is not None:
+        return _report(
+            EXIT_USAGE,
+            f"{labels.CLAIM}: --repo {args.repo}: {linked_why}",
+            "pass the state root itself, not a symlink to it",
+        )
     task = args.task.strip()
     if not task or not TASK_RE.fullmatch(task):
         print(
@@ -319,7 +340,21 @@ def main(argv: list[str] | None = None) -> int:
         )
         return EXIT_USAGE
 
-    session_file = repo / "noni" / "sessions" / f"{args.session_id}.md"
+    # The one name this run owns, derived before any read or write by the single
+    # validated derivation the four writers share: the write location
+    # (``repo / rel``), the pathspec, the failure wording and the nothing-to-commit
+    # probe all name this string, which is relative to the state root and carries
+    # no component of a relative --repo. The guard refuses an id that is not one
+    # token, that carries a path separator, or that begins with a dot (a hidden
+    # file the census's listing would not report), so a ``..`` in --session-id
+    # cannot reach a path outside the root. Refused before the register is looked
+    # for, so a refusal never leaves a written file behind.
+    rel = _session_git.writer_name(args.session_id.strip())
+    if not rel:
+        headline, hint = _session_git.name_refusal(f"--session-id {args.session_id!r}")
+        return _report(EXIT_USAGE, f"{labels.CLAIM}: {headline}",
+                       f"{labels.CLAIM}: fix: {hint}")
+    session_file = repo / rel
     if not session_file.is_file():
         print(f"{labels.CLAIM}: register file not found: {session_file} (register the session first)", file=sys.stderr)
         return EXIT_REGISTER_MISSING
@@ -403,8 +438,7 @@ def main(argv: list[str] | None = None) -> int:
     # already claims the task, and this file passed both checks), so it is
     # reported as the failure-to-advance class it is: exit 3, with the row's
     # staged state named so the caller knows what to clean up.
-    rel = session_file.relative_to(repo).as_posix()
-    ok, why = _session_git.stage_and_commit(repo, session_file, "claim: " + task)
+    ok, why = _session_git.stage_and_commit(repo, rel, "claim: " + task)
     if not ok:
         print(
             f"{labels.CLAIM}: git could not commit the claim row "

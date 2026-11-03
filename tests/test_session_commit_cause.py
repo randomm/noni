@@ -103,7 +103,7 @@ def test_a_killed_upstream_probe_is_never_read_as_the_gone_clause(tmp_path,
     monkeypatch.setattr(_session_git, "git", _git_via(run))
     monkeypatch.setattr(_commit_cause, "_git", _git_via(run))
 
-    ok, why = _session_git.stage_and_commit(clone, target, "close: d")
+    ok, why = _session_git.stage_and_commit(clone, _session_git.writer_name("2026-10-01-dddddd"), "close: d")
 
     assert ok, why  # the commit is git's to take; nothing is claimed about it
     assert why == ""
@@ -184,7 +184,7 @@ def test_a_commit_the_upstream_rejected_names_the_generic_cause(tmp_path,
     monkeypatch.setattr(_session_git, "git",
                         _git_refusing("commit", "Author identity unknown"))
 
-    ok, why = _session_git.stage_and_commit(clone, target, "close: d")
+    ok, why = _session_git.stage_and_commit(clone, _session_git.writer_name("2026-10-01-dddddd"), "close: d")
 
     assert ok is False, why
     assert _commit_cause.GIT_REFUSED in why, why

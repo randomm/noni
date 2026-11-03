@@ -10,8 +10,13 @@ failure comes back as ``(False, why)`` rather than an exit code or a raised
 The path half is the guard the callers cannot get wrong: ``Path.resolve()``
 resolves a not-yet-created file to the directory above the repository, so a
 relative path handed to git unnormalised is read against the caller's working
-directory — and ``-C`` carries an absolute path precisely so a relative
+directory -- and ``-C`` carries an absolute path precisely so a relative
 ``--repo`` cannot be reinterpreted against wherever the process started.
+
+Two files hold the assertions the primitive cannot make for itself. This one
+holds the ones that need a real tree (a commit that landed, a HEAD that did not
+move); ``test_session_name_contract.py`` holds the judgements about a name, which
+need no git at all and are read better as a table of shapes.
 """
 
 from __future__ import annotations
@@ -60,11 +65,12 @@ def test_stage_and_commit_commits_a_file_never_seen_before(tmp_path):
     step 3 able to carry the file, and a reordering breaks this test.
     """
     repo = _repo(tmp_path)
-    target = repo / "noni" / "sessions" / "2026-10-01-aaaaaa.md"
+    rel = _session_git.writer_name("2026-10-01-aaaaaa")
+    target = repo / rel
     target.parent.mkdir(parents=True)
     target.write_text("- status: active\n", encoding="utf-8")
 
-    ok, why = _session_git.stage_and_commit(repo, target, "register: 2026-10-01-aaaaaa")
+    ok, why = _session_git.stage_and_commit(repo, rel, "register: 2026-10-01-aaaaaa")
     assert ok, why
     assert _commit_files(repo) == ["noni/sessions/2026-10-01-aaaaaa.md"]
     assert _git_ok(repo, "log", "-1", "--format=%s").stdout.strip() == \
@@ -75,7 +81,8 @@ def test_stage_and_commit_carries_only_its_own_path(tmp_path):
     """Two changed files, one commit: the other stays unstaged-or-staged and
     uncommitted, which is the whole point of the three-step primitive."""
     repo = _repo(tmp_path)
-    mine = repo / "noni" / "sessions" / "2026-10-01-bbbbbb.md"
+    mine_rel = _session_git.writer_name("2026-10-01-bbbbbb")
+    mine = repo / mine_rel
     mine.parent.mkdir(parents=True)
     mine.write_text("- status: active\n", encoding="utf-8")
     theirs = repo / "noni" / "decisions" / "theirs.json"
@@ -85,7 +92,7 @@ def test_stage_and_commit_carries_only_its_own_path(tmp_path):
     # sweep it in and must not unstage it either.
     _git_ok(repo, "add", "noni/decisions/theirs.json")
 
-    ok, why = _session_git.stage_and_commit(repo, mine, "register: b")
+    ok, why = _session_git.stage_and_commit(repo, mine_rel, "register: b")
     assert ok, why
     assert _commit_files(repo) == ["noni/sessions/2026-10-01-bbbbbb.md"]
     assert "A  noni/decisions/theirs.json" in _git_ok(repo, "status", "--porcelain").stdout
@@ -95,13 +102,14 @@ def test_stage_and_commit_rewrites_a_previously_committed_file(tmp_path):
     """The amend path of the same primitive: the second commit carries only the
     new bytes of the same path."""
     repo = _repo(tmp_path)
-    target = repo / "noni" / "sessions" / "2026-10-01-cccccc.md"
+    rel = _session_git.writer_name("2026-10-01-cccccc")
+    target = repo / rel
     target.parent.mkdir(parents=True)
     target.write_text("- status: active\n", encoding="utf-8")
-    assert _session_git.stage_and_commit(repo, target, "first")[0]
+    assert _session_git.stage_and_commit(repo, rel, "first")[0]
 
     target.write_text("- status: closed\n", encoding="utf-8")
-    ok, why = _session_git.stage_and_commit(repo, target, "second")
+    ok, why = _session_git.stage_and_commit(repo, rel, "second")
     assert ok, why
     assert _commit_files(repo) == ["noni/sessions/2026-10-01-cccccc.md"]
     body = _git_ok(repo, "show", "HEAD:noni/sessions/2026-10-01-cccccc.md").stdout
@@ -112,70 +120,66 @@ def test_stage_and_commit_reports_git_failure_without_an_exit_code(tmp_path):
     """The helper owns no exit code: every way it can fail comes back as
     ``(False, why)``, and a caller's single ``if not ok`` covers them all.
 
-    Two fault classes, one shape: a path the repository does not contain (the
-    helper's own words, and no ``ValueError`` escaping to the caller), and a git
-    refusal (git's own words). Neither is an exit code, and neither raises.
+    Three fault classes, one shape: a name that is not one inside the state root
+    (the helper's own words, and no ``ValueError`` escaping to the caller), a
+    state root that is a symlink, and a git refusal (git's own words). None is an
+    exit code, and none raises.
     """
     repo = _repo(tmp_path)
-    outside = tmp_path / "elsewhere.md"
-    outside.write_text("x\n", encoding="utf-8")
 
-    ok, why = _session_git.stage_and_commit(repo, outside, "nope")
+    ok, why = _session_git.stage_and_commit(repo, "../elsewhere.md", "nope")
     assert ok is False
-    assert "not inside" in why, why
+    assert "inside the state root" in why, why
 
     # A git refusal names what git said, not the caller's commit message.
     missing = repo / "noni" / "sessions" / "absent.md"
     missing.parent.mkdir(parents=True)
-    ok, why = _session_git.stage_and_commit(repo, missing, "nope")
+    ok, why = _session_git.stage_and_commit(repo, "noni/sessions/absent.md", "nope")
     assert ok is False
     assert "nope" not in why, why
     assert "git" in why.lower(), why
 
-
-# --- the path resolution the callers cannot get wrong ------------------------
-
-
-def test_rel_of_refuses_a_path_outside_the_repo(tmp_path):
-    """A path the repository does not contain has no repo-relative form; it is
-    refused rather than quietly turned into ``../..`` something git would read
-    against a different tree."""
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    with pytest.raises(ValueError):
-        _session_git.rel_of(repo, tmp_path / "outside.md")
-    # A sibling whose name merely starts with the repo's name is not inside it.
-    with pytest.raises(ValueError):
-        _session_git.rel_of(repo, tmp_path / "repo-evil" / "x.md")
+    # A state root that is itself a symlink: the refusal the writers make before
+    # they touch the tree is repeated here, in noni's words, so the primitive
+    # cannot be driven around it by a caller that skipped its own check.
+    link = tmp_path / "state-link"
+    link.symlink_to(repo)
+    ok, why = _session_git.stage_and_commit(link, "noni/sessions/absent.md", "nope")
+    assert ok is False
+    assert "symlink" in why, why
+    assert str(repo.resolve()) in why, why
 
 
-def test_rel_of_resolves_a_relative_path_against_the_repo_not_the_cwd(tmp_path):
-    """The bug this guard exists for.
+# --- the name the callers hand the primitive --------------------------------
 
-    ``Path.resolve()`` resolves a path that does not exist yet by walking up to
-    the nearest directory that does, so a file about to be created resolves to
-    the directory above the repository — and a relative path handed to git
-    without this normalisation is read against the caller's working directory.
-    A tree containing a ``noni/`` directory then turns ``noni/sessions/x.md``
-    into a write in some other repository.
+
+def test_a_name_is_committed_against_the_repo_and_never_the_cwd(tmp_path):
+    """The bug the name contract exists for, now that no path reaches the primitive.
+
+    A name is joined to ``repo`` and nothing else, so a decoy tree beside the
+    cwd -- the shape a project carrying its own ``noni/`` directory presents --
+    is neither written nor committed, whatever the process is standing in. The
+    old form of this test handed the primitive a relative *path* and asked it to
+    guess where the path came from; the contract makes the guess impossible, so
+    the same tree now pins that ``repo / name`` is where the bytes land.
     """
     repo = tmp_path / "repo"
     (repo / "noni" / "sessions").mkdir(parents=True)
     _git_ok(repo, "init", "-q", "-b", "main")
+    _git_ok(repo, "config", "user.name", "Replay")
+    _git_ok(repo, "config", "user.email", "replay@fixture.invalid")
+
+    # The decoy tree beside the cwd, with a file at the very name this run owns.
+    (tmp_path / "noni" / "sessions").mkdir(parents=True)
+    decoy = tmp_path / "noni" / "sessions" / "x.md"
+    decoy.write_text("decoy\n", encoding="utf-8")
+    (repo / "noni" / "sessions" / "x.md").write_text("- status: active\n",
+                                                     encoding="utf-8")
 
     cwd_before = os.getcwd()
     os.chdir(tmp_path)
     try:
-        assert _session_git.rel_of(repo, Path("noni/sessions/x.md")) == \
-            "noni/sessions/x.md"
-        # The bytes exist only inside the repo; a run that resolved the relative
-        # name against the cwd would have looked beside it and found nothing.
-        (tmp_path / "noni" / "sessions").mkdir(parents=True)
-        (tmp_path / "noni" / "sessions" / "x.md").write_text("decoy\n",
-                                                              encoding="utf-8")
-        (repo / "noni" / "sessions" / "x.md").write_text("- status: active\n",
-                                                         encoding="utf-8")
-        ok, why = _session_git.stage_and_commit(repo, Path("noni/sessions/x.md"),
+        ok, why = _session_git.stage_and_commit(repo, "noni/sessions/x.md",
                                                 "register: x")
         assert ok, why
     finally:
@@ -185,7 +189,77 @@ def test_rel_of_resolves_a_relative_path_against_the_repo_not_the_cwd(tmp_path):
     # neither committed nor touched.
     committed = _git_ok(repo, "show", "HEAD:noni/sessions/x.md").stdout
     assert committed == "- status: active\n", committed
-    assert (tmp_path / "noni" / "sessions" / "x.md").read_text(encoding="utf-8") == "decoy\n"
+    assert decoy.read_text(encoding="utf-8") == "decoy\n"
+
+
+def test_stage_and_commit_refuses_a_name_that_is_not_inside_the_root(tmp_path):
+    """The backstop the writers do not rely on: a name that escapes the root never
+    reaches git at all.
+
+    Every writer asks the same question before it writes a byte, so this is the
+    second line of defence -- and the one that matters for a caller that forgot
+    to ask. An absolute pathspec is the dangerous shape: ``git add`` accepts one
+    outside the ``-C`` tree, exits 0 and stages nothing, so a writer that admitted
+    it would report a commit that carried no file.
+    """
+    repo = _repo(tmp_path)
+    (repo / "noni" / "sessions").mkdir(parents=True)
+    (repo / "noni" / "sessions" / "x.md").write_text("- status: active\n",
+                                                      encoding="utf-8")
+    head_before = _git_ok(repo, "rev-parse", "HEAD").stdout.strip()
+
+    for bad in (str(repo / "noni" / "sessions" / "x.md"), "../outside.md",
+                "noni/sessions/../../../outside.md", ".", "",
+                # not a session file: the primitive commits one .md file under
+                # the sessions directory and nothing else
+                "outside.md", "noni/sessions/x", "notes/x.md"):
+        ok, why = _session_git.stage_and_commit(repo, bad, "nope")
+        assert ok is False, repr(bad)
+        assert "inside the state root" in why, why
+
+    # Nothing reached git: HEAD unmoved, and the index holds no entry for a path
+    # this run was refused.
+    assert _git_ok(repo, "rev-parse", "HEAD").stdout.strip() == head_before
+    assert _git_ok(repo, "diff", "--cached", "--name-only").stdout.split() == []
+
+
+def test_stage_and_commit_returns_a_nul_name_instead_of_raising(tmp_path):
+    """The never-raises promise, on the one name that could break it.
+
+    ``subprocess.run`` refuses an argv element carrying a NUL with ``ValueError``
+    -- so a name like this handed straight to git would end the run in a
+    traceback over the message the operator was meant to read. The primitive
+    owns that promise, so the fault must come back as ``(False, why)`` like
+    every other bad name, and nothing may reach git. Delete the control-character
+    refusal in ``relative_name`` and this test fails with a raised ``ValueError``
+    rather than an assertion.
+    """
+    repo = _repo(tmp_path)
+    # The sessions directory and its one committed file are staged and committed
+    # here rather than left untracked: 'nothing this run changed' is the claim,
+    # and a directory nobody had committed yet would read as untracked dirt this
+    # run appeared to leave behind.
+    (repo / "noni" / "sessions").mkdir(parents=True)
+    (repo / "noni" / "sessions" / "x.md").write_text("- status: active\n",
+                                                      encoding="utf-8")
+    _git_ok(repo, "add", "noni/sessions/x.md")
+    _git_ok(repo, "commit", "-q", "-m", "session")
+    head_before = _git_ok(repo, "rev-parse", "HEAD").stdout.strip()
+    assert _git_ok(repo, "status", "--porcelain").stdout.splitlines() == [], \
+        "precondition: the tree starts clean"
+
+    for bad in ("noni/sessions/a\x00b.md", "noni/sessions/a\x01b.md",
+                # Text no UTF-8 codec can carry: it passes every path rule and
+                # would fault the write or the git call instead of reporting.
+                "noni/sessions/\ud800.md", "noni/sessions/a\udc00b.md"):
+        ok, why = _session_git.stage_and_commit(repo, bad, "nope")
+        assert ok is False, repr(bad)
+        assert isinstance(why, str) and why, repr(bad)
+        assert "inside the state root" in why, why
+
+    assert _git_ok(repo, "rev-parse", "HEAD").stdout.strip() == head_before
+    assert _git_ok(repo, "diff", "--cached", "--name-only").stdout.split() == []
+    assert _git_ok(repo, "status", "--porcelain").stdout.splitlines() == []
 
 
 def test_git_always_talks_to_the_named_repo_whatever_the_cwd_says(tmp_path):
@@ -219,10 +293,11 @@ def _tracked_session(repo):
     so a baseline that did not land must fail here and not silently become a
     'nothing to commit' the tree never had.
     """
-    target = repo / "noni" / "sessions" / "2026-10-01-dddddd.md"
+    rel = _session_git.writer_name("2026-10-01-dddddd")
+    target = repo / rel
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("- status: active\n", encoding="utf-8")
-    ok, why = _session_git.stage_and_commit(repo, target, "register: d")
+    ok, why = _session_git.stage_and_commit(repo, rel, "register: d")
     if not ok:
         raise AssertionError(f"the fixture could not commit its baseline: {why}")
     shown = _git_ok(repo, "rev-list", "--count", "HEAD").stdout.strip()
@@ -251,7 +326,7 @@ def test_a_commit_that_found_nothing_to_commit_names_that_cause(tmp_path):
     assert _git_ok(clone, "status", "--porcelain", "--",
                    "noni/sessions/2026-10-01-dddddd.md").stdout == ""  # (no-op write)
 
-    ok, why = _session_git.stage_and_commit(clone, target, "close: d")
+    ok, why = _session_git.stage_and_commit(clone, _session_git.writer_name("2026-10-01-dddddd"), "close: d")
 
     assert ok is False, why
     assert _commit_cause.NOTHING_TO_COMMIT in why, why
@@ -275,7 +350,7 @@ def test_a_diverged_clone_still_commits(tmp_path):
     target = _tracked_session(clone)
     target.write_text("- status: closed\n", encoding="utf-8")
 
-    ok, why = _session_git.stage_and_commit(clone, target, "close: d")
+    ok, why = _session_git.stage_and_commit(clone, _session_git.writer_name("2026-10-01-dddddd"), "close: d")
 
     assert ok is True, why
     assert origin.is_dir()
@@ -316,7 +391,7 @@ def test_a_commit_git_accepted_reports_no_cause(tmp_path):
     assert _git_commit(repo, "control", rel).returncode == 0  # the state is committable
     target.write_text("- status: active\n- note: third run\n", encoding="utf-8")
 
-    ok, why = _session_git.stage_and_commit(repo, target, "close: d")
+    ok, why = _session_git.stage_and_commit(repo, _session_git.writer_name("2026-10-01-dddddd"), "close: d")
 
     assert ok is True, why
     assert why == ""
@@ -341,7 +416,7 @@ def test_a_commit_whose_upstream_origin_deleted_names_that_cause(tmp_path):
     target = _tracked_session(clone)
     target.write_text("- status: active\n", encoding="utf-8")
 
-    ok, why = _session_git.stage_and_commit(clone, target, "close: d")
+    ok, why = _session_git.stage_and_commit(clone, _session_git.writer_name("2026-10-01-dddddd"), "close: d")
 
     assert ok is False, why
     assert _commit_cause.UPSTREAM_GONE in why, why
@@ -360,7 +435,7 @@ def test_the_failure_line_names_the_cause_and_keeps_git_sown_words(tmp_path):
     target = _tracked_session(repo)
     target.write_text("- status: active\n", encoding="utf-8")
 
-    ok, why = _session_git.stage_and_commit(repo, target, "register: secret-subject")
+    ok, why = _session_git.stage_and_commit(repo, _session_git.writer_name("2026-10-01-dddddd"), "register: secret-subject")
 
     assert ok is False
     assert why.count("\n") == 0, why  # one line, whatever git printed

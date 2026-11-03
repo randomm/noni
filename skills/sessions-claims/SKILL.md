@@ -64,9 +64,10 @@ scripts/register.py --repo REPO --identity IDENTITY [--status STATUS]
 ```
 
 The register writer allocates a session-id, creates the file at
-`noni/sessions/<session-id>.md`, commits that one file, and refuses to write a
-path it did not allocate (exit 2). It marks the working copy with the id it
-allocated, under that tree's own `.git/`, and the next run in the same working
+`noni/sessions/<session-id>.md`, commits that one file, and refuses to write any
+other path (exit 2): `--file` is admitted only for this run's allocation, or for
+the marked name on the route that reuses it. It marks the working copy with the id
+it allocated, under that tree's own `.git/`, and the next run in the same working
 copy reads that marker:
 
 | the marked session | what the next register does |
@@ -74,7 +75,10 @@ copy reads that marker:
 | active, same identity | continues it: exit 0, nothing written, no commit (`<id>.md already registered (identity=X)`) |
 | active, different identity | refused: exit 1, both identities named, the other session's bytes untouched |
 | terminal (`closed`, `done`, `superseded`, `ended`), or its file gone | allocates a new session and re-marks the working copy for it |
-A marker this run cannot read is no evidence of a session, and a marked file it
+| a `- status:` line with no readable value | refused: exit 2, the file and the marker named, nothing written |
+A marker this run cannot read is no evidence of a session, and a marker whose
+text is not a session id counts as no marker at all: the run says so on stderr,
+allocates afresh, and never builds a path from marker text. A marked file it
 cannot read is a refusal (exit 2) rather than an overwrite: the writer never
 replaces bytes it has not seen. `--no-commit` opts out of both the commit and
 the marker, which is how a caller that plants more than one session file in one
@@ -87,10 +91,13 @@ hostname, because the register file is committed to a public repo. Explicit
 `--host` / `--worktree` values are written as given.
 
 Exit codes: `0` registered, or the marked active session continued; `1` the
-marked file belongs to another identity; `2` a path this run did not allocate,
-or a marked file that cannot be read, or `--repo` naming no directory; `3` git
-could not commit; `4` a `--identity`/`--status` that is not one token, or
-`--no-commit` with `--push`.
+marked file belongs to another identity; `2` a path this run did not allocate, or
+a marked file that cannot be read or carries no readable `- status:` value, or
+`--repo` naming no directory or being a symlink (refused, never followed); `3` git
+could not commit; `4` a `--identity`/`--status` that is not one token, the
+session name this run allocated is not one file under `noni/sessions/` (a name
+the writer derived itself, so the hint names `--identity` and does not blame
+`--repo` or a symlink), or `--no-commit` with `--push`.
 
 A commit that git refuses (exit 3) is the same shape for all four writers: the
 file stays on disk with the bytes this run wrote, the one line on stderr names
@@ -129,8 +136,10 @@ under "Committing a session file" in `references/register.md`).
 Exit codes: `0` the row is gone and committed (and pushed with `--push`, or
 left uncommitted with `--no-commit`); `1` no such session file; `2` the session
 does not hold the task, or the file is unreadable or carries no `- claims:`
-marker, or `--repo` names no directory; `3` git could not commit, or `--push`
-failed; `4` a `--task`/`--session-id` that is not one token, or `--no-commit`
+marker, or `--repo` names no directory or is a symlink (refused, never
+followed); `3` git could not commit; `4` a `--task`/`--session-id` that is not one
+token with no leading dot (the id is also the name of one file under
+`noni/sessions/`), or `--no-commit`
 with `--push`; `5` the `--push` rebase started and stopped on a session-file
 conflict (this run aborts it); `6` the rebase never started (the hint names
 committing or stashing) or its state could not be read. `5` and `6` are
@@ -160,8 +169,10 @@ under "Committing a session file" in `references/register.md`).
 Exit codes: `0` closed and committed (and pushed with `--push`, or left
 uncommitted with `--no-commit`), or already closed; `1` no such session file;
 `2` the file is unreadable or carries no `- status:` line, or `--repo` names no
-directory; `3` git could not commit, or `--push` failed; `4` a `--session-id`
-that is not one token, or `--no-commit` with `--push`; `5` the `--push` rebase
+directory or is a symlink (refused, never followed); `3` git could not commit, or
+`--push` failed; `4` a `--session-id`
+that is not one token with no leading dot (the id is also the name of one file
+under `noni/sessions/`), or `--no-commit` with `--push`; `5` the `--push` rebase
 started and stopped on a session-file conflict (this run aborts it); `6` the
 rebase never started (the hint names committing or stashing) or its state could
 not be read. `5` and `6` are `claim.py`'s codes, and mean the same thing here.
@@ -219,7 +230,7 @@ is stopped. Exit codes (the full table, with the abort post-condition, is in
 | `1` | the register file for `--session-id` does not exist (register first) |
 | `2` | the session file is malformed (no `- claims:` marker, not readable as UTF-8), the session already claims the same task, or the session's status is terminal; see the paragraph above for what each refusal writes |
 | `3` | push failed after 3 fetch-rebase-push attempts; also a failed fetch, a detached HEAD, an unresolvable branch, a git call that timed out, or a `git add`/`git commit` that git refused |
-| `4` | usage error: bad `--task` or `--branch` value, `--no-commit` with `--push`, or a `--repo` that is not a directory |
+| `4` | usage error: bad `--task`, `--session-id` or `--branch` value (`--session-id` must name one file under `noni/sessions/`, so whitespace, a path separator, a `..` walk out of the state root or a leading dot is refused), `--no-commit` with `--push`, a `--repo` that is not a directory, or a `--repo` that is a symlink (refused, never followed — the message names the real path) |
 | `5` | rebase conflict: the rebase started and stopped; the script aborts it, which leaves the clone on the branch it was invoked on at the claim commit it made (if the abort itself fails, the message says the clone needs manual cleanup) |
 | `6` | rebase refused: the rebase never started (the hint names committing or stashing), or its state could not be read (no abort run, and the message says so) |
 

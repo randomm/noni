@@ -351,7 +351,7 @@ def test_failure_hints_name_their_code_and_carry_no_traceback(tmp_path):
 
     usage = run_close(clone, "a b")
     assert usage.returncode == close_mod.EXIT_USAGE, usage.stderr
-    assert "not a single token" in usage.stderr, usage.stderr
+    assert "inside the state root" in usage.stderr, usage.stderr
     assert "Traceback" not in usage.stderr, usage.stderr
 
 
@@ -359,7 +359,7 @@ def test_non_token_session_id_exits_four(tmp_path):
     clone, _ = _repo_with_session(tmp_path)
     proc = run_close(clone, "a b")
     assert proc.returncode == close_mod.EXIT_USAGE, proc.returncode
-    assert "not a single token" in proc.stderr, proc.stderr
+    assert "inside the state root" in proc.stderr, proc.stderr
 
 
 def test_no_commit_with_push_exits_four(tmp_path):

@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 
 from _harness import (
-    CLAIM,
+    SRC,
     _claim_module,
     _git,
     _script_ast,
@@ -29,12 +29,19 @@ def _rebase_state_paths(repo: Path) -> list[Path]:
     """The directories a stopped rebase can leave, resolved through git itself
     (plumbing only: rev-parse --git-path, never a hand-built .git).
 
-    The names come from claim.py's own REBASE_STATE_DIRS, so the set this file
-    asserts on and the set the classifier probes are one list: a backend
-    directory added to the constant is probed and asserted, never half of it.
+    The names come from the module that owns the constant,
+    ``_session_rebase_state.py``, read as a literal out of that file: the probe
+    lives there, so the set this file asserts on and the set the probe examines
+    are one list, and a backend directory added to the constant is probed and
+    asserted rather than half of it. Read from the owner rather than from
+    ``claim.py`` because that module only imports the name: a second literal
+    beside the real one would be a copy this helper could read while the probe
+    answered something else.
     """
     out = []
-    for name in _script_constant(_script_ast(CLAIM), "REBASE_STATE_DIRS", CLAIM.name):
+    tree = _script_ast(SRC / "noni" / "_session_rebase_state.py")
+    for name in _script_constant(tree, "REBASE_STATE_DIRS",
+                                 "_session_rebase_state.py"):
         raw = Path(_git_text(repo, "rev-parse", "--git-path", name))
         out.append(raw if raw.is_absolute() else repo / raw)
     return out

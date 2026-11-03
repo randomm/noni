@@ -91,11 +91,23 @@ class World:
         # The session files on disk before the page's register line ran, so the
         # collector can require that line to have added exactly one.
         self._sessions_before: list[str] | None = None
+        # The same snapshot for the ledger, taken before the page's decide line.
+        self._decisions_before: list[str] | None = None
+        # The date the page's decide line records under, or None for today. A
+        # launch appends it as --date (see ``quickstart_runner.date_arg``); a test
+        # that wants a date other than the host's sets it here. It hangs off the
+        # world rather than a fixture because the writers run as subprocesses.
+        self.decide_date: str | None = None
 
     def mark_sessions(self) -> None:
         """Record the session files on disk, just before the register line runs."""
         directory = self.state / "noni" / "sessions"
         self._sessions_before = sorted(p.name for p in directory.glob("*.md"))
+
+    def mark_decisions(self) -> None:
+        """Record the ledger files on disk, just before the decide line runs."""
+        directory = self.state / "noni" / "decisions"
+        self._decisions_before = sorted(p.name for p in directory.glob("*.json"))
 
     def collect_session_id(self) -> None:
         """Take the page's ``<session-id>`` from the register file on disk.
@@ -116,6 +128,29 @@ class World:
             "the page's register line wrote no session file under the state clone, "
             "so the claim line that follows cannot name a real session id")
         self.placeholders["<session-id>"] = files[-1].stem
+
+    def collect_record_id(self) -> None:
+        """Take the page's ``<record-id>`` from the record the decide line wrote.
+
+        The sibling of :meth:`collect_session_id` for the other placeholder the
+        page asks the reader to copy off a writer's output. Read from the state
+        clone's own ledger, not from stdout and not from a literal: the record the
+        ordering line cites is a file whose name carries the date the writer ran,
+        so a value the harness invented would name a record no run could have made
+        (that is the bug this collector replaces). With a :meth:`mark_decisions`
+        snapshot behind it the read is "this run added exactly one", not "a file is
+        there", and the stem goes to the placeholder verbatim -- the ordering
+        writer accepts only the name the record's own file carries.
+        """
+        files = sorted((self.state / "noni" / "decisions").glob("*.json"))
+        if self._decisions_before is not None:
+            assert len(files) == len(self._decisions_before) + 1, (
+                "the page's decide line did not add exactly one record file: "
+                f"{self._decisions_before} before, {[f.name for f in files]} after")
+        assert files, (
+            "the page's decide line wrote no record file under the state clone, "
+            "so the ordering line that follows cannot name a real record id")
+        self.placeholders["<record-id>"] = files[-1].stem
 
 
 class InstalledWorld:

@@ -123,7 +123,8 @@ noni census --repo .noni-state
 
 `<record-id>` is the `<date>-<slug>` of a record in the ledger: the ordering
 artifact cites a decision that exists, so run the `decide` line first and read
-the id off the name it printed (`2026-11-02-release-scope`). Sessions come next.
+the id off the `wrote noni/decisions/<id>.json` line it printed — the id is the
+date the command ran plus `-release-scope`. Sessions come next.
 `register` allocates its own session id and prints it, so you never choose one,
 and `claim`, `release` and `close` all take that id as `--session-id`:
 

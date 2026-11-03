@@ -29,6 +29,7 @@ reader's behalf, and the malformed argv below is how the refusal is shown to fir
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -42,6 +43,7 @@ from quickstart_runner import (
     launch,
     reroot,
     route_commands,
+    run_route_b,
     state_dir_commands,
     substitute,
 )
@@ -63,6 +65,13 @@ _DECOY_RAISES = 'raise RuntimeError("noni imported from an ambient PYTHONPATH")'
 _DECOY_MODULES = ("__init__.py", "cli.py", "census.py", "census_cli.py",
                   "census_report.py", "census_run.py", "public_safety.py")
 
+# The id shape the ordering writer accepts (``DECISION_ID_RE`` in
+# ``src/noni/orderstate.py``): a token of this shape is one a decide run could have
+# written, and anything else names no record file. The stale literal of #70 had this
+# shape too, so it is not the whole defence -- the walk above is what pins the id to
+# the record this run wrote.
+_DECID_FORM = re.compile(r"\d{4}-\d{2}-\d{2}-release-scope\Z")
+
 
 def _census_line() -> list[str]:
     """The Route A census command, as the golden list prints it."""
@@ -70,7 +79,9 @@ def _census_line() -> list[str]:
                 if argv[:2] == ["noni", "census"])
 
 
-def test_the_state_re_rooting_is_applied_to_the_commands_that_name_the_clone() -> None:
+def test_the_state_re_rooting_is_applied_to_the_commands_that_name_the_clone(
+    world: World,
+) -> None:
     """The two moves the launcher makes are plain mappings over the golden list.
 
     ``-C``/``--repo`` re-rooting and placeholder substitution are sound because
@@ -102,13 +113,85 @@ def test_the_state_re_rooting_is_applied_to_the_commands_that_name_the_clone() -
     payload = [argv for label in GOLDEN for argv in GOLDEN[label]
                if argv[0] == "echo" and STATE_DIR in " ".join(argv)]
     assert len(payload) == 1, payload
-    # Placeholders are the page's literal tokens, filled from one small mapping.
-    assert set(_PLACEHOLDERS_ON_PAGE) <= {"<record-id>", "<session-id>"}, _PLACEHOLDERS_ON_PAGE
-    filled = substitute(["noni", "order", "--repo", ".noni-state", "add", "12",
-                         "--decision", "<record-id>"], {"<session-id>": "s-1"})
-    assert filled[7] == "2026-11-02-release-scope", filled
-    assert filled[:7] == ["noni", "order", "--repo", ".noni-state", "add", "12",
-                          "--decision"], filled
+    # The placeholders are the page's literal tokens, and the launcher's own
+    # substitution fills every one of them: both values come off the running tree
+    # (see ``World.collect_record_id`` / ``World.collect_session_id``), so the world
+    # that fills them is one that has walked Route B. The check runs over every
+    # golden command, so a page that gained a third placeholder with nothing to fill
+    # it fails here -- ``substitute`` refuses an unfilled token rather than returning
+    # it, which is the launcher's reading and the one a writer would have seen.
+    assert set(_PLACEHOLDERS_ON_PAGE) == {"<record-id>", "<session-id>"}, _PLACEHOLDERS_ON_PAGE
+    # The collectors are what fill the placeholders, so the world must have walked
+    # the route; the walk's own exit codes are asserted by tests/test_quickstart.py.
+    run_route_b(world)
+    for argv in _all_golden_commands():
+        substitute(argv, world.placeholders)
+    # The one ordering line the page prints, seen token by token: only its
+    # placeholder moves, the rest is the reviewed line.
+    order = next(argv for argv in _all_golden_commands()
+                 if argv[:2] == ["noni", "order"])
+    filled = substitute(order, world.placeholders)
+    assert filled[:7] == order[:7], filled
+    assert filled[7] == world.placeholders["<record-id>"], filled
+    assert placeholder_words(filled[7]) == [], filled
+
+
+def test_the_launcher_refuses_an_unfilled_placeholder_rather_than_exec_it(
+    tmp_path: Path, installed: InstalledWorld,
+) -> None:
+    """The launcher's refusal, seen on the command a reader would have copied.
+
+    The pairing control for every placeholder assertion in this module: a
+    substitution that filled nothing looks exactly like one that filled everything,
+    until a token still reads as the page's word. So this builds a world whose
+    collectors never ran -- a fresh scratch, ``placeholders`` empty -- and shows the
+    ordering line is refused at the launcher, naming the page's ``<record-id>``,
+    while the same world after the real walk substitutes a date-shaped id. The
+    refusal matters because the writer's own answer to a literal ``<record-id>`` is
+    "matches no record file", which sends a reader to the wrong sentence.
+    """
+    fresh = fresh_scratch(installed, tmp_path / "unfilled")
+    assert fresh.placeholders == {}, "a fresh world must start with nothing filled"
+    order = next(argv for argv in _all_golden_commands()
+                 if argv[:2] == ["noni", "order"])
+    with pytest.raises(AssertionError, match="unfilled placeholder"):
+        launch(fresh, order, fresh.project)
+    # The other side of the pair: once the route has run, the same line fills.
+    run_route_b(fresh)
+    filled = substitute(order, fresh.placeholders)
+    assert _DECID_FORM.fullmatch(filled[7]), (
+        f"the ordering line was handed {filled[7]!r}, which no decide run could have "
+        f"written: {filled}")
+
+
+def test_the_walk_names_the_token_each_writer_was_launched_with(
+    world: World,
+) -> None:
+    """The walk pins *which* id each consumer was launched with, not just that it ran.
+
+    A collector overwrites whatever a mapping held, so a test that compares argv
+    against the collected id is true of a planted literal and a correct id alike --
+    which is how #70 stayed green for a reviewer until the date rolled over. The
+    walk's own consumer check is what closes that gap, so it is exercised here on its
+    real subject: a value the collector could not have produced is refused, and a
+    golden line whose id token was filled in at the source is refused too.
+    """
+    from quickstart_runner import _assert_consumed_id
+
+    order = next(argv for argv in _all_golden_commands()
+                 if argv[:2] == ["noni", "order"])
+    run_route_b(world)
+    # The page's own line, filled by the launcher with the collector's value: taken.
+    _assert_consumed_id(order, substitute(order, world.placeholders))
+    # A filled token that is still the page's word: the refusal a collector that
+    # never ran would earn, seen without executing anything.
+    with pytest.raises(AssertionError, match="no id a writer can have produced"):
+        _assert_consumed_id(order, substitute(order, {}, fill=False))
+    # A golden line whose placeholder was already filled in is the other refusal:
+    # the golden list must carry the page's token, not a value.
+    with pytest.raises(AssertionError, match="not the page's placeholder token"):
+        forged = [*order[:7], "2026-11-02-release-scope"]
+        _assert_consumed_id(forged, substitute(forged, world.placeholders))
 
 
 def _all_golden_commands() -> list[list[str]]:

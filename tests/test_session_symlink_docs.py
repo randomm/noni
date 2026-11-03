@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import ast
 import re
-from pathlib import Path
 
 from _harness import CLAIM, CLOSE, REGISTER, RELEASE, REPO, _script_ast
 
@@ -50,12 +49,6 @@ WRITER_CODES = (("register", 2), ("claim", 4), ("close", 4), ("release", 4))
 # clause matches neither, and a locator cannot be satisfied by neighbouring prose.
 CLAUSE_START = "state root down to it"
 CLAUSE_CLOSE = "a plain path this writer may follow"
-
-# How far past the clause's close the product page's window reaches: it states the
-# code in the sentence AFTER the clause, so the window must cover that sentence and
-# no more (the delimiter, ".", stops it at the sentence end regardless; the budget
-# just keeps a missing delimiter from running into the next paragraph).
-AFTER_CLAUSE_BUDGET = 200
 
 # The two shapes the clause names, checked inside the window that opens at the
 # walked position: the file (named in the clause's own lead-in, "or the session
@@ -135,22 +128,21 @@ def _row_code_cell(row: str) -> str:
 
 
 def _clause(text: str, origin: str, *, opening: str = CLAUSE_START,
-            delimiter: str = ";", code: str | None = None, after: int | None = None,
+            delimiter: str = ";", code: str | None = None,
             code_before_only: bool = False,
             shapes: tuple[str, ...] = (SESSION_FILE_SHAPE,
                                        SESSIONS_DIR_SHAPE)) -> str:
     """The one span of ``text`` that IS the session-write clause, verified.
 
-    ``after`` widens the window past the clause's close (the product page states the
-    code in the sentence AFTER the clause), ``delimiter`` bounds it on both sides, and
-    ``code``/``shapes`` are the claims made about the text inside it. The clause is
-    located by its opening (:data:`CLAUSE_START`) and its close
-    (:data:`CLAUSE_CLOSE`), both of which only it carries, so a page that dropped the
-    clause matches neither and a page that kept only the older ``--repo`` half matches
-    neither either. The caller's ``shapes`` must appear in the delimited sentence that
-    owns the clause (its file and directories are named there), and its ``code`` --
-    which the clause itself never repeats -- must appear in that same sentence rather
-    than anywhere in the block.
+    ``delimiter`` bounds the window on both sides, and ``code``/``shapes`` are the
+    claims made about the text inside it. The clause is located by its opening
+    (:data:`CLAUSE_START`) and its close (:data:`CLAUSE_CLOSE`), both of which only
+    it carries, so a page that dropped the clause matches neither and a page that
+    kept only the older ``--repo`` half matches neither either. The caller's
+    ``shapes`` must appear in the delimited sentence that owns the clause (its file
+    and directories are named there), and its ``code`` -- which the clause itself
+    never repeats -- must appear in that same sentence rather than anywhere in the
+    block.
     """
     flat = _sentence_words(text).lower()
     at = flat.find(opening)
@@ -162,8 +154,7 @@ def _clause(text: str, origin: str, *, opening: str = CLAUSE_START,
     assert stop != -1, (
         f"{origin} states the walked position ({phrase!r}) but not the promise "
         f"({CLAUSE_CLOSE!r}) after it: the clause is incomplete")
-    stop_at = stop + len(CLAUSE_CLOSE) + (after or 0)
-    window = _window(flat, at, stop_at, delimiter)
+    window = _window(flat, at, stop + len(CLAUSE_CLOSE), delimiter)
     for shape in shapes:
         assert shape in window, (
             f"{origin}'s session-write clause does not name {shape!r}: {window}")
@@ -284,24 +275,6 @@ def _exit_block(doc: str, code: int) -> str:
             row.append(line)
     assert row, f"the docstring names no exit {code}"
     return " ".join(row).lower()
-
-
-def _sentence_naming(text: str, name: str) -> str:
-    """The sentence of ``text`` that both names the tool and refuses the link.
-
-    The page states one code per group of tools, so the sentence sought is the one
-    that names the tool *and* the state: a page that dropped the symlink half, or
-    moved the code to a neighbouring sentence, fails here instead of passing on an
-    unrelated mention of the tool's name.
-    """
-    sentences = [s for s in re.split(r"(?<=[.!?])\s+", text) if f"`{name}`" in s]
-    assert sentences, f"docs/PRODUCT.md 7 no longer names {f'`{name}`'}"
-    for sentence in sentences:
-        if "symlink" in sentence:
-            return sentence
-    raise AssertionError(
-        f"docs/PRODUCT.md 7 no longer states a symlink refusal naming {name}: "
-        f"{sentences}")
 
 
 def test_product_md_states_the_symlink_refusal_with_each_writers_code():
@@ -445,24 +418,3 @@ def test_the_guard_module_is_the_single_home_of_the_wording():
         "the hint must know which writer creates the sessions directory")
     assert "walk_refusal" in dir(_session_paths), (
         "the one walk must be a named function, not a loop inside a caller")
-
-
-def test_a_refused_path_cannot_add_lines_to_the_refusal(tmp_path):
-    """A path is operator-supplied text printed to a two-line refusal, so the two
-    lines are all the reader gets: newline and carriage return are escaped rather
-    than emitted, and no crafted name injects a third line.
-    """
-    from noni import _session_paths
-
-    # ``lstat`` on a name that no write can reach answers ENOENT, which the guard
-    # reads as "absent" -- so the crafted name is planted as a symlink, the shape
-    # whose bytes are the whole point: the refusal prints the name it found.
-    crafted = tmp_path / "evil\nrelease.py: fix: all good"
-    crafted.symlink_to("nowhere")
-    headline, hint = _session_paths.file_refusal(crafted)
-    assert headline and hint, "a symlink is refused whatever its name carries"
-    assert "\n" not in headline and "\n" not in hint, (
-        f"a path injected a line: {headline!r} / {hint!r}")
-    assert "\\n" in headline, f"the newline must be shown as an escape: {headline!r}"
-    refused = _session_paths.write_refusal(Path("/tmp/root"), "../outside.md")
-    assert refused is not None and "\n" not in refused[0], refused

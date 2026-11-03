@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from pathlib import PurePosixPath
 
-from noni import _session_git
+from noni import _safe_text, _session_git
 
 # One id in the shape the allocator produces, so the accepted half of each table
 # reads as the ordinary case rather than as a fixture.
@@ -261,7 +261,7 @@ def test_the_name_refusal_never_prints_caller_control_bytes():
         for headline, hint in (_session_git.name_refusal(offender),
                                _session_git.name_refusal("x", arg=offender)):
             for text in (headline, hint):
-                for ch in _session_git.CONTROL_CHARS:
+                for ch in _safe_text.CONTROL_CHARS:
                     assert ch not in text, repr((offender, text))
     # The wording still names the offender, minus its control bytes.
     headline, _ = _session_git.name_refusal("noni/sessions/a\x1b[31mred.md")

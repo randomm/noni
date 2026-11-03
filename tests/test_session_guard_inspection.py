@@ -12,7 +12,7 @@ is evidence that the position is free, and a writer that read it that way printe
 position it could not inspect.
 
 Now only ``ENOENT`` and ``ENOTDIR`` mean absent (the one pair of errno values, shared
-with :data:`noni.gitwrite.ABSENT_ERRNOS`); every other ``OSError`` is a refusal that
+with :data:`noni._path_kind.ABSENT_ERRNOS`); every other ``OSError`` is a refusal that
 names the path and the error, because "I could not look" is a fact the operator has to
 be told -- and the fix is different from the fix for a missing file.
 
@@ -273,3 +273,146 @@ def test_a_socket_at_the_file_path_is_refused_not_read_as_absent(tmp_path):
     refused = _session_paths.file_refusal(sock)
     assert refused and "is not a regular file" in refused[0], refused
     assert "symlink" not in refused[0].lower()
+
+
+def test_a_declined_lstat_that_is_not_an_errno_is_a_refusal(tmp_path, monkeypatch):
+    """A refused ``lstat`` is a refusal, and only ``ENOENT``/``ENOTDIR`` are absence.
+
+    Every test above reaches the declination through the filesystem (a mode-000
+    parent, a link loop). This one reaches it through the syscall itself, because the
+    real bug the adversarial review found was invisible to all of them: mutating
+    ``ABSENT_ERRNOS`` membership to answer "absent" for every errno passed the whole
+    suite. With ``os.lstat`` raising ``EIO`` -- a disk fault, a failing network mount,
+    a parent that cannot be read for a reason no test plants -- there is no fact of the
+    matter about what sits at the path, and a guard that says "nothing is there" is a
+    guard that hands a writer permission to create over something it never saw.
+
+    The assertion is the refusal and its words: the path is refused on both questions,
+    named, and said in the "could not be inspected" form rather than the absent one.
+    """
+    root = tmp_path / "eio"
+    sessions = root / "noni" / "sessions"
+    sessions.mkdir(parents=True)
+    session_file = sessions / f"{SID}.md"
+    session_file.write_text("- status: active\n", encoding="utf-8")
+
+    def refusing_lstat(path, *args, **kwargs):
+        raise OSError(errno.EIO, "Input/output error", str(path))
+
+    monkeypatch.setattr(_path_kind.os, "lstat", refusing_lstat)
+
+    refused = _session_paths.file_refusal(session_file)
+    assert refused is not None, "a declined lstat was read as an absent session file"
+    assert "could not be inspected" in refused[0].lower(), refused[0]
+    assert str(session_file) in refused[0], refused[0]
+    assert "symlink" not in refused[0].lower(), refused[0]
+
+    refused = _session_paths.directory_refusal(sessions)
+    assert refused is not None, "a declined lstat was read as an absent directory"
+    assert "could not be inspected" in refused[0].lower(), refused[0]
+    assert str(sessions) in refused[0], refused[0]
+
+    # The walk, not just the two questions: this is the call the writers make.
+    refused = _session_paths.session_file_refusal(root, "noni/sessions/" + f"{SID}.md")
+    assert refused is not None, "the walk read a declined lstat as an ordinary tree"
+
+    # A refusal, so nothing was written and the session's bytes are untouched.
+    assert session_file.read_text(encoding="utf-8") == "- status: active\n"
+
+
+def test_a_value_error_from_lstat_is_the_same_refusal(tmp_path, monkeypatch):
+    """``ValueError`` is the NUL case, and it folds into the same words.
+
+    ``os.lstat`` raises ``ValueError`` rather than ``OSError`` for a path carrying an
+    embedded NUL, so a guard that catches only ``OSError`` turns the one shape it
+    cannot inspect into a traceback over the sentence the operator was meant to read.
+    The session guard refuses such a name by name before the walk (see
+    ``test_a_name_carrying_a_control_character_is_refused_by_name``), so this pins the
+    last line of defence behind that guard: the same "could not be inspected" refusal
+    the filesystem's own declinations get, from both questions.
+    """
+    root = tmp_path / "value-error"
+    sessions = root / "noni" / "sessions"
+    sessions.mkdir(parents=True)
+    target = sessions / "s.md"
+
+    def refusing_lstat(path, *args, **kwargs):
+        raise ValueError("lstat: embedded null character in path")
+
+    monkeypatch.setattr(_path_kind.os, "lstat", refusing_lstat)
+
+    for refused, label in ((_session_paths.file_refusal(target), "file"),
+                           (_session_paths.directory_refusal(sessions), "directory")):
+        assert refused is not None, f"a ValueError was read as absence: {label}"
+        assert "could not be inspected" in refused[0].lower(), refused[0]
+        assert "symlink" not in refused[0].lower(), refused[0]
+
+
+def test_a_name_carrying_a_control_character_is_refused_by_name(tmp_path):
+    """The entry point's normalisation, which is the only thing that says "no name".
+
+    ``lstat`` on a name of whitespace answers ENOENT, which the guard reads as absent,
+    so before the normalisation a name of spaces -- or one carrying a control
+    character -- walked the whole chain, found nothing at every component, and was
+    admitted as the ordinary file a writer may replace. The renderer then dropped the
+    control bytes from the sentence about it, so even the refusal printed a name that
+    was not the name refused.
+
+    Each shape below therefore comes back as a refusal tuple and not ``None``, and
+    never raises: the guard's promise to its callers is a pair of strings or nothing,
+    whatever a caller hands it. The name the refusal quotes is the name as the caller
+    spelled it, with its control byte named rather than silently dropped.
+    """
+    root = tmp_path / "normalised"
+    (root / "noni" / "sessions").mkdir(parents=True)
+    good = "noni/sessions/2026-10-01-cccccc.md"
+    assert _session_paths.write_refusal(root, good) is None, "the good name must pass"
+
+    refused_names = (b"", " ", "   ", chr(9), " \n ", chr(2), "a" + chr(2) + "b.md",
+                     "noni/sessions/a" + chr(27) + "[31mred.md",
+                     "noni/sessions/a" + chr(0) + "b.md",
+                     "noni/sessions/a" + chr(0x202e) + "b.md")
+    for rel in refused_names:
+        refused = _session_paths.write_refusal(root, rel)
+        assert refused is not None, f"{rel!r} was admitted as a session file"
+        headline, hint = refused
+        assert isinstance(headline, str) and isinstance(hint, str), rel
+        assert headline and hint, f"{rel!r}: a refusal needs both lines"
+        low = headline.lower()
+        assert "not a session file inside the state root" in low, f"{rel!r}: {headline}"
+        assert "symlink" not in low, f"{rel!r} blamed a link: {headline}"
+
+    # Bytes are a path, not the four characters of its repr: fsdecode is what makes
+    # the name the guard inspects the name the caller named.
+    refused = _session_paths.write_refusal(root, b"noni/sessions/../outside.md")
+    assert refused is not None, "a bytes name that walks out was admitted"
+    assert "not a session file inside the state root" in refused[0].lower(), refused[0]
+    # The repr of a bytes object carries a leading b and quotes; a refusal that
+    # rendered those had stringified instead of decoding.
+    assert "b'" not in refused[0], f"the refusal quoted a bytes repr: {refused[0]}"
+
+    # A bytes name that IS a session file inside the root is not a refusal, which is
+    # the half that keeps the decoding from becoming a blanket rejection.
+    assert _session_paths.write_refusal(root, good.encode()) is None
+
+
+def test_no_input_shape_raises_out_of_the_guard(tmp_path):
+    """Whatever a caller hands the guard, it answers: a tuple or None, never an excuse.
+
+    The writers call this before they have written anything and print the answer
+    straight to stderr, so a raise is a traceback where an operator should have read a
+    fix. The shapes here are the ones a caller can actually produce -- bytes, a Path, a
+    number, None, a name no codec carries -- driven through both entry points.
+    """
+    root = tmp_path / "never-raises"
+    (root / "noni" / "sessions").mkdir(parents=True)
+    for rel in (b"", b"\xff\xfe", "", " ", chr(0), "a" + chr(1) + "b", ".", "..",
+                "/", "~", "noni/sessions/x.md", chr(0xd800), 12, None,
+                Path("noni/sessions/x.md"), ["not", "a", "name"]):
+        for call in (_session_paths.write_refusal, _session_paths.session_file_refusal):
+            refused = call(root, rel)
+            assert refused is None or (isinstance(refused, tuple)
+                                        and len(refused) == 2
+                                        and all(isinstance(x, str) and x
+                                                for x in refused)), (
+                f"{call.__name__}({rel!r}) answered {refused!r}")

@@ -45,8 +45,11 @@ from session_git_support import STATE_DIR, _nested_state
 NAMES_THAT_ARE_NOT_FILES = (".", "", "noni/../../x.md", "noni/sessions/../../out.md",
                             "/abs/x.md", "../other/noni/sessions/x.md")
 
-# The one write location every case uses, so a name is the only variable.
-ROOT = Path("/home/janni/projects/noni/state/st")
+# The one write location every case uses, so a name is the only variable. The root
+# need not exist: every name below is refused by name, before anything is lstat'ed,
+# so the guard never looks at this path. A neutral root, not a machine-local one --
+# no tracked file carries a home path.
+ROOT = Path("/nonexistent-noni-root/st")
 
 # Each writer and the code docs/PRODUCT.md 7 gives it for a wrong path: 2 for
 # register, 4 for the others, with the minimum argv to reach the guard.

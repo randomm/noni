@@ -68,8 +68,8 @@ import tempfile
 from pathlib import Path, PurePosixPath
 
 from . import _session_paths, gitenv
-from ._safe_text import CONTROL_CHARS, safe_text
 from ._safe_text import TEXT_LIMIT as GIT_OUTPUT_LIMIT  # re-export: the limit names
+from ._safe_text import is_control_char, safe_text
 
 # Statuses that end a session. A claim from a session in one of these states
 # no longer counts toward the double-claim check, and close.py calls a session
@@ -126,8 +126,20 @@ def name_refusal(name: object, *, arg: str = "--session-id",
     working-copy marker, or an argument name -- and this pair goes to stderr, so
     each is rendered through :func:`safe_text`.
     """
-    return (safe_text(NAME_REFUSAL.format(name=name, directory=directory)),
-            safe_text(NAME_REFUSAL_HINT.format(arg=arg, directory=directory)))
+    # Each field is rendered once and then composed into its sentence; neither
+    # sentence is rendered as a whole, which would escape the backslash of every
+    # escape the field's own render had just written and put a name in the refusal
+    # that nobody passed.
+    #
+    # ``safe_text``, not ``safe_path``, because every writer hands this helper a name
+    # it has already quoted: ``f"--session-id {args.session_id!r}"``. The escape that
+    # makes a printed name unambiguous belongs to whoever holds the raw bytes, and
+    # applying it a second time here would turn the ``\t`` of the repr into a
+    # four-character ``\\t`` -- the value in the refusal would no longer be the
+    # value the operator typed. A raw name reaches a refusal through
+    # :func:`noni._session_paths`, where :func:`safe_path` is applied exactly once.
+    return (NAME_REFUSAL.format(name=safe_text(name), directory=directory),
+            NAME_REFUSAL_HINT.format(arg=safe_text(arg), directory=directory))
 
 
 def git(repo: Path, *args: str, _run=subprocess.run) -> subprocess.CompletedProcess[str]:
@@ -306,7 +318,7 @@ def relative_name(name: str | PurePosixPath) -> str:
     ``-C`` tree, exits 0 and stages nothing -- the silent nothing-landed the
     primitive must not produce); a ``..`` that walks out of the root; the empty
     name or the root itself; a control character (any Unicode category-C code
-    point, :data:`CONTROL_CHARS`) or a lone surrogate, neither of which
+    point, :func:`noni._safe_text.is_control_char`) or a lone surrogate, neither of which
     ``subprocess`` can carry as an argument; and a name that is not one ``.md``
     file under :data:`SESSIONS_REL`, because every caller here stages that.
 
@@ -322,7 +334,7 @@ def relative_name(name: str | PurePosixPath) -> str:
     on the caller's behalf for a state root it has not looked at yet.
     """
     text = str(name)
-    if any(ch in CONTROL_CHARS for ch in text):
+    if any(is_control_char(ch) for ch in text):
         return ""
     try:
         text.encode("utf-8")

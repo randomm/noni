@@ -107,10 +107,12 @@ fields (in order), plus the optional fields (`source`, `decided_by`,
 | `source` | object, or `null` (optional) | tracker provenance: `{"issue_number": <int>, "comment_id": <int>}` when the record was produced from a tracker-sourced answer; `null` or absent otherwise (a record without it stays valid) |
 | `decided_by` | string (optional) | who made the decision, when that is not the commit author: a login or pseudonym, never a personal-name requirement. Written by `--decided-by`; absent means the commit author decided, which is how every record written before this field stays valid. It never overrides `by` in the report (see Attribution) |
 | `on_behalf_of` | string (optional) | the party a delegated decision was made for, written by `--on-behalf-of`, which the writer refuses without `--decided-by` |
-| `single_option` | `true` (optional) | the marker `--single-option` writes to say a question was asked with one option on purpose, so nothing had to be invented. It is what lets the census read a one-option question as valid; a one-option record without it is a schema violation |
+| `single_option` | `true` (optional) | the marker `--single-option` writes to say a question was asked with one option on purpose, so nothing had to be invented. It is a per-record marker over a per-question bound: with it set, any question may carry one option, and at least one question of the record must. A one-option record without it is a schema violation, and a marker no question of the record carries one option is one too |
 
 A `question` object is `{id, text, options, answer}`. `options` is an array of
-2-4 strings, or exactly one string when the record carries `single_option`.
+2-4 strings, or exactly one string for a question of a record that carries
+`single_option` (the marker is read per record and the bound is judged per
+question, and at least one question of a marked record must hold one option).
 `answer` is either the chosen option's string (or a free-text
 escape string) and must name the question it answers by id pairing, or is
 `null` when the question was left open. The full shape, validation rules, and
@@ -168,7 +170,7 @@ default, so a run with no argument is the usage error `2`.
 |---|---|
 | `0` | clean — every record valid, chain intact |
 | `2` | usage: no ledger directory was given (the state root is named by the caller, never by the cwd) |
-| `3` | jq not found on the reading machine |
+| `3` | jq not found on the reading machine, or the schema program `scripts/census-schema.jq` is missing (`3:schema-program-missing`) |
 | `10` | a record is missing or malformed, or the ledger is unusable (missing/empty dir, bad filename, unreadable git tree) |
 | `12` | a record was edited after commit (supersede instead) |
 | `20` | the supersede chain is broken (dangling, duplicate, orphan, cycle, or a chain resolving to zero or more than one live record) |

@@ -4,7 +4,8 @@
 #
 #   census.sh <state-root>/noni/decisions   the decisions census (E1)
 #       columns: id date by status live supersedes
-#       codes:   0 clean | 2 no ledger dir given | 3 jq missing
+#       codes:   0 clean | 2 no ledger dir given | 3 jq missing or the
+#                schema program missing (3:schema-program-missing)
 #                | 10 record/ledger unusable | 12 edited after commit
 #                | 20 supersede chain broken
 #       a record is valid when it carries the eight top-level required
@@ -64,7 +65,11 @@ fi
 #       fields), chain intact
 #   2   usage: no ledger directory was given (the state root is named by the
 #       caller, never by the cwd)
-#   3   jq not found on the reading machine
+#   3   jq not found on the reading machine, or the schema program is
+#       missing (3:schema-program-missing): census-schema.jq, the sibling file
+#       this census reads its record rules from, is not beside this script.
+#       A census that cannot read the schema cannot report on a record, so it
+#       exits honestly rather than calling an unreadable ledger clean.
 #   10  a record is missing or malformed, or the ledger is unusable —
 #       five distinct sub-classes, all named on the stderr line:
 #       (10:missing-dir) the directory does not exist (operator error —
@@ -213,7 +218,10 @@ fi
 # record bytes are never echoed back into the diagnostic line.
 # The program itself is a sibling file read by jq, so the rules live in one
 # place a reader can open and a linter can parse; the path is taken from this
-# script's own directory so a relocated census stays self-contained.
+# script's own directory so a relocated census stays self-contained. A missing
+# sibling is exit 3 (3:schema-program-missing), the same code as a missing jq:
+# without the program there is no schema to apply, and a census that read the
+# ledger and reported nothing would be reporting a clean it never established.
 SCHEMA_JQ_FILE="$SCRIPT_DIR/census-schema.jq"
 if [ ! -f "$SCHEMA_JQ_FILE" ]; then
   echo "census.sh: $SCHEMA_JQ_FILE not found (3:schema-program-missing)" >&2

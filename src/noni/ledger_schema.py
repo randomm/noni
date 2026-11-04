@@ -72,10 +72,23 @@ SINGLE_OPTION_MARKER = "single_option"
 # What ``str.splitlines`` honours and json writes into the bytes without escaping:
 # U+0085 and the two Unicode separators. A value carrying one is a single JSON
 # string that is not one line, which is exactly what the single-line rule refuses;
-# the plain controls (\n, \r, \v, \f) json does escape and are listed alongside for
-# the hand-edited record. Shared by both censuses and the writer so the four of
+# the plain controls (\n, \r, \v, \f) and the three separators U+001C-U+001E
+# (file, group, record) json escapes, and are listed alongside for the
+# hand-edited record: ``str.splitlines`` -- the documented basis of this rule --
+# breaks a line on all ten, so a value carrying one of them is not one line
+# however it was written. Shared by both censuses and the writer so the four of
 # them never disagree on what a line is.
-LINE_BREAKS = ("\n", "\r", "\v", "\f", "\x85", "\u2028", "\u2029")
+LINE_BREAKS = ("\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85",
+               "\u2028", "\u2029")
+
+# The characters ``str.strip`` removes that are not line breaks: a value made of
+# nothing but these names nobody. U+0085, U+2028 and U+2029 are absent because
+# ``str.strip`` does not consider them blank -- a value carrying one is refused
+# as a line break, not as a blank. The census mirrors this set in jq (the
+# whitespace class of ``line_free`` in
+# ``skills/steering-ledger/scripts/census-schema.jq``), so a hand-edited record
+# holding a blank name is refused by both entry points and not only at the flag.
+BLANKS = (" ", "\t", "\v", "\f")
 
 # A UTC ISO-8601 second-resolution timestamp (the record date shape).
 DATE_RE = re.compile(
@@ -85,13 +98,18 @@ DATE_RE = re.compile(
 
 def is_single_line(value: object) -> bool:
     """Whether ``value`` is the shape the census accepts for a name field: a
-    non-empty string that reads as one line.
+    string that is neither blank nor more than one line.
 
-    The writer refuses the same shapes at the flag (exit 2) so a name nothing could
-    report never reaches the ledger as a committed record, and the supersede-target
-    check refuses them at exit 4 so a status flip cannot copy them onward.
+    Two rules, one predicate, so a writer, two censuses and the supersede-target
+    read cannot drift on either. Blankness is folded in here rather than kept as
+    a separate check the caller has to remember: a name that is only whitespace
+    names nobody, so it is refused wherever the shape is asked -- at the flag
+    (exit 2), at the supersede target (exit 4) and in both censuses (exit 10).
+    The line rule is ``LINE_BREAKS``, which is ``str.splitlines`` read out as a
+    set, so a value carrying one of the ten is two lines even when json holds it
+    as one string.
     """
-    return (isinstance(value, str) and bool(value)
+    return (isinstance(value, str) and bool(value.strip("".join(BLANKS)))
             and not any(char in value for char in LINE_BREAKS))
 
 
@@ -103,18 +121,6 @@ def is_non_empty_string(value: object) -> bool:
     ``true`` is neither a number nor a string.
     """
     return isinstance(value, str) and bool(value)
-
-
-def option_lower_bound(record: dict) -> int:
-    """The option bound ``record``'s questions are held to.
-
-    ``OPTION_MIN``, or ``OPTION_MIN_WITH_MARKER`` for the one kind of record that
-    asked for it: the marker must be the JSON ``true`` literal, so a record cannot
-    become single-option by editing its option list.
-    """
-    if record.get(SINGLE_OPTION_MARKER) is True:
-        return OPTION_MIN_WITH_MARKER
-    return OPTION_MIN
 
 
 # --- the shape of one record, as both censuses check it ----------------------
@@ -136,8 +142,11 @@ def validate_source(record: dict) -> list[str]:
     exponent, which is what census.sh checks with ``is_int`` and this checks with
     ``isinstance(int)`` plus not-``bool``, because Python calls ``True`` an ``int``
     and json's ``true`` is not a number the census accepts.
+
+    Total on the record: no ``source`` key is no provenance and answers no problem,
+    so a caller asks the question without first asking whether it may.
     """
-    src = record["source"]
+    src = record.get("source")
     if src is None:
         return []
     if not isinstance(src, dict):
@@ -192,13 +201,28 @@ def validate_questions(record: dict) -> list[str]:
     operator decision on issue #59 settled it. The marker relaxes the lower bound
     for every question of the record it is written on, which is what lets one record
     mix a one-option question with a 2-4-option one.
+
+    The marker is per record; the bound it relaxes is per question, and the marker
+    must be earned by one: with the marker present, at least one question of the
+    record has to carry exactly one option. A marker over an all-2-4 record says
+    something the record does not show, so it is reported rather than ignored.
     """
     if "questions" not in record:
         return []
     questions = record["questions"]
     if not isinstance(questions, list) or not 1 <= len(questions) <= 4:
         return ["questions must be an array of 1-4 entries"]
-    lower = option_lower_bound(record)
+    marker = record.get(SINGLE_OPTION_MARKER) is True
+    lower = OPTION_MIN_WITH_MARKER if marker else OPTION_MIN
+    # Asked once for the record, not per question: the marker is a per-record
+    # claim that the record holds a one-option question, so a record with two
+    # questions, one asked with one option and one with two, satisfies it. A
+    # question is counted only when its options are a list at all -- a malformed
+    # options value already earns its own problem below.
+    earns_marker = any(isinstance(question, dict)
+                       and isinstance(question.get("options"), list)
+                       and len(question["options"]) == 1
+                       for question in questions)
     problems: list[str] = []
     for question in questions:
         if not isinstance(question, dict):
@@ -216,6 +240,15 @@ def validate_questions(record: dict) -> list[str]:
         answer = question.get("answer")
         if "answer" in question and answer is not None and not isinstance(answer, str):
             problems.append("question answer must be a string or null")
+    if marker and not earns_marker:
+        # The marker must be earned by at least one question of the record it is
+        # written on: a record marked single-option while every question holds 2-4
+        # options was not written by --single-option (the writer refuses that shape
+        # at the flag), so it is reported rather than believed. census.sh mirrors
+        # this on the same two facts (the marker read as the true literal, and the
+        # one-option count).
+        problems.append(f"{SINGLE_OPTION_MARKER} is set but no question has exactly "
+                        f"one option: a one-option question is what the marker means")
     return problems
 
 
@@ -239,11 +272,24 @@ def render(record: dict, field_order: tuple[str, ...]) -> str:
 
     The order is the writer's, not this module's, because it is the order the census
     and the supersede canonical-form comparison read: a record whose fields arrive
-    in another order is not in the form ``decide.py`` writes. The renderer refuses a
-    number json cannot hold: ``allow_nan=False`` raises on ``NaN``, ``Infinity`` and
-    an overflowed literal, and that ``ValueError`` is let go rather than worded here
-    -- the callers catch it, and neither may be handed an empty string for a body.
+    in another order is not in the form ``decide.py`` writes.
+
+    A key outside ``field_order`` is refused rather than dropped. Silently dropping
+    it would print a body missing a field the caller believes it wrote: the bytes
+    would not match the dict, a supersede would compare its target against bytes it
+    never rendered, and the census would read back a record with a field gone. One
+    ``ValueError`` says so, and the callers already treat a refused render as their
+    exit-4 event.
+
+    The renderer refuses a number json cannot hold: ``allow_nan=False`` raises on
+    ``NaN``, ``Infinity`` and an overflowed literal, and that ``ValueError`` is let
+    go rather than worded here -- the callers catch it, and neither may be handed an
+    empty string for a body.
     """
+    unknown = [key for key in record if key not in field_order]
+    if unknown:
+        raise ValueError("the record carries field(s) outside the writer's field "
+                         "order: " + ", ".join(sorted(unknown)))
     ordered = {key: record[key] for key in field_order if key in record}
     return json.dumps(ordered, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
 
@@ -258,7 +304,8 @@ def build_questions(questions: list[tuple[str, str]], options: list[tuple[str, s
     relaxes per question rather than per record: a record written with the flag may
     still mix one-option and 2-4-option questions, and each question is judged on
     its own option count. The marker the census reads is written by the caller, so
-    this rule never has to guess a record's intent from its option counts.
+    this rule never has to guess a record's intent from its option counts; the
+    census checks the marker is earned by one of the record's questions.
     """
     lower = OPTION_MIN_WITH_MARKER if single_option else OPTION_MIN
     built: list[dict] = []

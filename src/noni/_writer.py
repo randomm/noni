@@ -24,29 +24,6 @@ from pathlib import Path
 from typing import Callable
 
 from . import gitwrite
-from . import ledger_schema as _schema
-
-
-def record_body(*, record_id: str, date_part: str, asked_by: str,
-                questions: list[dict], by: str, scope: str, unanswered: list[str],
-                supersedes: str | None, source: dict | None, decided_by: str | None,
-                on_behalf_of: str | None, single_option: bool) -> dict:
-    """The record dict, with only the optional fields whose flags were given.
-
-    A run that passes none of the three optional flags produces byte-for-byte the
-    eight-field record, which is what keeps the supersede canonical-form comparison
-    against a target's committed bytes meaningful. ``by`` is the commit author and is
-    never overridden by a flag: the census reports ``by`` from git, so
-    ``decided_by`` and ``on_behalf_of`` sit beside it as what the writer was told,
-    not as a claim about the commit. The field set itself is the census's, in
-    :mod:`noni.ledger_schema`.
-    """
-    return _schema.record_body(record_id=record_id, date_part=date_part,
-                               asked_by=asked_by, questions=questions, by=by,
-                               scope=scope, unanswered=unanswered,
-                               supersedes=supersedes, source=source,
-                               decided_by=decided_by, on_behalf_of=on_behalf_of,
-                               single_option=single_option)
 
 
 def allocate_ledger(label: str, repo: Path, ledger: Path) -> tuple[str, str] | None:
@@ -239,7 +216,9 @@ def flag_refusals(fail: Callable[[int, str, str | None], int], exit_usage: int,
                   refuse_name: Callable[..., int | None], slug_re: re.Pattern[str],
                   slug: str, scope: str, asked_by: str, decided_by: str | None,
                   on_behalf_of: str | None,
-                  line_free: Callable[[object], bool]) -> int | None:
+                  line_free: Callable[[object], bool],
+                  options_by_question: dict[str, list[str]] | None = None,
+                  single_option: bool = False) -> int | None:
     """The exit code of the first usage refusal the flags earn, or None.
 
     The rules, in the order they are refused: the slug is what the census accepts as
@@ -247,11 +226,15 @@ def flag_refusals(fail: Callable[[int, str, str | None], int], exit_usage: int,
     so it goes first because it decides the filename; then the two free-text ids no
     report can name without characters; then the two attribution names, whose shape
     is the census's own predicate handed in as ``line_free`` so the writer refuses
-    at the flag what the census would otherwise report at exit 10 after a commit.
+    at the flag what the census would otherwise report at exit 10 after a commit;
+    then the marker, which has to be earned by one of the record's questions.
     The pairing (``on_behalf_of`` without ``decided_by``) is the writer's rule and
     neither census enforces it: a delegate decides, and only a delegate's record may
-    name who they acted for. ``fail`` and ``exit_usage`` are the caller's printer and
-    code, so every refusal is worded in one voice.
+    name who they acted for. The marker rule is the writer's half of a rule both
+    censuses report: ``options_by_question`` maps each question id to the options
+    given for it, so the check sees what the record will hold rather than the flag
+    alone. ``fail`` and ``exit_usage`` are the caller's printer and code, so every
+    refusal is worded in one voice.
     """
     if not slug_re.fullmatch(slug):
         return fail(exit_usage, f"slug {slug!r} is not a slug",
@@ -274,4 +257,15 @@ def flag_refusals(fail: Callable[[int, str, str | None], int], exit_usage: int,
                     "the decision was made for must also name who made it",
                     "pass --decided-by <who> alongside --on-behalf-of "
                     f"{on_behalf_of!r}, or drop --on-behalf-of")
+    if single_option and not any(len(options) == 1
+                                 for _qid, options in options_by_question.items()):
+        # The marker says a question was asked with one option on purpose; the
+        # record it is written on has to show one. A flag with nothing to explain
+        # is a mistake at the flag, not a record to commit: the censuses report
+        # the same shape as malformed, so refusing here is the earlier, kinder
+        # answer to the same question.
+        return fail(exit_usage,
+                    "--single-option was given but no question has one option",
+                    "give one question a single --option, or drop --single-option "
+                    "and keep the 2-4-option form")
     return None

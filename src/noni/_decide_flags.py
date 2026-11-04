@@ -10,10 +10,12 @@ of the refusal it already printed.
 
 The rules themselves: ``--date`` is a real calendar day; one to four
 ``--question`` flags, each ``ID=TEXT`` with distinct ids; the ``--decided-by`` /
-``--on-behalf-of`` names are non-empty single-line strings, and ``--on-behalf-of``
+``--on-behalf-of`` names are non-empty single-line strings, decided by the
+census's own predicate the caller hands in, and ``--on-behalf-of``
 is refused without ``--decided-by``; and a supersede is refused while any question
-is unanswered. ``--option`` / ``--answer`` pairing, the slug and the
-2-4-options-per-question rule stay in decide.py next to the record renderer they
+is unanswered. ``--option`` / ``--answer`` pairing, the slug, the
+2-4-options-per-question rule and the marker's one-option requirement stay in
+decide.py next to the record renderer they
 feed.
 """
 
@@ -97,17 +99,21 @@ def refuse_name(flag: str, value: str | None, *, fail: Fail,
 
     The rule is the census's own (`decided_by`/`on_behalf_of` must be non-empty
     single-line strings), stated once so the writer refuses at the flag what the
-    census would otherwise report at exit 10 after the record was committed. A
-    name that is only whitespace names nobody, so it is refused by name before the
-    line rule is consulted; ``line_free`` is the census's own predicate, handed in
-    by the caller so the two entry points cannot drift on what a line is.
+    census would otherwise report at exit 10 after the record was committed. The
+    blank and the line rules are both carried by ``line_free``, the census's own
+    predicate handed in by the caller: a name that is only whitespace names
+    nobody, and a name carrying a break is not one name. Keeping both in the
+    handed-in predicate is what stops the writer and the two censuses disagreeing
+    on either.
     """
     if value is None:
         return None
-    if not value.strip():
-        return fail(exit_usage, f"{flag} is empty",
-                    f"name a login or pseudonym, e.g. {flag} operator-ann")
     if not line_free(value):
+        # One predicate, two refusals: the flag is empty when the census calls it
+        # blank, and not a single line when it carries a break.
+        if not value.strip():
+            return fail(exit_usage, f"{flag} is empty",
+                        f"name a login or pseudonym, e.g. {flag} operator-ann")
         return fail(exit_usage, f"{flag} is not a single line",
                     f"one name per {flag}: no line break in the value")
     return None

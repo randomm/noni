@@ -28,7 +28,8 @@ Exit codes:
        malformed --date, --question, --option or --answer, a source id that is
        not a positive integer, a question outside 1-4 or 2-4 options, an empty
        --decided-by or --on-behalf-of, --on-behalf-of without --decided-by, a
-       question with one option when --single-option was not given, or
+       question with one option when --single-option was not given, --single-option
+       when no question of the record has one option, or
        --supersedes with an unanswered question
     3  a git or identity problem: --repo is not a git work tree, git config
        user.name is not set (git config user.name <name>), or a git probe timed
@@ -151,21 +152,26 @@ def _written(exc: OSError, what: str) -> str:
     return f"{what} ({exc.__class__.__name__}: {exc.strerror or exc})"
 
 
-def _name_flags(args: argparse.Namespace) -> int | None:
+def _name_flags(args: argparse.Namespace,
+                options_by_question: dict[str, list[str]]) -> int | None:
     """The usage refusals that read one flag at a time: the slug, the two free-text
-    ids, the two attribution names and their pairing.
+    ids, the two attribution names, their pairing, and the single-option marker.
 
     The rules live in :func:`noni._writer.flag_refusals` beside the other writer
-    mechanics; this is the seam that hands them the writer's printer, its usage code
-    and the census's own line predicate (``is_single_line``), so a blank or
-    multi-line name is refused as input rather than committed as a record the census
-    then reports at exit 10.
+    mechanics; this is the seam that hands them the writer's printer, its usage code,
+    the census's own line predicate (``is_single_line``) and the options each
+    question ended up with, so a blank or multi-line name is refused as input rather
+    than committed as a record the census then reports at exit 10, and a
+    ``--single-option`` run that asked no one-option question is refused for the same
+    reason: the marker claims a one-option question and the record must show one.
     """
     return _writer.flag_refusals(_fail, EXIT_USAGE,
                                  _decide_flags.refuse_name,
                                  SLUG_RE, args.slug, args.scope, args.asked_by,
                                  args.decided_by, args.on_behalf_of,
-                                 is_single_line)
+                                 is_single_line,
+                                 options_by_question=options_by_question,
+                                 single_option=args.single_option)
 
 
 def _pair_flags_to_questions(flag: str, pairs: list[tuple[str, str]],
@@ -191,16 +197,6 @@ def _path_is_taken(path: Path) -> bool:
 def _parse_pairs(values: list[str], flag: str) -> tuple[list[tuple[str, str]], str | None]:
     """``ID=VALUE`` repeats as ordered pairs: :func:`ledger_schema.parse_pairs`."""
     return _schema.parse_pairs(values, flag)
-
-
-def _build_questions(questions: list[tuple[str, str]], options: list[tuple[str, str]],
-                     answers: list[tuple[str, str]],
-                     single_option: bool = False) -> list[dict] | str:
-    """The record's question objects, or a refusal message: the bounds and the
-    per-question relaxation are :func:`ledger_schema.build_questions`, the one
-    place the option counts are judged.
-    """
-    return _schema.build_questions(questions, options, answers, single_option)
 
 
 def _source_provenance(issue: int | None, comment: int | None) -> dict | None | int:
@@ -319,16 +315,26 @@ def _validate_usage(args: argparse.Namespace) -> tuple[str, list[dict], list[str
     """Flags-only checks, before git is consulted: returns
     ``(date_part, questions, unanswered)`` for flags that can produce a valid
     record, or the exit code of the refusal already printed.
+
+    The order is the one the refusals need: the record's parts are parsed first
+    because two of the flag rules read them. The slug decides the filename, so
+    nothing is parsed from a run whose slug is not a slug, and the name and marker
+    refusals come after the options are known -- the marker has to be able to see
+    whether any question ended up with one option.
     """
-    refused = _name_flags(args)
-    return refused if refused is not None else _build_record_flags(args)
+    return _build_record_flags(args)
 
 
 def _build_record_flags(args: argparse.Namespace) -> tuple[str, list[dict], list[str]] | int:
     """The flags that assemble the record: ``--date``, the ``--question`` /
-    ``--option`` / ``--answer`` triples, and the ``--supersedes`` rules. Returns
-    ``(date_part, questions, unanswered)``, or the exit code of the refusal printed.
+    ``--option`` / ``--answer`` triples, the name and marker refusals, and the
+    ``--supersedes`` rules. Returns ``(date_part, questions, unanswered)``, or the
+    exit code of the refusal printed.
     """
+    if not SLUG_RE.fullmatch(args.slug):
+        return _fail(EXIT_USAGE, f"slug {args.slug!r} is not a slug",
+                     "a slug is [a-z0-9-]+: lowercase letters, digits and dashes, no "
+                     "dots, slashes, spaces or uppercase")
     date_part, refused = _decide_flags.parse_date(args.date, fail=_fail,
                                                    exit_usage=EXIT_USAGE)
     if refused is not None:
@@ -352,7 +358,15 @@ def _build_record_flags(args: argparse.Namespace) -> tuple[str, list[dict], list
         unknown = _pair_flags_to_questions(flag, pairs, seen)
         if unknown is not None:
             return unknown
-    built = _build_questions(questions, options, answers, args.single_option)
+    # The options each question holds, in the order given: the marker refusal reads
+    # the same counts the record will carry, so the flag and the censuses answer one
+    # question rather than two.
+    options_by_question = {qid: [o for oid, o in options if oid == qid]
+                           for qid, _text in questions}
+    refused = _name_flags(args, options_by_question)
+    if refused is not None:
+        return refused
+    built = _schema.build_questions(questions, options, answers, args.single_option)
     if isinstance(built, str):
         return _fail(EXIT_USAGE, built,
                      "give every question 2-4 options, or --single-option to "
@@ -444,7 +458,7 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(EXIT_COLLISION, *refusal)
 
     # --- the writes: every check above has passed --------------------------
-    record = _writer.record_body(record_id=record_id, date_part=date_part,
+    record = _schema.record_body(record_id=record_id, date_part=date_part,
                                  asked_by=args.asked_by, questions=built, by=by,
                                  scope=args.scope, unanswered=unanswered,
                                  supersedes=args.supersedes, source=source,

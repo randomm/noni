@@ -1,0 +1,21 @@
+{
+  "id": "2026-10-04-junk-keys-nine",
+  "date": "2026-10-04T10:00:00Z",
+  "asked_by": "developer",
+  "questions": [
+    {
+      "id": "q1",
+      "text": "Adopt the new scheduler?",
+      "options": [
+        "yes",
+        "no"
+      ],
+      "answer": "yes"
+    }
+  ],
+  "by": "Operator",
+  "scope": "release ordering",
+  "status": "decided",
+  "supersedes": null,
+  "junk": "operator note"
+}

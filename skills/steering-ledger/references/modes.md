@@ -24,7 +24,11 @@ q1: Which release should carry the new scheduler?
   The one exception is a record the writer marked: `--single-option` writes
   `single_option: true`, and only that marker lets a question hold exactly one
   option. It exists to record a decision the operator already made, where an
-  alternative would have to be invented. A one-option record without the marker
+  alternative would have to be invented. The marker is read per record and the
+  bound is judged per question: with it set, any question of that record may
+  hold one option, and at least one of them must — a marker no question carries
+  a one option for is malformed too, because the record then claims a question
+  nobody asked. A one-option record without the marker
   is malformed like any other, so the bound is never relaxed by content alone.
 - **Free-text escape hatch.** The operator may reply with a choice not in the
   list; the `answer` then stores that free-text string. The bounds constrain the

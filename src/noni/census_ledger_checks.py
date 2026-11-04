@@ -80,7 +80,10 @@ def _validate_record(obj: object) -> list[str]:
     """Schema-check a parsed decision record; return the list of problems
     (empty = valid). Mirrors the required-field shape of the steering-ledger
     record, including the closed-set rule (the required eight plus the four
-    optional fields). The field groups whose wording is long enough to deserve
+    optional fields), which is tested as a SET: every key of the record must be
+    a declared one, so a junk key is reported whatever the record's key count
+    is (a count would let a junk key ride beside a real optional field).
+    The field groups whose wording is long enough to deserve
     its own function are the helpers in ``ledger_schema``; what is left here is
     the one-line set and type checks, so every problem still names its field and
     nothing else and the reporter turns one malformed value into one row."""
@@ -94,8 +97,7 @@ def _validate_record(obj: object) -> list[str]:
              if k not in REQUIRED_LEDGER_FIELDS and k not in OPTIONAL_LEDGER_FIELDS]
     if extra:
         problems.append("unknown field(s): " + ", ".join(sorted(extra)))
-    if "source" in obj:
-        problems.extend(_schema.validate_source(obj))
+    problems.extend(_schema.validate_source(obj))
     problems.extend(_schema.validate_date(obj))
     problems.extend(_schema.validate_questions(obj))
     status = obj.get("status")
@@ -106,7 +108,10 @@ def _validate_record(obj: object) -> list[str]:
             problems.append(f"{field} must be a non-empty string")
     # The two names keep the rule above and add the single-line one, and the
     # wording is the same shape ("<field> must be ...") so one malformed value
-    # still reports as one ledger-record row that names its field.
+    # still reports as one ledger-record row that names its field. The predicate
+    # refuses a blank as well as a break, which is the writer's flag rule read
+    # back at the record: a hand-edited `"decided_by": "   "` is a ledger-record
+    # failure here, not a clean row.
     for field in NAME_LINE_FIELDS:
         if field in obj and not is_single_line(obj[field]):
             problems.append(f"{field} must be a non-empty single-line string")

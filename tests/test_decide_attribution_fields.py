@@ -165,15 +165,38 @@ def test_one_option_without_the_marker_is_a_usage_error(tmp_path):
 
 
 def test_single_option_may_still_carry_two_to_four_options(tmp_path):
-    """The flag relaxes the lower bound only: an ordinary multiple-choice record
-    written with the flag stays valid and keeps its marker."""
+    """The flag relaxes the lower bound only, and a marked record still needs a
+    question the marker speaks for: an ordinary multiple-choice record written with
+    the flag is refused, because nothing in it was asked with one option."""
     repo = _baseline_repo(tmp_path)
     proc = _decide(repo, *ANSWERED, SINGLE)
-    assert proc.returncode == 0, proc.stderr
-    record = _read(repo, NEW_ID)
-    assert record["single_option"] is True
-    assert len(record["questions"][0]["options"]) == 2
-    _assert_both_censuses_clean(repo, "a two-option record carrying the marker")
+    assert proc.returncode == 2, f"{proc.returncode}: {proc.stderr}"
+    assert "--single-option" in proc.stderr, proc.stderr
+    assert not _record_path(repo, NEW_ID).exists()
+    assert _porcelain(repo) == ""
+    # The same record without the flag is what it always was: a clean 2-4 form.
+    assert _decide(repo, *ANSWERED).returncode == 0
+    _assert_both_censuses_clean(repo, "a two-option record with no marker")
+
+
+def test_a_marker_no_question_earns_is_malformed_to_both_censuses(tmp_path):
+    """The record-side of the same rule, planted rather than flagged: a record
+    carrying the marker whose questions all hold 2-4 options is a malformed record
+    (exit 10) in both censuses, naming the marker.
+
+    The writer refuses the shape at the flag, so the only way it reaches a ledger
+    is a hand edit. Both entry points must answer it: the marker claims a
+    one-option question and the record does not show one.
+    """
+    repo = _baseline_repo(tmp_path)
+    record = _baseline_record()
+    record["id"] = f"{NEW_DATE}-unearned-marker"
+    record["single_option"] = True
+    _planted(repo, record)
+    for name, census in (("census.py", _census_py), ("census.sh", _census_sh)):
+        _code, err = census(repo)
+        assert _code == 10, f"unearned marker via {name}: {_code} {err}"
+        assert "single_option" in err, f"unearned marker via {name}: {err}"
 
 
 def test_single_option_mixes_one_option_and_multi_option_questions(tmp_path):
@@ -278,7 +301,8 @@ def test_the_censuses_do_not_enforce_the_pairing(tmp_path):
 
 def test_the_censuses_accept_a_record_with_all_three_fields(tmp_path):
     """The shape the writer produces is accepted verbatim by both censuses: the
-    three fields are in the closed set, not reported as unknown."""
+    three fields are in the closed set, not reported as unknown. The one-option
+    question is what earns the marker, so the fixture carries one."""
     repo = _baseline_repo(tmp_path)
     record = _baseline_record()
     record["decided_by"] = "delegate-bot"
@@ -294,10 +318,15 @@ def test_the_censuses_accept_a_record_with_all_three_fields(tmp_path):
 
 def test_a_supersede_carries_the_new_fields_through_the_status_flip(tmp_path):
     """A supersede copies its target verbatim and changes one value, so a target
-    carrying the new fields keeps them and the census stays clean on both paths."""
+    carrying the new fields keeps them and the census stays clean on both paths.
+
+    The first record asks its question with one option (which is what earns the
+    ``single_option`` marker it carries); the successor repeats that question and
+    its options, so the marker stays earned on both paths."""
     repo = _baseline_repo(tmp_path)
-    proc = _decide(repo, *ANSWERED, DECIDED_BY, "operator-ann", BEHALF, "release team",
-                   SINGLE)
+    proc = _run(repo, "--slug", "scheduler", "--date", NEW_DATE, *BASE,
+                *QUESTION, "--option", "q1=next train", *ANSWERED,
+                DECIDED_BY, "operator-ann", BEHALF, "release team", SINGLE)
     assert proc.returncode == 0, proc.stderr
     # _decide already passes the question, its two options and --slug/--date: the
     # successor adds only the answers a supersede requires plus the target, and

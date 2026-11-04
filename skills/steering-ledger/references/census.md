@@ -37,7 +37,7 @@ to the caller.
 |---|---|
 | `0` | clean — every record valid, chain intact |
 | `2` | usage: no ledger directory was given (the state root is named by the caller, never by the cwd) |
-| `3` | `jq` not found on the reading machine (missing dependency) |
+| `3` | `jq` not found on the reading machine, or the schema program `scripts/census-schema.jq` is missing from beside the shim (`3:schema-program-missing`). Either way the census cannot apply a schema, so it exits honestly rather than reporting a false clean |
 | `10` | a record is missing or malformed (schema violation), or the ledger is unusable: the directory does not exist, contains no `*.json` records, a filename is not a plain `<name>.json` path segment, or the git tree is unreadable on a real repo |
 | `12` | a record was edited after commit (the committed bytes differ from the working tree) |
 | `20` | the supersede chain is broken (dangling, duplicate, orphan, cycle, or a chain resolving to zero or more than one live record) |
@@ -79,13 +79,22 @@ so.
 - **`2` (no ledger named):** the run was given no ledger directory. The census
   has no current-directory default, so it refuses rather than auditing the
   caller's cwd.
-- **`3` (jq missing):** `command -v jq` fails. The script cannot validate
-  without jq and exits honestly rather than reporting a false clean.
-- **`10` (schema violation):** a record is missing one of the eight fields, a
+- **`3` (jq or the schema program missing):** `command -v jq` fails, or
+  `scripts/census-schema.jq` — the sibling file the shim reads its record rules
+  from — is not beside the script (`3:schema-program-missing` on stderr). The
+  script cannot validate without either and exits honestly rather than reporting
+  a false clean: a census that read the ledger and printed nothing would be
+  claiming a verdict it never established. A packaging or install fault, not a
+  ledger state.
+- **`10` (schema violation):** a record is missing one of the eight fields, carries
+  a key outside the closed set (the eight required plus the four optional — tested
+  as a set, so a key nobody declared is refused whatever the record's key count
+  is), a
   `questions` array is empty or has more than four entries, a question has fewer
   than two or more than four options (a question with one option is a violation
-  unless the record carries the `single_option` marker), or a field has the wrong
-  type — including an empty, non-string or multi-line `decided_by` or
+  unless the record carries the `single_option` marker), the marker is set without
+  any question of the record holding exactly one option, or a field has the wrong
+  type — including an empty, blank, non-string or multi-line `decided_by` or
   `on_behalf_of`, or a `single_option` that is not the JSON `true` literal. All
   of these are the same `ledger-record` class at exit 10 naming the field: no
   new check class and no new code was added for the new fields.

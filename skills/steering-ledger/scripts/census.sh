@@ -8,7 +8,8 @@
 #                | 10 record/ledger unusable | 12 edited after commit
 #                | 20 supersede chain broken
 #       a record is valid when it carries the eight top-level required
-#       fields (plus the optional source field) and the chain resolves
+#       fields (plus the optional source, decided_by, on_behalf_of and
+#       single_option fields) and the chain resolves
 #
 #   census.sh --sessions <state-root>/noni/sessions   the sessions census (E2)
 #       one NDJSON row per finding; read-only, output to stdout only
@@ -59,7 +60,8 @@ fi
 # number wins (10 < 12 < 20) and the higher-numbered checks may not have
 # been evaluated — the stderr message says so.
 #   0   clean — every record valid (the eight top-level required fields
-#       plus the optional source field), chain intact
+#       plus the optional source, decided_by, on_behalf_of and single_option
+#       fields), chain intact
 #   2   usage: no ledger directory was given (the state root is named by the
 #       caller, never by the cwd)
 #   3   jq not found on the reading machine
@@ -204,100 +206,19 @@ fi
 
 # --- Schema -----------------------------------------------------------------
 # One jq program per record validates the declared shape (eight top-level
-# required fields plus the one optional source field) and emits "ok"; a non-"ok"
+# required fields plus the four optional ones: source, decided_by,
+# on_behalf_of and single_option) and emits "ok"; a non-"ok"
 # result is the (fixed, jq-generated) violation message. jq stderr is discarded: an unparseable record is
 # distinguished from a schema failure by the follow-up `jq empty` probe, and raw
 # record bytes are never echoed back into the diagnostic line.
-SCHEMA_JQ='
-  def is_iso: (.date | type) == "string"
-    and (.date | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"));
-  # The calendar probe only makes sense for a date string; any non-string
-  # reaches the report as the (more accurate) "not a valid ISO-8601" message.
-  def cal_ok: (if (.date | type) == "string" then
-    (if .date[5:7] | tonumber as $m | $m >= 1 and $m <= 12 then true else false end)
-    and (if .date[8:10] | tonumber as $d | $d >= 1 and $d <= 31 then true else false end)
-    and (if .date[11:13] | tonumber as $h | $h <= 23 then true else false end)
-    and (if .date[14:16] | tonumber as $mi | $mi <= 59 then true else false end)
-    and (if .date[17:19] | tonumber as $s | $s <= 60 then true else false end)
-    else false end);
-  def has8:
-    has("id") and has("date") and has("asked_by") and has("questions")
-    and has("by") and has("scope") and has("status") and has("supersedes");
-  # The closed set is the eight required fields plus the one optional
-  # source field: exactly eight keys when source is absent, nine when
-  # present.
-  def closed8: ((keys_unsorted | length) == 8
-    or ((keys_unsorted | length) == 9) and has("source"));
-  # source: absent or null is fine; present-and-non-null it must be an
-  # object with exactly the two fields (issue_number, comment_id), each a
-  # JSON integer. A JSON integer is a number whose textual form carries
-  # no decimal point or exponent; the floor check alone would pass an
-  # integral float (42.0), so both conditions must hold. This is the rule
-  # census.py mirrors exactly with isinstance(int) plus not-bool, and the
-  # two entry points must agree on every source shape.
-  def is_int: (type == "number")
-    and (tostring | test("^-?[0-9]+$"))
-    and (. == floor);
-  def source_ok:
-    ((has("source") | not) or (.source == null) or
-      ((.source | type) == "object")
-      and ((.source | has("issue_number")) and (.source | has("comment_id")))
-      and (((.source | keys_unsorted) - ["issue_number","comment_id"]) | length == 0)
-      and (.source.issue_number | is_int)
-      and (.source.comment_id | is_int));
-  def questions_ok:
-    ((.questions | type) == "array")
-    and ((.questions | length) >= 1) and ((.questions | length) <= 4)
-    and (all(.questions[];
-      has("id") and has("text") and has("options")
-      and ((.options | type) == "array")
-      and ((.options | length) >= 2) and ((.options | length) <= 4)
-      and (all(.options[]; type == "string"))
-      and (if has("answer")
-           then (.answer == null or (.answer | type) == "string")
-           else true end)
-      and ((if has("answer") then 4 else 3 end) == (keys_unsorted | length))
-    ));
-  def status_ok: (.status | IN("decided","open","superseded"));
-  def id_ok: ((.id | type) == "string") and ((.id | length) > 0);
-  def by_ok: ((.by | type) == "string") and ((.by | length) > 0);
-  def asked_by_ok: ((.asked_by | type) == "string") and ((.asked_by | length) > 0);
-  def scope_ok: ((.scope | type) == "string") and ((.scope | length) > 0);
-  def sup_type_ok: ((.supersedes == null) or
-    ((.supersedes | type) == "string") and ((.supersedes | length) > 0));
-  # The empty string is rejected: it is neither "no supersede" (null) nor a
-  # valid record id, and accepting it would make the chain walk ambiguous.
-  # (sup_type_ok already covers this via length > 0; stated here so the
-  # intent is explicit.)
-  if has8 and closed8 and is_iso and cal_ok and questions_ok and status_ok
-     and id_ok and by_ok and asked_by_ok and scope_ok and sup_type_ok and source_ok
-  then "ok"
-  else
-    [ (if has8 then "" else
-        "missing field(s): " + ([
-          (if has("id") then "" else "id" end),
-          (if has("date") then "" else "date" end),
-          (if has("asked_by") then "" else "asked_by" end),
-          (if has("questions") then "" else "questions" end),
-          (if has("by") then "" else "by" end),
-          (if has("scope") then "" else "scope" end),
-          (if has("status") then "" else "status" end),
-          (if has("supersedes") then "" else "supersedes" end)
-        ] | map(select(. != "")) | join(",")) end),
-      (if closed8 | not then "unknown field(s): " + (((keys_unsorted // []) - ["id","date","asked_by","questions","by","scope","status","supersedes","source"]) | join(",")) else "" end),
-      (if source_ok | not then "source must be null or an object with issue_number and comment_id" else "" end),
-      (if is_iso | not then "date is not a valid UTC ISO-8601 string" else "" end),
-      (if cal_ok | not then "date components out of range (month 1-12, day 1-31, hour 0-23, minute 0-59, second 0-60)" else "" end),
-      (if questions_ok | not then "questions array or option bounds violated" else "" end),
-      (if status_ok | not then "status not one of decided|open|superseded" else "" end),
-      (if id_ok | not then "id missing or not a non-empty string" else "" end),
-      (if by_ok | not then "by missing or not a non-empty string" else "" end),
-      (if asked_by_ok | not then "asked_by missing or not a non-empty string" else "" end),
-      (if scope_ok | not then "scope missing or not a non-empty string" else "" end),
-      (if sup_type_ok | not then "supersedes must be null or a non-empty string" else "" end)
-    ] | map(select(. != "")) | join("; ")
-  end
-'
+# The program itself is a sibling file read by jq, so the rules live in one
+# place a reader can open and a linter can parse; the path is taken from this
+# script's own directory so a relocated census stays self-contained.
+SCHEMA_JQ_FILE="$SCRIPT_DIR/census-schema.jq"
+if [ ! -f "$SCHEMA_JQ_FILE" ]; then
+  echo "census.sh: $SCHEMA_JQ_FILE not found (3:schema-program-missing)" >&2
+  exit 3
+fi
 # Field extraction after a schema pass: id \t date \t status \t sup \t by \t any_answer
 SCHEMA_DATA_JQ='
   [ .id, .date, .status,
@@ -322,7 +243,7 @@ while IFS= read -r rec; do
   f="$LEDGER_DIR/$rec"
   [ -f "$f" ] || { echo "census.sh: $rec not found in $LEDGER_DIR (10:missing-record)" >&2; STATUS=10; printf 'ERR\t-\t-\t-\tno\t-\n' >> "$ROWS"; continue; }
 
-  sc="$(jq -r "$SCHEMA_JQ" "$f" 2>/dev/null)"
+  sc="$(jq -r -f "$SCHEMA_JQ_FILE" "$f" 2>/dev/null)"
   if [ "$sc" != "ok" ]; then
     # Distinguish an unparseable record (jq parse error, which -r -e prints
     # to stdout) from a genuine schema violation: on parse failure, `jq empty`

@@ -67,11 +67,15 @@ so.
 ## What each check reads
 
 - **`0` (clean):** every `noni/decisions/*.json` parses, has all eight fields,
-  the `questions` array has 1-4 entries each with 2-4 options, and the
+  the `questions` array has 1-4 entries each with 2-4 options (or exactly one
+  option when the record carries the `single_option` marker), and the
   supersede chain resolves to exactly one live record per chain. The `by` field
   is only schema-checked (non-empty string): the report takes `by` from git
   when available, so a body value that disagrees with the commit is reported
-  as the git author, not flagged.
+  as the git author, not flagged. The optional `decided_by` and `on_behalf_of`
+  are schema-checked the same way plus one line: each is a non-empty single-line
+  string. Neither is reported — the report keeps its six columns and `by` keeps
+  coming from git — and no identity is verified.
 - **`2` (no ledger named):** the run was given no ledger directory. The census
   has no current-directory default, so it refuses rather than auditing the
   caller's cwd.
@@ -79,7 +83,12 @@ so.
   without jq and exits honestly rather than reporting a false clean.
 - **`10` (schema violation):** a record is missing one of the eight fields, a
   `questions` array is empty or has more than four entries, a question has fewer
-  than two or more than four options, or a field has the wrong type.
+  than two or more than four options (a question with one option is a violation
+  unless the record carries the `single_option` marker), or a field has the wrong
+  type — including an empty, non-string or multi-line `decided_by` or
+  `on_behalf_of`, or a `single_option` that is not the JSON `true` literal. All
+  of these are the same `ledger-record` class at exit 10 naming the field: no
+  new check class and no new code was added for the new fields.
 - **`12` (edited after commit):** the working-tree bytes of a committed record
   differ from the bytes in the last commit that touched that path. The census
   reads `git show <last commit>:<path>` and compares to the file on disk. A

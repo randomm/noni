@@ -19,13 +19,16 @@ Usage:
     decide.py --repo REPO --slug SLUG --scope SCOPE --asked-by ROLE
               --question ID=TEXT [--option ID=OPTION]... [--answer ID=ANSWER]...
               [--date YYYY-MM-DD] [--source-issue N --source-comment N]
+              [--decided-by WHO] [--on-behalf-of WHO] [--single-option]
               [--supersedes ID] [--no-commit]
 
 Exit codes:
     0  the record was written (and committed unless --no-commit)
     2  invalid input: an argparse failure, an empty or malformed slug, a
        malformed --date, --question, --option or --answer, a source id that is
-       not a positive integer, a question outside 1-4 or 2-4 options, or
+       not a positive integer, a question outside 1-4 or 2-4 options, an empty
+       --decided-by or --on-behalf-of, --on-behalf-of without --decided-by, a
+       question with one option when --single-option was not given, or
        --supersedes with an unanswered question
     3  a git or identity problem: --repo is not a git work tree, git config
        user.name is not set (git config user.name <name>), or a git probe timed
@@ -35,7 +38,9 @@ Exit codes:
        superseded, untracked, locally modified, not a regular file at its path
        (symlink, directory or device), not readable at all, not in the writer's
        canonical form, dated another day than --date, or carries a field the census
-       does not type as a string, a status outside decided, open or superseded,
+       does not type as a string (including decided_by and on_behalf_of, which the
+       census types as non-empty single-line strings), a status outside decided,
+       open or superseded,
        questions that are not a non-empty list of objects each with a string id
        and a string-or-null answer, or a number JSON cannot hold (NaN, Infinity or
        an overflow). A show reporting no path in HEAD is this code, not 3: git
@@ -61,14 +66,14 @@ deleting the new record, not just deleting the record.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 
-from . import _decide_flags, gitwrite, labels
+from . import _decide_flags, _writer, gitwrite, labels
+from . import ledger_schema as _schema
+from .ledger_schema import is_single_line
 
 # The git helper and the atomic writer live beside this file in the package and
 # are an ordinary package import: inside an installed wheel there is no sibling
@@ -106,9 +111,15 @@ STATUS_OPEN = "open"
 STATUS_SUPERSEDED = "superseded"
 STATUSES = (STATUS_DECIDED, STATUS_OPEN, STATUS_SUPERSEDED)
 
-# The field order both censuses document; json.dump keeps it, source last.
+# The field order both censuses document; json.dump keeps it. The three names
+# after ``source`` are optional and appended last, so a record that carries none
+# of them keeps the eight fields in the order the supersede canonical-form rule
+# compares a target's committed bytes against. Their shapes are the census's
+# (``ledger_schema``): the two names are non-empty single-line strings and
+# ``single_option`` is the JSON true literal that lets a question hold one option.
 FIELD_ORDER = ("id", "date", "asked_by", "questions", "by",
-               "scope", "status", "supersedes", "source")
+               "scope", "status", "supersedes", "source",
+               "decided_by", "on_behalf_of", "single_option")
 
 
 def _fail(code: int, message: str, hint: str | None = None) -> int:
@@ -122,18 +133,6 @@ def _fail(code: int, message: str, hint: str | None = None) -> int:
     return code
 
 
-def _timeout(repo: Path, *probes: tuple[str, subprocess.CompletedProcess[str]]) -> int | None:
-    """The exit-3 refusal for git probes meant to answer (gitwrite words the hung
-    call, this writer prints it); None when they all answered.
-    """
-    message = gitwrite.refuse_git_timeout(labels.DECIDE, *probes)
-    if message is None:
-        return None
-    cmd = next(name for name, result in probes if result.returncode == GIT_TIMEOUT_RC)
-    return _fail(EXIT_GIT, message,
-                 f"re-run decide once git answers again (git -C {repo} {cmd})")
-
-
 # The helper refuses its own target probes through this file, so a hung or failed git
 # call is worded once and its empty answer is never read as a clean tree downstream.
 gitwrite.probe_timeout_refusal = gitwrite.make_probe_refusal(_fail, EXIT_GIT, labels.DECIDE)
@@ -141,19 +140,43 @@ gitwrite.EXIT_PROBE_TIMEOUT = EXIT_GIT
 
 
 def _render(record: dict) -> str:
-    """The record's bytes: FIELD_ORDER, two-space indent, one trailing newline.
-
-    ``allow_nan=False`` is the whole refusal of a non-finite number, and json's
-    ``ValueError`` is let go rather than worded here: the callers catch it, and
-    neither may be handed an empty string for a body.
+    """The record's bytes in :data:`FIELD_ORDER`: the renderer is shared with the
+    census's canonical-form comparison in :func:`ledger_schema.render`.
     """
-    ordered = {key: record[key] for key in FIELD_ORDER if key in record}
-    return json.dumps(ordered, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
+    return _schema.render(record, FIELD_ORDER)
 
 
 def _written(exc: OSError, what: str) -> str:
     """One 'could not be written' headline naming the OSError and its reason."""
     return f"{what} ({exc.__class__.__name__}: {exc.strerror or exc})"
+
+
+def _name_flags(args: argparse.Namespace) -> int | None:
+    """The usage refusals that read one flag at a time: the slug, the two free-text
+    ids, the two attribution names and their pairing.
+
+    The rules live in :func:`noni._writer.flag_refusals` beside the other writer
+    mechanics; this is the seam that hands them the writer's printer, its usage code
+    and the census's own line predicate (``is_single_line``), so a blank or
+    multi-line name is refused as input rather than committed as a record the census
+    then reports at exit 10.
+    """
+    return _writer.flag_refusals(_fail, EXIT_USAGE,
+                                 _decide_flags.refuse_name,
+                                 SLUG_RE, args.slug, args.scope, args.asked_by,
+                                 args.decided_by, args.on_behalf_of,
+                                 is_single_line)
+
+
+def _pair_flags_to_questions(flag: str, pairs: list[tuple[str, str]],
+                             seen: set[str]) -> int | None:
+    """The exit code printed when ``pairs`` names a question no ``--question`` asks.
+
+    The rule is :func:`noni.ledger_schema.pair_refusal`, shared with the record
+    schema so an orphan id is refused the same way wherever it is found.
+    """
+    refusal = _schema.pair_refusal(flag, pairs, seen)
+    return None if refusal is None else _fail(EXIT_USAGE, *refusal)
 
 
 def _path_is_taken(path: Path) -> bool:
@@ -166,38 +189,115 @@ def _path_is_taken(path: Path) -> bool:
 
 
 def _parse_pairs(values: list[str], flag: str) -> tuple[list[tuple[str, str]], str | None]:
-    """Parse ``ID=VALUE`` repeats into ordered pairs, or name the malformed one.
-
-    No '=' attaches a value to no question and an empty key or value writes a
-    record the census rejects, so both are refused with the shape spelled out.
-    Only the first '=' splits (a free-text answer may carry one) and order is
-    kept: two ``--option q1=...`` flags are two options of q1.
-    """
-    out: list[tuple[str, str]] = []
-    for value in values:
-        key, sep, rest = value.partition("=")
-        if not sep or not key.strip() or not rest:
-            return [], (f"{flag} {value!r} is not an ID=VALUE pair "
-                        f"(write it as {flag} q1=<value>, where q1 is the question's id)")
-        out.append((key.strip(), rest))
-    return out, None
+    """``ID=VALUE`` repeats as ordered pairs: :func:`ledger_schema.parse_pairs`."""
+    return _schema.parse_pairs(values, flag)
 
 
 def _build_questions(questions: list[tuple[str, str]], options: list[tuple[str, str]],
-                     answers: list[tuple[str, str]]) -> list[dict] | str:
-    """The record's question objects (id, text, 2-4 options in given order, an
-    answer that is a string or null, last --answer wins), or a refusal message.
+                     answers: list[tuple[str, str]],
+                     single_option: bool = False) -> list[dict] | str:
+    """The record's question objects, or a refusal message: the bounds and the
+    per-question relaxation are :func:`ledger_schema.build_questions`, the one
+    place the option counts are judged.
     """
-    built = []
-    for qid, text in questions:
-        opts = [o for oid, o in options if oid == qid]
-        if not 2 <= len(opts) <= 4:
-            return (f"question {qid} has {len(opts)} option(s); every question needs "
-                    "2-4 options, given as --option " + qid + "=<option>")
-        asked = [a for aid, a in answers if aid == qid]
-        built.append({"id": qid, "text": text, "options": opts,
-                      "answer": asked[-1] if asked else None})
-    return built
+    return _schema.build_questions(questions, options, answers, single_option)
+
+
+def _source_provenance(issue: int | None, comment: int | None) -> dict | None | int:
+    """The record's ``source`` object, ``None`` for no provenance, or the exit
+    code of the refusal printed.
+    """
+    provenance, refusal = _schema.source_provenance(issue, comment)
+    return _fail(EXIT_USAGE, *refusal) if refusal is not None else provenance
+
+
+def _open_ledger(repo: Path, ledger: Path) -> int | None:
+    """The exit-5 refusal for a ledger directory that cannot be created, or None.
+
+    The allocation itself is :func:`noni._writer.allocate_ledger`; this is the seam
+    that gives its refusal this writer's exit code and voice.
+    """
+    refusal = _writer.allocate_ledger(labels.DECIDE, repo, ledger)
+    return None if refusal is None else _fail(EXIT_COMMIT_FAILED, *refusal)
+
+
+def _identity(repo: Path) -> str | int:
+    """The tree's ``git config user.name``, or the exit code of the exit-3 refusal
+    printed: the two git probes and their verdicts are
+    :func:`noni._writer.identity`, shared with the shape the target read refuses.
+    """
+    by, refusal = _writer.identity(labels.DECIDE, _git, repo)
+    if refusal is not None:
+        return _fail(EXIT_GIT, *refusal)
+    return by
+
+
+def _write_pair(repo: Path, record_path: Path, record: dict, target_rel: str | None,
+                rels: list[str], record_rel: str, committed_bytes: bytes | None,
+                target: tuple[Path, dict, bytes] | None,
+                ledger: Path) -> str | int:
+    """Land both paths, or hand back the exit code of the refusal printed and leave
+    the tree as it was; the empty string means both landed.
+
+    The renders, the atomic writes and the target's status flip are
+    :func:`noni._writer.write_record`; a refusal to render is the exit-4 case and a
+    filesystem fault is rolled back here, because only this writer knows both paths
+    it claimed and the target's committed bytes to put back.
+    """
+    try:
+        refusal = _writer.write_record(_write_atomic, _render, record_path, record,
+                                       target, STATUS_SUPERSEDED)
+    except OSError as exc:
+        return _refuse_unwritten(repo, rels, target_rel, record_rel, committed_bytes,
+                                 ledger, exc)
+    if refusal is not None:
+        return _fail(EXIT_COLLISION, *refusal)
+    return ""
+
+
+def _refuse_unwritten(repo: Path, rels: list[str], target_rel: str | None,
+                      record_rel: str, committed_bytes: bytes | None,
+                      ledger: Path, exc: OSError) -> int:
+    """Roll the run's paths back after a write that did not land, and refuse.
+
+    os.replace never half-writes, so a path that failed is a path still holding what
+    it held before this run; the rollback puts the target's committed bytes back and
+    the refusal names what the undo could not do rather than calling the tree clean.
+    """
+    unredone = _rollback(repo, rels, target_rel, record_rel, committed_bytes)
+    detail = _written(exc, "the record could not be written")
+    if unredone is not None:
+        return _fail(EXIT_COMMIT_FAILED, *_undone(detail, str(unredone), str(exc), rels))
+    return _fail(EXIT_COMMIT_FAILED, detail,
+                 f"check that {ledger} is writable, then re-run {labels.DECIDE}")
+
+
+def _refuse_taken_name(record_path: Path) -> int:
+    """The exit-4 refusal for a record name that is already spoken.
+
+    Tracked or not, and whatever kind of path it is: ``is_file()`` follows a link,
+    so a symlink would have read as free and ``os.replace`` would have put a record
+    where somebody's link stood.
+    """
+    return _fail(
+        EXIT_COLLISION,
+        f"{record_path} already exists; record ids are unique across the ledger",
+        "choose a slug nobody has taken; a supersede keeps the --date of the "
+        "record it replaces and differs by its slug",
+    )
+
+
+def _commit(repo: Path, rels: list[str], target_rel: str | None, record_rel: str,
+            committed_bytes: bytes | None, message: str) -> int | None:
+    """Stage and commit exactly the paths this run wrote, or hand back the exit
+    code of the refusal printed and leave nothing claimed as rolled back.
+
+    The two git steps and their rollback are :func:`noni._writer.stage_and_commit`;
+    this is the seam that turns its refusal into this writer's exit 5.
+    """
+    refusal = _writer.stage_and_commit(labels.DECIDE, repo, rels, message,
+                                       target_rel, record_rel, committed_bytes)
+    return None if refusal is None else _fail(EXIT_COMMIT_FAILED, *refusal)
 
 
 def _load_target(repo: Path, ledger: Path,
@@ -220,15 +320,15 @@ def _validate_usage(args: argparse.Namespace) -> tuple[str, list[dict], list[str
     ``(date_part, questions, unanswered)`` for flags that can produce a valid
     record, or the exit code of the refusal already printed.
     """
-    if not SLUG_RE.fullmatch(args.slug):
-        return _fail(EXIT_USAGE, f"slug {args.slug!r} is not a slug",
-                     "a slug is [a-z0-9-]+: lowercase letters, digits and dashes, no dots, "
-                     "slashes, spaces or uppercase")
-    if not args.scope.strip():
-        return _fail(EXIT_USAGE, "--scope is empty", "name the direction area, e.g. --scope 'release ordering'")
-    if not args.asked_by.strip():
-        return _fail(EXIT_USAGE, "--asked-by is empty", "name the agent role or session that asked")
+    refused = _name_flags(args)
+    return refused if refused is not None else _build_record_flags(args)
 
+
+def _build_record_flags(args: argparse.Namespace) -> tuple[str, list[dict], list[str]] | int:
+    """The flags that assemble the record: ``--date``, the ``--question`` /
+    ``--option`` / ``--answer`` triples, and the ``--supersedes`` rules. Returns
+    ``(date_part, questions, unanswered)``, or the exit code of the refusal printed.
+    """
     date_part, refused = _decide_flags.parse_date(args.date, fail=_fail,
                                                    exit_usage=EXIT_USAGE)
     if refused is not None:
@@ -249,20 +349,19 @@ def _validate_usage(args: argparse.Namespace) -> tuple[str, list[dict], list[str
     if problem is not None:
         return _fail(EXIT_USAGE, problem, "answer a question with --answer ID=<answer>")
     for flag, pairs in (("--option", options), ("--answer", answers)):
-        unknown = sorted({oid for oid, _v in pairs} - seen)
-        if unknown:
-            return _fail(EXIT_USAGE,
-                         f"{flag} names question(s) {', '.join(unknown)} that no --question asks",
-                         "the id must match one of the --question ids")
-    built = _build_questions(questions, options, answers)
+        unknown = _pair_flags_to_questions(flag, pairs, seen)
+        if unknown is not None:
+            return unknown
+    built = _build_questions(questions, options, answers, args.single_option)
     if isinstance(built, str):
-        return _fail(EXIT_USAGE, built, "give every question 2-4 options")
+        return _fail(EXIT_USAGE, built,
+                     "give every question 2-4 options, or --single-option to "
+                     "allow exactly one")
 
     # A declined steer is an open chain-root record, never a supersede: an
     # unanswered question would leave the chain with no live answer (census
     # exit 20), so this is a usage error and not a ledger state.
-    answered_ids = {oid for oid, _value in answers}
-    unanswered = [qid for qid, _text in questions if qid not in answered_ids]
+    unanswered = _schema.unanswered_ids(questions, answers)
     if args.supersedes is not None:
         refused = _decide_flags.check_supersede(args.supersedes, args.date,
                                                 questions, answers, fail=_fail,
@@ -295,6 +394,15 @@ def main(argv: list[str] | None = None) -> int:
                         "--answer the question is written open as \"answer\": null)")
     parser.add_argument("--date", default=None, metavar="YYYY-MM-DD",
                         help="record date (default: today, UTC); --supersedes requires it")
+    parser.add_argument("--decided-by", default=None, metavar="WHO",
+                        help="who made the decision, when that is not the commit "
+                        "author (a login or pseudonym, never an empty string)")
+    parser.add_argument("--on-behalf-of", default=None, metavar="WHO",
+                        help="the party the decision was made for (needs --decided-by)")
+    parser.add_argument("--single-option", action="store_true",
+                        help="record a decision with exactly one option per question, "
+                        "so nothing has to be invented (the multiple-choice form "
+                        "without this flag still needs 2-4)")
     parser.add_argument("--source-issue", type=int, default=None,
                         help="tracker issue number (a positive integer)")
     parser.add_argument("--source-comment", type=int, default=None,
@@ -312,164 +420,56 @@ def main(argv: list[str] | None = None) -> int:
         return checked
     date_part, built, unanswered = checked
 
-    source = None
-    if (args.source_issue is None) != (args.source_comment is None):
-        return _fail(EXIT_USAGE,
-                     "source provenance needs both --source-issue and --source-comment",
-                     f"got issue={args.source_issue!r} comment={args.source_comment!r}; "
-                     "pass both, or neither")
-    if args.source_issue is not None:
-        # A tracker id is a positive number: zero or negative names no issue and
-        # no comment, so the record would carry provenance nothing can check.
-        for flag, value in (("--source-issue", args.source_issue),
-                            ("--source-comment", args.source_comment)):
-            if value is None or value < 1:
-                return _fail(EXIT_USAGE, f"{flag} {value!r} is not a positive integer",
-                             f"name a real tracker id, e.g. {flag} 42")
-        source = {"issue_number": args.source_issue, "comment_id": args.source_comment}
+    source = _source_provenance(args.source_issue, args.source_comment)
+    if isinstance(source, int):
+        return source
     # --- git and identity: nothing is written until here and below ---------
-    work_tree = _git(repo, "rev-parse", "--is-inside-work-tree")
-    named = _git(repo, "config", "user.name")
-    timed_out = _timeout(repo, ("rev-parse", work_tree), ("config", named))
-    if timed_out is not None:
-        return timed_out
-    if work_tree.returncode != 0:
-        return _fail(EXIT_GIT, f"{repo} is not a git work tree",
-                     "run decide from the attached project's repo root (git -C REPO "
-                     "rev-parse --is-inside-work-tree must succeed)")
-    by = named.stdout.strip()
-    if named.returncode != 0 or not by:
-        return _fail(EXIT_GIT,
-                     f"git config user.name is not set for {repo}, so the record cannot be "
-                     "attributed",
-                     "git config user.name is not set: give the tree an identity with "
-                     f"git -C {repo} config user.name <name> (or --global)")
+    by = _identity(repo)
+    if isinstance(by, int):
+        return by
+    opened = _open_ledger(repo, ledger)
+    if opened is not None:
+        return opened
 
-    record_id = f"{date_part}-{args.slug}"
-    record_path = ledger / f"{record_id}.json"
-    record_rel = record_path.relative_to(repo).as_posix()
+    record_id, record_path, record_rel = _writer.ledger_name(repo, ledger, date_part,
+                                                             args.slug)
     if _path_is_taken(record_path):
-        # Tracked or not, and whatever kind of path it is, this name is taken:
-        # is_file() follows a link, so a symlink would have read as free and
-        # os.replace would have put a record where somebody's link stood.
-        return _fail(
-            EXIT_COLLISION,
-            f"{record_path} already exists; record ids are unique across the ledger",
-            "choose a slug nobody has taken; a supersede keeps the --date of the "
-            "record it replaces and differs by its slug",
-        )
+        return _refuse_taken_name(record_path)
 
-    target: tuple[Path, dict, bytes] | None = None
-    target_rel: str | None = None
-    if args.supersedes is not None:
-        found = _load_target(repo, ledger, args.supersedes)
-        if isinstance(found, int):
-            return found  # a git probe on the target hung; the refusal is printed
-        if isinstance(found[0], str):
-            return _fail(EXIT_COLLISION, found[0],
-                         found[1] or "name a committed, live record of the chain being corrected")
-        target_path, target_record, target_committed = found
-        target_rel = target_path.relative_to(repo).as_posix()
-        # Chain position, filename stem and census replay order all read this date,
-        # so another day cuts the record out of the chain it corrects. A value that
-        # is not a string was refused by _load_target; this slice is total here.
-        if target_record.get("date", "")[:10] != date_part:
-            want = str(target_record.get("date", ""))[:10]
-            return _fail(
-                EXIT_COLLISION,
-                f"--date {date_part} is not the date of the record being superseded "
-                f"({target_record.get('date')!r})",
-                f"a supersede carries the date of the record it replaces: pass --date {want}")
-        target = (target_path, target_record, target_committed)
+    target, target_rel, refusal = _writer.supersede_target(
+        _load_target, labels.DECIDE, repo, ledger, args.supersedes, date_part)
+    if isinstance(refusal, int):
+        return refusal  # a git probe on the target hung; the refusal is printed
+    if refusal is not None:
+        return _fail(EXIT_COLLISION, *refusal)
 
     # --- the writes: every check above has passed --------------------------
-    record: dict = {
-        "id": record_id,
-        "date": f"{date_part}T00:00:00Z",
-        "asked_by": args.asked_by,
-        "questions": built,
-        "by": by,
-        "scope": args.scope,
-        "status": STATUS_OPEN if unanswered else STATUS_DECIDED,
-        "supersedes": args.supersedes,
-    }
-    if source is not None:
-        record["source"] = source
-    if not ledger.is_dir():
-        # A fresh project has no noni/ state; the writer allocates the directory
-        # that holds its own record.
-        try:
-            ledger.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            return _fail(EXIT_COMMIT_FAILED,
-                         _written(exc, f"the ledger directory {ledger} could not be created"),
-                         f"check that {repo} is writable, then re-run decide")
-    rels = [record_rel] if target is None else [record_rel, target_rel]
+    record = _writer.record_body(record_id=record_id, date_part=date_part,
+                                 asked_by=args.asked_by, questions=built, by=by,
+                                 scope=args.scope, unanswered=unanswered,
+                                 supersedes=args.supersedes, source=source,
+                                 decided_by=args.decided_by,
+                                 on_behalf_of=args.on_behalf_of,
+                                 single_option=args.single_option)
+    rels, message = _schema.supersede_plan(args.supersedes, record_id, record_rel,
+                                           target_rel)
     committed_bytes = None if target is None else target[2]
-    try:
-        # The render is inside the try: a ValueError here refuses exit 4, not crash
-        # at 1 after a write has already landed.
-        _write_atomic(record_path, _render(record))
-        if target is not None:
-            flipped = dict(target[1])
-            flipped["status"] = STATUS_SUPERSEDED
-            _write_atomic(target[0], _render(flipped))
-    except ValueError:
-        # Not bytes this writer can produce: roll both paths back as a write failure
-        # does. The render cannot name what json read, so the tree is left untouched.
-        unredone = _rollback(repo, rels, target_rel, record_rel, committed_bytes)
-        detail = (f"the record {record_id} carries a number this writer cannot name: "
-                  "it is not in the canonical form decide.py writes")
-        if unredone is not None:
-            return _fail(EXIT_COMMIT_FAILED,
-                         *_undone(detail, str(unredone), "", rels))
-        return _fail(EXIT_COLLISION, detail,
-                     "name a record decide.py wrote, or repair it and re-run decide")
-    except OSError as exc:
-        # os.replace never half-writes, so a path failed to land: roll both paths as
-        # a failed commit does, and name the one that stayed.
-        unredone = _rollback(repo, rels, target_rel, record_rel, committed_bytes)
-        detail = _written(exc, "the record could not be written")
-        if unredone is not None:
-            return _fail(EXIT_COMMIT_FAILED,
-                         *_undone(detail, str(unredone), str(exc), rels))
-        return _fail(EXIT_COMMIT_FAILED, detail,
-                     f"check that {ledger} is writable, then re-run decide")
-    if args.no_commit:
-        # The census reads the working tree, so these files read as uncommitted (an
-        # edited target is census.sh exit 12): name both paths, and say that
-        # committing them is the caller's job. A supersede also names what the
-        # second path now holds: the target's status is superseded, so an operator
-        # who aborts the run knows to restore that file as well as delete the new
-        # record, or the chain is left with no live record.
-        left = (f"; {target_rel} now holds status {STATUS_SUPERSEDED}"
-                if target is not None else "")
-        print(f"{labels.DECIDE}: wrote {', '.join(rels)}{left}; left uncommitted: "
-              "commit these paths before running the census")
+    written = _write_pair(repo, record_path, record, target_rel, rels, record_rel,
+                          committed_bytes, target, ledger)
+    if isinstance(written, int):
+        return written
+    def _report() -> int:
+        line = _writer.success_line(labels.DECIDE, record_path, rels, target_rel,
+                                    STATUS_SUPERSEDED, args.no_commit)
+        print(line)
         return EXIT_OK
-    added = _git(repo, "add", "--", *rels)
-    if added.returncode != 0:
-        unredone = _rollback(repo, rels, target_rel, record_rel, committed_bytes)
-        detail = added.stderr.strip() or added.stdout.strip()
-        if unredone is not None:
-            return _fail(EXIT_COMMIT_FAILED,
-                         *_undone("git add failed", str(unredone), detail, rels))
-        return _fail(EXIT_COMMIT_FAILED, f"git add failed: {detail}",
-                     f"the paths {', '.join(rels)} are rolled back; re-run decide")
-    # --only with explicit paths: the commit carries exactly what this run wrote,
-    # never a file somebody else had staged.
-    verb = f"supersede {args.supersedes} with {record_id}" if args.supersedes else record_id
-    committed = _git(repo, "commit", "-q", "-m", f"steering: {verb}", "--only", "--", *rels)
-    if committed.returncode != 0:
-        unredone = _rollback(repo, rels, target_rel, record_rel, committed_bytes)
-        detail = committed.stderr.strip() or committed.stdout.strip()
-        if unredone is not None:
-            return _fail(EXIT_COMMIT_FAILED,
-                         *_undone("git commit failed", str(unredone), detail, rels))
-        return _fail(EXIT_COMMIT_FAILED, f"git commit failed: {detail}",
-                     f"{', '.join(rels)} are rolled back to their state before this run")
-    print(f"{labels.DECIDE}: wrote {record_path}")
-    return EXIT_OK
+
+    if args.no_commit:
+        return _report()
+    committed = _commit(repo, rels, target_rel, record_rel, committed_bytes, message)
+    if committed is not None:
+        return committed
+    return _report()
 
 
 if __name__ == "__main__":

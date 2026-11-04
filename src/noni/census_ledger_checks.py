@@ -35,35 +35,22 @@ from typing import TYPE_CHECKING, Callable
 
 from . import census_ledger as _ledger
 from . import census_text as _text
+from . import ledger_schema as _schema
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, nothing imported at runtime
     from .census_git import Git
 
 NAME_RE = re.compile(r"^[A-Za-z0-9._-]+\.json$")
-REQUIRED_LEDGER_FIELDS = (
-    "id",
-    "date",
-    "asked_by",
-    "questions",
-    "by",
-    "scope",
-    "status",
-    "supersedes",
-)
-
-# The one optional (but validated) ledger field: ``source``. It carries the
-# tracker provenance of a record produced from a tracker-sourced answer (an
-# adapter's question-legitimacy verdict): an object with ``issue_number``
-# (int) and ``comment_id`` (int). ``null`` (or absent) for records that did
-# not come from a tracker. A record without it stays valid: the eight
-# REQUIRED_LEDGER_FIELDS above are the closed required set, and ``source`` is
-# the one extra key the schema admits.
-
-# A UTC ISO-8601 second-resolution timestamp (the record date shape).
-DATE_RE = re.compile(
-    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
-)
-
+# The field sets, the option bounds and the two predicates are the shared
+# vocabulary in ``ledger_schema`` (see that module for why all four readers of
+# the schema name one owner); these bindings keep the names this module's
+# callers and ``census.py`` already use.
+REQUIRED_LEDGER_FIELDS = _schema.REQUIRED_LEDGER_FIELDS
+OPTIONAL_LEDGER_FIELDS = _schema.OPTIONAL_LEDGER_FIELDS
+NAME_LINE_FIELDS = _schema.NAME_LINE_FIELDS
+LINE_BREAKS = _schema.LINE_BREAKS
+DATE_RE = _schema.DATE_RE
+is_single_line = _schema.is_single_line
 
 # The five states the ledger probe answers: the four the ledger-empty class
 # reports, each in exactly one row's message, plus the silent "ok". "empty"
@@ -91,74 +78,40 @@ LEDGER_EMPTY_MESSAGES: dict[str, str | None] = {
 
 def _validate_record(obj: object) -> list[str]:
     """Schema-check a parsed decision record; return the list of problems
-    (empty = valid). Mirrors the eight-field shape of the steering-ledger
-    record, including the closed-set rule (exactly the eight fields)."""
+    (empty = valid). Mirrors the required-field shape of the steering-ledger
+    record, including the closed-set rule (the required eight plus the four
+    optional fields). The field groups whose wording is long enough to deserve
+    its own function are the helpers in ``ledger_schema``; what is left here is
+    the one-line set and type checks, so every problem still names its field and
+    nothing else and the reporter turns one malformed value into one row."""
     if not isinstance(obj, dict):
         return ["record is not a JSON object"]
     problems: list[str] = []
     missing = [f for f in REQUIRED_LEDGER_FIELDS if f not in obj]
     if missing:
         problems.append("missing field(s): " + ", ".join(missing))
-    extra = [k for k in obj if k not in REQUIRED_LEDGER_FIELDS and k != "source"]
+    extra = [k for k in obj
+             if k not in REQUIRED_LEDGER_FIELDS and k not in OPTIONAL_LEDGER_FIELDS]
     if extra:
         problems.append("unknown field(s): " + ", ".join(sorted(extra)))
     if "source" in obj:
-        src = obj["source"]
-        if src is not None:
-            if not isinstance(src, dict):
-                problems.append("source must be null or an object with issue_number and comment_id")
-            else:
-                if not isinstance(src.get("issue_number"), int) or isinstance(src.get("issue_number"), bool):
-                    problems.append("source.issue_number must be an integer")
-                if not isinstance(src.get("comment_id"), int) or isinstance(src.get("comment_id"), bool):
-                    problems.append("source.comment_id must be an integer")
-                src_extra = [k for k in src if k not in ("issue_number", "comment_id")]
-                if src_extra:
-                    problems.append("source unknown field(s): " + ", ".join(sorted(src_extra)))
-    date = obj.get("date")
-    if isinstance(date, str):
-        if not DATE_RE.match(date):
-            problems.append("date is not a valid UTC ISO-8601 string")
-        else:
-            month, day = int(date[5:7]), int(date[8:10])
-            hour, minute, second = int(date[11:13]), int(date[14:16]), int(date[17:19])
-            if not 1 <= month <= 12:
-                problems.append("date month out of range")
-            if not 1 <= day <= 31:
-                problems.append("date day out of range")
-            if not 0 <= hour <= 23:
-                problems.append("date hour out of range")
-            if not 0 <= minute <= 59:
-                problems.append("date minute out of range")
-            if not 0 <= second <= 60:
-                problems.append("date second out of range")
-    elif "date" in obj:
-        problems.append("date is not a string")
-    questions = obj.get("questions")
-    if "questions" in obj:
-        if not isinstance(questions, list) or not 1 <= len(questions) <= 4:
-            problems.append("questions must be an array of 1-4 entries")
-        else:
-            for q in questions:
-                if not isinstance(q, dict):
-                    problems.append("question entry is not an object")
-                    continue
-                if not ({"id", "text", "options"} <= set(q)):
-                    problems.append("question missing id/text/options")
-                options = q.get("options")
-                if not isinstance(options, list) or not 2 <= len(options) <= 4:
-                    problems.append("question options must be an array of 2-4 strings")
-                elif not all(isinstance(o, str) for o in options):
-                    problems.append("question options must be strings")
-                if "answer" in q and q["answer"] is not None and not isinstance(q["answer"], str):
-                    problems.append("question answer must be a string or null")
+        problems.extend(_schema.validate_source(obj))
+    problems.extend(_schema.validate_date(obj))
+    problems.extend(_schema.validate_questions(obj))
     status = obj.get("status")
     if "status" in obj and status not in ("decided", "open", "superseded"):
         problems.append("status not one of decided|open|superseded")
     for field in ("id", "by", "asked_by", "scope"):
-        value = obj.get(field)
-        if field in obj and (not isinstance(value, str) or not value):
+        if field in obj and not _schema.is_non_empty_string(obj[field]):
             problems.append(f"{field} must be a non-empty string")
+    # The two names keep the rule above and add the single-line one, and the
+    # wording is the same shape ("<field> must be ...") so one malformed value
+    # still reports as one ledger-record row that names its field.
+    for field in NAME_LINE_FIELDS:
+        if field in obj and not is_single_line(obj[field]):
+            problems.append(f"{field} must be a non-empty single-line string")
+    if _schema.SINGLE_OPTION_MARKER in obj and obj[_schema.SINGLE_OPTION_MARKER] is not True:
+        problems.append(f"{_schema.SINGLE_OPTION_MARKER} must be true when present")
     sup = obj.get("supersedes")
     if "supersedes" in obj and sup is not None and (not isinstance(sup, str) or not sup):
         problems.append("supersedes must be null or a non-empty string")

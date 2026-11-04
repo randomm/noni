@@ -1,3 +1,4 @@
 census.sh <state-root>/noni/decisions        the decisions census (E1)
 census.sh --sessions <state-root>/noni/sessions   the sessions census (E2)
 eight top-level required
+fields (plus the optional source, decided_by, on_behalf_of and

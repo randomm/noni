@@ -5,7 +5,7 @@ is the commit: a file in the working tree that is not committed is not a record,
 and a committed record is replayable by any later session or fresh clone because
 it reads nothing but git.
 
-## The eight fields (plus one optional)
+## The eight fields (plus the optional ones)
 
 ```json
 {
@@ -24,16 +24,19 @@ it reads nothing but git.
   "scope": "release ordering",
   "status": "decided",
   "supersedes": null,
-  "source": { "issue_number": 42, "comment_id": 9102 }
+  "source": { "issue_number": 42, "comment_id": 9102 },
+  "decided_by": "operator-ann",
+  "on_behalf_of": "the platform team",
+  "single_option": true
 }
 ```
 
 The field list is fixed and the census validates it. A record with a missing or
-malformed field fails the census with exit `10`. One field, `source`, is
-optional: a record that did not come from a tracker may omit it (or set it to
-`null`), but when it is present it must carry exactly the tracker's issue number
-and comment id as integers — it is how a ledger record produced from a tracker
-answer references where that answer came from.
+malformed field fails the census with exit `10`. Four fields are optional:
+`source`, `decided_by`, `on_behalf_of` and `single_option`. A record that carries
+none of them is the eight-field shape and stays valid, which is what keeps every
+record written before these fields existed censusable. Each optional field is
+checked when present.
 
 | field | type | rules |
 |---|---|---|
@@ -46,6 +49,9 @@ answer references where that answer came from.
 | `status` | string | `decided` \| `open` \| `superseded` |
 | `supersedes` | string \| null | id of the replaced record, or `null` for a root record |
 | `source` | object \| null (optional) | tracker provenance: `{"issue_number": <int>, "comment_id": <int>}` when the record was produced from a tracker-sourced answer (an adapter's question-legitimacy verdict); `null` or absent for a record that did not come from a tracker. A record without it stays valid. |
+| `decided_by` | string (optional) | who made the decision, when that is not the commit author: a login or pseudonym, never a personal-name requirement. Written by `--decided-by`. Absent means the commit author decided, so records written before this field stay valid. The census types it as a non-empty single-line string and verifies nothing about the identity |
+| `on_behalf_of` | string (optional) | the party a delegated decision was made for, written by `--on-behalf-of`. Same census shape as `decided_by`. `decide.py` refuses it without `--decided-by`; a hand-edited record carrying one name and not the other is well formed, because the pairing is the writer's rule and not the census's |
+| `single_option` | `true` (optional) | written by `--single-option`: the marker that says a question was asked with one option on purpose. It is the only thing that makes a one-option question valid, so a one-option record without it is a `ledger-record` exit 10 in both censuses. Written as the JSON `true` literal, anything else is a malformed marker |
 
 ## The question object
 
@@ -58,7 +64,7 @@ so a multi-question record is unambiguous.
 |---|---|---|
 | `id` | string | short identifier unique within the record (`q1`, `q2`, ...) |
 | `text` | string | the question as asked |
-| `options` | array | 2-4 strings; the free-text escape hatch is always available, so a reply may name an option not in the list |
+| `options` | array | 2-4 strings, or exactly one string when the record carries `single_option`; the free-text escape hatch is always available, so a reply may name an option not in the list |
 | `answer` | string \| null | the chosen option's string (or a free-text string), or `null` when the question is open |
 
 ## Writing a record
@@ -71,7 +77,9 @@ never does:
 - **Supplied by flags, named after the field:** `id` (from `--date` and
   `--slug`), `asked_by`, `scope`, each question's `id`/`text`/`options`, and
   each answer (`--answer ID=<answer>`). `by` comes from `git config user.name`
-  of the tree, so it is not a flag either.
+  of the tree, so it is not a flag either. `--decided-by` and `--on-behalf-of`
+  name who decided and, for a delegate, who they decided for; `--single-option`
+  records that a question was asked with one option on purpose.
 - **Derived, never supplied:** `status`. All questions answered is `decided`;
   any unanswered question is `open` and its `answer` is written as `null`; the
   target of a supersede becomes `superseded`. There is no `--status` flag.
@@ -108,6 +116,29 @@ mismatch between body and commit. The default posture is signed commits;
 stranger-detection is advisory until forge-verified pushes. This mirrors the
 precedent that a reply edited by a non-allowed account voids the reply — the
 author is the legitimacy check, and it is the commit author, not the body.
+
+### Who decided, when the commit author is not that person
+
+Agents commit under the operator's identity, so `by` names who committed and
+not who decided. `decided_by` records the decider separately, and
+`on_behalf_of` names the party a delegate acted for:
+
+```
+scripts/decide.py --repo . --decided-by operator-ann --on-behalf-of "the platform team" ...
+```
+
+The three rules that keep this honest without pretending to verify anyone:
+
+- The record's `by` still comes from git and the report's `by` column still
+  reads `git log -1 --format=%an`. `decided_by` never overrides it, so a body
+  value cannot buy an author it does not have.
+- A record with no `decided_by` means the commit author decided. That is the
+  reading for every record written before the field existed, and it is why no
+  old record needed rewriting.
+- The census checks the shape and nothing else: each name is a non-empty single
+  line. It never verifies an identity, and it does not enforce the pairing —
+  `decide.py` refuses `--on-behalf-of` without `--decided-by`, and a record
+  hand-edited to carry one name alone stays well formed.
 
 ## Ordering and the supersede chain
 

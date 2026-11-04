@@ -31,9 +31,12 @@ Exit codes:
     1  --file names the marked session's file and that file carries a different
        identity (never write into another session's file)
     2  --file names a path this run neither allocated nor found in the marker,
-       or --repo names no directory or is a symlink (refused, never followed),
-       or the session file could not be written, or the marked session's file
-       carries no readable status (never continued, never overwritten)
+       or --repo names no directory or is a symlink (refused, never followed), or
+       the session file it would write, or any directory from the state root down
+       to it (its noni/sessions directory and the noni above it), is not a plain
+       path this writer may follow (a symlink is never followed, and a refusal
+       creates nothing), or it could not be written, or the marked file carries no
+       readable status (never continued, never overwritten)
     3  git could not commit what this run wrote, or a --push failed after 3
        fetch-rebase-push attempts (also a fetch failure, a detached HEAD, or an
        unresolvable branch)
@@ -53,8 +56,7 @@ marker, the commit subject and the printed line. The marker's text is an input, 
 fact: text that is not a valid session id is not a marker for a session, so the run says
 so, treats the working copy as unmarked, and allocates afresh -- it builds no path from
 it. The marked file is read once, strictly: a file whose bytes cannot be decoded, or whose
-``- status:`` line has no readable value, is refused with exit 2 rather than continued or
-replaced.
+``- status:`` line has no readable value, is refused with exit 2 rather than continued.
 
 --no-commit writes through the same validation chain and runs no git at all, then prints
 exactly ``register.py: <path> left uncommitted``; --push pushes the branch ``git
@@ -69,11 +71,20 @@ from __future__ import annotations
 
 import argparse
 import sys
-import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 
-from . import _marker, _session_git, _session_push, claim, labels
+from . import _marker, _session_git, _session_guard, _session_push, claim, labels
+from . import _session_body as _session_body_module
+from . import _session_fields as _fields
+
+# The two values this writer stamps its file with, bound as names of THIS module: the
+# allocator and the clock live in :mod:`noni._session_body`, and the register suites
+# patch ``register._make_session_id`` to hand the writer a name of its own choosing (a
+# name its own guard refuses, or the exact allocation an idempotency branch needs).
+# Calling them through the imported module instead would send those patches nowhere and
+# the suites would silently exercise the real allocator.
+_make_session_id = _session_body_module.make_session_id
+_now_utc = _session_body_module.now_utc
 
 # Where session files live, relative to the state root. The one spelling is the
 # primitive's, and a writer's file is always ``_session_git.writer_name(sid)``: the write
@@ -86,35 +97,6 @@ EXIT_IDENTITY_MISMATCH: int = 1
 EXIT_USAGE: int = 2
 EXIT_GIT: int = 3
 EXIT_BAD_ARGS: int = 4
-
-
-def _now_utc() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _make_session_id() -> str:
-    # <UTC date>-<6 hex chars>: 16^6 ~ 16.7M slots per day, so ids are collision-free
-    # by construction (see references/register.md); stable across pulls and clones
-    # once committed.
-    return f"{datetime.now(timezone.utc).strftime('%Y-%m-%d')}-{uuid.uuid4().hex[:6]}"
-
-
-def _parse_fields(body: str) -> dict[str, str]:
-    """Parse the '- key: value' field lines of a register file.
-
-    A line that does not match the field shape is left for the census to flag;
-    registration needs only identity and status to be present.
-    """
-    fields: dict[str, str] = {}
-    for line in body.splitlines():
-        line = line.strip()
-        if not line.startswith("- "):
-            continue
-        key, sep, value = line[2:].partition(":")
-        if not sep:
-            continue
-        fields[key.strip()] = value.strip()
-    return fields
 
 
 def _fail(code: int, headline: str, hint: str) -> int:
@@ -146,16 +128,6 @@ def _warn_unmarked(marker: Path | None) -> None:
           "that exists), then re-run", file=sys.stderr)
 
 
-def _session_body(session_id: str, identity: str, host: str, worktree: str,
-                  started: str, status: str) -> str:
-    return (f"# session {session_id}\n\n"
-            f"- identity: {identity}\n"
-            f"- host/worktree: {host} ({worktree})\n"
-            f"- started: {started}\n"
-            f"- status: {status}\n"
-            f"- claims:\n")
-
-
 def _reuse(marked_name: str, body: str, args: argparse.Namespace) -> int:
     """The marked session's own file: continue it, or refuse to overwrite it.
 
@@ -167,7 +139,7 @@ def _reuse(marked_name: str, body: str, args: argparse.Namespace) -> int:
     caller derived, printed as it is: the name inside the state root is what the
     operator has to go and look at.
     """
-    existing_identity = _parse_fields(body).get("identity", "")
+    existing_identity = _fields.parse_fields(body).get("identity", "")
     if existing_identity != args.identity:
         return _fail(
             EXIT_IDENTITY_MISMATCH,
@@ -339,7 +311,6 @@ def main(argv: list[str] | None = None) -> int:
                      "committed to push)",
                      "drop one of the two")
 
-    sessions_dir = repo / SESSIONS_REL
     # The session id this run owns, minted ONCE here and threaded through every use of it
     # (the name written, the pathspec, the marker's contents, the commit subject, the
     # printed line): two mints would let the printed id and the committed id disagree.
@@ -347,7 +318,24 @@ def main(argv: list[str] | None = None) -> int:
     # derivation single. It sits ahead of every write because a refusal may never leave a
     # file and a marker behind (the #57 contract).
     session_id = _make_session_id()
+    # The ONE name this run may write, and the directory the guard and the mkdir below
+    # are both built from: they are then the same directory by construction.
+    # ``writer_name`` is the committed form (it re-asks the name questions a minted id
+    # cannot answer for itself) and the empty string is the allocator's own refusal,
+    # answered just below on register's argument code -- ahead of the path guard, which
+    # speaks EXIT_USAGE and would blame --repo for a name the writer derived itself.
     rel = _session_git.writer_name(session_id)
+    sessions_dir = repo / SESSIONS_REL
+    # The sessions tree this run is about to create, refused before the mkdir and before
+    # any other write: the tree is asked about by NAME, not by the allocation, because an
+    # allocating run may be handed a name its own guard refuses (a test pins the
+    # allocator) and the sessions directory still has to be a directory it may write.
+    # Only the directories can answer here -- an absent one is register's ordinary case,
+    # never a refusal, since creating it is what this writer does.
+    if (refused := _session_guard.session_write(_fail, EXIT_USAGE, repo, SESSIONS_REL,
+                                               creates=True,
+                                               directory_only=True)):
+        return refused
     if not rel:
         # The allocator's own answer is not a name it can commit: register's argument
         # code, because the fault is in a bad argument rather than in git (EXIT_GIT would
@@ -357,7 +345,6 @@ def main(argv: list[str] | None = None) -> int:
             f"{SESSIONS_REL}/{session_id}{_session_git.SESSION_SUFFIX}",
             arg="--identity")
         return _fail(EXIT_BAD_ARGS, headline, hint)
-
     if not sessions_dir.exists():
         # Created on first registration: a fresh repo has no noni/ state yet. An
         # empty directory is no protocol violation: the first writer's file.
@@ -427,6 +414,9 @@ def main(argv: list[str] | None = None) -> int:
     # allocated. The name written is the one _resolve_target admitted -- this run's
     # allocation, never a name from the marker.
     target_file = repo / target
+    if (refused := _session_guard.session_write(_fail, EXIT_USAGE, repo, target,
+                                               creates=True)):
+        return refused
     host = args.host or session_id
     # Default to the repo's basename, not an absolute machine-local path: the register
     # file is committed to a public repo, so the worktree field must stay generic (an
@@ -435,7 +425,7 @@ def main(argv: list[str] | None = None) -> int:
     started = _now_utc()
     try:
         _session_git.atomic_write(
-            target_file, _session_body(session_id, args.identity, host, worktree,
+            target_file, _session_body_module.session_body(session_id, args.identity, host, worktree,
                                        started, args.status))
     except OSError as exc:
         return _fail(EXIT_USAGE,

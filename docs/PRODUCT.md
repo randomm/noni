@@ -137,8 +137,8 @@ not a git work tree). The codes are not interchangeable — each is that tool's
 existing refusal, and a caller tells a wrong path from a fault of the tree by
 which one it gets.
 
-The four session writers (`register`, `claim`, `close`, `release`) refuse one
-further state the same way: a `--repo` that is itself a symlink. `git` works on
+The four session writers (`register`, `claim`, `close`, `release`) refuse two
+further states the same way. A `--repo` that is itself a symlink: `git` works on
 the resolved path of the tree it is pointed at, so a linked state root is where
 the writer's own path arithmetic and git's stop agreeing, and the marker and the
 audit trail would be kept against a path nobody named. The run stops with a
@@ -146,6 +146,28 @@ message naming the real path of the state root, on the same code that tool
 already uses for a wrong path: 2 for `register`, 4 for `claim`, `close` and
 `release`. A project directory reached *through* a link is not this state: only
 a `--repo` that is itself a link is refused.
+
+The same four writers refuse a session file that is a symlink, and any directory
+from the state root down to it — `noni/sessions/` and the `noni/` that holds it —
+that is not a plain path this writer may follow (a link, a plain file, a socket or
+a device, none of them read or written through).
+`is_file()` follows a link, so a symlinked session file reads as present and the
+writer's atomic replace lands on the link's target: the link is replaced by a
+regular file holding bytes the run composed, and a symlinked `noni/sessions/` — or
+`noni/` itself — sends the file outside the tree altogether. Every one of those
+paths is refused before any read, write or `mkdir`, with the offending path named,
+and a refusal creates no directory, writes no file and leaves the marker and HEAD
+where they were. A dangling link gets this refusal and not the "no such session
+file" exit, because the check is `lstat`, not `is_file()`: `lstat` reads only the
+last component, which is why the guard asks the same question of every directory
+above the file rather than of the two it happens to write into. A project reached
+through a linked ancestor is not this state either: only the session file and the
+paths beneath the state root are examined, never an ancestor of the state root.
+
+The check is `lstat`, never `is_file()`: a dangling link is a refusal, not a
+missing session. The symlinked session file, the symlinked `noni/sessions/` and the
+symlinked `noni/` are answered with the same codes as the state-root refusal above:
+2 for `register`, 4 for `claim`, `close` and `release`.
 
 Results are recomputed on demand by the census (no `census/` directory). The
 census is read-only: running it leaves `git status --porcelain` empty. Trends,

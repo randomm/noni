@@ -76,6 +76,19 @@ path it did not allocate:
   belonging to some other session is refused, not written.
 - A file that already exists with a different identity → exit 1 (refused).
 - A file that already exists with the same identity → exit 0 (idempotent no-op).
+- A session file that is a symlink, or a directory on the way to it — `noni/sessions/`
+  or the `noni/` above it — that is not a directory (a link, a plain file, a
+  socket or a device) → exit 2 (refused). `is_file()` follows a link, so a
+  symlinked file would read as present and the atomic replace would land on the
+  link's target; the check is `lstat` instead, and it runs before the `mkdir`,
+  before the write and before the marker, so a refusal creates no directory, writes
+  no file and leaves HEAD where it was. `lstat` reads only the last component, which
+  is why the same question is asked of every directory above the file and not of the
+  two it happens to write into: a link at `noni/` would otherwise read as the
+  ordinary directory and file beneath it and send the write outside the tree. A
+  dangling link is refused on this code rather than reported as "no such session
+  file". A project reached *through* a linked ancestor is not this state: only the
+  session file and the paths beneath the state root are examined.
 
 Two sessions that register concurrently get distinct session-ids and distinct
 files. The protocol does not mediate writes to one shared path; it allocates

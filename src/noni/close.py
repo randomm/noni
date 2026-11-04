@@ -28,7 +28,11 @@ Exit codes:
     4  --session-id is not a single token with no leading dot (the name of one
        file under noni/sessions/, so a path separator or a '..' walk out of the
        state root is refused here), or --no-commit was combined with
-       --push (there would be nothing committed to push)
+       --push (there would be nothing committed to push), or the session file,
+       or any directory from the state root down to it (its noni/sessions
+       directory and the noni above it), is not a plain path this writer may
+       follow (a symlink is never read or written through, and a refusal writes
+       nothing)
     5  the --push rebase started and stopped on a conflict in the session file;
        this run aborts the rebase, so the clone is left on its branch with the
        close commit it made intact
@@ -51,7 +55,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import _session_git, _session_push, claim, labels
+from . import _session_git, _session_guard, _session_push, claim, labels
 
 STATUS_PREFIX = _session_git.STATUS_FIELD
 CLOSED_STATUS = "closed"
@@ -146,6 +150,13 @@ def main(argv: list[str] | None = None) -> int:
     # before the register was looked for, so a refusal never leaves a written
     # file behind.
     session_file = repo / rel
+    # Both paths this run would read and replace, refused before either is touched:
+    # asked after the name was derived and before is_file(), so a dangling link is
+    # this refusal rather than the misleading 'register file not found' below
+    # (noni._session_guard).
+    refused = _session_guard.session_write(_fail, EXIT_USAGE, repo, rel)
+    if refused is not None:
+        return refused
     if not session_file.is_file():
         return _fail(EXIT_SESSION_MISSING, f"register file not found: {session_file}",
                      f"register the session first (register.py --repo {repo} "

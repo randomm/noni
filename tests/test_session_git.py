@@ -120,10 +120,10 @@ def test_stage_and_commit_reports_git_failure_without_an_exit_code(tmp_path):
     """The helper owns no exit code: every way it can fail comes back as
     ``(False, why)``, and a caller's single ``if not ok`` covers them all.
 
-    Three fault classes, one shape: a name that is not one inside the state root
+    Four fault classes, one shape: a name that is not one inside the state root
     (the helper's own words, and no ``ValueError`` escaping to the caller), a
-    state root that is a symlink, and a git refusal (git's own words). None is an
-    exit code, and none raises.
+    state root that is a symlink, a session file that is one, and a git refusal
+    (git's own words). None is an exit code, and none raises.
     """
     repo = _repo(tmp_path)
 
@@ -148,6 +148,20 @@ def test_stage_and_commit_reports_git_failure_without_an_exit_code(tmp_path):
     assert ok is False
     assert "symlink" in why, why
     assert str(repo.resolve()) in why, why
+
+    # A session file that is itself a symlink, on a tree whose --repo is fine:
+    # the primitive's own guard, so a caller that ran no check of its own cannot
+    # commit a path whose bytes live outside the tree.
+    outside = tmp_path / "outside.md"
+    outside.write_text("- status: active\n", encoding="utf-8")
+    planted = repo / "noni" / "sessions" / "linked.md"
+    planted.symlink_to(outside)
+    ok, why = _session_git.stage_and_commit(repo, "noni/sessions/linked.md", "nope")
+    assert ok is False
+    assert "symlink" in why, why
+    assert str(planted) in why, why
+    assert planted.is_symlink(), "the primitive replaced the link"
+    assert outside.read_text(encoding="utf-8") == "- status: active\n"
 
 
 # --- the name the callers hand the primitive --------------------------------

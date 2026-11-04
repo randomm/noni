@@ -9,6 +9,11 @@ variables — a commit made without them is a commit git refuses.
 
 Keeping the builders here (a non-test module) leaves the assertions with the
 test files that state them.
+
+``link_session``, ``link_sessions_dir`` and ``link_noni`` on :func:`_nested_state`
+plant the three shapes issue #68 refuses, so every writer suite builds a linked
+session file, a linked ``noni/sessions/``, or a linked ``noni/`` the same way
+instead of spelling the unlink and replace out again.
 """
 
 from __future__ import annotations
@@ -147,7 +152,10 @@ STATE_BODY = ("# session {sid}\n\n- identity: dev\n- host/worktree: host (repo)\
 
 def _nested_state(tmp_path: Path, sid: str, *, status: str = "active",
                   name: str = "project", decoy: bool = True,
-                  upstream: bool = True, nested: bool = False) -> tuple[Path, Path, Path]:
+                  upstream: bool = True, nested: bool = False,
+                  link_session: bool = False,
+                  link_sessions_dir: bool = False,
+                  link_noni: bool = False) -> tuple[Path, Path, Path]:
     """The private-state route as a reader sets it up: (project, state root, session file).
 
     The project is a git repository; the state root is a *separate* git
@@ -164,6 +172,25 @@ def _nested_state(tmp_path: Path, sid: str, *, status: str = "active",
     ``upstream`` gives the clone an origin and pushes ``main``, so a refused
     commit is classified by what actually went wrong rather than by the absence
     of an upstream.
+
+    ``link_session`` replaces the committed session file with a symlink to a
+    regular file outside the state clone, ``link_sessions_dir`` replaces the whole
+    ``noni/sessions`` directory with a symlink to a regular file outside it, and
+    ``link_noni`` moves the whole ``noni`` directory outside the clone and leaves a
+    symlink in its place. The three positions are the ones the guard reads: a link
+    at ``noni`` is invisible to the other two questions, because ``lstat`` resolves
+    every component but the last and so reports the linked tree as the ordinary
+    directory and file beneath it.
+
+    The sessions and ``noni`` links point at a directory that holds
+    ``sessions/<sid>.md`` with the fixture's own body, so a writer that followed
+    either link would overwrite that file with the bytes it composed, and the
+    caller's byte comparison is what notices; git cannot see through either link, so
+    porcelain reports the tracked session as deleted before any run, which is why a
+    refusal suite snapshots it rather than asserting a clean tree. The links are made
+    after the commit, so the tracked paths are real files in history and only the
+    work tree carries them. A caller that needs the planted path reads it back with
+    :func:`os.path.realpath`.
 
     ``nested`` adds a third tree: a ``deep`` directory inside the project, which
     is the cwd the ``--repo ..`` cases launch from. From there the state root is
@@ -206,6 +233,15 @@ def _nested_state(tmp_path: Path, sid: str, *, status: str = "active",
         _git_ok(tmp_path, "init", "-q", "--bare", str(origin))
         _git_ok(state, "remote", "add", "origin", str(origin))
         _git_ok(state, "push", "-q", "-u", "origin", "main")
+    if [link_session, link_sessions_dir, link_noni].count(True) > 1:
+        raise ValueError("link_session, link_sessions_dir and link_noni plant "
+                         "links at three different paths; ask for one of them")
+    if link_session:
+        _link_session(state, session, tmp_path, name)
+    elif link_sessions_dir:
+        _link_sessions_dir(state, tmp_path, name, sid, status)
+    elif link_noni:
+        _link_noni(state, tmp_path, name, sid, status)
     if nested:
         # The directory the ``--repo ..`` cases launch from: two levels inside
         # the project, so the state root is ``../st`` -- every component of the
@@ -231,6 +267,69 @@ def _nested_state(tmp_path: Path, sid: str, *, status: str = "active",
         _git_ok(deep, "-c", "user.name=Replay", "-c", "user.email=replay@fixture.invalid",
                 "commit", "-q", "-m", "the cwd tree")
     return project, state, session
+
+
+def _link_session(state: Path, session: Path, tmp_path: Path, name: str) -> Path:
+    """Swap the committed session file for a link and return the link's target.
+
+    The target is a regular file outside the state clone carrying the same body the
+    fixture just committed, so a writer that followed the link would leave the bytes
+    it composed where the fixture's own file was, and the caller's byte comparison
+    is what notices. The target is a *file*, which is what makes this the shape a
+    writer must not replace: an atomic write through the link overwrites it.
+    """
+    body = session.read_text(encoding="utf-8")
+    target = tmp_path / f"outside-{name}.md"
+    target.write_text(body, encoding="utf-8")
+    session.unlink()
+    session.symlink_to(target)
+    return target
+
+
+def _link_sessions_dir(state: Path, tmp_path: Path, name: str, sid: str,
+                      status: str) -> Path:
+    """Swap ``noni/sessions`` for a link to a plain file, and return that file.
+
+    The link's target is a regular *file* rather than a directory, so there is no
+    directory for a writer to create its session in: had the link been followed,
+    ``os.replace`` would have replaced this file with a session file, which is what
+    the caller's byte comparison catches. Its bytes are the fixture's own session
+    body, so one expected value serves both planted shapes, and the absence of a
+    file named ``<sid>.md`` beside it is what shows no session landed there. The
+    tracked session goes with the directory that was here, which is the state a
+    linked sessions directory really leaves: git cannot see through the link, so it
+    reports the file as deleted.
+    """
+    target = tmp_path / f"sessions-target-{name}.md"
+    target.write_text(STATE_BODY.format(sid=sid, status=status), encoding="utf-8")
+    sessions = state / "noni" / "sessions"
+    for planted in sessions.iterdir():
+        planted.unlink()
+    sessions.rmdir()
+    sessions.symlink_to(target)
+    return target
+
+
+def _link_noni(state: Path, tmp_path: Path, name: str, sid: str,
+               status: str) -> Path:
+    """Move ``noni`` outside the clone and leave a symlink where it was.
+
+    The link's target is a real directory holding ``sessions/<sid>.md`` with the
+    fixture's own body, so this is the shape a writer still *reads* successfully:
+    had the link been followed, the run would have composed its bytes onto that
+    file two levels outside the state clone, which is what the caller's byte
+    comparison catches. It is also the shape the two narrower questions cannot see
+    -- ``lstat`` resolves ``noni`` and answers "directory" and "regular file" for
+    everything beneath it -- so this is the case the guard had to grow a third
+    question for. git cannot see through the link, so it reports the tracked
+    session as deleted, exactly as the sessions-directory link does.
+    """
+    outside = tmp_path / f"noni-{name}"
+    outside.mkdir()
+    os.replace(state / "noni" / "sessions", outside / "sessions")
+    (state / "noni").rmdir()
+    (state / "noni").symlink_to(outside)
+    return outside / "sessions" / f"{sid}.md"
 
 
 def _committed_names(state: Path, rev: str = "HEAD~1..HEAD") -> list[str]:

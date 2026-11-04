@@ -10,7 +10,8 @@ The allocator is patched in a tiny driver script rather than in-process:
 register.py must stay byte-identical, and monkeypatching its clock or id function
 in the pytest process would not reach the launched interpreter.
 
-The shapes ``_parse_fields`` tolerates are covered here too: they are the
+The shapes ``parse_fields`` tolerates are covered here too (the grammar lives in
+``noni._session_fields``): they are the
 exit-code contract of the writer, and they are what the coverage gate otherwise
 never executes. The marker half of register's behaviour is in
 ``test_register_defaults.py``.
@@ -305,21 +306,23 @@ def test_registration_creates_the_sessions_dir_when_absent(tmp_path):
     assert fields["status"] == "active"
 
 
-# --- _parse_fields shapes ----------------------------------------------------
+# --- parse_fields shapes -----------------------------------------------------
 #
 # The register-file field grammar is one line per field, '- key: value',
 # parsed by stripping the line first. These assert the shapes the parser must
 # tolerate without crashing or inventing a field, including the indented claim
-# row that the census — not the parser — classifies.
+# row that the census — not the parser — classifies. The grammar lives in
+# ``noni._session_fields`` (the module register reads it from); register.py holds
+# the writing rules and no longer re-exports a name of its own for it.
 
 
 def test_parse_fields_reads_dash_prefixed_key_value_lines():
     """Fields are read after stripping, so the indented claim row parses as a
     'claim' key: register.py uses only identity, and the census is what
     separates claim rows from fields (census-sessions.py)."""
-    from register import _parse_fields
+    from noni._session_fields import parse_fields
 
-    fields = _parse_fields(
+    fields = parse_fields(
         "# session x\n"
         "\n"
         "- identity: synth\n"
@@ -336,26 +339,26 @@ def test_parse_fields_reads_dash_prefixed_key_value_lines():
 def test_parse_fields_ignores_malformed_lines():
     """A line without a colon, a non-field line and an empty body are all
     tolerated: no crash, and nothing invented."""
-    from register import _parse_fields
+    from noni._session_fields import parse_fields
 
-    assert _parse_fields("") == {}
-    assert _parse_fields("just prose\n- no colon here\n- identity: ok") == {"identity": "ok"}
+    assert parse_fields("") == {}
+    assert parse_fields("just prose\n- no colon here\n- identity: ok") == {"identity": "ok"}
     # Surrounding whitespace is stripped from both key and value.
-    assert _parse_fields("   -   identity   :    synth   ") == {"identity": "synth"}
+    assert parse_fields("   -   identity   :    synth   ") == {"identity": "synth"}
 
 
 def test_parse_fields_keeps_the_last_write_for_a_repeated_key():
     """A duplicated field is last-wins: the census, not the parser, decides
     whether a repeated key is a defect."""
-    from register import _parse_fields
+    from noni._session_fields import parse_fields
 
-    assert _parse_fields("- status: active\n- status: idle") == {"status": "idle"}
+    assert parse_fields("- status: active\n- status: idle") == {"status": "idle"}
 
 
 def test_parse_fields_splits_on_the_first_colon_only():
     """A value containing colons (a timestamp) survives intact."""
-    from register import _parse_fields
+    from noni._session_fields import parse_fields
 
-    assert _parse_fields("- started: 2026-10-01T10:00:00Z") == {
+    assert parse_fields("- started: 2026-10-01T10:00:00Z") == {
         "started": "2026-10-01T10:00:00Z"
     }

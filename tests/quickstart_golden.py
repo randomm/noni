@@ -44,6 +44,7 @@ from __future__ import annotations
 INSTALL: tuple[str, ...] = ("Install",)
 ROUTE_A: tuple[str, ...] = ("Route A",)
 ROUTE_B: tuple[str, ...] = ("Route B",)
+CI: tuple[str, ...] = ("Run the census in CI",)
 DENYLIST: tuple[str, ...] = ("The deny-list",)
 ISSUE_STATE: tuple[str, ...] = ("The --issue-state",)
 
@@ -92,6 +93,13 @@ GOLDEN: dict[tuple[str, ...], list[list[str]]] = {
          "--task", "#12"],
         ["git", "-C", ".noni-state", "push", "-u", "origin", "main"],
     ],
+    # The CI section prints one census line per route and nothing else: the
+    # install lines are linked, not reprinted, so the page carries one copy of
+    # them and the review of a step that gates a build stays this pair of lines.
+    CI: [
+        ["noni", "census", "--repo", "."],
+        ["noni", "census", "--repo", ".noni-state"],
+    ],
     DENYLIST: [
         ["python", "scripts/public_safety.py"],
     ],
@@ -109,5 +117,5 @@ GOLDEN: dict[tuple[str, ...], list[list[str]]] = {
 # ``test_quickstart.py`` compares this tuple against the page rather than trusting
 # the walk to have chosen well.
 COVERED_SECTIONS: tuple[tuple[str, ...], ...] = (
-    INSTALL, ROUTE_B, ROUTE_A, DENYLIST, ISSUE_STATE,
+    INSTALL, ROUTE_B, ROUTE_A, CI, DENYLIST, ISSUE_STATE,
 )

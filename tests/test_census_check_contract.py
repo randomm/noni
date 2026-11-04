@@ -1,7 +1,18 @@
 """The check contract has exactly one source.
 
-``CHECKS`` owns the ids, codes and severities; the help text, the ``--list`` output
-and the rendered rows are renderings of it, never extra copies.
+``CHECKS`` owns the ids, codes and severities; the help text, the ``--list`` output,
+the rendered rows and the quickstart's CI section are renderings of it, never extra
+copies.
+
+The first class settles the surfaces the census itself renders. The second settles
+the prose a team pastes into a build: the fail and warn sets printed by the
+"Run the census in CI" section must be exactly ``CHECKS`` split by default severity,
+so a class added to the table without a row on the page -- or a code the page
+invented -- fails here naming both sides. The launches that earn those two
+documented verdicts (exit 0 on a clean tree, the double-claim code on a planted
+one) are ``tests/test_quickstart_ci.py``'s; this module settles only that what the
+page says and what the table says are the same set, along with the section's
+``--strict`` promise.
 
 Split out of ``tests/test_census_unified.py``; the builders are in
 ``tests/census_fixtures.py`` and the runners in ``tests/census_run.py``.
@@ -78,3 +89,82 @@ class TestCheckContractIsDerived:
         )
         for name, (_code, _sev, _fix) in census.CHECKS.items():
             assert f"`{name}`" in text, f"SKILL.md does not document check {name}"
+
+
+class TestQuickstartCISetsAgreeWithTheTable:
+    """The CI section's two documented sets are the table, not a second list.
+
+    The sets are read out of the page's own bullets by
+    :func:`test_quickstart_ci.documented_fail_codes` /
+    ``documented_warn_codes`` -- the one page parser, shared with the launches --
+    so what is compared is the text a reader copies, and this module keeps no copy
+    of it.
+    """
+
+    def test_the_documented_fail_set_is_the_table_fail_severity(self):
+        import census
+        from test_quickstart_ci import documented_fail_codes
+
+        fail = documented_fail_codes()
+        expected = {code for code, sev, _fix in census.CHECKS.values() if sev == "fail"}
+        assert fail == expected, (
+            f"the page's fail set {sorted(fail)} is not the census's fail classes "
+            f"{sorted(expected)} (src/noni/census_report.py CHECKS)")
+
+    def test_the_documented_warn_set_is_the_table_warn_severity(self):
+        import census
+        from test_quickstart_ci import documented_warn_codes
+
+        warn = documented_warn_codes()
+        expected = {code for code, sev, _fix in census.CHECKS.values() if sev == "warn"}
+        assert warn == expected, (
+            f"the page's warn set {sorted(warn)} is not the census's warn classes "
+            f"{sorted(expected)} (src/noni/census_report.py CHECKS)")
+
+    def test_the_two_documented_sets_are_disjoint_and_jointly_complete(self):
+        """A code on neither side leaves a build to guess; on both sides it is
+        documented as failing and not failing at once."""
+        import census
+        from test_quickstart_ci import documented_fail_codes, documented_warn_codes
+
+        fail, warn = documented_fail_codes(), documented_warn_codes()
+        assert not (fail & warn), f"a code is documented on both sides: {fail & warn}"
+        assert fail | warn == set(census.CLASS_CODE.values()), (
+            f"the page documents {sorted(fail | warn)} of the census's "
+            f"{sorted(set(census.CLASS_CODE.values()))} codes")
+
+    def test_the_section_keeps_the_run_un_strict_and_names_the_opt_in(self):
+        """The documented step runs without ``--strict``, and ``--strict`` is the
+        opt-in a team adds once the deny-list holds a usable entry.
+
+        Read off the page the reader copies, and checked against the product too:
+        every warn class the page lists must be one ``--strict`` promotes, so the
+        sentence cannot describe a mode the census does not have.
+        """
+        import census
+        from test_quickstart_ci import ci_commands, ci_section
+
+        section = ci_section()
+        assert "--strict" in section, "the CI section no longer mentions --strict"
+        assert "without `--strict`" in section, (
+            "the CI section no longer says the documented step runs without --strict")
+        assert "at its own code" in section, (
+            "the section no longer says a warn class fails at its own code under "
+            "--strict")
+        assert "usable entry" in section, (
+            "the section offers --strict without naming its precondition")
+        for argv in ci_commands():
+            assert "--strict" not in argv, f"a documented CI step runs --strict: {argv}"
+        for name, (_code, default, _fix) in census.CHECKS.items():
+            if default == "warn":
+                assert name in _strict_help(), (
+                    f"--strict no longer promotes {name}, so the page's sentence "
+                    "about warn classes failing at their own code is stale")
+
+
+def _strict_help() -> str:
+    """The --strict help string, which lists the classes the flag promotes."""
+    import census
+
+    action = next(a for a in census._build_parser()._actions if a.dest == "strict")
+    return action.help

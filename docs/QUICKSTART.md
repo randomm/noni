@@ -147,6 +147,43 @@ naming the remote again.
 git -C .noni-state push -u origin main
 ```
 
+## Run the census in CI
+
+One shell step, run from the root of the repository whose state you want gated,
+after the clone-and-install of the [Install](#install-noni) section: it is the
+census line of Route A, and nothing else. No CI system is assumed and no workflow
+file ships here. The page a team copying this into one specific CI needs is
+[`integrations/github-issues/README.md`](../integrations/github-issues/README.md).
+
+```bash
+noni census --repo .
+```
+
+Route B runs the same step with the state clone as `--repo`:
+
+```bash
+noni census --repo .noni-state
+```
+
+The census audits only the tree `--repo` names, so on Route B the state clone is
+what the build gates on and the code repository's tracked files never enter the
+run.
+
+Run it without `--strict`, and gate the build on these two sets, which are the
+census's own classes split by their default severity:
+
+- **fail the build** on 10, 12, 15, 20, 30, 31 and 32;
+- **report without failing** on 40, 41, 42, 43, 44, 45, 46 and 50.
+
+`skills/census/SKILL.md` owns that table with the class names beside each code.
+A warning never moves the exit code on its own, so a first CI run on a tree with
+no deny-list exits 0 and prints the inactive row (`deny-list class inactive
+(absent)`) as its only finding: that is the expected output, not a failure, and
+[the deny-list section](#the-deny-list-and-why---strict-fails-on-a-fresh-attach)
+says what switches the class on. `--strict` is the opt-in a team adds once that
+file holds at least one usable entry, and under it every warn class above fails
+the build at its own code.
+
 ## The deny-list, and why --strict fails on a fresh attach
 
 `--strict` promotes every warn class to a failure at its own code, `hygiene`
@@ -193,7 +230,8 @@ from it does not mean every ordered issue is open.
 
 The census says so out loud when you look at it in human-readable mode: one
 line, `note: ordering-closed was not evaluated: no --issue-state FILE was
-given`, printed beside the report. `--json` mode prints no such line — that
+given`, printed beside the report. A CI run that gates on the exit code can skip
+the note and read the rows instead: `--json` mode prints no such line — that
 stream is findings and a summary, and a notice about a class that did not run
 is neither — so read the note from a run without `--json`, and keep the
 ordering group in the run (`--only` must name an ordering class, or name none).

@@ -28,6 +28,13 @@ QUICKSTART = REPO / "docs" / "QUICKSTART.md"
 PRODUCT = REPO / "docs" / "PRODUCT.md"
 PUBLISHING = REPO / "docs" / "PUBLISHING.md"
 
+# The forge-specific page: the one place in the repository allowed to speak one
+# CI system's vocabulary (docs/QUICKSTART.md's CI section links it, and
+# ``test_the_forge_example_lives_under_integrations_and_is_linked`` checks both
+# halves). It is deliberately absent from DOC_PAGES below: the core-page gate is
+# the reason it exists, so it cannot also be one of the pages that gate clears.
+FORGE_CI_README = REPO / "integrations" / "github-issues" / "README.md"
+
 # The pages whose commands are product surface: a reader copies them, so they
 # have to be runnable as printed. A ``.sh`` entry point belongs to bash; only a
 # ``.py`` entry point runs under an interpreter.

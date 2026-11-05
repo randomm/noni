@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from . import public_safety as _PACKAGE_PUBLIC_SAFETY
+from .census_text import fault_text
 
 # The artifact a not-run hygiene row names, in the census's own hygiene artifact
 # namespace. It is a fixed package-relative literal rather than a path computed
@@ -289,16 +290,40 @@ def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
     with _pinned_hygiene_env(), _QuietScanStderr():
         try:
             violations, _source, denylist = public_safety.scrub_tracked_files(top)
+        except OSError as e:
+            # The scan's own read of the tree faulted. ``OSError`` renders itself
+            # as the errno words *plus the path it failed on*, so the row is
+            # built from the exception's fields rather than from its string:
+            # ``fault_text`` keeps the class and the ``strerror`` (the half that
+            # says what failed) and never the filename (the half that says where,
+            # which no row may print). The scrubber would be the only thing
+            # between a host directory and a published report if the string were
+            # quoted, and it has lost every race it has been in.
+            add(
+                "hygiene scan",
+                scan_artifact,
+                f"hygiene scan did not run: {fault_text(e)} — this run is not a "
+                "hygiene-clean guarantee",
+            )
+            return
         except Exception as e:
             # "Report, never crash": any exception from the scan (a failing or
             # hung git ls-files, an unreadable deny-list store, a malformed
             # pattern table) becomes the not-run row, never a traceback that
             # discards every finding already collected in this run. A public
             # safety scan must not be able to take the whole census down.
+            #
+            # Not a filesystem fault, so there is no filename to withhold and
+            # the exception's own message IS the finding: public_safety raises
+            # RuntimeError(f"git ls-files failed: ...") for a scan whose git call
+            # did not come back, and a row that named only the class would say
+            # that something failed and nothing about what. The text is still
+            # somebody else's, so it goes through the scrub-and-clip net that
+            # ``bounded`` is.
             add(
                 "hygiene scan",
                 scan_artifact,
-                bounded(f"hygiene scan did not run: {e} — this run is not a "
+                bounded(f"hygiene scan did not run: {type(e).__name__}: {e} — this run is not a "
                         "hygiene-clean guarantee"),
             )
             return

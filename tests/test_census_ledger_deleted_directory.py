@@ -5,6 +5,12 @@ git cannot answer for the history.
 
 Split out of ``tests/test_census_unified.py``; the builders are in
 ``tests/census_fixtures.py`` and the runners in ``tests/census_run.py``.
+
+The last two cases are a pair about one line of ``_check_ledger``: the early
+return taken when the ledger's listing faulted, which skips every check below it
+and so silences git's deletion answer as well as the group's own read. They build
+the same tree twice, once with the listing faulted and once without, because
+neither half means anything alone.
 """
 
 from __future__ import annotations
@@ -12,8 +18,9 @@ from __future__ import annotations
 import json
 import shutil
 
-from _harness import _commit_file, _git, _init_repo
+from _harness import _commit_file, _fault_the_ledger_listing, _git, _init_repo
 from census_fixtures import _ndjson_rows, _valid_record
+from census_ledger_fixtures import _code, _rows
 from census_run import _run_census
 
 
@@ -168,3 +175,81 @@ class TestLedgerWholeDirectoryDeletion:
         rows = [r for r in _ndjson_rows(out) if r.get("kind") == "finding"]
         assert sorted(r["check"] for r in rows) == ["ledger-edited", "ledger-empty"], rows
         assert rc == 12, f"expected 12, got {rc}\n{err}\n{out}"
+
+
+def _records_deleted_but_directory_kept(tmp_path):
+    """A repo whose history holds two records and whose working tree holds neither.
+
+    ``noni/decisions/`` is emptied with ``git rm`` of the records alone, so the
+    directory itself stays on disk and stays listable: a listing fault can only
+    be planted on a directory that exists, and the deletion row needs history to
+    have held the records. It is also the shape the pair below needs -- a tree
+    whose history held no record would owe no deletion row whether or not the
+    listing faulted, and the pair would prove nothing.
+    """
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                 json.dumps(_valid_record("2026-10-01-alpha"), indent=2))
+    _commit_file(repo, "noni/decisions/2026-10-02-beta.json",
+                 json.dumps(_valid_record("2026-10-02-beta"), indent=2))
+    _commit_file(repo, "noni/decisions/KEEP.txt", "keeps the directory on disk\n")
+    _git(repo, "rm", "-q", "noni/decisions/2026-10-01-alpha.json",
+         "noni/decisions/2026-10-02-beta.json")
+    _git(repo, "commit", "-q", "-m", "delete the records, keep the directory")
+    assert (repo / "noni" / "decisions").is_dir()
+    return repo
+
+
+def test_a_committed_deletion_behind_a_faulted_listing_says_cannot_tell(
+    tmp_path, monkeypatch
+):
+    """One half of the suppression: a faulted listing is the group's whole answer.
+
+    ``_check_ledger`` returns as soon as the probe reports a faulted listing, and
+    every check below that return is skipped -- including the git-backed deletion
+    check, which is the one check of the group that does not need the listing at
+    all. So a committed deletion whose directory is still on disk, in a tree git
+    can answer for perfectly well, is reported only by the cannot-tell row, at the
+    warn severity of a read that failed, and never as the clean verdict of a run
+    that found no deletion. Exit 0 by default, the class's 12 under --strict.
+    """
+    repo = _records_deleted_but_directory_kept(tmp_path)
+
+    _fault_the_ledger_listing(monkeypatch, repo / "noni" / "decisions")
+    found = _rows(repo, "--skip", "hygiene")
+    assert [r["check"] for r in found] == ["ledger-edited"], (
+        f"a faulted listing is the group's only answer: {found}")
+    row = found[0]
+    assert row["subject"] == "noni/decisions", row
+    assert "could not be listed" in row["message"], row["message"]
+    assert row["severity"] == "warn" and row["code"] == 12, row
+    # git could answer here -- history does hold the two records -- and the run
+    # still says it cannot tell, because the row that would have named them was
+    # never reached.
+    assert "cannot-tell" in row["message"], row["message"]
+    assert _code(repo, "--skip", "hygiene") == 0
+    assert _code(repo, "--skip", "hygiene", "--strict") == 12
+
+
+def test_the_same_tree_without_the_fault_reports_the_deletions_it_was_owed(tmp_path):
+    """The other half: same tree, no fault planted, and git's answer comes through.
+
+    One ``deleted`` row per committed record at exit 12, plus the ``ledger-empty``
+    warn the recordless directory earns. Without this half the faulted run above
+    proves nothing: it would read identically on a tree whose history never held a
+    record, and a fault that silently swallowed a whole fail class would look like
+    a clean run rather than a suppressed one.
+    """
+    repo = _records_deleted_but_directory_kept(tmp_path)
+
+    found = _rows(repo, "--skip", "hygiene")
+    deleted = [r for r in found if r["check"] == "ledger-edited"]
+    assert [r["subject"] for r in deleted] == [
+        "2026-10-01-alpha.json", "2026-10-02-beta.json"], (
+        f"one deleted row per committed record: {deleted}")
+    for row in deleted:
+        assert "deleted" in row["message"], row["message"]
+        assert row["severity"] == "fail" and row["code"] == 12, row
+    assert [r["check"] for r in found if r["check"] == "ledger-empty"] == ["ledger-empty"], (
+        f"the recordless directory is the ledger-empty warn too: {found}")
+    assert _code(repo, "--skip", "hygiene") == 12

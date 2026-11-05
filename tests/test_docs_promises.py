@@ -178,7 +178,12 @@ def test_the_deny_list_states_are_all_named() -> None:
     explain from the row alone, because the file exists.
     """
     # The state words are the product's rendering, not this test's invention.
-    source = (README.parent / "src" / "noni" / "census_hygiene.py").read_text(encoding="utf-8")
+    # Two sources render them: public_safety names the statuses and
+    # census_hygiene_rows adds the comments-only word, so the pair is read
+    # together (see ``docs_promises._denylist_state_words``).
+    source = "".join(
+        (README.parent / "src" / "noni" / name).read_text(encoding="utf-8")
+        for name in ("census_hygiene_rows.py", "public_safety.py"))
     for word in DENYLIST_STATES:
         assert word in source, f"the product no longer renders the state {word!r}"
     for page in (read(QUICKSTART), *[t for p, t in ALL_PAGES

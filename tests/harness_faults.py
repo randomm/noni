@@ -11,6 +11,7 @@ this file, which is loaded before ``harness_module`` finishes.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from harness_module import HOME_PATH_PATTERNS, SECRET_PATTERNS
@@ -126,6 +127,90 @@ def _permission_fault_on(sessions: Path, leaked: str):
 
 _HOME_PATH_KNOWN_IDENTITY = "admin"
 _SECRET_TOKEN_PREFIX = "ghp_"
+
+# --- The planted non-regular paths ---------------------------------------------
+#
+# A fifo is the one path shape that turns the hygiene scan into a process that
+# never returns: a plain ``open`` of a pipe with no writer blocks forever and
+# raises nothing, so no handler downstream can report it (issue #91). Every FIFO
+# case in the suite plants one of these three ways and runs under a bound.
+#
+# The swap is the ONLY way a TRACKED path can hold a pipe. ``git add`` of a fifo
+# exits 0 and then never lists the path -- git indexes blobs, not pipes -- so a
+# fixture that staged one would scan an ordinary file and pass for the wrong
+# reason. Committing a regular file and replacing it is the shape a stray pipe
+# left in a real work tree has, which is the state this guard exists for.
+
+
+def _plant_fifo(repo: Path, rel: str) -> Path:
+    """A fifo at ``repo/rel``, replacing a committed regular file of that name.
+
+    The caller must have committed ``rel`` first (``_commit_file`` does).
+    Returns the path, which the caller may hand to a scan: the fixture is
+    removable (unlinking a fifo is always safe), so ``tmp_path`` cleanup never
+    blocks on it, and no writer process is started -- a scan that opens the pipe
+    blocking hangs against the test's own ``timeout=``, which IS the finding.
+    """
+    return _plant_non_regular(repo, rel, os.mkfifo)
+
+
+def _plant_untracked_fifo(repo: Path, rel: str) -> Path:
+    """A fifo at ``repo/rel`` that git has never seen: the untracked control.
+
+    ``git ls-files`` lists index entries only, so a path never added never
+    reaches the scan whatever the scanner does. A test that asserts this one is
+    asserting the LISTING is what keeps the scan off it, not a guard: pair it
+    with a violation planted in a regular tracked file beside the pipe and
+    require that violation to still be reported.
+    """
+    target = repo / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        target.unlink()
+    os.mkfifo(target)
+    return target
+
+
+def _plant_fifo_link(repo: Path, rel: str, name: str = "outside") -> Path:
+    """A tracked symlink at ``repo/rel`` whose target is a fifo outside the tree.
+
+    The case a top-level ``lstat`` pre-check alone does not cover: the link
+    itself is neither regular nor a pipe, and following it leads to a read that
+    blocks. Only the ``S_ISREG`` check on the descriptor that was actually opened
+    refuses it, so this is the fixture that pins that check rather than the
+    flags.
+
+    The pipe is created OUTSIDE the tree and linked in, so the tree holds a link
+    rather than a second pipe: a fixture that planted both could pass with a
+    guard that only ever looked at the link itself.
+    """
+    target = repo / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.is_symlink() or target.exists():
+        target.unlink()
+    pipe = target.parent.parent / f".{name}-fifo"
+    if not pipe.exists():
+        os.mkfifo(pipe)
+    target.symlink_to(pipe)
+    return target
+
+
+def _plant_non_regular(repo: Path, rel: str, make) -> Path:
+    """Commit-then-replace: ``make`` builds the non-regular node at ``repo/rel``.
+
+    One builder for the swap so the tracked-fifo fixture cannot drift into two
+    recipes for the same state. The pre-existing path is unlinked first: git
+    will not stage a pipe, so the replacement is always post-commit.
+    """
+    target = repo / rel
+    if not target.exists() and not target.is_symlink():
+        raise AssertionError(
+            f"{rel} was never committed: a tracked non-regular path is planted by "
+            "replacing a committed regular file, since git cannot stage a pipe")
+    target.unlink()
+    make(target)
+    return target
+
 
 
 def _home_path_violation() -> str:

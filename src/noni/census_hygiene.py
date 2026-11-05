@@ -26,6 +26,7 @@ import types
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
+from . import census_hygiene_rows as _rows
 from . import public_safety as _PACKAGE_PUBLIC_SAFETY
 from .census_text import fault_text
 
@@ -186,34 +187,19 @@ def _hygiene_labels(public_safety) -> set[str]:
 
 
 def _split_violation(violation: str, labels: set[str]) -> tuple[str, int, str] | None:
-    """Split a public_safety violation "<path>:<line>: <label>" into parts.
+    """The row split, delegated to the reporter module that owns it.
 
-    Returns (path, line, label) or None when the string is not of that shape.
-
-    Splitting cannot be done by counting colons: a tracked path may contain
-    one ("x:y/p.txt" is a legal POSIX filename), so splitting at the first
-    colon truncates the path and garbles the message — which also breaks the
-    documented (artifact, check, subject) sort grouping, because artifact
-    becomes the path prefix before the colon. The label is a fixed string from
-    public_safety's own tables and contains no colon, so the tail is matched
-    against the known label set exactly and everything before ":<line>: " is
-    the path.
+    Kept as a member of this class's module because ``census.py`` re-exports it
+    and the census's own tests name it through the census; the rule itself, and
+    its reasoning, live in :func:`noni.census_hygiene_rows.split_violation`.
     """
-    if not labels:
-        return None
-    for label in labels:
-        suffix = f": {label}"
-        if not violation.endswith(suffix):
-            continue
-        head = violation[: -len(suffix)]
-        path, sep, line_no = head.rpartition(":")
-        if sep and path and line_no.isdigit():
-            return path, int(line_no), label
-        # The suffix matched but the head is not "<path>:<digits>". This label
-        # is not the split; a later one in the set may match the same tail with
-        # a head that does parse, so keep looking instead of giving up.
-        continue
-    return None
+    return _rows.split_violation(violation, labels)
+
+
+def _partition_skip_notes(violations: list[str],
+                          public_safety: Any) -> tuple[list[str], list[str]]:
+    """The skip-row / finding split, delegated to the reporter module."""
+    return _rows.partition_skip_notes(violations, public_safety)
 
 
 def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
@@ -237,8 +223,9 @@ def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
     as not run, never a clean.
 
     The two families of row are told apart by ``subject``, not by prose:
-    ``hygiene scan`` = the scan itself, ``deny-list`` = the deny-list half of
-    the scan, anything else = ``path:line`` of a violating tracked file (whose
+    ``hygiene scan`` = the scan itself (did not run, or skipped tracked paths it
+    could not open), ``deny-list`` = the deny-list half of the scan, anything
+    else = ``path:line`` of a violating tracked file (whose
     artifact is that file, root-relative, while the first two name the checker
     in the package-relative hygiene namespace — see SKILL.md, "The hygiene
     artifact namespace"). The deny-list read follows public_safety's own
@@ -329,7 +316,8 @@ def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
             return
 
     labels = _hygiene_labels(public_safety)
-    for violation in sorted(violations):
+    skipped_notes, found = _partition_skip_notes(violations, public_safety)
+    for violation in sorted(found):
         parsed = _split_violation(violation, labels)
         if parsed is None:
             # Not the documented shape: report the violation verbatim rather
@@ -340,6 +328,14 @@ def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
         rel, line_no, label = parsed
         add(f"{rel}:{line_no}", rel,
             f"public hygiene: {rel}:{line_no}: {label}")
+
+    # One row per skip note, in the scan's own subject and artifact namespace:
+    # the scan did not read those paths, so the run must not read as a hygiene
+    # clean. The sentence is public_safety's (it owns the count and the class
+    # word) and the row is the census's, so the row groups beside the other
+    # rows about the scan itself rather than beside a violating file.
+    for note in skipped_notes:
+        add("hygiene scan", scan_artifact, bounded(note))
 
     if not public_safety._denylist_active(denylist):
         add(
@@ -352,19 +348,8 @@ def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
 
 
 def _denylist_state(denylist: Any) -> str:
-    """Render the deny-list's inactive state word from its result.
-
-    public_safety owns the statuses; this only maps them to a word. The mapping
-    is three lines of the census's own reporting — `status` for a file that is
-    absent or unreadable, and the comments-only case that loaded "ok" with no
-    entries. A status public_safety adds later surfaces under its own name here
-    rather than being silently mislabelled. The caller has already established
-    the class is inactive, so "ok" with entries cannot reach this function.
-    """
-    status = getattr(denylist, "status", "absent")
-    if status != "ok":
-        return str(status)
-    return "present but empty" if not getattr(denylist, "entries", []) else "ok"
+    """The deny-list state word, delegated to the reporter module that owns it."""
+    return _rows.denylist_state(denylist)
 
 
 class _QuietScanStderr:

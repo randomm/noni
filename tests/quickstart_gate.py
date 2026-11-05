@@ -23,9 +23,11 @@ comparison rather than quietly retargeting this helper.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from _harness import REPO
@@ -44,6 +46,12 @@ from noni import public_safety
 # checklist whose green run depends on the distinction, and the sentence the page
 # prints beside the gate command.
 GATE_DENYLIST_INACTIVE_EXIT = 2
+
+# The bound on one gate run. A clean tree costs about a second of git plus a
+# handful of opens; a scan that blocks on a pipe blocks forever, so the bound is
+# what turns that into a failing test instead of a suite that never reports.
+GATE_BOUND_SECONDS = 180
+
 
 
 def gate_page_sentences() -> None:
@@ -72,20 +80,87 @@ def run_gate_on_tree_with_no_denylist(scratch: Path) -> subprocess.CompletedProc
     content to answer for. ``PYTHONPATH`` names the copied package because the
     installed venv is not what the page's reader has beside their clone.
     """
-    argv = _golden_gate_argv()
-    env = _gate_env_without_denylist()
+    _tree, _elapsed, proc = _run_gate_case(scratch)
+    return proc
+
+
+def run_gate_on_tree_with_a_tracked_fifo(
+        scratch: Path) -> tuple[Path, float, subprocess.CompletedProcess[str]]:
+    """The same gate command over a tree whose tracked path holds a pipe.
+
+    The publishing gate is the second caller of ``scrub_tracked_files`` and the
+    one AGENTS.md names, and it has no timeout of its own: a scan that blocks on
+    a pipe hangs the operator's publish-before-push step rather than reporting
+    it. The pipe is planted by the post-commit swap on a path ``git add -A``
+    already committed (git indexes blobs, never pipes, so a staged fifo is not a
+    thing the builder could have made).
+
+    Returns ``(tree, elapsed, process)``. The tree is handed back so the caller
+    can assert the pipe survived the scan -- a checker that deleted the offending
+    path would otherwise pass an exit-code assertion -- and the elapsed seconds
+    are the assertion that the gate returned rather than merely that the child
+    died inside its own timeout, which is the difference between a pass and a
+    green suite that never ran the check.
+    """
+    return _run_gate_case(scratch, plant_fifo=True)
+
+
+def _run_gate_case(scratch: Path, plant_fifo: bool = False,
+                   ) -> tuple[Path, float, subprocess.CompletedProcess[str]]:
+    """One gate run over the scratch clone, optionally over a tree holding a pipe.
+
+    One builder for both cases so the fifo run differs from the clean one by the
+    pipe and nothing else: two builders would be two trees, and only one of them
+    is the tree the page's exit-code sentence describes.
+    """
+    tree, env = _build_gate_tree(scratch)
+    if plant_fifo:
+        _plant_gate_fifo(tree)
+    started = time.monotonic()
+    proc = _run_gate(tree, env)
+    return tree, time.monotonic() - started, proc
+
+
+def _build_gate_tree(scratch: Path) -> tuple[Path, dict[str, str]]:
+    """The committed scratch clone the gate reads: wrapper, package, one clean file.
+
+    Shared by both gate runs so the fifo case differs from the clean one by the
+    pipe and nothing else -- a second builder would be a second tree whose
+    verdict the page's sentence does not describe.
+    """
     tree = scratch / "gate-tree"
     (tree / "scripts").mkdir(parents=True)
     shutil.copy2(REPO / "scripts" / "public_safety.py", tree / "scripts")
     shutil.copytree(REPO / "src" / "noni", tree / "src" / "noni")
     (tree / "notes.md").write_text("# notes\n", encoding="utf-8")
+    env = _gate_env_without_denylist()
     init_repo(tree, env=env)
     checked(git(tree, "add", "-A", env=env), "gate tree add")
     checked(git(tree, "commit", "-q", "-m", "clean tree", identity=True, env=env),
             "gate tree commit")
+    return tree, env
+
+
+def _plant_gate_fifo(tree: Path) -> Path:
+    """Swap a committed regular file of the gate tree for a pipe, and track it."""
+    target = tree / "notes.md"
+    if not target.is_file():
+        raise AssertionError(
+            "the gate tree's notes.md was never committed: a tracked fifo is "
+            "planted by replacing a committed regular file, since git cannot "
+            "stage a pipe")
+    target.unlink()
+    os.mkfifo(target)
+    return target
+
+
+def _run_gate(tree: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """The page's gate command, launched against ``tree`` under a bound."""
+    argv = _golden_gate_argv()
+    env = dict(env)
     env["PYTHONPATH"] = str(tree / "src")
     return subprocess.run([sys.executable, *argv[1:]], capture_output=True,
-                          text=True, cwd=tree, env=env, timeout=180)
+                          text=True, cwd=tree, env=env, timeout=GATE_BOUND_SECONDS)
 
 
 def _golden_gate_argv() -> list[str]:

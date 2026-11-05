@@ -320,6 +320,7 @@ def _ledger_name(rel: str) -> str:
 # path. The row mechanics each one uses are handed in at the call, so the row
 # shape keeps its one owner here.
 from . import census_hygiene as _helpers  # noqa: E402
+from . import census_hygiene_rows as _hygiene_rows  # noqa: E402
 from . import census_ledger as _ledger  # noqa: E402
 from . import census_text as _text  # noqa: E402
 
@@ -373,7 +374,8 @@ HYGIENE_SCAN_ARTIFACT = _helpers.HYGIENE_SCAN_ARTIFACT
 _load_public_safety = _helpers._load_public_safety
 _trusted_public_safety = _helpers._trusted_public_safety
 _hygiene_labels = _helpers._hygiene_labels
-_split_violation = _helpers._split_violation
+_split_violation = _hygiene_rows.split_violation
+_partition_skip_notes = _hygiene_rows.partition_skip_notes
 # The message scrub's own parts stay reachable as members of the census for the
 # same reason: one object, not a copy, so the text rules keep their single owner
 # in ``census_text`` while a caller (and the census's own tests) still names them

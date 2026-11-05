@@ -23,9 +23,16 @@ import public_safety  # noqa: E402
 from _harness import _git  # noqa: E402
 
 
-@pytest.fixture
-def clean_repo(tmp_path, monkeypatch):
-    """A throwaway git repo whose tracked files contain no violations."""
+def _clean_repo(tmp_path, monkeypatch):
+    """A throwaway git repo whose tracked files contain no violations.
+
+    The body of the fixture below, and the one the sibling module
+    ``tests/test_public_safety_non_regular.py`` builds its own ``clean_repo``
+    fixture from. The scrub's unit tests and its non-regular-path tests
+    (issue #91) are one suite split for the size rule, not two fixtures: a tree
+    that reads clean to one file and dirty to the other would make their
+    verdicts incomparable, so the tree has exactly one builder.
+    """
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-q")
@@ -42,6 +49,11 @@ def clean_repo(tmp_path, monkeypatch):
     monkeypatch.delenv(public_safety.DENYLIST_ENV_VAR, raising=False)
     return repo
 
+
+@pytest.fixture
+def clean_repo(tmp_path, monkeypatch):
+    """The shared clean-tree fixture (see :func:`_clean_repo`)."""
+    return _clean_repo(tmp_path, monkeypatch)
 
 def test_scrub_passes_on_clean_fixture(clean_repo):
     """A clean tracked tree produces no violations (either with or without a

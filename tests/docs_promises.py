@@ -67,7 +67,7 @@ SKILL_PAGES: tuple[Path, ...] = tuple(sorted((REPO / "skills").rglob("*.md")))
 STATE_DIR = ".noni-state"
 
 # The three words the census renders for a deny-list class that did not run
-# (``census_hygiene._denylist_state``), derived from the two product sources that
+# (``census_hygiene_rows.denylist_state``), derived from the two product sources that
 # write them rather than typed out again: the public_safety status names and the
 # one literal the census adds for the comments-only file. The page that tells a
 # reader to create the file has to name all three, because the third is the state
@@ -76,9 +76,9 @@ STATE_DIR = ".noni-state"
 def _denylist_state_words() -> tuple[str, ...]:
     """The inactive state words, read out of the two files that render them.
 
-    ``public_safety`` owns the status names and ``census_hygiene`` owns the
+    ``public_safety`` owns the status names and ``census_hygiene_rows`` owns the
     comments-only word, and both are read from source rather than imported: the
-    census module pulls in a scanner this helper has no business loading.
+    census modules pull in a scanner this helper has no business loading.
 
     The status names come from the ``Literal`` annotation on
     ``DenylistResult.status`` -- the one declaration of the closed set -- with
@@ -90,10 +90,11 @@ def _denylist_state_words() -> tuple[str, ...]:
     helper believes they are, so a source that moved or reworded its declaration
     is a failure rather than an empty derivation.
     """
-    hygiene = (REPO / "src" / "noni" / "census_hygiene.py").read_text(encoding="utf-8")
+    hygiene = (REPO / "src" / "noni" / "census_hygiene_rows.py").read_text(encoding="utf-8")
     safety = (REPO / "src" / "noni" / "public_safety.py").read_text(encoding="utf-8")
     empty = re.search(r'return "([^"]+)" if not getattr\(denylist, "entries"', hygiene)
-    assert empty, "census_hygiene no longer renders a comments-only deny-list word"
+    assert empty, (
+        "census_hygiene_rows no longer renders a comments-only deny-list word")
     declared = re.search(r"status:\s*Literal\[([^\]]+)\]", safety)
     assert declared, (
         "public_safety no longer declares DenylistResult.status as a Literal, so "

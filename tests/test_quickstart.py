@@ -366,7 +366,6 @@ def test_the_deny_list_states_are_named_and_the_gate_refuses_an_inactive_class(
         f"the gate's refusal did not name the class it skipped: {proc.stderr!r}")
 
 
-
 def test_the_page_s_pr_only_ignore_rule_actually_hides_the_state_clone(
     world: World,
 ) -> None:

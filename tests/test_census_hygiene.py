@@ -12,10 +12,12 @@ deny-list planting in ``tests/census_denylist.py``.
 from __future__ import annotations
 
 import json
+import os
 
 from _harness import _commit_file, _home_path_violation, _init_repo, _secret_violation
 from census_denylist import _clear_denylist, _with_denylist
 from census_fixtures import _ndjson_rows, _valid_record
+from census_hygiene_child import BOUND_SECONDS, fifo_tree_census_run, tree_dir
 from census_hygiene_target import _hygiene_target
 from census_run import _run_census
 
@@ -399,3 +401,81 @@ class TestHygiene:
         (plain / "note.txt").write_text("hello\n", encoding="utf-8")
         rc, _out, err = _run_census(plain, "--only", "hygiene", "--strict")
         assert rc == 50, f"expected 50 under --strict, got {rc}\n{err}"
+
+
+class TestHygieneFifoTree:
+    """A tracked fifo is skipped and reported, in bounded time, at census level.
+
+    Every case here runs the census in a subprocess (``census_hygiene_child``),
+    never through the file's in-process ``_run_census``: the fault being pinned
+    is a read that never returns, it raises nothing, so ``check_hygiene``'s
+    ``except Exception`` cannot turn it into a row and an in-process regression
+    would wedge the pytest worker instead of failing one test.
+    """
+
+    def test_a_tracked_fifo_yields_no_violation_and_a_prompt_exit(self, tmp_path):
+        """AC1 at the census: the run returns, the pipe earns no violation row.
+
+        The tree is built by the same harness builders the in-process tests use
+        (a ledger record, a planted deny-list violation in a regular file, and
+        a tracked path swapped for a pipe after its commit). The scan must answer
+        in bounded time, exit 0 (hygiene is warn), and produce no row whose
+        subject is the pipe.
+        """
+        rc, rows, elapsed = fifo_tree_census_run(tmp_path)
+        assert rc == 0, f"hygiene is warn: expected 0 without --strict, got {rc}"
+        assert elapsed < BOUND_SECONDS, f"the census took {elapsed:.1f}s"
+        findings = [r for r in rows if r.get("kind") == "finding"]
+        assert not [r for r in findings if r["subject"].startswith("plain.md")], (
+            f"the scan reported the fifo as a violating file: {findings}")
+
+    def test_the_skipped_fifo_is_reported_never_a_clean_scan(self, tmp_path):
+        """The census's honesty half: a path it did not read is a row, not a clean.
+
+        The row is the scan's own -- ``subject`` ``hygiene scan``, the checker in
+        the hygiene artifact namespace -- because the finding is that the scan
+        could not look, not that some file holds something. It names the count
+        and the class and never the skipped path, which is the census's rule for
+        every row about someone else's tree.
+        """
+        import census_hygiene
+
+        _rc, rows, _elapsed = fifo_tree_census_run(tmp_path)
+        scan_rows = [r for r in rows
+                     if r.get("check") == "hygiene" and r["subject"] == "hygiene scan"]
+        assert len(scan_rows) == 1, f"expected exactly one scan row: {rows}"
+        row = scan_rows[0]
+        assert row["artifact"] == census_hygiene.HYGIENE_SCAN_ARTIFACT, row
+        assert "skipped" in row["message"] and "non-regular" in row["message"], row
+        assert "not a hygiene-clean guarantee" in row["message"], row["message"]
+        assert row["severity"] == "warn"
+        assert "plain.md" not in json.dumps(row), (
+            f"a skipped path reached the row: {row}")
+
+    def test_a_violation_beside_the_fifo_is_still_reported(self, tmp_path):
+        """The control that keeps the two cases above from passing for nothing.
+
+        A scan that abandoned the whole tree would emit no pipe row and no
+        violation row. This requires the violation in the regular tracked file
+        beside the pipe to still be there, with its path, line and label.
+        """
+        _rc, rows, _elapsed = fifo_tree_census_run(tmp_path)
+        findings = [r for r in rows if r.get("kind") == "finding"]
+        assert any(r["subject"] == "note.md:1" and "note.md" in r["artifact"]
+                   and "deny-list entry" in r["message"] for r in findings), (
+            f"a violation beside the fifo was lost: {findings}")
+
+    def test_the_fifo_is_left_untouched_on_disk(self, tmp_path):
+        """Skipping is not consuming: the pipe is still a pipe afterwards.
+
+        A guard that opened the path and read it to EOF, or that unlinked it to
+        get rid of the problem, would both pass the row assertions above.
+        """
+        import stat
+
+        # The launcher's own tree name, passed explicitly rather than left to
+        # the default: this assertion reaches into the tree the child built.
+        _rc, _rows, _elapsed = fifo_tree_census_run(tmp_path, name="fifo-tree-untouched")
+        pipe = tree_dir(tmp_path, "fifo-tree-untouched") / "plain.md"
+        assert stat.S_ISFIFO(os.lstat(pipe).st_mode), (
+            "the scan removed or replaced the pipe it was meant to skip")

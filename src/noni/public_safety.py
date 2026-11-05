@@ -45,12 +45,20 @@ The tree to audit and the deny-list location are parameters of the scan, never
 read from this file's own location: the module ships inside a wheel, so its
 ``__file__`` says nothing about the repository being scrubbed. See
 ``scrub_tracked_files`` and ``load_denylist``.
+
+Every file this module opens is somebody else's, so every open is the guarded
+one (:func:`open_regular`): ``O_NONBLOCK`` so a fifo cannot stall the scan, and
+``fstat`` of the descriptor that was opened so nothing that is not a regular
+file is read. A bare ``read_text`` on a tracked path that holds a pipe with no
+writer never returns, and a blocked read raises nothing — no handler downstream
+can rescue it (issue #91).
 """
 
 from __future__ import annotations
 
 import os
 import re
+import stat
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -179,16 +187,99 @@ def _is_self_file(rel: str) -> bool:
     return rel in _SELF_FILES
 
 
-def _read_text_lenient(path: Path) -> list[str] | None:
-    """Read a tracked file as text, or None when it is binary / non-UTF-8.
+# The substring that identifies the one line a scan emits for the paths it had
+# to skip, at both sites that read it: here, which renders the sentence, and the
+# census's hygiene class, which renders the row. Both name the CLASS of the path
+# and how many, and neither names a path: a scan of a stranger's tree prints no
+# machine-local location. public_safety owns the sentence so the gate CLI, which
+# prints its findings verbatim, cannot read a skipped file as clean; the census
+# owns the row's subject and artifact, so it groups beside the other rows of the
+# scan itself (see census_hygiene.py).
+NONI_SKIP_NOTE_MARKER = "hygiene scan skipped"
 
-    Binary or non-UTF-8 files are skipped gracefully (edge case: the scrub
-    must never crash on an unreadable tracked file).
+
+def open_regular(path: Path) -> int | None:
+    """An open descriptor on ``path`` when it is a regular file, else None.
+
+    The caller owns the descriptor and closes it; None means this scan did not
+    open the path at all.
+
+    The refusal sits at the open, the only place it can hold. ``O_NONBLOCK`` is
+    on that open: a fifo with no writer blocks a plain open forever, and a
+    blocked open raises nothing, so no handler downstream can rescue the scan
+    (issue #91 — the hygiene scan hung on a tracked pipe). ``O_NOFOLLOW`` is
+    deliberately absent: a link to a regular file is the file a tracked link
+    names, and ``ELOOP`` would drop it silently.
+
+    ``S_ISREG`` is checked on the descriptor that was opened, never on a second
+    ``lstat`` of the name: between a separate classification and the open, the
+    path a scanner just inspected can become something else. A link to a fifo, a
+    socket or a device is refused by that check rather than followed into a read
+    that blocks or answers nothing.
+
+    ``O_NONBLOCK`` alone would not be enough either — a non-blocking open of a
+    writerless fifo succeeds and reads as EOF, so the pipe would be scanned as
+    an empty file and the run would report a false clean.
     """
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
     try:
-        return path.read_text(encoding="utf-8").splitlines()
-    except (UnicodeDecodeError, OSError):
+        regular = stat.S_ISREG(os.fstat(fd).st_mode)
+    except OSError:
+        # fstat answers ENXIO for a device with nothing behind it. That is a
+        # path this scan cannot read rather than one that is not there, and the
+        # caller reads None the same way: skipped and reported, never clean.
+        regular = False
+    if not regular:
+        os.close(fd)
         return None
+    return fd
+
+
+def _skipped_paths(paths: list[Path]) -> list[Path]:
+    """The paths among ``paths`` the guarded open declined, in the order given.
+
+    Both refusals are the same finding: None is a path that is there and is not
+    a regular file, and an ``OSError`` is the filesystem declining the open at
+    all (vanished since the listing, a link loop, a directory it will not open).
+    Neither is a file this scan looked at, so neither may be counted clean.
+    """
+    declined = []
+    for path in paths:
+        try:
+            fd = open_regular(path)
+        except OSError:
+            declined.append(path)
+            continue
+        if fd is None:
+            declined.append(path)
+            continue
+        os.close(fd)
+    return declined
+
+
+def _skipped_path(path: Path) -> bool:
+    """True when the guarded open declined ``path``, so this scan did not read it."""
+    return bool(_skipped_paths([path]))
+
+
+def _read_text_lenient(path: Path) -> tuple[list[str] | None, bool]:
+    """The lines of a tracked file, as ``(lines, skipped_non_regular)``.
+
+    ``(None, False)`` is a binary or non-UTF-8 file: the scrub never crashes on
+    an unreadable tracked file, and a binary file is a path the scan did look
+    at, so it is skipped silently as it always was.
+
+    ``(None, True)`` is a path the guarded open declined — a fifo, a socket, a
+    device, a directory, or a symlink to one of those: the scan did not read it
+    and says so rather than reporting a clean (see
+    :func:`skipped_paths_note`). ``(lines, False)`` is the text it read.
+    """
+    if _skipped_path(path):
+        return None, True
+    try:
+        return path.read_text(encoding="utf-8").splitlines(), False
+    except (UnicodeDecodeError, OSError):
+        return None, False
 
 
 @dataclass
@@ -236,7 +327,12 @@ def load_denylist(repo: Path) -> DenylistResult:
         if not candidate:
             continue
         path = Path(candidate)
-        if not path.is_file():
+        # ``is_file()`` is not a guard: it follows links and answers True for a
+        # fifo, so the read below would block forever on a deny-list path that
+        # holds a pipe. The same open the tracked scan uses is the guard here,
+        # and a candidate it declined is no different from one that was never
+        # there: the class stays inactive and says so, rather than hanging.
+        if _skipped_path(path):
             continue
         try:
             raw = path.read_text(encoding="utf-8")
@@ -262,13 +358,20 @@ def load_denylist(repo: Path) -> DenylistResult:
     return DenylistResult([], None, "absent")
 
 
-def _scan_tracked_files(repo: Path, patterns: list[tuple[re.Pattern, str]]) -> list[str]:
-    # The tree being scanned is someone else's, so its config may not turn a
-    # read-only listing into execution: core.fsmonitor names a helper git execs,
-    # core.hooksPath redirects hooks, protocol.ext.allow enables external
-    # transport helpers, and a repo-embedded config carrying any of them would
-    # otherwise run under the scanner's privileges. The two config files a host
-    # may carry are pinned to the null device for the same reason.
+def _tracked_relative_paths(repo: Path) -> list[str]:
+    """The repository-relative paths ``git ls-files`` tracks in ``repo``.
+
+    The tree being listed is someone else's, so its config may not turn a
+    read-only listing into execution: core.fsmonitor names a helper git execs,
+    core.hooksPath redirects hooks, protocol.ext.allow enables external
+    transport helpers, and a repo-embedded config carrying any of them would
+    otherwise run under the scanner's privileges. The two config files a host
+    may carry are pinned to the null device for the same reason.
+
+    Both walks of a scan list here: the scan of patterns, and the walk that
+    reports the paths it skipped. Two listings of one tree would be two answers
+    about which files the tree has.
+    """
     try:
         env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
         result = subprocess.run(
@@ -286,12 +389,13 @@ def _scan_tracked_files(repo: Path, patterns: list[tuple[re.Pattern, str]]) -> l
         raise RuntimeError("git ls-files timed out (30s); a stuck index lock or fs hang is likely") from e
     if result.returncode != 0:
         raise RuntimeError(f"git ls-files failed: {result.stderr.strip()}")
+    return [rel for rel in (part.strip() for part in result.stdout.split("\0")) if rel]
+
+
+def _scan_tracked_files(repo: Path, patterns: list[tuple[re.Pattern, str]]) -> list[str]:
     violations = []
-    for rel in result.stdout.split("\0"):
-        rel = rel.strip()
-        if not rel:
-            continue
-        lines = _read_text_lenient(repo / rel)
+    for rel in _tracked_relative_paths(repo):
+        lines, _skipped = _read_text_lenient(repo / rel)
         if lines is None:
             continue
         is_self = _is_self_file(rel)
@@ -314,7 +418,11 @@ def scrub_tracked_files(repo: Path) -> tuple[list[str], str | None, DenylistResu
     never scan the wrong tree by locating itself.
 
     Returns (violations, denylist_source, denylist): violations is a list of
-    ``path:line: label`` strings (empty means the repo is clean);
+    ``path:line: label`` strings (empty means the repo is clean), plus — when
+    the guarded open declined any tracked path — one trailing line saying how
+    many paths were skipped as non-regular and not read (see
+    :func:`skipped_non_regular_paths`; it carries no path, so a census renders
+    it as its own ``hygiene scan`` row rather than a finding about a file);
     denylist_source is the deny-list file path that was loaded, or None when
     the deny-list class was not active (absent or corrupt — a prominent
     stderr notice is printed either way, and a green run without the
@@ -329,6 +437,9 @@ def scrub_tracked_files(repo: Path) -> tuple[list[str], str | None, DenylistResu
         patterns.append((re.compile(re.escape(entry)), "deny-list entry"))
 
     violations = _scan_tracked_files(repo, patterns)
+    skipped = _skipped_paths([repo / rel for rel in _tracked_relative_paths(repo)])
+    if skipped:
+        violations.append(skipped_paths_note(len(skipped)))
 
     if denylist.status != "ok":
         reason = "unreadable/corrupt" if denylist.status == "corrupt" else "absent"
@@ -341,6 +452,38 @@ def scrub_tracked_files(repo: Path) -> tuple[list[str], str | None, DenylistResu
             file=sys.stderr,
         )
     return violations, denylist.source if denylist.status == "ok" else None, denylist
+
+
+def skipped_non_regular_paths(repo: Path) -> list[Path]:
+    """The tracked paths of ``repo`` the guarded open declined.
+
+    The scan reports them as one line (see :func:`skipped_paths_note`); this is
+    that set, for a caller or a test that wants the paths themselves.
+
+    A second walk, and deliberately so: the scan loop stays the shape that
+    produced the verdict, and this one asks only "which tracked paths did the
+    guarded open decline?". It costs one open and one ``fstat`` per tracked
+    file, which is what the scan already paid.
+
+    A path the walk cannot open — vanished between the listing and the read, or
+    refused by the filesystem — is counted as skipped too: a path this scan
+    never saw is not a path it may report clean.
+    """
+    return _skipped_paths([repo / rel for rel in _tracked_relative_paths(repo)])
+
+
+def skipped_paths_note(count: int) -> str:
+    """The one line naming the paths the scan skipped, as a count and a class.
+
+    A count and a class, never a path: the scan of a stranger's tree prints no
+    machine-local location. The census renders this line as a row of its own
+    (subject ``hygiene scan``, artifact ``noni/public_safety.py``), so the
+    sentence says what the scan did not do rather than where it failed to do it.
+    """
+    paths = "path" if count == 1 else "paths"
+    return (f"{NONI_SKIP_NOTE_MARKER} {count} tracked {paths} "
+            "as non-regular: they were not read, so this run is not a "
+            "hygiene-clean guarantee")
 
 
 def _denylist_active(denylist: DenylistResult) -> bool:

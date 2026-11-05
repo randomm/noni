@@ -29,6 +29,10 @@ from harness_faults import (
     _home_path_violation,
     _permission_fault_guard,
     _permission_fault_on,
+    _plant_fifo,
+    _plant_fifo_link,
+    _plant_non_regular,
+    _plant_untracked_fifo,
     _secret_violation,
 )
 from harness_git import (
@@ -147,6 +151,10 @@ __all__ = [
     "_order_module",
     "_permission_fault_guard",
     "_permission_fault_on",
+    "_plant_fifo",
+    "_plant_fifo_link",
+    "_plant_non_regular",
+    "_plant_untracked_fifo",
     "_product_source",
     "_run_session_writer",
     "_script_ast",

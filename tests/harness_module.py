@@ -49,6 +49,7 @@ for _alias, _pkg_name in (
     ("release", "release"),
     ("census", "census"),
     ("census_hygiene", "census_hygiene"),
+    ("census_hygiene_rows", "census_hygiene_rows"),
     ("census_json", "census_json"),
     ("census_ledger", "census_ledger"),
     ("census_ordering", "census_ordering"),

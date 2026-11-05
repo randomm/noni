@@ -129,7 +129,7 @@ consumers should branch on it rather than matching message prose:
 | `subject` | meaning | `artifact` |
 |---|---|---|
 | `path:line` of a tracked file | a built-in or active deny-list violation | that file, root-relative |
-| `hygiene scan` | the scan itself did not run (no git tree, `git ls-files` failed or hung, `public_safety` not importable) | the checker, in the hygiene artifact namespace (`noni/public_safety.py`) |
+| `hygiene scan` | the scan itself did not run (no git tree, `git ls-files` failed or hung, `public_safety` not importable), or it skipped tracked paths it could not open (a fifo, a socket, a device, a directory, or a link to one: the message carries the count and the class, never a path) | the checker, in the hygiene artifact namespace (`noni/public_safety.py`) |
 | `deny-list` | the deny-list half of the scan did not run; the state word (`absent`, `corrupt`, `present but empty`) is in the message | the checker, as above |
 
 A violating file's artifact is rooted in the tree being audited; the two
@@ -222,6 +222,14 @@ The same rule extends to the classes that report their own absence:
   every finding the run already collected is still reported. The scan runs
   in-process over the census's own git tree — the `--ledger` / `--sessions`
   overrides never re-target it.
+
+  Every file the scan opens is opened without blocking and only accepted when
+  the descriptor it opened is a regular file, so a tracked path that holds a
+  pipe cannot stall the run (a blocked read raises nothing, so no handler could
+  report it). Such a path is never read and never counted clean: the run emits
+  one `hygiene scan` row naming how many tracked paths were skipped as
+  non-regular and that they were not read. The row names no path, and the count
+  is the census's honesty — a scan of files it did not read is not a clean one.
 
   The file that switches the deny-list half on is `.noni-scrub-denylist`, one
   entry per line, kept at the root of the tree being audited (so

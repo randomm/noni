@@ -46,6 +46,7 @@ PRODUCT_MODULES = (
     "src/noni/census.py",
     "src/noni/census_git.py",
     "src/noni/census_hygiene.py",
+    "src/noni/census_hygiene_rows.py",
     "src/noni/census_intent.py",
     "src/noni/census_intent_readers.py",
     "src/noni/census_json.py",

@@ -156,7 +156,24 @@ fi
 # the tree has earned a verdict, not even "there is nothing to report". A run
 # that reached the recordless branch first would call an unreadable ledger clean
 # on the very machine that cannot read a record.
-command -v jq >/dev/null 2>&1 || { echo "census.sh: jq not found on $(hostname 2>/dev/null || echo unknown)" >&2; exit 3; }
+# The probe runs jq rather than asking whether the name resolves: `command -v`
+# is satisfied by a stub that exits 127 without reading anything, and the
+# verdicts below all depend on a jq that actually evaluates a program. The
+# probe asks the question the census depends on — can this machine run jq at
+# all — and answers 3 (the jq-missing code) when it cannot.
+jq -n 1 >/dev/null 2>&1 || { echo "census.sh: jq not found on $(hostname 2>/dev/null || echo unknown)" >&2; exit 3; }
+
+# The schema program is the other half of "can this machine read a record", so
+# it is refused on the same terms and in the same place: ahead of the ledger
+# listing, so the (42:ledger-empty) branch can never be the answer a census
+# gives when it holds no program to apply to a record. Without the program there
+# is no schema, and a census that read the directory and reported nothing would
+# be reporting a clean it never established.
+SCHEMA_JQ_FILE="$SCRIPT_DIR/census-schema.jq"
+if [ ! -f "$SCHEMA_JQ_FILE" ]; then
+  echo "census.sh: $SCHEMA_JQ_FILE not found (3:schema-program-missing)" >&2
+  exit 3
+fi
 
 # Refuse every non-directory here rather than at the (10:empty-ledger) branch
 # below: a dangling symlink and a plain file both fail -d, and a fallback that
@@ -237,17 +254,10 @@ fi
 # result is the (fixed, jq-generated) violation message. jq stderr is discarded: an unparseable record is
 # distinguished from a schema failure by the follow-up `jq empty` probe, and raw
 # record bytes are never echoed back into the diagnostic line.
-# The program itself is a sibling file read by jq, so the rules live in one
-# place a reader can open and a linter can parse; the path is taken from this
-# script's own directory so a relocated census stays self-contained. A missing
-# sibling is exit 3 (3:schema-program-missing), the same code as a missing jq:
-# without the program there is no schema to apply, and a census that read the
-# ledger and reported nothing would be reporting a clean it never established.
-SCHEMA_JQ_FILE="$SCRIPT_DIR/census-schema.jq"
-if [ ! -f "$SCHEMA_JQ_FILE" ]; then
-  echo "census.sh: $SCHEMA_JQ_FILE not found (3:schema-program-missing)" >&2
-  exit 3
-fi
+# The program is the sibling file checked (and refused with 3:schema-program-
+# missing) beside the jq probe above, so the rules live in one place a reader can
+# open and a linter can parse; the path is taken from this script's own directory
+# so a relocated census stays self-contained.
 # Field extraction after a schema pass: id \t date \t status \t sup \t by \t any_answer
 SCHEMA_DATA_JQ='
   [ .id, .date, .status,

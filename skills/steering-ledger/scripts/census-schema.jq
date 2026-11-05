@@ -67,12 +67,30 @@ def source_ok:
 # record is bound to $r first: inside all() the input is the question, so a
 # record-level has() there reads the question for a key the record holds and
 # silently answers false for every record.
+# The scalar_items count is the one entry that is not an object -- 5, "a", true,
+# null, an array, anything. Counting it separately rather than folding a
+# (type == "object") guard into the predicate below is what lets the record name
+# the fault: every has() in that predicate faults jq itself (exit 5) on a non-
+# object, and census.sh discards jq's stderr, so a guarded-out entry would still
+# leave the line reading `schema violation:  (10:schema)` -- the exit code right
+# and nothing named, which is the absence of a diagnostic rather than one. The
+# count is read before any field of the item is, so nothing faults on the way to
+# it, and jq-1.8.1 is the reader that settled the shape: a guard on the leading
+# conjunct alone does not stop the fault, because the later (.options | type)
+# read is reached anyway. census.py calls the same shape "question entry is not
+# an object" -- validate_questions in noni/ledger_schema.py -- and the two
+# censuses are pinned to that wording by the test that plants these three scalars
+# (tests/test_ledger_name_and_marker_rules.py). marker_earned carries its own
+# type guard: it reads .options of every item, and jq's `and` short-circuits, so
+# that rule runs on records questions_ok has already refused.
+def scalar_items: ([.questions[]? | select(type != "object")] | length);
 def questions_ok:
   (. as $r
    | ((.questions | type) == "array")
    and ((.questions | length) >= 1) and ((.questions | length) <= 4)
    and (all(.questions[];
-     has("id") and has("text") and has("options")
+     (type == "object")
+     and has("id") and has("text") and has("options")
      and ((.options | type) == "array")
      and ((if ($r | has("single_option")) and ($r.single_option == true) then 1 else 2 end) <= (.options | length))
      and ((.options | length) <= 4)
@@ -101,9 +119,12 @@ def sup_type_ok: ((.supersedes == null) or
 # escapes are json escapes, so the shell never sees them.
 # The blank rule is the writer's, mirrored: a name that is only whitespace
 # names nobody, so the flag refuses it and a hand-edited record is refused the
-# same way here. The blank class is the whitespace str.strip() removes, minus
-# the line breaks (a value carrying one is already refused by the class above)
-# and minus U+0085, U+2028 and U+2029, which are not blank to str.strip().
+# same way here. The class names exactly four characters -- space, tab, U+000B
+# and U+000C -- which is BLANKS in noni/ledger_schema.py read out as a jq class.
+# It is not "the whitespace str.strip() removes": str.strip() also strips U+001C
+# to U+001F, U+0085, U+00A0, U+1680, the U+2000-U+200A run, U+202F, U+205F and
+# U+3000, and none of those is blank to this rule -- a name made of one of them
+# names somebody, and is refused only if it also carries a line break.
 # The census checks these shapes and nothing more: it never verifies an identity,
 # and it does not enforce the pairing: a record naming the party a decision was
 # made for without naming who made it is the writer refusal, not a census one.
@@ -128,17 +149,24 @@ def single_option_ok: ((has("single_option") | not) or (.single_option == true))
 # facts. The // [] and the type test keep a null or a non-array questions value
 # from faulting here: that shape is questions_ok's message to give, and jq's
 # stderr is discarded by the caller, so a rule that faults would answer as the
-# absence of a diagnostic rather than as a diagnostic.
+# absence of a diagnostic rather than as a diagnostic. The select() guards the
+# item's type before it reads .options for the same reason questions_ok does:
+# this rule runs whatever questions_ok answered, so a guard in that one alone
+# would leave a scalar entry reaching has() here and faulting the record.
 def marker_earned: ((has("single_option") | not) or (.single_option != true)
   or ((.questions // []) as $qs
       | ((($qs | type) == "array") and (($qs | length) > 0)
-         and ((([ $qs[]? | select((.options | type) == "array"
+         and ((([ $qs[]? | select((type == "object") and ((.options | type) == "array")
                                   and (.options | length) == 1) ] | length)) > 0))));
+# One entry that is not an object is enough to refuse the record, and the count
+# carries the reason: see scalar_items above for why the refusal is stated as its
+# own message rather than folded into questions_ok's fixed group wording.
+def scalars_ok: ((scalar_items) == 0);
 # The empty string is rejected: it is neither "no supersede" (null) nor a
 # valid record id, and accepting it would make the chain walk ambiguous.
 # (sup_type_ok already covers this via length > 0; stated here so the
 # intent is explicit.)
-if has8 and closed8 and is_iso and cal_ok and questions_ok and status_ok
+if has8 and closed8 and is_iso and cal_ok and questions_ok and scalars_ok and status_ok
    and id_ok and by_ok and asked_by_ok and scope_ok and sup_type_ok and source_ok
    and decided_by_ok and on_behalf_of_ok and single_option_ok and marker_earned
 then "ok"
@@ -159,6 +187,7 @@ else
     (if is_iso | not then "date is not a valid UTC ISO-8601 string" else "" end),
     (if cal_ok | not then "date components out of range (month 1-12, day 1-31, hour 0-23, minute 0-59, second 0-60)" else "" end),
     (if questions_ok | not then "questions array or option bounds violated" else "" end),
+    (if scalars_ok | not then "question entry is not an object" else "" end),
     (if status_ok | not then "status not one of decided|open|superseded" else "" end),
     (if id_ok | not then "id missing or not a non-empty string" else "" end),
     (if by_ok | not then "by missing or not a non-empty string" else "" end),

@@ -142,3 +142,24 @@ def _assert_both_clean(tmp_path: Path, record: dict, label: str,
     for name, (code, out) in verdicts.items():
         assert code == 0, f"{label} via {name}: expected 0, got {code}\n{out}"
     return verdicts
+
+
+def _assert_sh_names_the_schema_fault(tmp_path: Path, record: dict, reason: str,
+                                      label: str, *, subdir: str = "schema") -> None:
+    """The shim's own ``10:schema`` line carries ``reason`` after the colon.
+
+    census.sh folds each jq rule into one diagnostic line and discards jq's
+    stderr, so a rule that faults instead of answering leaves the line reading
+    ``schema violation:  (10:schema)`` -- the exit code right and the reason named
+    by nothing. Asserting the exit code alone certifies that shape, which is the
+    reading failure the census must never answer with, so this asserts the reason
+    is present (alone or joined to the other rules that fired), that the sub-class
+    is the schema one, and that the colon is followed by something.
+    """
+    code, out = _run_sh(_ledger(tmp_path / subdir, record))
+    assert code == 10, f"{label}: expected 10, got {code}\n{out}"
+    assert f"schema violation: {reason}" in out or f"; {reason}" in out, (
+        f"{label}: the shim's line does not name the fault: {out}")
+    assert "(10:schema)" in out, f"{label}: wrong sub-class: {out}"
+    assert "schema violation:  (" not in out, (
+        f"{label}: the diagnostic is blank: {out}")

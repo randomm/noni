@@ -48,6 +48,15 @@ from noni import public_safety
 # prints beside the gate command.
 GATE_DENYLIST_INACTIVE_EXIT = 2
 
+# The gate's exit when it could not run at all: the wrapper's ``import noni``
+# failed, so no tracked file was read. Kept apart from the exit above on
+# purpose -- CI passes on 2 (a public runner has no deny-list), so a code that
+# means "nobody scanned anything" must never be answerable with it. Named here
+# for the same reason the number above is: nothing in the product names it (the
+# wrapper returns the literal), and the step's shell, the wrapper's own
+# behaviour test and the two docs pages are all asserted against this value.
+GATE_COULD_NOT_RUN_EXIT = 3
+
 
 def gate_page_sentences() -> None:
     """The two documents that state the pinned exit code still state it.

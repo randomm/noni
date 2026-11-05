@@ -240,9 +240,10 @@ def check_intent(
     # by the branch under this one.
     if record_kind != "regular" and record_kind != "absent":
         # A symlink, a directory or a device at the cited path says nothing about
-        # whether the direction stands. The row names the cited id and text this
-        # file wrote or the census's bounder kept short, never a target path or a
-        # byte, and never a bare ``None`` from a classifier that named no problem.
+        # whether the direction stands. The row names the cited id and one fixed
+        # sentence of this file's, never the classifier's fault text (which is
+        # ``OSError`` words and could quote a host path at any length) and never a
+        # bare ``None`` from a classifier that named no problem.
         add(SUBJECT_CANNOT_TELL,
             f"cannot-tell: the record {cited} the intent cites is not a readable "
             f"regular file ({_classify_words(record_kind, record_problem)}), so "

@@ -262,11 +262,25 @@ def test_ci_proves_the_installed_console_command_runs():
     assert re.search(r"\.venv-wheel/bin/noni --help", body), (
         "the wheel job never runs the installed noni script"
     )
-    for tool in ("census", "register", "claim", "decide", "order"):
-        assert re.search(rf'noni "\${{?tool}}?" --help|noni {tool} --help', body) or \
-            "for tool in census register claim decide order" in body, (
-            f"the wheel job never dispatches the {tool} subcommand of the installed command"
-        )
+    from noni import cli
+
+    # Parsed from the loop header rather than matched as a literal, so the
+    # assertion follows cli.TOOLS: a verb added to the dispatch table must be
+    # dispatched by the wheel job without either file being edited by hand, and
+    # a verb dropped from the loop fails here instead of passing silently.
+    match = re.search(r"for tool in ([^;\n]+); do", body)
+    assert match, "the wheel job has no `for tool in ...; do` dispatch loop"
+    looped = set(match.group(1).split())
+    assert looped == set(cli.TOOLS), (
+        "the wheel job's dispatch loop is not the set of subcommands the console "
+        f"names: loop has {sorted(looped - set(cli.TOOLS))}, "
+        f"missing {sorted(set(cli.TOOLS) - looped)}"
+    )
+    # The loop must actually dispatch its variable, not merely name eight verbs.
+    assert 'noni "$tool" --help' in body, (
+        "the wheel job's loop does not dispatch the loop variable of the "
+        "installed command"
+    )
 
 
 def test_ci_names_the_editable_install():

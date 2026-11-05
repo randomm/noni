@@ -234,17 +234,22 @@ def load_denylist(repo: Path) -> DenylistResult:
         # guard: the deny-list read gets the same open-and-classify as every tracked
         # file, and a non-regular candidate is closed by the open and never waited
         # on. A pipe at the deny-list path is as inactive as a corrupt one.
-        fd, _fault = _open_regular(path)
-        if fd is None:
-            # Nothing to read at this candidate, and no finding to raise: an
-            # unopenable deny-list is the class being inactive, which this caller
-            # reports its own way. The next candidate gets its chance; if none is
-            # usable the run is "absent".
+        fd, fault = _open_regular(path)
+        if fd is None and fault is None:
+            # Nothing at this candidate and nothing to report: the open faulted with
+            # ENOENT or ENOTDIR, so this path is simply not there. Absence stays a
+            # silent skip -- the operator is not warned about a file they never wrote --
+            # and the next candidate gets its chance.
             continue
         # The deny-list class never turns a fault into a tracked-file finding: an
         # unopenable or unreadable candidate is the class being inactive, and the reason
         # words only go into the stderr notice this caller prints.
-        if fd == _NOT_REGULAR:
+        if fd is None:
+            # The filesystem refused the open (EACCES on a 000-mode file, ELOOP on a
+            # link loop). Reporting this as absence would leave the operator's deny-list
+            # silently inactive, so it degrades like every other unreadable arm.
+            raw, reason = None, ": ".join(filter(None, fault))
+        elif fd == _NOT_REGULAR:
             raw, reason = None, "opened, but it is not a regular file"
         else:
             try:

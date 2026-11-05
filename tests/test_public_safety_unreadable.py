@@ -202,13 +202,20 @@ def test_a_file_that_vanished_after_the_listing_is_still_a_skip(tmp_path):
     assert scrub_in_time(repo) == [], "a vanished tracked file earned a row"
 
 
-def test_the_deny_list_read_still_degrades_on_a_sealed_candidate(tmp_path):
-    """The other lenient caller is unchanged: a sealed deny-list stays a skip, not a finding.
+def test_the_deny_list_read_reports_a_sealed_candidate_as_corrupt(tmp_path, capsys):
+    """A deny-list the filesystem refuses is corrupt, not absent: the class is not
+    silently inactive.
 
-    ``load_denylist`` shares the guarded open, so the fault path added for tracked
-    files must not have turned its three statuses into violations: an unreadable
-    deny-list is still the inactive-class answer the publishing checklist names, and
-    the tree's own scan still reports no row for it.
+    ``load_denylist`` shares the guarded open with the tracked-file scan. Where the
+    scan turns a refused read into a row, the loader turns it into the "corrupt"
+    status: the operator wrote a deny-list and the open was refused (EACCES on a
+    000-mode file, ELOOP on a link loop), so reporting "absent" would tell them to go
+    write one and leave their deny-list silently inactive. Absence -- an open that
+    faulted with ENOENT/ENOTDIR -- stays a silent skip; only a fault degrades.
+
+    The notice names the fault by its class (``PermissionError``) and never the path
+    the syscall failed on, the same scrub the tracked-file row follows. The source is
+    named so the operator can find the file that was refused.
     """
     repo, _ = _sealed_repo(tmp_path, name="denylist-sealed")
     sealed = tmp_path / "sealed-denylist.txt"
@@ -224,6 +231,53 @@ def test_the_deny_list_read_still_degrades_on_a_sealed_candidate(tmp_path):
     finally:
         public_safety._default_denylist_file = public_safety.default_denylist_file
 
-    assert result.status == "absent", (
-        f"a sealed candidate must keep the walk going, not classify the run: {result}")
+    assert result.status == "corrupt", (
+        f"a refused deny-list must classify the run corrupt, not absent: {result}")
     assert result.entries == []
+    assert result.source == sealed.as_posix(), (
+        f"the corrupt run must name the file that was refused: {result}")
+    err = capsys.readouterr().err
+    assert "PermissionError" in err, (
+        f"the notice must name the fault class: {err!r}")
+    # The fault pair is scrubbed to (class, strerror); the kernel's message, which
+    # repeats the path the syscall failed on, must not appear in the parenthesised
+    # reason. The banner's own ``deny-list <path> unreadable`` candidate prefix is
+    # pre-existing deny-list notice behaviour (the leak census_hygiene._QuietScanStderr
+    # exists for) and is outside this HIGH's fault-reason scrub, so only the reason
+    # between the parens is asserted path-free.
+    reason = err.split("unreadable", 1)[-1].split(";", 1)[0]
+    assert "PermissionError" in reason and "Permission denied" in reason, (
+        f"the notice did not carry the scrubbed fault pair: {err!r}")
+    assert str(sealed) not in reason, (
+        f"the fault reason leaked the path the syscall failed on: {err!r}")
+
+
+def test_the_open_fault_notice_carries_the_fault_class_and_no_path(tmp_path, monkeypatch, capsys):
+    """The open-fault arm's reason text is the joined fault pair, with no path.
+
+    ``open_regular`` answers a refused open with ``(None, (class, strerror))``; the
+    loader must put both words into its stderr notice (so the operator learns *why*
+    the deny-list went inactive) while the fault reason itself carries no path. The
+    fault is bent in-process so the reason is pinned exactly, independent of the
+    filesystem's errno.
+    """
+    def fake_open(_path):
+        return (None, ("OSError", "Too many levels of symbolic links"))
+
+    monkeypatch.setattr(public_safety, "_open_regular", fake_open)
+    sealed = tmp_path / "loop-denylist.txt"
+    public_safety._default_denylist_file = lambda _repo: sealed
+    try:
+        result = public_safety.load_denylist(tmp_path / "repo")
+    finally:
+        public_safety._default_denylist_file = public_safety.default_denylist_file
+
+    assert result.status == "corrupt", result
+    err = capsys.readouterr().err
+    reason = err.split("unreadable", 1)[-1].split(";", 1)[0]
+    assert "OSError: Too many levels of symbolic links" in reason, (
+        f"the notice did not carry the joined fault reason: {err!r}")
+    # The reason (the parenthesised fault pair) carries no path: only the banner's
+    # pre-existing candidate prefix does, and that is not this fault's leak.
+    assert str(sealed) not in reason, (
+        f"the fault reason printed a path: {err!r}")

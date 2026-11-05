@@ -9,8 +9,10 @@ allocated it.
 The id is minted ONCE per run and threaded through every use of it (the name written,
 the pathspec, the marker's contents, the commit subject, the printed line), because two
 mints would let the printed id and the committed id disagree. The shape is
-``<UTC date>-<6 hex chars>``: 16^6 is roughly 16.7M slots per day, so ids are
-collision-free by construction and stable across pulls and clones once committed (see
+``<UTC date>-<6 hex chars>``: 16^6 is roughly 16.7M slots per UTC day, which makes a
+collision rare but not impossible, so ``register`` tests the name it mints against the
+filesystem and mints again when it is taken, up to :data:`ALLOCATION_RETRIES` times
+before it refuses. Ids are stable across pulls and clones once committed (see
 ``references/register.md``). The timestamp is the same UTC second, formatted the way
 the sessions census reads it back.
 
@@ -30,8 +32,23 @@ def now_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+# How many names the allocating route mints before it reports a taken name: the
+# first allocation plus this many re-mints. A real 24-bit collision is rarer than one
+# run in a hundred thousand, so the bound is there to end a pathological run (every
+# name in the day's space held, or an allocator pinned to one id), not to be tuned;
+# it lives beside the allocator so the retry and the mint are read together.
+ALLOCATION_RETRIES = 3
+
+
 def make_session_id() -> str:
-    """The session id this run owns: a UTC date and six hex characters."""
+    """The session id this run owns: a UTC date and six hex characters.
+
+    The shape the census's ``SESSION_NAME_RE`` accepts, ``<YYYY-MM-DD>-<6 hex>``.
+    Six hex characters are 16^6 slots per UTC day, which is roomy rather than
+    collision-resistant: ids are compared, not trusted -- ``register`` checks the name
+    this mints against the filesystem and mints again on the rare collision (see
+    ``noni.register`` and ``references/register.md``).
+    """
     return f"{datetime.now(timezone.utc).strftime('%Y-%m-%d')}-{uuid.uuid4().hex[:6]}"
 
 

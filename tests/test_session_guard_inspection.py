@@ -36,7 +36,7 @@ from _harness import _git_ok, run_from
 from harness_paths import CLOSE, SRC
 from session_git_support import STATE_DIR, _nested_state
 
-from noni import _path_kind, _session_paths
+from noni import _path_kind, _session_guard, _session_paths
 
 SID = "2026-10-01-cccccc"
 
@@ -402,14 +402,16 @@ def test_no_input_shape_raises_out_of_the_guard(tmp_path):
     The writers call this before they have written anything and print the answer
     straight to stderr, so a raise is a traceback where an operator should have read a
     fix. The shapes here are the ones a caller can actually produce -- bytes, a Path, a
-    number, None, a name no codec carries -- driven through both entry points.
+    number, None, a name no codec carries -- driven through every entry point that
+    takes a name, the allocating route's two questions included.
     """
     root = tmp_path / "never-raises"
     (root / "noni" / "sessions").mkdir(parents=True)
     for rel in (b"", b"\xff\xfe", "", " ", chr(0), "a" + chr(1) + "b", ".", "..",
                 "/", "~", "noni/sessions/x.md", chr(0xd800), 12, None,
                 Path("noni/sessions/x.md"), ["not", "a", "name"]):
-        for call in (_session_paths.write_refusal, _session_paths.session_file_refusal):
+        for call in (_session_paths.write_refusal, _session_paths.session_file_refusal,
+                     _session_guard.taken_refusal):
             refused = call(root, rel)
             assert refused is None or (isinstance(refused, tuple)
                                         and len(refused) == 2

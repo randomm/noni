@@ -36,6 +36,7 @@ PRODUCT_MODULES = (
     "src/noni/_safe_text.py",
     "src/noni/_session_guard.py",
     "src/noni/_session_paths.py",
+    "src/noni/_session_walk.py",
     "src/noni/_session_rebase_state.py",
     "src/noni/_commit_cause.py",
     "src/noni/_marker.py",

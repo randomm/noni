@@ -65,24 +65,30 @@ def _skip_when_build_absent() -> None:
         pytest.skip("the build module is not installed in this environment")
 
 
-def _build_wheel(source_root: Path, tmp_path: Path) -> Path:
+def _build_wheel(source_root: Path, tmp_path: Path,
+                 extra_inputs: tuple[str, ...] = ()) -> Path:
     """Build the wheel from this tree and hand back its path.
 
     The build runs in a copy of the tree so the build's own droppings
     (``build/``, ``*.egg-info/``) never land in the working tree the suite is
     measuring.
+
+    ``extra_inputs`` names paths at the source root to copy in beyond ``src``
+    and ``pyproject.toml``, so a caller that needs a file to reach the build
+    (``LICENSE``, in ``test_wheel_license.py``) asks for it instead of staging
+    one into the helper's private output directory. A name nothing copies is a
+    file the build cannot ship, so the request is checked rather than trusted.
     """
     _skip_when_build_absent()
     build_tree = tmp_path / "build-tree"
-    # parents=True: the caller may hand over a fresh output directory of its own
-    # (the suite's fixture does, and so does the broken-backend test below).
-    build_tree.mkdir(parents=True)
-    for name in ("src", "pyproject.toml"):
+    build_tree.mkdir(parents=True, exist_ok=True)
+    for name in (*("src", "pyproject.toml"), *extra_inputs):
         source = source_root / name
+        assert source.exists(), f"the wheel build needs {name!r}, which is missing"
         target = build_tree / name
         if source.is_dir():
-            subprocess.run(["cp", "-r", str(source), str(target.parent)], check=True,
-                           timeout=BUILD_TIMEOUT)
+            subprocess.run(["cp", "-r", str(source), str(target.parent)],
+                           check=True, timeout=BUILD_TIMEOUT)
         else:
             target.write_bytes(source.read_bytes())
     proc = subprocess.run(

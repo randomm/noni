@@ -143,8 +143,8 @@ to the attached project. Adapters for one tracker or driver live under
 ## Contributing
 
 Set up the venv and run the gates in [CONTRIBUTING.md](CONTRIBUTING.md). Before
-publishing a public tree, follow the scrub checklist in
-[docs/PUBLISHING.md](docs/PUBLISHING.md). The committed check covers
-machine-local paths and secret shapes; operator names, external project or tool
-names and hostnames are covered only by the untracked deny-list that checklist
-requires.
+publishing, follow [docs/PUBLISHING.md](docs/PUBLISHING.md): names and hostnames
+are caught only by its untracked deny-list, not by the committed check.
+
+License: Apache-2.0 ([LICENSE](LICENSE)). Report security problems privately:
+[SECURITY.md](SECURITY.md).

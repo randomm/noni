@@ -112,10 +112,10 @@ has written neither censuses clean. The census also reads input it does
 not own: the `--issue-state` map an adapter or the operator supplies, whose
 absence it reports as an unevaluated check. It recomputes everything it reports
 from git history plus those files on every run: metrics are derived, never
-self-reported.
-
-The skills are the unit of product: an agent loads `skills/<skill>/SKILL.md`,
-which names the script to run, the flags it takes and the exit codes it returns.
+self-reported. The skills are the unit of product: an agent loads
+`skills/<skill>/SKILL.md`, which names the script to run, its flags and its exit
+codes. How to put the four core skills in front of your agents, and what an agent
+does from session start to close: [docs/ONBOARDING.md](docs/ONBOARDING.md).
 
 ## Status
 

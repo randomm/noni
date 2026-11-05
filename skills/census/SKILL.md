@@ -189,15 +189,11 @@ The same rule extends to the classes that report their own absence:
   When the listing faults, no state word of the class is rendered (those four
   name states of the tree, and "unlistable" is a fault of this run's read): the
   run adds one `ledger-edited` `cannot-tell` row whose `subject` and `artifact`
-  both carry the ledger path and whose message carries the `OSError` text,
-  bounded and stripped of machine-local paths. The path is root-relative
-  (`noni/decisions`) whenever the census could root it; for a `--ledger`
-  override that points outside the audited tree the row keeps the path's last
-  segment, since the machine-local directory that holds it must not reach a
-  report. A relative override the census cannot root (one that does not sit
-  under `--repo`) keeps the path as it was given in `subject` and `artifact`,
-  and the scrubber's `<path>` marker wherever it is narrated. It is a warn at
-  exit 0 and a failure at 12 under `--strict`.
+  both carry the ledger's name and whose message carries the `OSError` text,
+  bounded and stripped of machine-local paths. That name is the last-segment
+  rule stated once below, and it is the rule for every row of the ledger group
+  that names the ledger, not only this one. It is a warn at exit 0 and a
+  failure at 12 under `--strict`.
 - **An unreadable `noni/sessions/` is never clean.** A `noni/sessions/` that
   stats as a directory and cannot be listed earns exactly one `session-deleted`
   `cannot-tell` row — the class the deletion check already uses for its
@@ -295,6 +291,34 @@ The same rule extends to the classes that report their own absence:
 - **A map key must be the issue number itself.** `"07"` or `"-7"` can never match
   an entry's issue, so such a key is reported as malformed rather than becoming a
   silent `cannot-tell` row for an issue the file does name.
+
+### Every ledger row names the ledger the same way
+
+Every row of the ledger group that names the ledger names it by one identifier,
+so the rows cannot disagree about which directory they are talking about: the
+root-relative path when the census could root it (`noni/decisions`, the form the
+census wrote and the one a caller joins on), and the path's **last segment** for
+any `--ledger` it could not root — an absolute path, a `~`-rooted one, or a
+relative walk out of the tree (`../x/decisions` is `decisions`). A path a caller
+spelled out of its own working directory or home is a machine-local location, and
+the report promises never to print one; a scrubber's `<path>` marker is not an
+answer either, because a marker is not a name anyone can act on.
+
+The rows it applies to, in the fields they render it in:
+
+| row | where the ledger's name appears |
+|---|---|
+| `ledger-edited` `cannot-tell` for a faulted listing | `subject`, `artifact`, and the parenthesised ledger in its message |
+| `ledger-empty` | `subject` and `artifact` |
+| `ledger-record` | `artifact`, as the ledger's name with the record's name after it (`decisions/<name>.json`) |
+| `ledger-chain` (duplicate, dangling, orphan, cycle, zero-live, multi-live) | `artifact`, on every row of the class |
+| `ledger-edited` `cannot-tell` for an override outside the audited git tree | the parenthesised ledger in its message |
+
+The in-tree case is unchanged by the rule and is what a normal run prints: those
+fields carry `noni/decisions`, and the record row carries
+`noni/decisions/<name>.json`. The `deleted` row of `ledger-edited` is not in the
+table because it reports a record's path inside the audited tree, which the
+append-only question can only reach for a ledger that is inside it.
 
 ### census exit 50 is not the public_safety gate
 

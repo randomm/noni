@@ -6,6 +6,15 @@ sentence, and a public_safety that is not the one the census loaded is refused.
 Split out of ``tests/test_census_unified.py``; the builders are in
 ``tests/census_fixtures.py``, the runners in ``tests/census_run.py`` and the
 deny-list planting in ``tests/census_denylist.py``.
+
+The not-run row has two arms, and they are told apart by what the scan raised
+(``src/noni/census_hygiene.py``, ``check_hygiene``): a filesystem fault is
+rendered by ``census_text.fault_text``, which reads the exception's class and
+its ``strerror`` and never the filename it failed on, and anything else keeps
+its class and its own message through the census's scrub-and-clip. The two
+arms are tested apart because the text they may carry is different in kind:
+one is a location the reporter must not have at all, the other is the reason
+the reporter exists to print.
 """
 
 from __future__ import annotations
@@ -13,13 +22,33 @@ from __future__ import annotations
 import json
 import sys
 
-from _harness import _commit_file, _home_path_violation, _init_repo, _secret_violation
+from _harness import (
+    _commit_file,
+    _home_path_violation,
+    _init_repo,
+    _permission_fault_guard,
+    _permission_fault_on,
+    _secret_violation,
+)
 from census_denylist import _clear_denylist, _with_denylist
 from census_fixtures import _ndjson_rows, _valid_record
 from census_hygiene_target import _hygiene_target
 from census_run import _run_census
 
 _SECRET = _secret_violation()
+
+
+def _not_run_message(stdout: str) -> str:
+    """The single not-run row's message of a --json run.
+
+    Fails loudly rather than returning a default: a run that produced no not-run
+    row is the bug, and a caller that compared against ``""`` would read it as a
+    message that simply lacked the expected words.
+    """
+    rows = [r for r in _ndjson_rows(stdout)
+            if r.get("check") == "hygiene" and r["subject"] == "hygiene scan"]
+    assert len(rows) == 1, f"expected exactly one not-run row: {rows}"
+    return rows[0]["message"]
 
 class TestHygieneRowContract:
     """The hygiene class's four states are machine-distinguishable: subject, not
@@ -111,6 +140,171 @@ class TestHygieneRowContract:
             f"the row leaked a machine-local absolute path: {rows[0]['message']}"
         )
         assert len(rows[0]["message"]) < 400, f"message unbounded: {rows[0]['message']}"
+
+    def test_not_run_row_of_an_errno_fault_keeps_the_words_and_loses_the_path(
+        self, tmp_path, monkeypatch
+    ):
+        """An ``OSError`` carrying an errno pair keeps its ``strerror`` and loses
+        its filename: the words say what failed, and the path is the location no
+        row may print.
+
+        ``str(OSError)`` mixes the two in one string, so the row is built from the
+        structured fields instead (``census_text.fault_text``) rather than scrubbed
+        after the fact: the shapes a host path takes are not enumerable, and the
+        scrubber is a net, not the thing standing between a directory and a
+        published report. The filename below is deliberately a shape that net has
+        historically lost (a non-ASCII component and one holding a space), built
+        at runtime so this file carries no host path of its own.
+        """
+        public_safety = _hygiene_target()
+
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/.gitkeep", "")
+        host = "/home/someone/\u00fcn\u00ef c\u00f6de/my dir/denylist"
+        monkeypatch.setattr(
+            public_safety, "scrub_tracked_files",
+            lambda _repo: (_ for _ in ()).throw(OSError(13, "Permission denied", host)))
+        _rc, out, _err = _run_census(repo, json_out=True)
+        rows = [r for r in _ndjson_rows(out)
+                if r.get("check") == "hygiene" and r["subject"] == "hygiene scan"]
+        assert len(rows) == 1, f"rows: {rows}"
+        message = rows[0]["message"]
+        for part in ("someone", "\u00fcn\u00ef", "c\u00f6de", "my dir", "denylist"):
+            assert part not in message, f"filename part leaked into the row: {part!r} in {message!r}"
+        # The words the row exists to print survive: a not-run row that named no
+        # reason would read the same as any other scan that did not run.
+        assert "Permission denied" in message, message
+        assert "PermissionError" in message, message
+        assert "hygiene scan did not run" in message, message
+        assert len(message) < 400, f"message unbounded: {message}"
+
+    def test_not_run_row_keeps_the_reason_of_a_non_oserror(self, tmp_path, monkeypatch):
+        """The other arm: a fault that is not a filesystem fault keeps its own
+        message, because the reason it carries IS the finding.
+
+        ``public_safety`` raises ``RuntimeError(f"git ls-files failed: …")`` for a
+        scan whose ``git ls-files`` did not come back, and a row reduced to the
+        class name would tell the operator only that something failed. The text
+        is foreign, so it still goes through the scrub-and-clip net: the reason
+        stays and any host path inside it does not.
+        """
+        public_safety = _hygiene_target()
+
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/.gitkeep", "")
+        monkeypatch.setattr(
+            public_safety, "scrub_tracked_files",
+            lambda _repo: (_ for _ in ()).throw(
+                RuntimeError("git ls-files failed: " + _home_path_violation())))
+        _rc, out, _err = _run_census(repo, json_out=True)
+        rows = [r for r in _ndjson_rows(out)
+                if r.get("check") == "hygiene" and r["subject"] == "hygiene scan"]
+        assert len(rows) == 1, f"rows: {rows}"
+        message = rows[0]["message"]
+        assert "git ls-files failed" in message, (
+            f"the non-OSError arm dropped the reason: {message!r}")
+        assert _home_path_violation() not in message, f"host path leaked: {message!r}"
+        assert "RuntimeError" in message, message
+        assert len(message) < 400, f"message unbounded: {message}"
+
+    def test_the_two_not_run_arms_are_not_swapped(self, tmp_path, monkeypatch):
+        """The two arms are distinguished by the exception's type, not by which
+        message happened to be shorter.
+
+        One planted fault per arm, and each is asserted against the other's
+        behaviour: a scan fault that rendered its filename is the leak, and a
+        foreign message that was reduced to a class name lost the reason. Either
+        half swapped would let the other look correct in isolation.
+        """
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/.gitkeep", "")
+        target = _hygiene_target()
+        leaked = "/home/someone/\u00fcn\u00ef c\u00f6de/my dir/denylist"
+
+        monkeypatch.setattr(
+            target, "scrub_tracked_files",
+            lambda _repo: (_ for _ in ()).throw(OSError(13, "Permission denied", leaked)))
+        _rc, out, _err = _run_census(repo, json_out=True)
+        os_message = _not_run_message(out)
+        assert "Permission denied" in os_message and leaked.split("/")[3] not in os_message, (
+            f"the OSError arm printed the wrong half: {os_message!r}")
+
+        monkeypatch.setattr(
+            target, "scrub_tracked_files",
+            lambda _repo: (_ for _ in ()).throw(ValueError("deny-list store unreachable")))
+        _rc, out, _err = _run_census(repo, json_out=True)
+        other_message = _not_run_message(out)
+        assert "deny-list store unreachable" in other_message, (
+            f"the non-OSError arm dropped the reason: {other_message!r}")
+        assert "Permission denied" not in other_message, other_message
+
+    def test_not_run_row_naming_is_stable_for_a_bare_errno_and_a_plain_message(
+        self, tmp_path, monkeypatch
+    ):
+        """The two ``OSError`` shapes that carry no words and no path still name
+        the fault by its class, and stay inside the row bound.
+
+        ``OSError(5)`` renders itself as ``[Errno 5] None`` and ``OSError()`` as
+        the empty string, so a row built from ``str(e)`` said "did not run: 5" or
+        "did not run:" and nothing else. Built from the fields, the first is
+        named by its class and the second keeps the sentence it was raised with
+        (there is no filename in it to lose).
+        """
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/.gitkeep", "")
+        target = _hygiene_target()
+
+        monkeypatch.setattr(target, "scrub_tracked_files",
+                            lambda _repo: (_ for _ in ()).throw(OSError(5)))
+        _rc, out, _err = _run_census(repo, json_out=True)
+        message = _not_run_message(out)
+        assert "OSError" in message, message
+        assert "did not run" in message, message
+        assert "None" not in message, f"an empty strerror rendered as None: {message!r}"
+
+        monkeypatch.setattr(target, "scrub_tracked_files",
+                            lambda _repo: (_ for _ in ()).throw(OSError("input/output error")))
+        _rc, out, _err = _run_census(repo, json_out=True)
+        message = _not_run_message(out)
+        assert "input/output error" in message, message
+        assert len(message) < 400, f"message unbounded: {message}"
+
+    def test_not_run_row_holds_its_shape_whatever_the_fault_carries(
+        self, tmp_path, monkeypatch
+    ):
+        """The row's contract is fixed for every fault shape the scan can raise:
+        the exact ``hygiene scan did not run`` substring, the checker in the
+        hygiene artifact namespace, and warn severity.
+
+        The three rows above pin one shape each; this one sweeps them, because the
+        guarantee is about the row and not about any single exception. The guard
+        builds each fault inside the raise, so the shape a handler leaves behind
+        cannot leak into the next one.
+        """
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/.gitkeep", "")
+        target = _hygiene_target()
+        leaked = "/home/someone/\u00fcn\u00ef c\u00f6de/my dir/denylist"
+
+        faults = [_permission_fault_guard(repo, text="readdir denied"),
+                  _permission_fault_on(repo, leaked)]
+        for guard in faults:
+            def raise_from_guard(_repo, _guard=guard):
+                # Drive the guard's own raise: the fault it builds is the fixture.
+                _guard(repo)
+                raise AssertionError("the guard did not fault its target")
+
+            monkeypatch.setattr(target, "scrub_tracked_files", raise_from_guard)
+            _rc, out, _err = _run_census(repo, json_out=True)
+            rows = [r for r in _ndjson_rows(out)
+                    if r.get("check") == "hygiene" and r["subject"] == "hygiene scan"]
+            assert len(rows) == 1, f"rows: {rows}"
+            row = rows[0]
+            assert "hygiene scan did not run" in row["message"], row["message"]
+            assert row["artifact"] == "noni/public_safety.py", row
+            assert row["severity"] == "warn", row
+            assert leaked.split("/")[3] not in row["message"], row["message"]
+            assert len(row["message"]) < 400, row["message"]
 
 
     def test_checker_is_loaded_into_a_census_owned_slot(self, tmp_path):

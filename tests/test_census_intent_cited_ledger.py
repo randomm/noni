@@ -185,24 +185,40 @@ def test_the_probe_falling_back_to_the_classifier_is_what_refuses_the_link(
         tmp_path, monkeypatch):
     """A probe that faults is no answer, and the classifier half takes over.
 
-    ``probe_ledger`` reads the tree, so it can fault the way any read does. When it
-    does, the class must not read that as "no link reported" and open the record: it
-    classifies the ledger and ``noni/`` itself. The tree is the linked one and the
-    probe raises, so only the fallback can produce the row — which is what separates
-    this test from the one above, where the probe answers for a tree that is clean.
+    ``probe_ledger`` reads the tree, so a caller handing this class a probe of its
+    own can hand it one that faults (the census's own wrapper swallows nothing, and
+    a probe is a read like any other). When it does, the class must not read the
+    fault as "no link reported" and open the record: it classifies the ledger and
+    ``noni/`` itself. The tree is the linked one and the probe raises, so only the
+    fallback can produce the row — which is what separates this test from the one
+    above, where the probe answers for a tree that is clean.
     """
-    import noni.census as census
+    from noni import census_json, census_run, census_text
 
     repo = _planted_ledger_link(tmp_path, "probe-faults")
 
     def faults(_ledger):
         raise OSError("readdir: I/O error")
 
-    monkeypatch.setattr(census, "_ledger_probe", faults)
-    code, rows, _, _ = _run(repo)
-    row = _assert_cannot_tell(_intent_rows(rows), code)
+    census = census_run._census()
+    # The history view answers through the root recorded for the run in flight; a
+    # direct caller records it the way ``census_run._run`` does, or the citation
+    # branch is never reached and the test would assert nothing.
+    census._set_run_root(repo)
+    found: list[dict] = []
+    census_run._intent.check_intent(
+        repo / "noni" / "direction" / "intent.md", repo / "noni" / "decisions",
+        repo, found, False,
+        row=census._row, rel_to_root=census._rel_to_root,
+        file_kind=census._file_kind, fault_text=census_text.fault_text,
+        load_json_strict=census_json.load_json_strict,
+        commit_subject=census._intent_commit_subject,
+        ledger_state=faults)
+    row = _assert_cannot_tell(_intent_rows(found))
     assert "symlink" in row["message"], row
     assert RECORD_ID in row["message"], row
+    assert "I/O error" not in json.dumps(row), (
+        f"the probe's own fault text reached the row: {row['message']!r}")
 
 
 def test_the_cited_record_refuses_a_ledger_link_on_the_classifier_alone(tmp_path,

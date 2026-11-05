@@ -208,6 +208,11 @@ steered runs park less, rework less, merge faster?").
 - **E4 adapters** (#4) — the primary integration adapter (question-render /
   answer mapping, cycle-lock reading, label-event authorization, run-analytics
   join) and `integrations/github-issues/` (generic). Core viable with neither.
+  A driver-claims adapter — one that mirrors a work driver's own claim state
+  into the session register instead of the team keeping a second register by
+  hand — is the follow-up; its coexistence position is documented in
+  `docs/QUICKSTART.md` (*Using noni alongside a driver that keeps its own
+  claims*), and no commitment is made here on the adapter's shape.
 - **E5 measurement/eval** (#5) — baseline capture, scenario eval on an
   existing benchmark harness (two concurrent sessions, planted double-claim),
   optional noni arm on the harness's pinned suite.

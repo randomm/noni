@@ -343,6 +343,59 @@ def test_the_publishing_checklist_still_owns_the_gate() -> None:
         "the checklist that actually gates on it")
 
 
+def test_the_coexistence_section_offers_no_command_the_page_does_not_run() -> None:
+    """The driver-coexistence section is prose, so it prints no fence of its own.
+
+    Every command-bearing fence on the quickstart belongs to a section the golden
+    command list covers, and this section's whole purpose is a position a reader
+    takes rather than a step they type: a bash fence added under this heading would
+    be a command the launcher never runs and no review covered, and the fence census
+    in ``tests/test_quickstart.py`` catches it only because it compares the page's
+    whole flattened list. The check belongs here too because it is a claim about
+    this section: the position is documentation, and documentation that has grown a
+    command line has grown something the suite does not run.
+    """
+    from docs_commands import fenced_pairs
+    from docs_promises import section_body
+    from quickstart_page import COEXISTENCE_HEADING
+
+    body = section_body(read(QUICKSTART), COEXISTENCE_HEADING)
+    blocks = [lines for info, lines in fenced_pairs(body) if info == "bash"]
+    commands = [argv for lines in blocks for argv in block_commands(lines)]
+    assert not commands, (
+        f"the coexistence section prints {len(commands)} command(s), which the "
+        f"golden list does not cover: {commands}"
+    )
+
+
+def test_the_forge_page_links_the_coexistence_position() -> None:
+    """The forge copy links the coexistence section, because its own page sells claims.
+
+    The generic step stays uncluttered: a team with no driver reads the quickstart
+    and types the census line, and does not need a paragraph about a driver they do
+    not run. The page that does need it is the forge copy -- the page whose own
+    commands claim an issue before they work it, which is the exact situation the
+    section addresses. It is read explicitly rather than through ``DOC_PAGES``
+    because it is the one page the neutrality gate exempts, so a gate written over
+    the core set stays green while this page drifts.
+    """
+    from docs_promises import FORGE_CI_README
+    from quickstart_page import COEXISTENCE_HEADING
+
+    example = read(FORGE_CI_README)
+    # Located word by word with any run of whitespace between them: the forge page
+    # wraps the link's heading text to its own column, exactly as the quickstart
+    # page wraps its headings, and the words are the contract.
+    heading = r"\s+".join(re.escape(word) for word in COEXISTENCE_HEADING.split())
+    assert re.search(heading, example), (
+        f"{FORGE_CI_README.name} claims issues without pointing at the page that "
+        f"says what to do when a driver already keeps its own claims: name "
+        f"{COEXISTENCE_HEADING!r} and link docs/QUICKSTART.md")
+    assert "docs/QUICKSTART.md" in example, (
+        f"{FORGE_CI_README.name} names the section without naming the page that "
+        "carries it, so the link has nothing to resolve against")
+
+
 def test_commands_the_pages_print_are_all_parseable() -> None:
     """Every fenced bash block on every page in scope lexes as commands.
 

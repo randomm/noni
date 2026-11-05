@@ -141,6 +141,18 @@ audited holds a deny-list with at least one usable entry: `.noni-scrub-denylist`
 its root (so `.noni-state/.noni-scrub-denylist` on Route B, where the state clone is
 what `--repo` names), or the file `NONI_SCRUB_DENYLIST` points at.
 
+### When a work driver already keeps its own claims
+
+A team attaching noni may already run a work driver that claims issues and keeps
+its own per-issue state. The position, the layers such a team runs and the reason
+`noni/sessions/` stays absent rather than created empty, is the quickstart's
+[Using noni alongside a driver that keeps its
+own claims](../../docs/QUICKSTART.md#using-noni-alongside-a-driver-that-keeps-its-own-claims)
+section, and this page deliberately does not restate it. What this page adds is the
+local consequence: the claim step below is the driver's own claim, so a team that
+carries its claims elsewhere skips that line and runs the census on the direction
+layer alone.
+
 ## Usage
 
 ```python

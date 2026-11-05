@@ -84,13 +84,20 @@ def _scan_in_time(repo: Path) -> list[str]:
 
 
 def _read_in_time(path: Path) -> object:
-    """``_read_text_lenient`` on ``path`` in a child, or a failure if it stalled."""
+    """The lines ``_read_text_lenient`` returns for ``path``, in a child.
+
+    The function's answer is now a triple (lines, fault) or None for a skip, which
+    a caller reads; this helper answers the one question the non-regular cases ask
+    -- what lines did the read hand back -- so ``None`` means "skipped" and a list
+    means "read", exactly as before the unreadable-file finding was added.
+    """
     script = (
         "import json, sys; sys.path.insert(0, {src!r})\n"
         "from pathlib import Path\n"
         "from noni import public_safety\n"
         "value = public_safety._read_text_lenient(Path({path!r}))\n"
-        "print('KIND::' + json.dumps(value))\n"
+        "lines = None if value is None else value[0]\n"
+        "print('KIND::' + json.dumps(lines))\n"
     ).format(src=str(SRC), path=str(path))
     started = time.monotonic()
     proc = subprocess.run([sys.executable, "-B", "-c", script],
@@ -187,24 +194,26 @@ def test_a_regular_file_through_a_symlink_is_read(tmp_path):
 
 
 def test_an_unreadable_path_yields_no_lines(tmp_path):
-    """A path the scan may not open is a skip, the lenient contract unchanged.
+    """A path that is no file the scan could read is a skip, the lenient contract.
 
-    A missing path, an unreadable one and a link loop must all answer None: the
-    census's honesty about a scan that ran is built on the scan never crashing,
-    and each of the three faults the open in a different way (ENOENT, EACCES,
-    ELOOP) on a path that is present in the listing.
+    A missing path and a link loop must both answer None: the census's honesty
+    about a scan that ran is built on the scan never crashing, and each faults the
+    open in its own way (ENOENT, ELOOP) on a path the listing named.
+
+    A 000-mode ``regular`` file is deliberately NOT one of these cases any more:
+    an unreadable tracked file is a finding, and the row it earns is asserted in
+    ``tests/test_public_safety_unreadable.py``. A non-regular sealed path still
+    skips, which is what the directory arm below pins for its whole family.
     """
     assert _read_in_time(tmp_path / "absent") is None
     loop_a = tmp_path / "loop-a"
     loop_a.symlink_to("loop-b")
     (tmp_path / "loop-b").symlink_to(loop_a)
     assert _read_in_time(loop_a) is None, "a link loop was not a skip"
-    if os.geteuid() == 0:
-        pytest.skip("root reads anything, so the 000-mode case cannot be planted")
-    sealed = tmp_path / "sealed"
-    sealed.write_text("x\n", encoding="utf-8")
-    sealed.chmod(0o000)
-    assert _read_in_time(sealed) is None, "an unreadable file was not skipped"
+    sealed_dir = tmp_path / "sealed-dir"
+    sealed_dir.mkdir()
+    sealed_dir.chmod(0o000)
+    assert _read_in_time(sealed_dir) is None, "an unreadable directory was not skipped"
 
 
 @posix_only
@@ -256,8 +265,8 @@ def test_the_guarded_open_inspects_the_descriptor_it_opened():
     pins the intent reader the same way.
     """
     tree = public_safety_module(public_safety_text())
-    opened = call_line(tree, "_open_regular", "open")
-    inspected = call_line(tree, "_open_regular", "fstat")
+    opened = call_line(tree, "open_regular", "open")
+    inspected = call_line(tree, "open_regular", "fstat")
     assert opened < inspected, (
         "the scan no longer inspects the descriptor it opened, so a path swapped "
         "for a fifo after the check is read and blocks the census forever"
@@ -265,15 +274,33 @@ def test_the_guarded_open_inspects_the_descriptor_it_opened():
 
 
 def test_the_guarded_open_carries_both_flags_and_neither_extra():
-    """``O_NONBLOCK`` and ``S_ISREG`` present, ``O_NOFOLLOW`` absent.
+    """``O_NONBLOCK`` and ``S_ISREG`` present, ``O_NOFOLLOW`` absent, in the guard.
 
-    Each half is a different bug, and the behavioural tests above each carry the
-    one that belongs to it: dropping the flag makes the pipe cases hang, dropping
-    the check makes a pipe scan as the empty file that is not there, and adding
-    ``O_NOFOLLOW`` makes a tracked symlink's content vanish silently -- the last
-    one a green publishing gate over bytes nobody read.
+    Each half is a different bug, and the behavioural tests above each carry the one that
+    belongs to it: dropping the flag makes the pipe cases hang, dropping the check makes a
+    pipe scan as the empty file that is not there, and adding ``O_NOFOLLOW`` makes a
+    tracked symlink's content vanish silently -- the last one a green publishing gate over
+    bytes nobody read. The flags travel with the open, so the pin reads the guard's whole
+    the flags are read off the code itself: ``getattr`` resolves ``"O_NONBLOCK"`` at
+    import time and the flag constant is absent on a host without it, so the pin asserts
+    the spelling is in the executable text and ``O_NOFOLLOW`` is not.
     """
-    body = function_source("_open_regular", public_safety_text())
+    import ast
+
+    import noni.public_safety_io
+
+    tree = ast.parse(Path(noni.public_safety_io.__file__).read_text(encoding="utf-8"))
+    # Comments are gone with the parse; the docstrings are dropped here. The guard's own
+    # docstring spends a paragraph on why O_NOFOLLOW is absent, and a pin that read prose
+    # would fail on the sentence that justifies the design.
+    for _node in ast.walk(tree):
+        if isinstance(_node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef,
+                              ast.ClassDef)) and _node.body:
+            first = _node.body[0]
+            if (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+                    and isinstance(first.value.value, str)):
+                _node.body = _node.body[1:] or [ast.Pass()]
+    body = ast.unparse(tree)
     assert "O_NONBLOCK" in body, (
         "the scan's open lost O_NONBLOCK, so a pipe with no writer blocks the open"
     )

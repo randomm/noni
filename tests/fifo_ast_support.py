@@ -34,12 +34,16 @@ from pathlib import Path
 def public_safety_text() -> str:
     """The source of the module that owns the scan's opens.
 
-    Read from the imported package module rather than from a path the caller
-    builds, so a pin cannot be satisfied by a copy of the checker no scan runs.
+    Read from the imported package module rather than from a path the caller builds, so a
+    pin cannot be satisfied by a copy of the checker no scan runs. The guarded open lives
+    in ``noni.public_safety_io`` since the #91 split, so that module's text is what the
+    open's pins read; the scan itself stays in ``noni.public_safety``.
     """
     import noni.public_safety
+    import noni.public_safety_io
 
-    return Path(noni.public_safety.__file__).read_text(encoding="utf-8")
+    return (Path(noni.public_safety.__file__).read_text(encoding="utf-8")
+            + "\n" + Path(noni.public_safety_io.__file__).read_text(encoding="utf-8"))
 
 
 def public_safety_module(source: str) -> ast.Module:
@@ -48,11 +52,15 @@ def public_safety_module(source: str) -> ast.Module:
 
 
 def _function(tree: ast.Module, name: str) -> ast.FunctionDef:
-    """The module-level function ``name``, with a message when it is gone."""
-    for node in tree.body:
+    """The module-level function ``name``, in either module of the scan.
+
+    A missing function is an invariant that stopped holding, not a ``None`` to be
+    dereferenced by the caller, so the message is raised rather than returned.
+    """
+    for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == name:
             return node
-    raise AssertionError(f"public_safety.py defines no function {name}, so the "
+    raise AssertionError(f"public_safety defines no function {name}, so the "
                          "invariant this pin exists for is not the code any more")
 
 
@@ -73,5 +81,5 @@ def call_line(tree: ast.Module, func: str, callee: str) -> int:
 
 
 def function_source(name: str, source: str) -> str:
-    """The text of the module-level function ``name`` in ``source``."""
+    """The text of the function ``name`` in the concatenated source of the scan."""
     return ast.get_source_segment(source, _function(public_safety_module(source), name)) or ""

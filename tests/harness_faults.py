@@ -153,9 +153,10 @@ def _secret_violation() -> str:
 
 # --- The planted FIFO ---------------------------------------------------------
 #
-# The one fixture that puts a named pipe where a scan expects a file. The scrub,
-# the census-level and the gate-CLI FIFO tests all plant it through this builder:
-# three copies of the recipe drift, and the usual drift is the one that quietly
+# The one fixture that puts a named pipe where a scan expects a file, and its
+# sibling for a regular file the scan may not open. The scrub, the census-level
+# and the gate-CLI FIFO tests all plant the pipe through this builder: three
+# copies of the recipe drift, and the usual drift is the one that quietly
 # stops producing a tracked pipe (see ``_plant_fifo``) so the test scans an
 # ordinary file and passes green while the hang is still in the product.
 
@@ -203,6 +204,41 @@ def _plant_fifo(repo: Path, rel: str, *, content: str = "placeholder\n") -> Path
     os.mkfifo(target)
     assert not target.is_file(), f"{rel} is not a named pipe: a fixture that plants " \
         "nothing leaves the FIFO tests scanning an ordinary file"
+    return target
+
+
+def _plant_unreadable_tracked_file(repo: Path, rel: str, *,
+                                   content: str = "placeholder\n") -> Path:
+    """Commit ``repo/rel`` as an ordinary file, then revoke every permission on it.
+
+    The sibling of :func:`_plant_fifo` for the other fault a scan meets at a
+    tracked path: a regular file the scan may not open (EACCES), which #91 made a
+    silent skip. The commit-then-chmod recipe mirrors the pipe's because the
+    assertion is the same one -- git must still list the path, or the scan never
+    reaches the fault and the test reports a clean tree it never looked at.
+
+    Skips when the host's euid can read anything: root ignores the mode bits, so
+    the 000 file would open and the test would assert nothing about unreadability.
+    The skip is the repo's standing answer for a fixture a host cannot plant.
+
+    The mode is restored before the skip returns, so ``tmp_path`` cleanup on a
+    root-equivalent host never meets a path it cannot remove.
+
+    Returns the path, so a caller can assert the violation row names it.
+    """
+    target = repo / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    _git(repo, "add", "--", rel)
+    _git(repo, "commit", "-q", "-m", f"track {rel} as a regular file")
+    assert rel in _git_ls_files(repo), (
+        f"the fixture's {rel} is not tracked, so the scan would never reach the "
+        "sealed file and the test would prove nothing"
+    )
+    target.chmod(0o000)
+    if os.access(target, os.R_OK):
+        target.chmod(0o644)
+        pytest.skip("root reads anything, so the 000-mode file cannot be planted")
     return target
 
 

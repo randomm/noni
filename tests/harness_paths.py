@@ -76,6 +76,7 @@ PRODUCT_MODULES = (
     "src/noni/orderschema.py",
     "src/noni/orderstate.py",
     "src/noni/public_safety.py",
+    "src/noni/public_safety_io.py",
     "src/noni/register.py",
     "src/noni/shim_help.py",
     "src/noni/targetschema.py",

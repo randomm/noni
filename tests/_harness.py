@@ -35,6 +35,7 @@ from harness_faults import (
     _permission_fault_on,
     _plant_fifo,
     _plant_fifo_symlink,
+    _plant_unreadable_tracked_file,
     _plant_untracked_fifo,
     _secret_violation,
 )
@@ -160,6 +161,7 @@ __all__ = [
     "_permission_fault_on",
     "_plant_fifo",
     "_plant_fifo_symlink",
+    "_plant_unreadable_tracked_file",
     "_plant_untracked_fifo",
     "_product_source",
     "_run_session_writer",

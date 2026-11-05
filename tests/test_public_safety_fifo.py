@@ -387,48 +387,67 @@ def test_the_read_loop_reads_a_whole_file_under_the_bound(tmp_path):
     assert any(v.startswith("long.md:") for v in violations), violations
 
 
-def test_a_read_that_faults_halfway_is_a_skip_and_not_a_crash(tmp_path):
-    """A descriptor that faults mid-read is skipped, and the fd is still closed.
+def test_a_read_that_faults_halfway_is_reported_and_the_fd_is_still_closed(tmp_path):
+    """A descriptor that faults mid-read is a finding, not a skip and not a crash.
 
     The read of the tree can fault after the classification succeeded (an I/O
-    error, a descriptor revoked underneath the scan), and the module's promise is
-    that the scan never crashes on an unreadable tracked file -- the census's
-    honesty about a scan that ran rests on it. The seam is bent in a child so it
-    cannot leak into the next test, and the close count is asserted because a
-    leaked descriptor on every faulting file is how a scan dies of exhaustion.
+    error, a descriptor revoked underneath the scan). Two promises meet here and
+    neither may cost the other: the scan never crashes on a path it cannot read
+    (the census's honesty about a scan that ran rests on it), and it never
+    certifies bytes it never held -- a faulting read of a tracked regular file is
+    a violation row naming that file, not a silent skip. The seam is bent in a
+    child so it cannot leak into the next test, and the close count is asserted
+    because a leaked descriptor on every faulting file is how a scan dies of
+    exhaustion.
     """
     repo = _init_repo(tmp_path / "read-fault")
     (repo / "README.md").write_text("# clean\n", encoding="utf-8")
     _git(repo, "add", "--", "README.md")
     _git(repo, "commit", "-q", "-m", "clean file")
-    (repo / "note.md").write_text(_secret_violation() + "\n", encoding="utf-8")
-    _git(repo, "add", "--", "note.md")
+    # The faulting file must be the first path the scan reaches, because the seam faults
+    # one read. `git ls-files` sorts by byte with the uppercase block first, so a lowercase
+    # name sorts after README.md; the faulting file is therefore the README itself.
+    (repo / "README.md").write_text(_secret_violation() + "\n", encoding="utf-8")
+    _git(repo, "add", "--", "README.md")
     _git(repo, "commit", "-q", "-m", "a file the read will fault on")
+    (repo / "note.md").write_text("# clean\n", encoding="utf-8")
+    _git(repo, "add", "--", "note.md")
+    _git(repo, "commit", "-q", "-m", "the clean neighbour the read must reach")
+    listing = _git(repo, "ls-files").stdout.split()
+    assert listing[0] == "README.md", f"the fixture must order the faulting file first: {listing}"
 
     # The scan's own descriptors (the only opens carrying O_NONBLOCK) are all
     # closed: none leaked, including the one whose read faulted.
     found, leaked, closes = run_bent_scan(repo, _READ_FAULT_BENDS)
-    assert found == [], f"the scan reported a file it could not read: {found}"
+    assert any(v.startswith("README.md:0:") and "could not be read" in v for v in found), (
+        f"a read that faulted on a tracked regular file was skipped, not reported: "
+        f"{found}")
+    assert not any(v.startswith("note.md") for v in found), (
+        f"the clean file beside the faulting read was flagged: {found}")
     assert leaked == [], f"the scan leaked these descriptors: {leaked}"
     assert closes >= 3, f"fewer descriptors closed than the scan opened: {closes}"
 
 
-# Child source that faults the first scan read and reports what happened: the
-# descriptors the scan opened (those are the only opens carrying O_NONBLOCK), the
-# ones still open at the end, and how many closes it made.
+# Child source that faults one scan read and reports what happened: the descriptors the
+# scan opened (those are the only opens carrying O_NONBLOCK), the ones still open at the
+# end, and how many closes it made.
 _READ_FAULT_BENDS = (
     "real_read, real_close = os.read, os.close\n"
     "closed = []\n"
-    "scan_fds = []\n"
+    "opened = []\n"
+    "faulted = []\n"
     "real_open = os.open\n"
     "def opento(path, flags, *a):\n"
     "    fd = real_open(path, flags, *a)\n"
     "    if flags & os.O_NONBLOCK:\n"
-    "        scan_fds.append(fd)\n"
+    "        opened.append(fd)\n"
     "    return fd\n"
     "def read(fd, size):\n"
-    "    if fd in scan_fds:\n"
-    "        scan_fds.remove(fd)\n"
+    "    if fd in opened and not faulted:\n"
+    "        # Fault the read of the first scan descriptor only: bending every read\n"
+    "        # would flag every file in the tree and lose the clean neighbour that\n"
+    "        # proves the scan reported the faulting file and not all of them.\n"
+    "        faulted.append(fd)\n"
     "        raise OSError(5, 'input/output error')\n"
     "    return real_read(fd, size)\n"
     "def close(fd):\n"
@@ -438,7 +457,8 @@ _READ_FAULT_BENDS = (
     "public_safety.os.read = read\n"
     "public_safety.os.close = close\n"
     "def payload():\n"
-    "    return json.dumps([found, list(scan_fds), len(closed)])\n"
+    "    return json.dumps([found, [fd for fd in opened if fd not in closed],\n"
+    "                       len(closed)])\n"
 )
 
 
@@ -454,12 +474,15 @@ def test_the_guard_falls_back_to_a_skip_when_the_descriptor_cannot_be_asked(tmp_
     path = tmp_path / "regular"
     path.write_text("ordinary content\n", encoding="utf-8")
     skipped, closes = read_lenient_bent(path, _FSTAT_FAULT_BENDS)
-    assert skipped, "a descriptor the scan could not classify was read anyway"
+    assert skipped == [None, ["OSError", "bad descriptor"]], (
+        "a descriptor the scan could not classify was read, or was skipped instead of "
+        f"reported: {skipped}")
     assert closes == 1, f"the scan leaked the descriptor it opened: {closes} closed"
 
 
-# Child source that makes every ``fstat`` fault and reports whether the path was
-# skipped and how many descriptors the scan closed.
+# Child source that makes every ``fstat`` fault and reports what the read answered (the
+# three-way value of ``_read_text_lenient``, so a finding and a skip are told apart) and
+# how many descriptors the scan closed.
 _FSTAT_FAULT_BENDS = (
     "real_fstat, real_close = os.fstat, os.close\n"
     "closed = []\n"
@@ -471,5 +494,5 @@ _FSTAT_FAULT_BENDS = (
     "public_safety.os.fstat = fstat\n"
     "public_safety.os.close = close\n"
     "def payload():\n"
-    "    return json.dumps([value is None, len(closed)])\n"
+    "    return json.dumps([value, len(closed)])\n"
 )

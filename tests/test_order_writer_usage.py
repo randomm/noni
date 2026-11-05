@@ -30,6 +30,7 @@ from _harness import (
     REPO,
     _git_ok,
     run_from,
+    run_module,
     run_noni,
     run_wrapper,
 )
@@ -125,18 +126,56 @@ def test_skill_md_and_the_help_name_the_same_verb_first_form(tmp_path):
         assert f"--repo REPO {verb} " in text, f"SKILL.md omits the {verb} verb"
 
 
-def test_a_missing_verb_still_refuses_with_the_pinned_wording():
-    """The formatter is the only thing that moved: argparse's own refusal stands.
+# The verbs the writer accepts, spelled out for the refusal that has to name them.
+# ``order_usage_support.VERBS`` is the same set in parser order; the "or" is the
+# writer's own sentence, not a join the tests get to choose.
+_ACCEPTED_VERBS = "add, move, remove or confirm"
 
-    A subparsers or ``choices=`` fix would have changed this message and the code
-    beside it; the ticket's out-of-scope list forbids both, so the refusal is
-    pinned here as evidence the parser surface was not reshaped.
+
+def test_order_help_exits_zero_and_prints_no_traceback(tmp_path):
+    """Every usage print of this writer answers, on every Python it runs on.
+
+    The formatter this file's four tests used to exercise called a private argparse
+    method, and Python 3.14 removed it: on that interpreter ``--help``, a missing
+    subcommand and an unknown flag all died with an ``AttributeError``, so a run
+    that only asserted the shape of a line it never got to read was not asserting
+    anything (issue #98). The routes and the three usage prints are each run here
+    for their documented exit code and a stderr that carries no traceback.
+    """
+    repo = _repo(tmp_path)
+    cases = [
+        (run_wrapper, (ORDER, "--help"), 0),
+        (run_wrapper, (ORDER, "--repo", str(repo)), 2),
+        (run_wrapper, (ORDER, "--repo", str(repo), "--not-a-flag"), 2),
+        (run_noni, ("order", "--repo", str(repo), "--help"), 0),
+        (run_noni, ("order", "--repo", str(repo)), 2),
+        (run_noni, ("order", "--repo", str(repo), "--not-a-flag"), 2),
+        (run_module, ("order", "--repo", str(repo), "--help"), 0),
+    ]
+    for launch, argv, expected in cases:
+        proc = launch(*argv)
+        assert proc.returncode == expected, (
+            f"{argv}: expected {expected}, got {proc.returncode}\n"
+            f"stdout: {proc.stdout}\nstderr: {proc.stderr}")
+        assert "Traceback" not in proc.stderr, f"{argv}: {proc.stderr}"
+
+
+def test_a_missing_verb_still_refuses_with_the_pinned_wording():
+    """The parser surface is unchanged and the verbs are still named (issue #98).
+
+    Two halves, one assertion each. The wording and the code are what they always
+    were: a ``subparsers`` or ``choices=`` fix would have changed both, and the
+    ticket's out-of-scope list forbids either, so this is the evidence the parser
+    was not reshaped. The verbs beside the wording are the fix -- before it the run
+    named the slot and left the reader to guess the four words that fill it, which
+    only the *invalid*-verb refusal said.
     """
     proc = run_wrapper(ORDER, "--repo", str(REPO))
     assert proc.returncode == 2, f"{proc.returncode}: {proc.stderr}"
     assert "the following arguments are required: subcommand" in proc.stderr, (
         proc.stderr
     )
+    assert f"choose from: {_ACCEPTED_VERBS}" in proc.stderr, proc.stderr
     assert_verb_precedes_flags(first_usage_line(proc.stderr), "argparse refusal")
 
 

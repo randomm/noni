@@ -269,6 +269,28 @@ def test_an_unknown_verb_is_exit_2(tmp_path):
     assert result.returncode == 2
 
 
+def test_a_missing_subcommand_names_the_verb_it_wants(tmp_path):
+    """The refusal without the verb still says which verb (issue #98).
+
+    ``intent --repo X --from f --decision d`` with no ``set`` reached argparse's own
+    missing-positional refusal, which names the slot and not the word that fills it:
+    only an *invalid* verb printed the fix line that did. The wording argparse
+    composes is kept (it is the same refusal every tool prints) and the verb is
+    named beside it, with the usage line above, at the usage code and with no
+    traceback. Nothing is written by a run this early in the checks.
+    """
+    repo = repo_with_record(tmp_path)
+    result = intent_run(repo, "--from", draft(tmp_path, GOOD_INTENT),
+                        "--decision", RECORD_ID)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "the following arguments are required: subcommand" in result.stderr, (
+        result.stderr)
+    assert "choose from: set" in result.stderr, result.stderr
+    assert result.stderr.startswith("usage: intent.py "), result.stderr
+    assert "Traceback" not in result.stderr, result.stderr
+    assert not (repo / INTENT_REL).exists()
+
+
 def test_a_fenced_heading_does_not_become_a_section(tmp_path):
     repo = repo_with_record(tmp_path)
     result = intent_run(repo, SET, "--from", draft(tmp_path, FENCED_HEADING),

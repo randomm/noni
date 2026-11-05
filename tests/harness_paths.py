@@ -29,6 +29,7 @@ SRC = REPO / "src"
 PRODUCT_MODULES = (
     "integrations/adapter_protocol.py",
     "integrations/github-issues/github_issues_adapter.py",
+    "src/noni/__main__.py",
     "src/noni/_session_git.py",
     "src/noni/_session_fields.py",
     "src/noni/_session_body.py",

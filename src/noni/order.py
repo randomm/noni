@@ -75,7 +75,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import re
 import sys
 from pathlib import Path
 
@@ -95,78 +94,84 @@ EXIT_IO: int = 3
 EXIT_REFUSAL: int = 4
 
 
-# One token of a usage line, as argparse recognises them: a bracketed group stays
-# together, anything else is a word. Same expression argparse's own
-# ``_format_usage`` uses to pack a long usage line, kept here so the formatter
-# below can pack the two halves of the line itself.
-_USAGE_PART_RE = re.compile(r"\(.*?\)+(?=\s|$)|\[.*?\]+(?=\s|$)|\S+")
+# The verbs the writer owns, in the order every document lists them. One tuple so
+# the unknown-verb refusal, the missing-verb hint and the usage line cannot name
+# three different sets.
+VERBS: tuple[str, ...] = ("add", "move", "remove", "confirm")
+
+# The verb list the unknown-verb refusal and the usage line take, spelled once from
+# ``VERBS``. The missing-subcommand hint spells its conjunction itself, and its own
+# test pins that text.
+_VERB_LIST = ", ".join(VERBS)
+
+# The usage line, spelled once and handed to argparse as ``usage=``.
+#
+# argparse composes a usage line as ``optionals + positionals``, unconditionally, so
+# with ``--repo`` required and five flags declared before the verbs, ``order.py
+# --help`` rendered ``... [--no-commit] subcommand [issue]`` and buried the one word
+# the caller has to choose. The docstring's ``Usage:`` block and
+# ``skills/direction/SKILL.md`` both spell the verb first, and a help line that
+# contradicts the two texts a reader copies from is the bug (issue #77).
+#
+# A literal is the only public way to put the verb first. A formatter subclass used
+# to derive the line by calling argparse's private ``_format_usage`` and
+# ``_format_actions_usage``, and Python 3.14 removed the second of those: on 3.14
+# every usage print -- ``--help``, a missing subcommand, an unknown flag -- died
+# with an ``AttributeError`` instead of printing anything (issue #98). A literal
+# keeps the rendering inside argparse: it still prepends ``usage:``, still wraps the
+# line at ``COLUMNS``, and still prints it on all three of those paths.
+#
+# The flag block is the parser's own declaration, in declaration order, with the
+# metavar argparse prints for each, and it is compared against that declaration by
+# ``tests/test_order_writer_usage.py`` and the flag-set parity of
+# ``tests/test_order_writer_docs.py``: a flag added to the parser belongs here too.
+_USAGE = (f"{labels.ORDER} --repo REPO subcommand [issue]"
+          " [--at N] [--to N] [--decision ID] [--now ISO-8601] [--no-commit] [-h]")
+
+# The missing-positional message argparse composes for a required positional, and
+# the line argparse prints above it. argparse turns this refusal into usage-plus-
+# error itself, so the verbs are added to *that* pair rather than to the message
+# text: a subclass that re-raised it would print its own usage instead, and
+# ``first_usage_line`` reads the ``usage:`` line out of the refusal.
+_MISSING_SUBCOMMAND = "the following arguments are required: subcommand"
 
 
-def _pack_usage_parts(parts: list[str], indent: str, prefix: str | None,
-                      text_width: int) -> list[str]:
-    """Fill ``parts`` into lines no wider than ``text_width``, the way argparse does.
+class _VerbedParser(argparse.ArgumentParser):
+    """The parser of a one-verb writer, naming the verbs when the verb is missing.
 
-    A copy of the inner ``get_lines`` of argparse's ``_format_usage`` (including its
-    rule that the first line loses the indent when a prefix already sits before it),
-    lifted to a module function so :class:`_VerbFirstFormatter` can pack the
-    positionals and the optionals separately instead of handing both to one call.
+    ``order.py --repo R`` with no verb got argparse's own refusal, which names the
+    slot (``subcommand``) and not the four words that fill it: only an *invalid*
+    verb reached the fix line that named them, so the commonest mistake printed the
+    least useful answer (issue #98). This parser keeps argparse's own refusal and
+    adds the verbs to it, so the usage line, the wording and the exit code are
+    unchanged and one more line names the accepted verbs.
+
+    The parser shape is deliberately untouched. ``add_subparsers`` or ``choices=``
+    would name the verbs too, but both move the verb out of the usage line and take
+    the refusal off the path the pinned wording stands for, which is what
+    ``tests/test_order_writer_usage.py`` exists to catch.
     """
-    lines: list[str] = []
-    line: list[str] = []
-    line_len = len(prefix) - 1 if prefix is not None else len(indent) - 1
-    for part in parts:
-        if line and line_len + 1 + len(part) > text_width:
-            lines.append(indent + " ".join(line))
-            line = []
-            line_len = len(indent) - 1
-        line.append(part)
-        line_len += len(part) + 1
-    if line:
-        lines.append(indent + " ".join(line))
-    if prefix is not None and lines:
-        lines[0] = lines[0][len(indent):]
-    return lines
+
+    def error(self, message: str):
+        if _MISSING_SUBCOMMAND in message:
+            self.print_usage(sys.stderr)
+            print(f"{self.prog}: {message}", file=sys.stderr)
+            print(f"{self.prog}: fix: choose from: {_missing_verb_hint()}",
+                  file=sys.stderr)
+            raise SystemExit(EXIT_USAGE)
+        super().error(message)
 
 
-class _VerbFirstFormatter(argparse.HelpFormatter):
-    """Put the verb positionals ahead of the flag block in the ``usage:`` line.
+def _missing_verb_hint() -> str:
+    """The verb list the missing-subcommand hint prints.
 
-    argparse composes the usage line as ``optionals + positionals``, unconditionally:
-    with ``--repo`` required and five flags declared before the verbs, ``order.py
-    --help`` rendered ``... [--no-commit] subcommand [issue]``, burying the one word
-    the caller has to choose. The docstring's Usage block and
-    ``skills/direction/SKILL.md`` both spell the verb first, and a help line that
-    contradicts the two texts a reader copies from is the bug (issue #77).
-
-    Handing the parent a reordered action list does not work: it splits the list
-    back into optionals and positionals before it renders. So this formatter renders
-    the two halves itself with argparse's own action formatter -- which is what
-    keeps every ``metavar``, bracket and required-argument marking exactly as
-    argparse would print them -- and packs them with :func:`_pack_usage_parts`, so
-    ``COLUMNS`` still decides where the line breaks. The argument surface, the group
-    sections, the ``choices``/``metavar`` table and the refusal wording of an
-    argparse error are untouched, and a caller that passed its own ``usage=`` is
-    passed straight through.
+    Joined with the same "or" the unknown-verb refusal above uses -- one sentence
+    for one set, so the two refusals of the same mistake cannot answer it twice.
     """
-
-    def _format_usage(self, usage, actions, groups, prefix):
-        positionals = [action for action in actions if not action.option_strings]
-        optionals = [action for action in actions if action.option_strings]
-        if usage is not None or not positionals or not optionals:
-            # Nothing to move: a caller-supplied line, a flags-only parser and a
-            # positionals-only parser all render as the parent renders them.
-            return super()._format_usage(usage, actions, groups, prefix)
-        if prefix is None:
-            prefix = " " * self._current_indent + "usage: "
-        parts = [self._format_actions_usage(positionals, groups),
-                 self._format_actions_usage(optionals, groups)]
-        text_width = max(self._width - self._current_indent, 11)
-        indent = " " * (len(prefix) + len(self._prog) + 1)
-        lines = _pack_usage_parts([self._prog] + _USAGE_PART_RE.findall(parts[0]),
-                                  indent, prefix, text_width)
-        lines.extend(_pack_usage_parts(_USAGE_PART_RE.findall(parts[1]),
-                                       indent, None, text_width))
-        return prefix + "\n".join(lines) + "\n\n"
+    *first, last = VERBS
+    if len(first) == 1:
+        return f"{first[0]} or {last}"
+    return f"{', '.join(first)} or {last}"
 
 
 def _digests(data: bytes) -> str:
@@ -187,11 +192,11 @@ def _render(body: dict):
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
+    parser = _VerbedParser(
         prog=labels.ORDER,
         description="Write the ordered list of issues the operator wants worked next "
                     "(noni/direction/order.json) and commit it.",
-        formatter_class=_VerbFirstFormatter,
+        usage=_USAGE,
     )
     parser.add_argument("--repo", required=True, help="repository root")
     parser.add_argument("subcommand", help="add, move, remove or confirm")
@@ -213,7 +218,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     subcommand = args.subcommand
-    if subcommand not in ("add", "move", "remove", "confirm"):
+    if subcommand not in VERBS:
         return _fail(EXIT_USAGE, f"subcommand {subcommand!r} is not one of "
                      "add, move, remove or confirm",
                      f"{labels.ORDER} --repo REPO add ISSUE --decision ID | "

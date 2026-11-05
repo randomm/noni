@@ -10,7 +10,9 @@ tool name appears in this file or its fixtures.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -20,7 +22,7 @@ REPO = Path(__file__).resolve().parent.parent
 # The package module is the only importable home of the checker; the bare alias
 # is registered by _harness from the same package object.
 import public_safety  # noqa: E402
-from _harness import _git  # noqa: E402
+from _harness import _git, subprocess_env  # noqa: E402
 
 
 @pytest.fixture
@@ -396,6 +398,47 @@ def test_repo_local_fsmonitor_helper_does_not_run_during_a_scan(clean_repo):
     violations, _source, _ = public_safety.scrub_tracked_files(clean_repo)
     assert violations == []
     assert not marker.exists(), "the scrub ran a core.fsmonitor helper it must not run"
+
+
+def test_the_wrapper_exits_3_when_the_package_is_not_importable(tmp_path):
+    """The gate exits 3 when ``import noni`` fails, not 2.
+
+    Exit 2 is "the scan ran and its deny-list half did not", which is the one
+    code CI's scrub step is written to tolerate (``|| [ "$?" -eq 2 ]``). When the
+    package itself cannot be imported no tracked file has been read at all, and
+    the two states must not answer with one number: sharing it would let the CI
+    step go green on a gate that never ran.
+
+    The script is copied alone into a tree that carries no package, and run
+    under ``-S -I``: ``-I`` ignores ``PYTHONPATH`` (so the harness's ``src/`` pin
+    cannot satisfy the import) and isolates the user site, while ``-S`` skips
+    the site-module processing that would otherwise put the venv's editable
+    install of ``noni`` -- a ``.pth`` line pointing at another worktree's ``src/``
+    -- back on the path. With both, the import failure is a fact of the tree the
+    script sits in, which is the state the exit code speaks for. The branch runs
+    in a child, so it is not the in-process coverage of the wrapper that this
+    asserts -- the exit code and the message are.
+    """
+    tree = tmp_path / "no-noni"
+    scripts = tree / "scripts"
+    scripts.mkdir(parents=True)
+    shutil.copy2(REPO / "scripts" / "public_safety.py", scripts / "public_safety.py")
+    env = subprocess_env()
+    env.pop(public_safety.DENYLIST_ENV_VAR, None)
+
+    proc = subprocess.run([sys.executable, "-S", "-I", "scripts/public_safety.py"],
+                          capture_output=True, text=True, cwd=tree, env=env,
+                          timeout=120)
+    assert proc.returncode == 3, (
+        f"the gate answered {proc.returncode} with no package to import; "
+        f"expected 3, the could-not-run exit\nstdout: {proc.stdout}"
+        f"\nstderr: {proc.stderr}")
+    assert "not importable" in proc.stderr, (
+        f"the failure said nothing about the import it could not do: "
+        f"{proc.stderr!r}")
+    assert "public-safety: clean" not in proc.stdout + proc.stderr, (
+        "a gate that scanned nothing called itself clean"
+    )
 
 
 def test_noni_repo_is_clean():

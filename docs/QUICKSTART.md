@@ -278,7 +278,9 @@ python scripts/public_safety.py
 ```
 
 That CLI exits 2 when the class was not active, so it cannot report a false
-"clean" on a tree whose deny-list is absent, corrupt or empty.
+"clean" on a tree whose deny-list is absent, corrupt or empty. A gate that
+could not run is a different answer: if the `noni` package is not importable
+the script says so on one line and exits 3.
 
 ## The --issue-state map, and what the census skips without it
 

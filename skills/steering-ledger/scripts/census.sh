@@ -73,12 +73,16 @@ fi
 #   10  a record is missing or malformed, or the ledger is unusable —
 #       five distinct sub-classes, all named on the stderr line:
 #       (10:missing-dir) the directory does not exist (operator error —
-#       wrong path); (10:empty-ledger) the directory exists but contains
-#       no *.json records (the ledger may simply be empty); (10:bad-name,
-#       10:unparseable, 10:schema, 10:missing-record, 10:integral-float)
-#       a filename, body, or schema field violates the declared shape (fix
-#       the record);
+#       wrong path); (10:bad-name, 10:unparseable, 10:schema,
+#       10:missing-record, 10:integral-float) a filename, body, or schema
+#       field violates the declared shape (fix the record);
+#       (10:empty-ledger) the directory exists but could not be enumerated
+#       (a read that happened nowhere is not an empty ledger);
 #       (10:git-unavailable) git itself failed on a real repo (fix the tree)
+#   42  a ledger directory that holds no *.json record at all — reported as
+#       (42:ledger-empty) on stderr and exited 0, the unified census's
+#       ledger-empty warn, so a freshly attached project censuses clean here
+#       as it does there (issue #97)
 #   12  a record was edited after commit (working tree differs from git)
 #   20  the supersede chain is broken (dangling, duplicate, orphan, cycle,
 #       or a chain resolving to zero or more than one live record)
@@ -202,11 +206,18 @@ if [ -z "$RECORDS" ] && [ "$STATUS" -eq 0 ]; then
   # Distinguish "find failed" (e.g. permission denied) from a truly empty dir.
   find_err="$(find "$LEDGER_DIR" -maxdepth 1 -name '*.json' 2>&1 | head -1)"
   if [ -n "$find_err" ] && ! find "$LEDGER_DIR" -maxdepth 1 -name '*.json' >/dev/null 2>&1; then
+    # A ledger this script could not enumerate is not an empty ledger: nothing
+    # was read, so no verdict about its records was earned. That stays 10.
     echo "census.sh: find failed to enumerate $LEDGER_DIR: $find_err (10:empty-ledger)" >&2
+    STATUS=10
   else
-    echo "census.sh: no *.json records under $LEDGER_DIR (10:empty-ledger)" >&2
+    # A recordless decisions/ directory is the unified census's ledger-empty warn
+    # (code 42, exit 0), not a failure: a freshly attached project has no records
+    # yet and must not read as permanently red, and this shim has no --strict to
+    # promote the warn with. One verdict on one tree, whichever census is run
+    # (issue #97); the unified census keeps the wording and the promotion.
+    echo "census.sh: no *.json records under $LEDGER_DIR (42:ledger-empty)" >&2
   fi
-  STATUS=10
 fi
 
 # --- Schema -----------------------------------------------------------------

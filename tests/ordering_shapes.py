@@ -40,8 +40,13 @@ ORDERING_CLASSES = ("ordering-malformed", "ordering-stale", "ordering-closed")
 # otherwise well-formed is never also reported as stale.
 FRESH = "2026-10-26T00:00:00Z"
 
+# A live record id every shape of the table can cite: an entry must cite a
+# decision (issue #97), so a shape under test needs a value that is not itself
+# the defect. The census's ledger fixture holds a record of this name.
+BASELINE_ID = "2026-10-01-baseline"
 
-def entry(issue: int, decision: str | None = None, confirmed: str = FRESH) -> dict:
+
+def entry(issue: int, decision: str = BASELINE_ID, confirmed: str = FRESH) -> dict:
     """One well-formed entry, for composing a body around the shape under test."""
     return {"issue": issue, "decision": decision, "confirmed": confirmed}
 
@@ -83,20 +88,20 @@ MALFORMED_SHAPES: dict[str, tuple[str, str]] = {
     "entry not an object": (_entries("[7]"), "is not an object"),
     "entry missing fields": (_entries('[{"issue": 1}]'), "missing field"),
     "entry with an unknown field": (_entries(
-        '[{"issue": 1, "decision": null, "confirmed": "2026-10-26T00:00:00Z", "note": 1}]'),
+        '[{"issue": 1, "decision": "2026-10-01-baseline", "confirmed": "2026-10-26T00:00:00Z", "note": 1}]'),
         "unknown field"),
     "issue a string": (_entries(
-        '[{"issue": "1", "decision": null, "confirmed": "2026-10-26T00:00:00Z"}]'),
+        '[{"issue": "1", "decision": "2026-10-01-baseline", "confirmed": "2026-10-26T00:00:00Z"}]'),
         "not a positive integer"),
     "issue a bool": (_entries(
-        '[{"issue": true, "decision": null, "confirmed": "2026-10-26T00:00:00Z"}]'),
+        '[{"issue": true, "decision": "2026-10-01-baseline", "confirmed": "2026-10-26T00:00:00Z"}]'),
         "not a positive integer"),
     "issue zero": (_entries(
-        '[{"issue": 0, "decision": null, "confirmed": "2026-10-26T00:00:00Z"}]'),
+        '[{"issue": 0, "decision": "2026-10-01-baseline", "confirmed": "2026-10-26T00:00:00Z"}]'),
         "not a positive integer"),
     "issue listed twice": (_entries(
-        '[{"issue": 4, "decision": null, "confirmed": "2026-10-26T00:00:00Z"}, '
-        '{"issue": 4, "decision": null, "confirmed": "2026-10-26T00:00:00Z"}]'),
+        '[{"issue": 4, "decision": "2026-10-01-baseline", "confirmed": "2026-10-26T00:00:00Z"}, '
+        '{"issue": 4, "decision": "2026-10-01-baseline", "confirmed": "2026-10-26T00:00:00Z"}]'),
         "appears more than once"),
     "decision a number": (_entries(
         '[{"issue": 1, "decision": 7, "confirmed": "2026-10-26T00:00:00Z"}]'),
@@ -104,14 +109,24 @@ MALFORMED_SHAPES: dict[str, tuple[str, str]] = {
     "decision blank": (_entries(
         '[{"issue": 1, "decision": "  ", "confirmed": "2026-10-26T00:00:00Z"}]'),
         "neither a record id nor null"),
+    # A null decision is the state the anti-fabrication rule removed (issue #97):
+    # every entry cites the record that set its position, so a JSON null earns a
+    # row from the census and a refusal from every verb, each naming the entry
+    # index. The absent key is the row above (``missing field``), so the two
+    # sentences cannot be confused with one another.
+    "decision null": (_entries(
+        '[{"issue": 1, "decision": null, "confirmed": "2026-10-26T00:00:00Z"}]'),
+        "decision is neither a record id nor null"),
+    "decision absent": (_entries(
+        '[{"issue": 1, "confirmed": "2026-10-26T00:00:00Z"}]'), "missing field"),
     "confirmed not a timestamp": (_entries(
-        '[{"issue": 1, "decision": null, "confirmed": "yesterday"}]'),
+        '[{"issue": 1, "decision": "2026-10-01-baseline", "confirmed": "yesterday"}]'),
         "not a UTC timestamp"),
     "confirmed null": (_entries(
-        '[{"issue": 1, "decision": null, "confirmed": null}]'), "not a UTC timestamp"),
+        '[{"issue": 1, "decision": "2026-10-01-baseline", "confirmed": null}]'), "not a UTC timestamp"),
     # A stamp with no offset names no instant, so neither side treats it as one.
     "confirmed has no offset": (_entries(
-        '[{"issue": 1, "decision": null, "confirmed": "2026-10-26T00:00:00"}]'),
+        '[{"issue": 1, "decision": "2026-10-01-baseline", "confirmed": "2026-10-26T00:00:00"}]'),
         "not a UTC timestamp"),
     # The document-level JSON literals no noni writer can name.
     # A non-finite literal is refused by both readers, and the two reach that
@@ -119,11 +134,11 @@ MALFORMED_SHAPES: dict[str, tuple[str, str]] = {
     # the writer refuses at the entry that carries it), so the row and the
     # refusal are checked for the exit code and the class, not for shared words.
     "an overflowed literal": (_entries(
-        '[{"issue": 1, "decision": null, "confirmed": 1e400}]'), None),
+        '[{"issue": 1, "decision": "2026-10-01-baseline", "confirmed": 1e400}]'), None),
     "a NaN in a number position": (_entries(
-        '[{"issue": NaN, "decision": null, "confirmed": "2026-10-26T00:00:00Z"}]'), None),
+        '[{"issue": NaN, "decision": "2026-10-01-baseline", "confirmed": "2026-10-26T00:00:00Z"}]'), None),
     "an Infinity in a number position": (_entries(
-        '[{"issue": 1, "decision": null, "confirmed": "2026-10-26T00:00:00Z", '
+        '[{"issue": 1, "decision": "2026-10-01-baseline", "confirmed": "2026-10-26T00:00:00Z", '
         '"n": Infinity}]'), None),
     # A repeated key is not a document either reader can answer for: last-wins
     # would let the entry carry a value no line of the file's text states. The
@@ -133,12 +148,12 @@ MALFORMED_SHAPES: dict[str, tuple[str, str]] = {
     # an entry that cites nothing while an earlier line of the file says it cites
     # a record, so no rule of the shape answers this document.
     "a repeated decision key": (_entries(
-        '[{"issue": 3, "decision": "2026-10-01-baseline", "decision": null, '
+        '[{"issue": 3, "decision": "2026-10-01-baseline", "decision": "2026-10-01-baseline", '
         '"confirmed": "2026-10-26T00:00:00Z"}]'), None),
     # The issue given twice: last-wins would let the entry name 4 while an
     # earlier line of the file says 3, which no rule of the shape reports.
     "a repeated issue key": (_entries(
-        '[{"issue": 3, "issue": 4, "decision": null, '
+        '[{"issue": 3, "issue": 4, "decision": "2026-10-01-baseline", '
         '"confirmed": "2026-10-26T00:00:00Z"}]'), None),
     "a repeated schema key": ('{"schema": "noni.order/1", "schema": "noni.order/1", '
                               '"entries": []}', None),

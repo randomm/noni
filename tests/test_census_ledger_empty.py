@@ -17,6 +17,7 @@ from _harness import _commit_file, _init_repo
 from census_fixtures import _ndjson_rows, _session_body, _valid_record
 from census_probe_doubles import _UnreadableGit
 from census_run import _run_census
+from ledger_schema_fixtures import _run_py, _run_sh
 
 
 class TestLedgerEmpty:
@@ -209,3 +210,44 @@ class TestLedgerEmpty:
         assert rc == 0, f"expected 0, got {rc}\nstderr: {err}"
         rows = [r for r in _ndjson_rows(out) if r.get("kind") == "finding"]
         assert rows == [], f"expected no findings: {rows}"
+
+    def test_both_censuses_agree_on_a_freshly_attached_tree(self, tmp_path):
+        """A freshly attached tree is a committed ``noni/decisions/`` holding no
+        record, and the two entry points must hand back one verdict (issue #97).
+
+        Before the fix ``census.sh`` exited 10 there while the unified census
+        exited 0 with the ``ledger-empty`` warn, so the same project read as
+        permanently red to one tool and clean to the other, and a team's CI chose
+        its verdict by which script it happened to call. The shim converged on the
+        unified census, not the reverse: the warn stays a warn (42 under
+        ``--strict``, which the shim has no flag for), and the states the shim's
+        read never reached -- a directory it could not enumerate -- stay 10.
+
+        Both censuses are driven over the one ledger directory, so the only thing
+        that differs between the two verdicts is the tool.
+        """
+        ledger = tmp_path / "fresh" / "noni" / "decisions"
+        ledger.mkdir(parents=True)
+
+        sh_code, sh_out = _run_sh(ledger)
+        assert sh_code == 0, f"census.sh must exit 0 on a recordless ledger:\n{sh_out}"
+        assert "42:ledger-empty" in sh_out, (
+            f"the shim must name the state it reported, not fail silently: {sh_out}")
+        assert "10:empty-ledger" not in sh_out, (
+            f"the shim still calls a recordless ledger an unusable one: {sh_out}")
+
+        py_code, py_out = _run_py(ledger)
+        assert py_code == 0, f"the unified census must exit 0 on a recordless ledger:\n{py_out}"
+        assert sh_code == py_code, (
+            f"the two censuses disagree on a freshly attached tree: sh={sh_code} "
+            f"py={py_code}\nsh: {sh_out}\npy: {py_out}")
+        # ``_run_py`` merges both streams, so the rows are read from a second run
+        # through this file's own runner: the census prints the NDJSON stream on
+        # stdout and the exit-code note on stderr, and the verdict under test is
+        # the row set.
+        rc, out, err = _run_census(ledger.parent.parent, "--ledger", str(ledger),
+                                   "--json", "--only", "ledger-empty",
+                                   "--only", "ledger-record")
+        assert rc == 0 and sh_code == rc, f"sh={sh_code} py={rc}\n{err}"
+        rows = [r for r in _ndjson_rows(out) if r.get("kind") == "finding"]
+        assert [r["check"] for r in rows] == ["ledger-empty"], out

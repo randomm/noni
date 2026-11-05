@@ -44,20 +44,35 @@ def test_add_creates_the_file_and_commits_only_that_path(tmp_path):
     _assert_census_clean(repo, "add")
 
 
-def test_an_entry_without_a_decision_carries_null_not_an_absent_key(tmp_path):
-    """``decision`` is always present, and null is the state 'the operator put
-    this here and no record is cited': an absent key is a malformed entry, so
-    the writer's own output must round-trip through the shape it refuses."""
+def test_an_entry_whose_decision_is_null_is_refused_by_every_verb(tmp_path):
+    """Every entry cites a decision (anti-fabrication, issue #97), so a hand-
+    written ``"decision": null`` is not a state the file may carry.
+
+    The three states the rule separates are pinned apart: a null decision earns
+    the refusal naming the entry, an absent key earns the missing-field refusal,
+    and the writer's own output -- which always writes the key -- round-trips.
+    The refusal is the writer's own code 4 and it leaves the artifact untouched,
+    because overwriting an order the operator committed is worse than refusing
+    the run.
+    """
     repo = _repo(tmp_path)
-    # An entry the operator placed with no record cited is a state the file
-    # carries, but "an added position is a decision" is the writer's rule: the
-    # null form is reached by seeding, and the writer must still round-trip it.
     _seed(repo, _entry(1, None))
+    before = _order_path(repo).read_bytes()
+    for verb in (("confirm",), ("confirm", "1"), ("move", "1", "--to", "1"),
+                 ("remove", "2"), ("add", "9", "--decision", BASELINE_ID)):
+        proc = _order(repo, *verb, "--now", NOW)
+        assert proc.returncode == 4, f"{verb}: {proc.returncode} {proc.stderr}"
+        assert "entry 1 decision is neither a record id nor null" in proc.stderr, \
+            f"{verb}: {proc.stderr}"
+    assert _order_path(repo).read_bytes() == before, "a refused run rewrote the artifact"
+    # The key's presence in what the writer does write: an absent key is a
+    # different refusal (the missing-field row), so the two states stay distinct.
+    _seed(repo, _entry(1, BASELINE_ID))
     assert _order(repo, "confirm", "--now", NOW).returncode == 0
     body = _order_path(repo).read_text(encoding="utf-8")
-    assert '"decision": null' in body, body
+    assert '"decision": "2026-10-01-baseline"' in body, body
     assert list(json.loads(body)["entries"][0]) == ["issue", "decision", "confirmed"]
-    _assert_census_clean(repo, "a null decision")
+    _assert_census_clean(repo, "a cited decision")
 
 
 def test_add_writes_the_canonical_bytes_the_docstring_documents(tmp_path):
@@ -68,7 +83,8 @@ def test_add_writes_the_canonical_bytes_the_docstring_documents(tmp_path):
     assert _order(repo, "add", "12", "--decision", BASELINE_ID,
                   "--now", NOW).returncode == 0
     body = _order_path(repo).read_text(encoding="utf-8")
-    # The second add names no --decision, so its entry carries null:
+    # Every add names a --decision: an entry that cited nothing would not be an
+    # artifact this writer writes at all.
     assert body == _canonical([_entry(7, BASELINE_ID), _entry(12, BASELINE_ID)]), repr(body)
     assert list(json.loads(body)) == ["schema", "entries"]
     assert list(json.loads(body)["entries"][0]) == ["issue", "decision", "confirmed"]

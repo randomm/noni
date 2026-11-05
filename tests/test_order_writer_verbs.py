@@ -28,7 +28,7 @@ from order_fixtures import (
 def test_move_replaces_the_entry_and_restamps_it(tmp_path):
     repo = _repo(tmp_path)
     _seed(repo, _entry(1, BASELINE_ID, "2026-10-01T00:00:00Z"),
-          _entry(2, None, "2026-10-01T00:00:00Z"),
+          _entry(2, BASELINE_ID, "2026-10-01T00:00:00Z"),
           _entry(3, BASELINE_ID, "2026-10-01T00:00:00Z"))
     proc = _order(repo, "move", "3", "--to", "1", "--now", NOW)
     assert proc.returncode == 0, proc.stderr
@@ -60,7 +60,7 @@ def test_move_of_an_unlisted_issue_refuses_with_four(tmp_path):
 
 def test_remove_shortens_the_list_and_leaves_the_others(tmp_path):
     repo = _repo(tmp_path)
-    _seed(repo, _entry(1, BASELINE_ID), _entry(2, None))
+    _seed(repo, _entry(1, BASELINE_ID), _entry(2, BASELINE_ID))
     proc = _order(repo, "remove", "1", "--now", NOW)
     assert proc.returncode == 0, proc.stderr
     assert _issues(repo) == [2]
@@ -78,8 +78,8 @@ def test_remove_of_an_unlisted_issue_refuses_with_four(tmp_path):
 
 def test_confirm_restamps_one_entry_and_then_the_whole_order(tmp_path):
     repo = _repo(tmp_path)
-    _seed(repo, _entry(1, None, "2026-10-01T00:00:00Z"),
-          _entry(2, None, "2026-10-01T00:00:00Z"))
+    _seed(repo, _entry(1, BASELINE_ID, "2026-10-01T00:00:00Z"),
+          _entry(2, BASELINE_ID, "2026-10-01T00:00:00Z"))
     assert _order(repo, "confirm", "1", "--now", NOW).returncode == 0
     entries = _read(repo)["entries"]
     assert entries[0]["confirmed"] == STAMP and entries[1]["confirmed"] == "2026-10-01T00:00:00Z"
@@ -117,12 +117,17 @@ def test_a_run_that_changes_no_byte_commits_nothing(tmp_path):
 
 def test_every_run_prints_the_resulting_order_one_line_per_entry(tmp_path):
     repo = _repo(tmp_path)
-    _seed(repo, _entry(1, BASELINE_ID), _entry(2, None))
+    _seed(repo, _entry(1, BASELINE_ID), _entry(2, BASELINE_ID))
     proc = _order(repo, "remove", "1", "--now", NOW)
     lines = proc.stdout.splitlines()
     assert any("order.json" in line and "1 entr" in line for line in lines), lines
     assert any(line.strip().startswith("1. #2") for line in lines), lines
-    assert "decision=-" in proc.stdout and "confirmed=" in proc.stdout, proc.stdout
+    # The decision column carries the citation the entry holds -- never a dash:
+    # since issue #97 every entry cites a record, so the printed order always
+    # names it, and the line stays the operator's view of what the order rests on.
+    assert f"decision={BASELINE_ID}" in proc.stdout, proc.stdout
+    assert "confirmed=" in proc.stdout, proc.stdout
+    assert "decision=-" not in proc.stdout, proc.stdout
 
 
 # --- --no-commit and the staged-file rule -------------------------------------

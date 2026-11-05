@@ -76,6 +76,18 @@ EXIT_CLEAN = 0
 EXIT_USAGE = 2
 EXIT_TOOL_MISSING = 3
 
+# The one wording of the note that ``ordering-closed`` was not evaluated, declared
+# above the table that quotes it: the human-readable branch prints it as a
+# ``note:`` line, the NDJSON branch carries the same sentence on the summary
+# record's ``not_evaluated`` field, and the fix hint of the class repeats it, so
+# one run cannot say one thing in one mode and its opposite in the other. The
+# literal is pinned by tests/test_docs_promises.py, tests/test_quickstart_promises.py
+# and the scrape in tests/test_quickstart.py, and docs/QUICKSTART.md and
+# skills/census/SKILL.md quote it.
+ORDERING_CLOSED_NOT_EVALUATED = (
+    "ordering-closed was not evaluated: no --issue-state FILE was given, so whether "
+    "an ordered issue is closed is not asked (the census never contacts a tracker)")
+
 # The one declaration of the check contract: id -> (code, default severity,
 # fix hint). Everything a caller can read about a class — its exit code, its
 # severity with and without --strict, the fix hint on every row, the --list
@@ -147,7 +159,7 @@ CHECKS: dict[str, tuple[int, str, str]] = {
     "ordering-malformed": (
         15, "fail",
         "repair noni/direction/order.json to the noni.order/1 shape (schema, a unique positive "
-        "issue and a UTC confirmed stamp per entry, decision a live record id or null), or write "
+        "issue, a live record id in `decision` and a UTC confirmed stamp per entry), or write "
         "it with skills/direction/scripts/order.py, which refuses the shapes this class reports",
     ),
     "ordering-stale": (
@@ -158,8 +170,15 @@ CHECKS: dict[str, tuple[int, str, str]] = {
     ),
     "ordering-closed": (
         46, "warn",
-        "remove the closed issue from the order (order.py remove ISSUE), or reopen it; the order "
-        "is what to work on next, so an issue the tracker has closed does not belong in it",
+        # The note itself is the constant above this table, not prose here: the
+        # human ``note:`` line and the summary row's not_evaluated field carry one
+        # sentence, three doc tests scrape it, and a fix hint that quoted it would
+        # put that sentence in a row of the very class that did run.
+        "remove the closed issue from the order (order.py remove ISSUE), or reopen it; the "
+        "order is what to work on next, so an issue the tracker has closed does not "
+        "belong in it. When --issue-state was not given the class is not evaluated at "
+        "all, and the run says so in words rather than leaving a rowless class to read "
+        "as every ordered issue being open",
     ),
 }
 
@@ -222,10 +241,23 @@ def _finding_sort_key(f: dict) -> tuple[str, str, str]:
     return (f["artifact"], f["check"], f["subject"])
 
 
+# The one wording of the human and NDJSON note lives above CHECKS, beside the
+# class whose fix hint repeats it (``ORDERING_CLOSED_NOT_EVALUATED``).
 def _render(
-    findings: list[dict], counts: dict[str, int], ok: bool, exit_code: int, json_out: bool
+    findings: list[dict], counts: dict[str, int], ok: bool, exit_code: int, json_out: bool,
+    notes: tuple[str, ...] = (),
 ) -> None:
-    """Emit the results in either NDJSON (--json) or human-readable form."""
+    """Emit the results in either NDJSON (--json) or human-readable form.
+
+    ``notes`` is what a run observed about a class it did not evaluate (the
+    ordering-closed note today). Human mode prints each as its own ``note:`` line
+    beside the report; the NDJSON branch prints none of them on stdout and puts
+    them on the one summary row instead, under ``not_evaluated``, so a machine
+    consumer loses nothing to the mode it picked and the closed set of row kinds
+    (``finding``, ``summary``) stays closed. The field is omitted when there is
+    nothing to say, so a run that evaluated everything keeps the byte stream it
+    had before the field existed.
+    """
     if json_out:
         for f in sorted(findings, key=_finding_sort_key):
             row = {
@@ -241,12 +273,11 @@ def _render(
             }
             print(json.dumps(row, sort_keys=True))
         counts_row = {k: v for k, v in counts.items() if v}
-        print(
-            json.dumps(
-                {"schema": SCHEMA_VERSION, "kind": "summary", "ok": ok, "exit": exit_code, "counts": counts_row},
-                sort_keys=True,
-            )
-        )
+        summary = {"schema": SCHEMA_VERSION, "kind": "summary", "ok": ok,
+                   "exit": exit_code, "counts": counts_row}
+        if notes:
+            summary["not_evaluated"] = list(notes)
+        print(json.dumps(summary, sort_keys=True))
     else:
         fired = {f["check"] for f in findings}
         if not findings:
@@ -256,10 +287,15 @@ def _render(
                 tag = {"fail": "FAIL", "warn": "WARN"}.get(f["severity"], "?")
                 print(f"{f['check']:<16} {tag:<4} {f['subject']}: {f['message']}")
                 print(f"{'':<16} fix: {CLASS_FIX[f['check']]}")
+        for note in notes:
+            print(f"note: {note}")
         if ok:
             verdict_text = "clean"
         else:
             verdict_text = f"{exit_code} ({', '.join(sorted(fired))})"
+        # The verdict line stays the last line of stdout: a CI step that reads the
+        # report's ending (tests/test_quickstart.py) must still find it there, so
+        # the notes sit above it, beside the findings they qualify.
         print(f"summary: {verdict_text}; {sum(counts.values())} finding(s); verdict {'ok' if ok else 'fail'}")
         if not ok:
             print(

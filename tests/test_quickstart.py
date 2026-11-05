@@ -57,7 +57,7 @@ from quickstart_gate import (
     run_gate_on_tree_with_no_denylist,
 )
 from quickstart_golden import COVERED_SECTIONS, GOLDEN
-from quickstart_page import page_text
+from quickstart_page import ordering_note_from_product, page_text
 from quickstart_page_steps import GIT_INFO_EXCLUDE, ignore_rules_written
 from quickstart_page_steps import RULE as IGNORE_RULE
 from quickstart_runner import (
@@ -270,13 +270,15 @@ def test_the_ordering_note_appears_in_human_mode_and_not_in_json(world: World) -
     """The page's claim about the ``--json`` stream, observed on the Route A tree.
 
     The page tells the reader the census says out loud that ``ordering-closed``
-    was not evaluated, and that ``--json`` mode prints no such line. Both halves
-    are about output, so both are read from two runs of the same census over the
-    same tree. The absence in the ``--json`` run is only worth anything next to
-    the positive half in the *same* run: the stream has to parse as NDJSON, carry
-    the ordering group's summary row, and reach the verdict the page ends with.
-    An assertion that only looked for the note's absence would be satisfied by a
-    census that never read anything, which is the vacuity this pins shut.
+    was not evaluated, that no ``note:`` line goes to stdout in ``--json`` mode,
+    and that the summary row carries the sentence instead. All three are about
+    output, so all three are read from two runs of the same census over the same
+    tree. The absence of the line in the ``--json`` run is only worth anything
+    next to the positive half in the *same* run: the stream has to parse as
+    NDJSON, carry the ordering group's summary row with its ``not_evaluated``
+    entry, and reach the verdict the page ends with. An assertion that only
+    looked for the note's absence would be satisfied by a census that never read
+    anything, which is the vacuity this pins shut.
     """
     for argv in route_commands(("Route A",)):
         _checked(launch(world, argv, world.project), f"Route A command {argv}")
@@ -284,7 +286,7 @@ def test_the_ordering_note_appears_in_human_mode_and_not_in_json(world: World) -
     plain = run_noni("census", "--repo", str(world.project), "--only", "ordering-closed",
                      cwd=world.project, env=world.env)
     _checked(plain, "the plain census run")
-    note = _note_from_product()
+    note = ordering_note_from_product()
     assert note in plain.stdout, (
         f"the census does not print the note the page quotes it as printing: "
         f"{plain.stdout!r}")
@@ -295,14 +297,17 @@ def test_the_ordering_note_appears_in_human_mode_and_not_in_json(world: World) -
     assert note not in as_json.stdout, (
         f"--json mode prints the note the page says it never prints: "
         f"{as_json.stdout!r}")
-    # The positive half, in this same run: the payload is the ordering group's
-    # own rows, so the absence asserted above is an absence from a stream that
-    # demonstrably answered, not from one that printed nothing at all.
+    # The page's third claim, in the same run: the sentence is not lost to the
+    # mode, it moves to the summary row (issue #97).
     rows = [json.loads(line) for line in as_json.stdout.splitlines() if line.strip()]
     assert rows, f"--json mode printed no stream at all: {as_json.stdout!r}"
     summaries = [row for row in rows if row.get("kind") == "summary"]
     assert len(summaries) == 1, f"no single summary row in the --json stream: {rows}"
     summary, = summaries
+    carried = summary.get("not_evaluated")
+    assert isinstance(carried, list) and any(note[6:] in line for line in carried), (
+        f"--json mode neither printed the note nor carried it on the summary row: "
+        f"{summary}")
     assert summary.get("exit") == 0 and summary.get("ok") is True, summary
     assert all(row.get("schema") == rows[0]["schema"] for row in rows), rows
     # The payload has to answer for the ordering group, not just be well-formed:
@@ -473,22 +478,3 @@ def _assert_git_ignores_the_state_tree(world: World, argv: list[str],
     assert target in ignored.stdout and IGNORE_RULE in ignored.stdout, (
         f"git ignored the path through a file other than the one the page's "
         f"{argv[0]} line names: {ignored.stdout!r}")
-
-
-# --- helpers used only by this module ---------------------------------------
-
-def _note_from_product() -> str:
-    """The ordering-closed note, assembled from the census's own source.
-
-    The sentence is written in the run's body across two string literals, so this
-    reads the print call out of ``census_run.py`` and joins them. Quoting the
-    literal here instead would let the page and this test agree with each other
-    while both drifted away from the tool.
-    """
-    source = (REPO / "src" / "noni" / "census_run.py").read_text(encoding="utf-8")
-    match = re.search(r'print\("(note: ordering-closed was not evaluated[^"]*)"\s*'
-                      r'([^)]*)\)', source, re.S)
-    assert match, "the census no longer prints the ordering-closed note this test cites"
-    parts = re.findall(r'"((?:[^"\\]|\\.)*)"', match.group(0))
-    assert parts and parts[0].startswith("note: ordering-closed was not evaluated"), parts
-    return "".join(parts)

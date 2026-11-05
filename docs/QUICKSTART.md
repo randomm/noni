@@ -288,13 +288,16 @@ spelled as a bare decimal string, to `"open"` or `"closed"`. Without the flag
 the `ordering-closed` (46) class is not evaluated at all, so a run with no rows
 from it does not mean every ordered issue is open.
 
-The census says so out loud when you look at it in human-readable mode: one
-line, `note: ordering-closed was not evaluated: no --issue-state FILE was
-given`, printed beside the report. A CI run that gates on the exit code can skip
-the note and read the rows instead: `--json` mode prints no such line — that
-stream is findings and a summary, and a notice about a class that did not run
-is neither — so read the note from a run without `--json`, and keep the
-ordering group in the run (`--only` must name an ordering class, or name none).
+The census says so out loud whichever mode you read it in. In human-readable
+mode that is one line, `note: ordering-closed was not evaluated: no
+--issue-state FILE was
+given`, printed beside the report. In `--json` mode no such line goes to
+stdout — that stream stays findings and one summary — and the same sentence is
+instead carried on the summary row as its `not_evaluated` field, a list of the
+classes the run did not evaluate and why. Read it from either mode; a CI run
+gating on the rows loses nothing by never printing a `note:` line. Keep the
+ordering group in the run either way (`--only` must name an ordering class, or
+name none), because a run that never reached the class reports nothing about it.
 
 The census ships no producer. A tracker with a command line and `jq` produce
 one:

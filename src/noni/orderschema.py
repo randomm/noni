@@ -265,9 +265,12 @@ def _entry_field_problems(index: int, entry: dict, found: list[str]) -> None:
             found.append(f"entry {index} issue {issue!r} is not a positive integer")
     if "decision" in entry:
         decision = entry["decision"]
-        if decision is not None and not (isinstance(decision, str) and decision.strip()):
-            # A blank id is no id: it matches no record file, so an entry that
-            # claims it is malformed rather than a decision nobody can look up.
+        if not (isinstance(decision, str) and decision.strip()):
+            # Every entry cites a decision, whoever placed it: a position with no
+            # record behind it is an ordering nobody can look up or replay, so a
+            # JSON null is refused like a blank string. A missing key is the
+            # entry-gaps report above, never this one — the two sentences are
+            # what tells a reader whether a repair is an id or a key.
             found.append(f"entry {index} decision is neither a record id nor null")
     confirmed = entry.get("confirmed")
     if "confirmed" in entry and (not isinstance(confirmed, str)

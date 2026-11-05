@@ -49,6 +49,7 @@ from .census_report import (
     INTENT_CHECKS,
     LEDGER_CHECKS,
     ORDERING_CHECKS,
+    ORDERING_CLOSED_NOT_EVALUATED,
     ORDERING_STALE_AFTER_DEFAULT,
     SESSION_CHECKS,
     STALE_AFTER_RE,
@@ -308,6 +309,12 @@ def _run(argv: list[str] | None = None) -> int:
     census._set_run_root(root)
 
     findings: list[dict] = []
+    # What this run observed about a class it did not evaluate. Human mode prints
+    # each entry as a ``note:`` line, --json mode carries them on the summary row
+    # (see ``_render``). Decided from the flags alone -- never the clock, the
+    # filesystem or the cwd -- so the byte stream of a --json run stays
+    # reproducible across two runs with one --now.
+    notes: list[str] = []
     # One --only/--skip rule for all five groups: a group runs when any class
     # of its reporting set was asked for, and keeps only the rows of the
     # classes actually named. The ledger group is reported as a unit (the
@@ -374,14 +381,13 @@ def _run(argv: list[str] | None = None) -> int:
         # The closed check's question comes only from --issue-state, which an
         # adapter or the operator produces. Without it the class is not run, and
         # the run says so once rather than letting "no ordering-closed rows"
-        # read as "every ordered issue is open". Text mode only, on stdout
-        # beside the report: the --json stream is findings, and a notice about a
-        # class that did not run is not one, so the NDJSON stays byte-exact.
-        if (issue_state_path is None and "ordering-closed" in requested
-                and not args.json_out):
-            print("note: ordering-closed was not evaluated: no --issue-state FILE was "
-                  "given, so whether an ordered issue is closed is not asked "
-                  "(the census never contacts a tracker)")
+        # read as "every ordered issue is open". The same sentence is carried in
+        # both modes: a ``note:`` line on stdout here, the summary row's
+        # ``not_evaluated`` field in --json mode (see ``_render``), so a CI run
+        # that gates on the rows loses the information no more than one that
+        # reads the human report.
+        if issue_state_path is None and "ordering-closed" in requested:
+            notes.append(ORDERING_CLOSED_NOT_EVALUATED)
 
     # The intent class is its own group: one file, one cited record, and the
     # citation question answered from the history view this run already took. The
@@ -432,5 +438,5 @@ def _run(argv: list[str] | None = None) -> int:
         counts[f["check"]] += 1
     ok = exit_code == EXIT_CLEAN
 
-    _render(findings, counts, ok, exit_code, args.json_out)
+    _render(findings, counts, ok, exit_code, args.json_out, tuple(notes))
     return exit_code

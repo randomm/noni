@@ -16,8 +16,11 @@ agent never answers for the operator: a decline or cancel leaves the question
 open, records nothing, and commits nothing.
 
 The record is the commit. A ping, a comment, or a chat message is a hint; the
-committed file is the truth. The census (`scripts/census.sh`) is the enforcement
-mechanism for what git and the files can prove: every invariant it enforces is
+committed file is the truth. `noni census` (the unified census,
+`skills/census/scripts/census.py`) is the enforcement mechanism for what git and
+the files can prove; `scripts/census.sh` beside it is the ledger shim (with its
+`--sessions` dispatch to the sessions-claims twin), kept compatible for callers
+that already run it. Every invariant it enforces is
 a script with an honest exit code or a census check that catches the
 violation. Prose states the protocol; the census holds the line where git
 gives it the evidence. What git cannot prove — that an answer was the
@@ -164,8 +167,11 @@ the anti-fabrication rule (the agent never answers for the operator) are in
 
 ## Census
 
-`scripts/census.sh <state-root>/noni/decisions` is read-only, jq-based, and
-exits with an honest code. It is a bash script: run it as `bash
+`scripts/census.sh <state-root>/noni/decisions` is the ledger shim: read-only,
+jq-based, and it exits with an honest code. It is the compatibility twin, not the
+enforcer — `noni census` (the unified census, `skills/census/scripts/census.py`,
+documented in `skills/census/SKILL.md`) is the entry point that enforces. It is a
+bash script: run it as `bash
 scripts/census.sh <dir>` or, since it carries its executable bit and its bash
 shebang, as `scripts/census.sh <dir>`. Why no interpreter may stand in front of
 it is in `references/census.md`. Its one argument is the ledger directory of the
@@ -177,9 +183,13 @@ default, so a run with no argument is the usage error `2`.
 | `0` | clean — every record valid, chain intact |
 | `2` | usage: no ledger directory was given (the state root is named by the caller, never by the cwd) |
 | `3` | jq not found on the reading machine, or the schema program `scripts/census-schema.jq` is missing (`3:schema-program-missing`) |
-| `10` | a record is missing or malformed, or the ledger is unusable (missing/empty dir, bad filename, unreadable git tree) |
+| `10` | a record is missing or malformed, or the ledger is unusable (missing dir, bad filename, a directory that could not be enumerated, unreadable git tree) |
 | `12` | a record was edited after commit (supersede instead) |
 | `20` | the supersede chain is broken (dangling, duplicate, orphan, cycle, or a chain resolving to zero or more than one live record) |
+
+A `decisions/` directory that holds no `*.json` record is none of the above: the
+shim names it `(42:ledger-empty)` on stderr and exits 0, the same verdict the
+unified census gives it.
 
 When several invariant classes fail at once, the lowest code wins
 (`10 < 12 < 20`); the stderr message says whether the higher-numbered checks
@@ -188,7 +198,9 @@ whether the operator confirmed an answer, so it never claims to (below).
 
 The table above is `census.sh`. The unified census reports a recordless
 `noni/decisions/` directory as the `ledger-empty` warn 42 (exit 0, 42 under
-`--strict`) rather than this shim's exit 10: see `skills/census/SKILL.md`.
+`--strict`), and so does this shim on stderr (`42:ledger-empty`) at exit 0: the
+two entry points agree on a freshly attached tree (issue #97). See
+`skills/census/SKILL.md`.
 
 The exit-code contract and how to read the report are in `references/census.md`.
 

@@ -80,7 +80,7 @@ def test_a_deeply_nested_state_file_is_malformed_and_not_a_traceback(tmp_path):
     needs the same answer: the row is the state file's own and the run still
     exits 15 rather than dying."""
     repo = _repo(tmp_path, "deep-state")
-    _seed(repo, _entry(7, None))
+    _seed(repo, _entry(7, BASELINE_ID))
     path = repo / "issue-state.json"
     path.write_text(_deep(), encoding="utf-8")
     code, rows, out, err = _run(repo, "--issue-state", str(path))
@@ -307,7 +307,7 @@ def test_the_state_row_bounds_the_whole_composed_message(tmp_path):
                                               "z" * 5000: "perhaps",
                                               "w" * 5000: "maybe"}))):
         repo = _repo(tmp_path, f"long-state-{index}")
-        _seed(repo, _entry(7, None))
+        _seed(repo, _entry(7, BASELINE_ID))
         path = repo / "issue-state.json"
         path.write_text(body, encoding="utf-8")
         code, rows, out, err = _run(repo, "--issue-state", str(path))

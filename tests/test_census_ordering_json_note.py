@@ -78,3 +78,28 @@ def test_the_field_never_adds_a_row_kind(tmp_path):
     assert any("not_evaluated" in r for r in rows), (
         "this run asks nothing that leaves a class unevaluated, so the test would "
         "pass vacuously: pin the ordering note's tree")
+
+
+def test_a_note_that_is_not_a_sentence_is_refused_at_the_renderer(tmp_path):
+    """``not_evaluated`` is a ``list[str]`` by contract, not by accident.
+
+    The doc names the field a list of the classes a run did not evaluate and
+    why, and a consumer is entitled to read each element as a sentence. A note
+    that arrived as a dict or a pair would have printed as ``note: {...}`` in
+    human mode and an object inside a list in ``--json``: two shapes for one
+    field, which is the divergence the field exists to remove. So the renderer
+    refuses a non-string note rather than emitting a stream whose element type
+    varies per run.
+    """
+    import pytest
+
+    from noni.census_report import _render
+
+    for bad in ({"class": "ordering-closed", "why": "no flag"}, ("a", "pair"), 7, None):
+        with pytest.raises(TypeError, match="must be a sentence"):
+            _render([], {}, True, 0, True, (bad,))
+        with pytest.raises(TypeError, match="must be a sentence"):
+            _render([], {}, True, 0, False, (bad,))
+
+    # The shape the contract does allow, in both modes: one string per note.
+    _render([], {}, True, 0, True, (NOTE,))

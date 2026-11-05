@@ -81,9 +81,8 @@ EXIT_TOOL_MISSING = 3
 # ``note:`` line, the NDJSON branch carries the same sentence on the summary
 # record's ``not_evaluated`` field, and the fix hint of the class repeats it, so
 # one run cannot say one thing in one mode and its opposite in the other. The
-# literal is pinned by tests/test_docs_promises.py, tests/test_quickstart_promises.py
-# and the scrape in tests/test_quickstart.py, and docs/QUICKSTART.md and
-# skills/census/SKILL.md quote it.
+# docs that quote the literal are scraped from this constant, so a rename reddens
+# the pages rather than leaving them quoting a line nothing prints.
 ORDERING_CLOSED_NOT_EVALUATED = (
     "ordering-closed was not evaluated: no --issue-state FILE was given, so whether "
     "an ordered issue is closed is not asked (the census never contacts a tracker)")
@@ -257,7 +256,18 @@ def _render(
     (``finding``, ``summary``) stays closed. The field is omitted when there is
     nothing to say, so a run that evaluated everything keeps the byte stream it
     had before the field existed.
+
+    ``list[str]`` is the field's contract, not a description of what happens to
+    be passed today: one sentence per element, the class named first. A note that
+    arrived as a dict or a pair would print as a ``note: {...}`` line in one mode
+    and an object inside a list in the other, which is the per-mode-diverging
+    shape this field exists to prevent, so a producer is refused here rather than
+    a consumer surprised later.
     """
+    for note in notes:
+        if not isinstance(note, str):
+            raise TypeError(
+                f"a census note must be a sentence, got {type(note).__name__}: {note!r}")
     if json_out:
         for f in sorted(findings, key=_finding_sort_key):
             row = {

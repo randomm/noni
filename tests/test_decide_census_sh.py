@@ -112,7 +112,13 @@ def test_census_sh_refuses_a_ledger_dir_it_cannot_read(tmp_path):
     assert proc.returncode == 10, f"{proc.returncode}\n{proc.stderr}"
     assert "find failed to enumerate" in proc.stderr, proc.stderr
     assert "unreadable-ledger" in proc.stderr, proc.stderr
-    assert "empty-ledger" in proc.stderr, proc.stderr
+    # The code is asserted as the printed label, not as a substring of it: the
+    # sibling branch below prints `42:ledger-empty` and a check that matched
+    # "empty-ledger" alone was satisfied by either, so it could not tell a blind
+    # census from a recordless one (the pair the agreement test in
+    # tests/test_census_ledger_empty.py asserts the same way).
+    assert "(10:empty-ledger)" in proc.stderr, proc.stderr
+    assert "42:ledger-empty" not in proc.stderr, proc.stderr
     # The header row still goes to stdout (that print is the shim's long-standing
     # shape for every path through the report, and this test is about the
     # ledger's state, not about it). What matters is that no record rows follow:

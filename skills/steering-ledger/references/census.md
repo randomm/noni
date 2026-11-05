@@ -4,7 +4,10 @@
 `skills/census/SKILL.md`) is the entry point that enforces the ledger invariants.
 `scripts/census.sh`, the subject of this page, is the ledger shim (with its
 `--sessions` dispatch to the sessions-claims twin): the read-only, jq-based twin
-kept for callers that already run it. It is a
+kept for callers that already run it — for spot checks, not for a gate. It runs
+one `jq` pass per record in a shell loop, so on a ledger of thousands of records
+it costs an order of magnitude more than `noni census` over the same tree; a CI
+step that censuses a real ledger each run belongs on the unified census. It is a
 bash script, so it runs under `bash` or through its own executable bit and its
 bash shebang — never under `python3`, which reads its braces as Python and dies
 on a syntax error before any check runs. This is the one page that states that
@@ -48,11 +51,13 @@ to the caller.
 
 A `decisions/` directory that exists and can be read but holds no `*.json`
 record is not a failure: the shim names it `(42:ledger-empty)` on stderr and
-exits `0`, which is what the unified census's `ledger-empty` warn means (issue
-#97). A directory it could not enumerate is still `10:empty-ledger` — a read
-that happened nowhere is not an empty ledger.
+exits `0`, which is what the unified census's `ledger-empty` warn means (the
+unified census promotes that warn to 42 under `--strict`, which this shim has no
+flag for), so the two agree on a freshly attached tree (issue #97). A directory
+it could not enumerate is still `10:empty-ledger` — a read that happened nowhere
+is not an empty ledger.
 
-**Compatibility shim.** This table is the contract of `census.sh`, the ledger
+**Ledger shim.** This table is the contract of `census.sh`, the ledger
 shim. `noni census` is the entry point that enforces. The unified census
 (`skills/census/scripts/census.py`, documented in
 `skills/census/SKILL.md`) owns `ledger-empty` (42, warn; fail under `--strict`)
@@ -63,10 +68,7 @@ no `*.json` record — operator decision on issue #33, so a freshly attached
 project censuses clean at exit 0). That class only adds rows: a record that is
 bad JSON or violates the schema stays the `ledger-record` exit 10 in both
 censuses, so the code-10 row of this table still covers the malformed and
-unreadable records. On the recordless directory the shim now reports that same
-verdict — `42:ledger-empty` on stderr at exit 0 — so the two agree on a freshly
-attached tree (issue #97); it has no `--strict`, so the promotion to 42 belongs
-to the unified census alone. The
+unreadable records. The
 unified census also owns three classes this shim does not have: `session-same-identity` (43),
 `session-deleted` (44) and `hygiene` (50). Where the two disagree, the unified
 census is the arbiter and this table describes the shim's own exit codes only.

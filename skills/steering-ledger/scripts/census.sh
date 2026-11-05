@@ -8,6 +8,8 @@
 #                schema program missing (3:schema-program-missing)
 #                | 10 record/ledger unusable | 12 edited after commit
 #                | 20 supersede chain broken
+#                | 42 recordless ledger, reported as the ledger-empty warn
+#                at exit 0
 #       a record is valid when it carries the eight top-level required
 #       fields (plus the optional source, decided_by, on_behalf_of and
 #       single_option fields) and the chain resolves
@@ -207,9 +209,11 @@ if [ -z "$RECORDS" ] && [ "$STATUS" -eq 0 ]; then
   find_err="$(find "$LEDGER_DIR" -maxdepth 1 -name '*.json' 2>&1 | head -1)"
   if [ -n "$find_err" ] && ! find "$LEDGER_DIR" -maxdepth 1 -name '*.json' >/dev/null 2>&1; then
     # A ledger this script could not enumerate is not an empty ledger: nothing
-    # was read, so no verdict about its records was earned. That stays 10.
-    echo "census.sh: find failed to enumerate $LEDGER_DIR: $find_err (10:empty-ledger)" >&2
+    # was read, so no verdict about its records was earned. That stays 10, and
+    # the code is set before the line is printed so no path can reach the report
+    # with the message and not the verdict.
     STATUS=10
+    echo "census.sh: find failed to enumerate $LEDGER_DIR: $find_err (10:empty-ledger)" >&2
   else
     # A recordless decisions/ directory is the unified census's ledger-empty warn
     # (code 42, exit 0), not a failure: a freshly attached project has no records

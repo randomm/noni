@@ -67,10 +67,9 @@ directory, a symlink, `noni/` present without a `decisions/` directory, or a
 malformed-record failure: a record that is bad JSON or violates the schema
 keeps its `ledger-record` exit 10. A freshly attached project whose
 `noni/decisions/` has no records yet therefore censuses clean at exit 0
-(operator decision on issue #33). `census.sh` is the ledger shim (with its
-`--sessions` dispatch to the sessions-claims twin): it reports the same
-recordless directory as the same warn at exit 0 (`42:ledger-empty` on stderr),
-so the two entry points give one verdict on a freshly attached tree (issue #97).
+(operator decision on issue #33). The shim agrees with that verdict on that
+directory (see the Rules below), so a freshly attached tree reads the same way to
+either entry point.
 
 When several classes fire at once the lowest code wins; stderr names every
 class that fired.
@@ -344,9 +343,9 @@ substitute for running `scripts/public_safety.py` before publishing.
   scripts (`census.sh`, `census-sessions.sh`) remain as compatibility
   shims with a subset of the same exit codes (see the steering-ledger
   SKILL.md). `census.sh` is the ledger shim (with its `--sessions` dispatch to
-  the sessions-claims twin); on the states the two share they answer alike,
-  including the recordless ledger directory, which both report as the
-  `ledger-empty` warn at exit 0.
+  the sessions-claims twin): on the states the two share they answer alike, the
+  recordless ledger directory among them — both report it as the `ledger-empty`
+  warn, at exit 0 here and 42 under `--strict`.
 - **Time from `--now`.** All time-based checks use `--now` when given (for
   reproducible output in tests) and the current UTC time otherwise.
 - **No self-reported numbers.** Every metric in `--json` mode names the

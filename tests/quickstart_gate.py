@@ -23,14 +23,17 @@ comparison rather than quietly retargeting this helper.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from _harness import REPO
 from docs_commands import read
 from docs_promises import PUBLISHING, QUICKSTART
+from harness_faults import _mkfifo_available
 from quickstart_golden import DENYLIST
 from quickstart_runner import checked, git, route_commands
 from quickstart_topology import init_repo, run_env
@@ -66,15 +69,41 @@ def gate_page_sentences() -> None:
 def run_gate_on_tree_with_no_denylist(scratch: Path) -> subprocess.CompletedProcess[str]:
     """The golden publishing-gate command, run against a scratch tree of its own.
 
-    The tree carries a copy of ``scripts/public_safety.py`` and of the package that
-    wrapper imports -- which is what makes the copy a gate over *that* tree and not
-    over this checkout -- plus one clean committed file, so the scan has tracked
-    content to answer for. ``PYTHONPATH`` names the copied package because the
-    installed venv is not what the page's reader has beside their clone.
+    The tree (see :func:`build_gate_tree`) carries a copy of
+    ``scripts/public_safety.py`` and of the package that wrapper imports -- which
+    is what makes the copy a gate over *that* tree and not over this checkout --
+    plus one clean committed file, so the scan has tracked content to answer for.
+    ``PYTHONPATH`` names the copied package because the installed venv is not what
+    the page's reader has beside their clone.
     """
-    argv = _golden_gate_argv()
+    tree, env = build_gate_tree(scratch)
+    return run_gate_on_tree(tree, env)
+
+
+# A gate that hangs is worse than a gate that fails: the publishing checklist
+# stops with no verdict and no reason, which is what #91 did to this very command
+# (the wrapper imports the package module, so it inherited the scan's blocking
+# open). The bound is generous against a scan that finishes in well under a
+# second and short enough that the regression reports itself instead of
+# inheriting the absence of any timeout in the wrapper.
+GATE_BOUND_SECONDS = 120
+
+
+def build_gate_tree(scratch: Path, name: str = "gate-tree") -> tuple[Path, dict[str, str]]:
+    """The scratch clone-root the gate audits, committed and clean.
+
+    One builder for the plain run and the FIFO variant, because the two must
+    differ in exactly one thing: a pipe at a path ``git add -A`` already
+    committed. The tree carries a copy of ``scripts/public_safety.py`` and of the
+    package that wrapper imports -- which is what makes the copy a gate over
+    *that* tree and not over this checkout -- plus one clean committed file.
+
+    Returns the tree and the launch env (deny-list pointer removed, package
+    ``src/`` on ``PYTHONPATH``) so a caller can plant a state after the commit and
+    before the run.
+    """
     env = _gate_env_without_denylist()
-    tree = scratch / "gate-tree"
+    tree = scratch / name
     (tree / "scripts").mkdir(parents=True)
     shutil.copy2(REPO / "scripts" / "public_safety.py", tree / "scripts")
     shutil.copytree(REPO / "src" / "noni", tree / "src" / "noni")
@@ -84,8 +113,58 @@ def run_gate_on_tree_with_no_denylist(scratch: Path) -> subprocess.CompletedProc
     checked(git(tree, "commit", "-q", "-m", "clean tree", identity=True, env=env),
             "gate tree commit")
     env["PYTHONPATH"] = str(tree / "src")
-    return subprocess.run([sys.executable, *argv[1:]], capture_output=True,
-                          text=True, cwd=tree, env=env, timeout=180)
+    return tree, env
+
+
+def run_gate_on_tree(tree: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """The gate's own command, run from the scratch tree's root under a bound.
+
+    The page's argv and the wrapper's own location decide the tree; the bound is
+    the difference between a hung publishing gate and a red one.
+    """
+    argv = _golden_gate_argv()
+    started = time.monotonic()
+    try:
+        proc = subprocess.run([sys.executable, *argv[1:]], capture_output=True,
+                              text=True, cwd=tree, env=env,
+                              timeout=GATE_BOUND_SECONDS)
+    except subprocess.TimeoutExpired as exc:  # pragma: no cover - a hung gate
+        raise AssertionError(
+            f"the publishing gate hung on this tree (no verdict in "
+            f"{GATE_BOUND_SECONDS}s): {exc}") from None
+    # A run that reached the bound tripped subprocess's own timeout above, so this
+    # is the assertion that says the gate finished on its own, promptly.
+    assert time.monotonic() - started < GATE_BOUND_SECONDS
+    return proc
+
+
+def run_gate_on_tree_with_a_tracked_fifo(scratch: Path) -> subprocess.CompletedProcess[str]:
+    """The page's gate command over a tree whose tracked path is a named pipe.
+
+    The pipe is planted by the only recipe that makes a path both tracked and a
+    pipe -- commit a regular file, unlink it, ``os.mkfifo`` the same path -- on a
+    path the builder's ``git add -A`` already committed. ``git add`` on a fresh
+    pipe never lists it, so a variant that planted the pipe before the commit
+    would run the gate over an ordinary file and pass with the hang in place.
+
+    The expected outcome is the plain run's: exit ``GATE_DENYLIST_INACTIVE_EXIT``,
+    because a pipe holds no stored content to flag and the deny-list class is the
+    only thing this tree can refuse on.
+    """
+    if not _mkfifo_available():  # pragma: no cover - non-POSIX host only
+        raise RuntimeError("this host cannot create a named pipe")
+    tree, env = build_gate_tree(scratch, name="gate-tree-fifo")
+    pipe = tree / "notes.md"
+    pipe.unlink()
+    os.mkfifo(pipe)
+    # The precondition the whole variant rests on: git still lists the path, so
+    # the scan really does reach the pipe. Without it the gate would be scanning
+    # nothing and the exit code would mean nothing either.
+    listed = git(tree, "ls-files", env=env)
+    assert "notes.md" in listed.stdout.split(), (
+        f"git no longer tracks the planted pipe, so the gate would scan nothing: "
+        f"{listed.stdout!r}")
+    return run_gate_on_tree(tree, env)
 
 
 def _golden_gate_argv() -> list[str]:

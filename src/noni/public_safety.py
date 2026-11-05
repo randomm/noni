@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -179,15 +180,140 @@ def _is_self_file(rel: str) -> bool:
     return rel in _SELF_FILES
 
 
-def _read_text_lenient(path: Path) -> list[str] | None:
-    """Read a tracked file as text, or None when it is binary / non-UTF-8.
+# The bytes one tracked file may be read into memory. The bound is not a
+# performance knob: it is what a read of someone else's tree is willing to hold,
+# and a file past it is skipped exactly as an unreadable one is.
+_MAX_SCAN_FILE_BYTES = 8 << 20
 
-    Binary or non-UTF-8 files are skipped gracefully (edge case: the scrub
-    must never crash on an unreadable tracked file).
+# A pipe with no writer has nothing to say, so an open without O_NONBLOCK never
+# returns: the hygiene scan of #91 blocked inside ``path.read_text`` forever,
+# outside every timeout and every handler the module has (a blocked read raises
+# nothing, so `except OSError` cannot rescue it). The guard therefore sits at the
+# open, and on the descriptor the open returned:
+#
+#   os.open(O_RDONLY | O_NONBLOCK)  ->  stat.S_ISREG(os.fstat(fd))  ->  read
+#
+# ``O_NOFOLLOW`` is deliberately absent: a tracked symlink is legitimate content,
+# and the flag would raise ELOOP on it and skip the file silently. The link is
+# followed and scanned when its target is a regular file, and refused by the
+# same-fd check when it is not. Checking the mode of a separate ``lstat`` of the
+# path instead would leave the interval in which a regular file is swapped for a
+# pipe after the check, which is the window this ordering closes.
+#
+# This is the idiom ``census_intent_readers.read_record`` uses; public_safety
+# mirrors it rather than inventing a second one for the same fault.
+_SCAN_OPEN_FLAGS = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+
+
+# The one answer a caller may not close: the path opened but was not a regular
+# file, and this module already gave that descriptor back. Negative, so no real
+# descriptor can be mistaken for it. Distinct from None ("could not be opened at
+# all") because load_denylist must classify an unopenable deny-list and a
+# non-regular one the same way, and neither of them as "absent".
+_NOT_REGULAR = -1
+
+
+def _open_regular(path: Path) -> int | None:
+    """An open fd on ``path`` if it is a regular file; ``_NOT_REGULAR`` or None.
+
+    An fd comes back only when the path is regular and readable, so the caller
+    closes exactly the one it was handed: every other answer means nothing is left
+    to close, because this function closes what it opened before returning. Nothing
+    is read on any path either way: a pipe, socket or device is refused, not read as
+    the empty string its immediate EOF would have produced. O_NONBLOCK is on the
+    open itself because that open, not a later read, is what blocks on a pipe with
+    no writer; the ``fstat`` runs on the very descriptor that was opened, so a path
+    swapped for a non-regular one between a pre-open check and this call is refused
+    too.
+
+    Closing here rather than handing the descriptor to a caller is what keeps the
+    leak out of them: the scan used to leave one descriptor open per non-regular
+    path for the life of the process, and the census scans in-process, so a tree
+    with more pipes than the table allows dies on the next open with EMFILE instead
+    of returning a verdict.
     """
     try:
-        return path.read_text(encoding="utf-8").splitlines()
-    except (UnicodeDecodeError, OSError):
+        fd = os.open(path, _SCAN_OPEN_FLAGS)
+    except OSError:
+        # Absent, unreadable, or a link loop: the caller treats it as the
+        # unreadable tracked file the lenient read always skipped.
+        return None
+    try:
+        mode = os.fstat(fd).st_mode
+    except OSError:
+        _close(fd)
+        return None
+    if not stat.S_ISREG(mode):
+        # The kind is reported rather than swallowed because the two lenient
+        # callers answer differently for it: a tracked file that is not a file is
+        # skipped as if it were not there, while a deny-list that is not a file
+        # must still classify the run as corrupt ("absent" would tell the operator
+        # to go write one). The descriptor goes back first: the decision is already
+        # made, no caller needs it, and reading a pipe is the fault.
+        _close(fd)
+        return _NOT_REGULAR
+    return fd
+
+
+def _close(fd: int) -> None:
+    """Close a descriptor the caller is finished with, swallowing a bad one.
+
+    The swallow is not tidiness: the scan's contract is that it never crashes on a
+    path it cannot read, so a descriptor closed underneath the scan or revoked by a
+    device going away must not raise EBADF out of a run. ``_open_regular`` closes
+    what it opened and hands back only a descriptor it is done with, so a caller
+    holding an fd has exactly one to give back, and the sentinel is never one.
+    """
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
+def _read_bytes_capped(fd: int, limit: int = _MAX_SCAN_FILE_BYTES) -> bytes | None:
+    """Every byte of an open regular descriptor, or None when it exceeds ``limit``.
+
+    The loop is not decoration: ``os.read`` is free to return fewer bytes than
+    were asked for even on a regular file, and a body truncated that way would
+    scan clean on the part nobody held. Past the bound the read stops and
+    answers None, so a file this scan will not hold is skipped the way an
+    unreadable one is.
+    """
+    chunks = bytearray()
+    while True:
+        chunk = os.read(fd, min(1 << 16, limit + 1 - len(chunks)))
+        if not chunk:
+            return bytes(chunks)
+        chunks += chunk
+        if len(chunks) > limit:
+            return None
+
+
+def _read_text_lenient(path: Path) -> list[str] | None:
+    """Read a tracked file as text, or None when it must be skipped.
+
+    Skipped means: binary or non-UTF-8 (the original lenient contract: never
+    crash on an unreadable tracked file); not a regular file — a fifo, socket,
+    device or directory, or a symlink to one; unreadable (absent, no permission,
+    a link loop); or bigger than ``_MAX_SCAN_FILE_BYTES``. A non-regular path is
+    closed by the open that classified it and never read, so a pipe is never waited
+    on and never read as the empty file O_NONBLOCK's EOF would have made of it. The
+    only descriptor this function closes is the one it was handed.
+    """
+    fd = _open_regular(path)
+    if fd is None or fd == _NOT_REGULAR:
+        return None
+    try:
+        raw = _read_bytes_capped(fd)
+    except OSError:
+        return None
+    finally:
+        _close(fd)
+    if raw is None:
+        return None
+    try:
+        return raw.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
         return None
 
 
@@ -236,16 +362,41 @@ def load_denylist(repo: Path) -> DenylistResult:
         if not candidate:
             continue
         path = Path(candidate)
-        if not path.is_file():
+        # ``is_file()`` follows links and answers True for a fifo, so it is not
+        # the guard: the deny-list read gets the same open-and-classify as every
+        # tracked file, and a non-regular candidate is skipped (closed by the
+        # open, never read) rather than waited on. A pipe at the deny-list path is
+        # as inactive as a corrupt one: the notice below names it.
+        fd = _open_regular(path)
+        if fd is None:
+            # Nothing to read at this candidate and nothing to be angry about:
+            # absent, or a path the scan cannot open at all. The next candidate
+            # gets its chance and, if none is usable, the run is "absent".
             continue
         try:
-            raw = path.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError) as e:
+            raw_bytes = None if fd == _NOT_REGULAR else _read_bytes_capped(fd)
+            raw = raw_bytes.decode("utf-8") if raw_bytes is not None else None
+        except (OSError, UnicodeDecodeError) as e:
+            raw = None
+            reason = str(e)
+        else:
+            reason = ("opened, but it is not a regular file" if fd == _NOT_REGULAR
+                      else "past the scan's size bound" if raw is None else "")
+        finally:
+            # The sentinel was closed by the open that classified it, so only the
+            # descriptor the read took is this arm's to give back.
+            if fd != _NOT_REGULAR:
+                _close(fd)
+        if raw is None:
+            # Unreadable: a read fault, a body past the scan's size bound, or
+            # non-UTF-8 bytes. Either way the class is not active from this file
+            # and the next candidate gets its chance.
             last_corrupt = path
             print(
-                f"public-safety: WARNING — deny-list {path} unreadable ({e}); "
-                f"continuing with the next candidate if any. Built-in patterns "
-                "still run, but the deny-list class is not active from this file.",
+                f"public-safety: WARNING — deny-list {path} unreadable"
+                f"{f' ({reason})' if reason else ''}; continuing with the next "
+                "candidate if any. Built-in patterns still run, but the deny-list "
+                "class is not active from this file.",
                 file=sys.stderr,
             )
             continue

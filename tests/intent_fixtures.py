@@ -273,9 +273,11 @@ def _json_rows(stdout: str) -> list[dict]:
             if row.get("kind") == "finding"]
 
 
-def intent_kind_answers(verdict: str, problem: str | None = None):
+def intent_kind_answers(verdict: str, problem: str | None = None, *,
+                        answers: dict[Path, tuple[str, str | None]] | None = None):
     """A ``_file_kind`` replacement that answers ``(verdict, problem)`` for the
-    intent path and classifies every other path for real.
+    intent path, ``(kind, problem)`` for any path named in ``answers``, and
+    classifies every other path for real.
 
     Two tests need the census to meet a path it cannot describe: a parent whose
     ``lstat`` was declined, and a chain of links that loops. Neither is portable as
@@ -297,6 +299,11 @@ def intent_kind_answers(verdict: str, problem: str | None = None):
     def answer(path, kind="file"):
         if Path(path).name == "intent.md":
             return verdict, problem
+        if answers and Path(path) in answers:
+            # A path the test wants classified as something the tree does not
+            # hold, asked through the classifier a direct caller uses when the
+            # run hands it no probe at all.
+            return answers[Path(path)]
         return real(path, kind)
 
     return answer
@@ -325,6 +332,40 @@ def findings_of(stdout: str, check: str) -> list[tuple[str, str, str]]:
     return [(row["check"], row["subject"], row["severity"])
             for row in (json.loads(line) for line in stdout.splitlines() if line.strip())
             if row.get("kind") == "finding" and row["check"] == check]
+
+
+def probe_state_answers(state: str, *, fault: bool = False):
+    """A ``census._ledger_probe`` replacement that answers one ``state`` for any ledger.
+
+    ``probe_ledger`` is the run's own answer for the two levels above a cited
+    record: it classifies the ledger and ``noni/`` and reports ``"symlink"`` for a
+    link at either. A test that means "the run was told the ledger is a link" (or
+    was told a word the ledger module has not invented yet) puts one of these on
+    that seam, so the state under test is the probe's word and not a symlink the
+    host filesystem happens to allow, and the intent group's refusal is exercised
+    through the seam ``census_run._check_intent`` actually uses.
+
+    ``fault`` gives the probe the ``problem`` half an ``OSError`` forced, which is
+    the text a row must never quote. ``listing_fault`` stays None unless a caller
+    says otherwise: the finding under test is the intent class's row, not a second
+    group's blindness.
+    """
+    def answer(_ledger):
+        return _ProbeAnswer(state, fault)
+
+    return answer
+
+
+class _ProbeAnswer:
+    """The fields of a ``LedgerProbe`` the census reads off the probe."""
+
+    def __init__(self, state: str, fault: bool = False) -> None:
+        self.state = state
+        # Text of the kind a stat fault produces: a path and a long tail, which no
+        # row may carry. Deliberately machine-local in shape.
+        self.problem = "/home/operator/secret-dir" + "x" * 400 if fault else None
+        self.listing_fault = None
+        self.names = None
 
 
 class BlindListing:

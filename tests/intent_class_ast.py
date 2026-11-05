@@ -45,6 +45,44 @@ def call_line(tree: ast.Module, func: str, callee: str) -> int:
                          "this pin exists for is not the code any more")
 
 
+def assignment_line(tree: ast.Module, func: str, name: str) -> int:
+    """The line where ``func`` first binds the local ``name``, or a failure naming it.
+
+    For an order pin that must survive a reword: "the identifier is computed before
+    the read" is a fact about two statements, and a substring search reports a
+    reformat of either as a ``ValueError`` that names nothing.
+    """
+    body = function(tree, func)
+    for node in ast.walk(body):
+        if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == name
+                for target in node.targets):
+            return node.lineno
+    raise AssertionError(f"{func}() no longer binds a local named {name}, so the "
+                         "order this pin guards is not the code any more")
+
+
+def excepts_line(tree: ast.Module, func: str, exc_type: str) -> int:
+    """The line of the first ``except`` in ``func`` naming ``exc_type``, or a failure.
+
+    The handler for a fault type is an invariant a reword cannot move: matching on
+    the tree instead of on a source substring means a refactor that keeps catching
+    the same exception keeps passing, and one that drops it fails with the reason.
+    """
+    body = function(tree, func)
+    for node in ast.walk(body):
+        if not isinstance(node, ast.ExceptHandler) or node.type is None:
+            continue
+        named = node.type if isinstance(node.type, ast.Name) else \
+            getattr(node.type, "elts", [])
+        names = {n.id for n in ([named] if isinstance(named, ast.Name) else named)
+                 if isinstance(n, ast.Name)}
+        if exc_type in names:
+            return node.lineno
+    raise AssertionError(f"{func}() no longer handles {exc_type}, so the fault this "
+                         "pin exists for is not caught any more")
+
+
 def return_line(tree: ast.Module, func: str, *, after: int) -> int:
     """The first ``return`` inside ``func`` at or after line ``after``."""
     body = function(tree, func)

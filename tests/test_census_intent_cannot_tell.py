@@ -22,7 +22,13 @@ from _harness import SRC
 
 # The reader's structure pins read the module's syntax tree; the helpers live in
 # ``intent_class_ast`` and the fixtures are decorated here, where pytest sees them.
-from intent_class_ast import intent_class_text, intent_module
+from intent_class_ast import (
+    assignment_line,
+    call_line,
+    excepts_line,
+    intent_class_text,
+    intent_module,
+)
 from intent_fixtures import (
     RECORD_ID,
     BlindListing,
@@ -160,7 +166,7 @@ def test_the_run_survives_a_path_it_cannot_classify(tmp_path, monkeypatch):
     )
 
 
-def test_a_symlink_loop_at_the_intent_path_is_cannot_tell(intent_class):
+def test_a_symlink_loop_at_the_intent_path_is_cannot_tell(intent_ast):
     """A loop is a fault the class owns, not a run that ends.
 
     ``read_bytes`` on a chain of links raises ``RuntimeError`` (``pathlib`` turns an
@@ -169,23 +175,28 @@ def test_a_symlink_loop_at_the_intent_path_is_cannot_tell(intent_class):
     unreadable file is a ``cannot-tell``, never a crash -- did not hold for the one
     link shape that loops.
 
-    Pinned at the source rather than the filesystem: whether a loop reaches the run
-    through the classifier, the reader, or not at all depends on how the link was
+    Pinned at the syntax tree rather than the filesystem: whether a loop reaches the
+    run through the classifier, the reader, or not at all depends on how the link was
     written and on the filesystem beneath it, so a fixture could pass without the
     handling being reached. The two assertions below are the handling and the order
     it happens in -- the reader catches the loop's own type, and the path is named
-    before the verdict on it, so the row that reports the fault always has an
-    artifact to name.
+    before the read that can fault, so the row that reports the fault always has an
+    artifact to name. Read off the tree, not the source text: a reworded line moves
+    a token and must not be reported as a bare ``ValueError`` from a substring search.
     """
-    assert "except (OSError, RuntimeError) as exc:" in intent_class, (
-        "the intent reader stopped catching the fault a symlink loop raises"
+    caught = excepts_line(intent_ast, "check_intent", "RuntimeError")
+    read = call_line(intent_ast, "check_intent", "read_bytes")
+    assert caught > read, (
+        "the intent reader no longer wraps its read of the file in the handler for "
+        "the fault a symlink loop raises, so a chain of links ends the census "
+        f"instead of earning a cannot-tell row (read on line {read}, handler on "
+        f"line {caught})"
     )
-    read_bytes = intent_class.index("raw = intent.read_bytes()")
-    asked_rel = intent_class.index("rel = rel_to_root(root, intent)")
-    assert asked_rel < read_bytes, (
-        "the root-relative identifier is asked for only after the read the fault "
-        "can come from, so a run that could not read the file has no artifact to "
-        "name in its cannot-tell row"
+    asked_rel = assignment_line(intent_ast, "check_intent", "rel")
+    assert asked_rel < read, (
+        "the root-relative identifier is computed only after the read that can fault, "
+        f"so a run that could not read the file has no artifact to name (identifier "
+        f"on line {asked_rel}, read on line {read})"
     )
 
 

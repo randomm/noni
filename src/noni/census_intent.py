@@ -77,6 +77,13 @@ STATUS_SUPERSEDED = "superseded"
 LEDGER_LINKED = "the ledger directory is reached through a symlink"
 LEDGER_NOT_A_DIR = "the ledger directory is not a directory"
 
+# The one ledger-probe state that forbids a read: ``census_ledger.probe_ledger``
+# answers "symlink" for the ledger or for ``noni/``, the same fact this class must
+# refuse above the cited record. Named here and compared with ``==``, so the class
+# speaks the ledger module's own vocabulary and any answer it does not name falls
+# through to the classifier rather than being read as permission to open.
+LEDGER_STATE_LINKED = "symlink"
+
 # The four subjects of this class. Like hygiene's `hygiene scan` / `deny-list`
 # subjects they are the machine-readable discriminator: a consumer branches on
 # `subject`, not on message prose.
@@ -128,6 +135,7 @@ def check_intent(
     fault_text: Callable[[BaseException], str],
     load_json_strict: Callable[[bytes], object],
     commit_subject: Callable[[str], str | None],
+    ledger_state: Callable[[Path], str] | None = None,
 ) -> None:
     """Check the standing intent file; append its findings to ``findings``.
 
@@ -143,7 +151,12 @@ def check_intent(
     The row factory, the root-relative identifier, the path classifier and the
     fault wording are the census's own and arrive as arguments rather than being
     imported, so the row shape, the machine-local-path rule and the bounded-text
-    rule keep their single owner in ``census.py``.
+    rule keep their single owner in ``census.py``. ``ledger_state`` is the run's
+    ledger probe answering for the ledger directory: the state word
+    ``census_ledger.probe_ledger`` derived from the classifier at both levels above
+    the record, and the run's own prior knowledge of a link it must not read
+    through. When the caller has no probe the classifier is asked for those two
+    levels instead, so the refusal never depends on the run having probed.
     """
     def add(subject: str, message: str, *, whole_artifact: bool = False) -> None:
         findings.append(row("intent", strict, subject, rel, message, root,
@@ -215,16 +228,18 @@ def check_intent(
             f"commit subject '{INTENT_SUBJECT_PREFIX}<decision-id>')")
         return
 
-    # The two levels above the cited path are classified before a path under them
-    # is composed or opened, the way ``probe_ledger`` classifies the ledger and its
-    # parent: a link at ``noni/decisions`` (or at ``noni/``) puts every record
-    # beneath it outside the audited tree, and a leaf-level classification would
-    # call such a record an ordinary file and read it. A directory or a link that
-    # faults is already blindness the read below reports with the kernel's own
-    # words, so only the two states the read could otherwise follow are refused
-    # here: that keeps the rows the other groups already own (an absent ``noni/``, a
-    # ledger that is a plain file) exactly as they were.
-    outside = _ledger_why(ledger, file_kind)
+    # The two levels above the cited path are refused before a path under them is
+    # composed or opened. The run's own ledger probe is asked first (it classifies
+    # ``noni/decisions`` and ``noni/`` and answers "symlink" for a link at either,
+    # the state the ledger group already refuses to list); with no probe to read, the
+    # same two levels are classified here. A link at ``noni/decisions`` (or at
+    # ``noni/``) puts every record beneath it outside the audited tree, and a
+    # leaf-level classification would call such a record an ordinary file and read it.
+    # Only the link is refused here: a ledger that is missing, or is there but no
+    # directory, is already blindness the read below reports with the kernel's own
+    # words, so the rows the other groups own (an absent ``noni/``, a ledger that is a
+    # plain file) stay exactly as they were.
+    outside = _ledger_why(ledger, file_kind, ledger_state)
     if outside is not None:
         add(SUBJECT_CANNOT_TELL,
             f"cannot-tell: the record {cited} the intent cites was not read "
@@ -308,14 +323,35 @@ def _classify_words(kind: str, problem: str | None) -> str:
 
 
 def _ledger_why(ledger: Path,
-                file_kind: Callable[..., tuple[str, str | None]]) -> str | None:
+                file_kind: Callable[..., tuple[str, str | None]],
+                ledger_state: Callable[[Path], str] | None = None) -> str | None:
     """Why this run must not open anything under ``ledger``, or None.
 
-    The same two levels ``probe_ledger`` classifies — the ledger and the directory
-    above it — asked of the same classifier. Either answer is this run's blindness
-    and never a verdict: a link means the records live outside the tree the census
-    was asked to audit, and a non-directory means no record can be there.
+    The answer the run already holds is asked for first: ``ledger_state`` is the
+    census's own ledger probe, which classifies the ledger and ``noni/`` with this
+    module's own classifier and answers ``"symlink"`` for a link at either level —
+    the state the ledger group already refuses to list. Reusing it keeps the two
+    groups from classifying one directory twice and disagreeing about it. Any other
+    answer (``"ok"``, ``"empty"``, ``"absent"``, ``"not a directory"``, or a probe
+    that faulted) is no ground to refuse on here: a ledger that is missing or is not
+    a directory is answered by the read below with the kernel's own words, exactly
+    as before this gate existed.
+
+    With no probe to read (a caller that composed the class directly), or a probe
+    that itself faulted, the same two levels are classified here through the same
+    classifier the rest of the class uses. Either answer is this run's blindness and
+    never a verdict: a link means the records live outside the tree the census was
+    asked to audit, and a non-directory means no record can be there.
     """
+    if ledger_state is not None:
+        try:
+            state = ledger_state(ledger)
+        except OSError:
+            # The probe is a read of the tree like any other, and its fault is not
+            # the finding this gate exists for: classify for ourselves below.
+            state = None
+        if state == LEDGER_STATE_LINKED:
+            return LEDGER_LINKED
     for path in (ledger, ledger.parent):
         kind, _problem = file_kind(path, kind="dir")
         if kind == "symlink":

@@ -1,15 +1,16 @@
-"""Every state a cited decision record can stand in, and the row each one earns.
+"""Every state the cited decision record itself can stand in, and the row each earns.
 
 The intent class answers "does the direction the citation names still stand", and
 the answer is built from one path: ``noni/decisions/<id>.json``. Each state that
 path can hold — a symlink to an outside file, a dangling link, a link to a
-directory, a directory, a device-shaped non-regular path, a hardlink, or a link
-anywhere above it in ``noni/decisions`` or ``noni/`` — is asserted here, plus the
-two structural pins (the classifier runs before the read, and the read itself
-refuses a link) that no filesystem fixture can state.
+directory, a directory, a fifo, a hardlink — is asserted here, plus the structural
+pins (the classifier runs before the read, the read itself refuses a link, the
+gate names the kind it accepts) that no filesystem fixture can state.
 
-The intent-file's own faults live in ``tests/test_census_intent_cannot_tell.py``;
-the builders and runners in ``tests/intent_fixtures.py``.
+A link at either directory *above* that path is the same defect one level up and is
+asserted in ``tests/test_census_intent_cited_ledger.py``; the intent file's own
+faults in ``tests/test_census_intent_cannot_tell.py``; the builders and runners in
+``tests/intent_fixtures.py``.
 """
 
 from __future__ import annotations
@@ -43,8 +44,7 @@ from intent_fixtures import (
     subjects,
 )
 
-# The planted-path builders, named for what they plant rather than for the fixture.
-from intent_fixtures import planted_ledger_link as _planted_ledger_link
+# The planted-path builder, named for what it plants rather than for the fixture.
 from intent_fixtures import planted_record_link as _planted_record_link
 
 
@@ -66,6 +66,20 @@ def intent_ast(intent_class):
     return intent_module(intent_class)
 
 
+def _assert_cannot_tell(intent_rows, code=0):
+    """One ``cannot-tell`` warn from the intent class, at the exit that row decides.
+
+    Every test in this file plants a state meant to earn the same row: one row, of
+    this class, a warn, and the exit a warn leaves at 0 (the ``--strict`` half is
+    asserted separately). Stating it once keeps a row that silently gained a second
+    subject, or lost its severity, from passing a test that only looked at the first.
+    """
+    assert subjects(intent_rows) == ["cannot-tell"], intent_rows
+    assert intent_rows[0]["severity"] == "warn", intent_rows
+    assert code == 0, f"a cannot-tell warn must leave the run at 0, not {code}"
+    return intent_rows[0]
+
+
 def test_a_symlink_at_the_cited_record_path_is_cannot_tell(tmp_path):
     """A planted link at the cited record path decides nothing.
 
@@ -85,16 +99,13 @@ def test_a_symlink_at_the_cited_record_path_is_cannot_tell(tmp_path):
     # The ledger group reports its own "record is unreadable: path is a symlink"
     # row beside this one, and that row is correct existing behaviour; this
     # assertion is the intent class's own row and nothing else.
-    intent_rows = _intent_rows(rows)
-    assert subjects(intent_rows) == ["cannot-tell"]
-    assert intent_rows[0]["severity"] == "warn"
-    assert code == 0
+    row = _assert_cannot_tell(_intent_rows(rows), code)
     # No byte of the target's content, and no path to it, reaches the row.
-    row_text = json.dumps(intent_rows[0])
+    row_text = json.dumps(row)
     assert "superseded" not in row_text
     assert "outside-record" not in row_text
     assert str(outside) not in row_text
-    assert RECORD_ID in intent_rows[0]["message"]
+    assert RECORD_ID in row["message"]
 
 
 def test_a_dangling_symlink_at_the_cited_record_path_is_cannot_tell(tmp_path):
@@ -109,11 +120,8 @@ def test_a_dangling_symlink_at_the_cited_record_path_is_cannot_tell(tmp_path):
     """
     repo = _planted_record_link(tmp_path, "dangling", dangling=True)
     code, rows, _, _ = _run(repo)
-    intent_rows = _intent_rows(rows)
-    assert subjects(intent_rows) == ["cannot-tell"]
-    assert intent_rows[0]["severity"] == "warn"
-    assert code == 0
-    assert "no-such-record" not in json.dumps(intent_rows[0])
+    _assert_cannot_tell(_intent_rows(rows), code)
+    assert "no-such-record" not in json.dumps(_intent_rows(rows)[0])
 
 
 def test_a_symlink_to_a_directory_at_the_cited_record_path_is_cannot_tell(tmp_path):
@@ -129,11 +137,8 @@ def test_a_symlink_to_a_directory_at_the_cited_record_path_is_cannot_tell(tmp_pa
         encoding="utf-8")
     repo = _planted_record_link(tmp_path, "dir-link", target=outside_dir)
     code, rows, _, _ = _run(repo)
-    intent_rows = _intent_rows(rows)
-    assert subjects(intent_rows) == ["cannot-tell"]
-    assert intent_rows[0]["severity"] == "warn"
-    assert code == 0
-    assert "outside-dir" not in json.dumps(intent_rows[0])
+    _assert_cannot_tell(_intent_rows(rows), code)
+    assert "outside-dir" not in json.dumps(_intent_rows(rows)[0])
 
 
 def test_a_directory_at_the_cited_record_path_is_cannot_tell(tmp_path):
@@ -146,10 +151,7 @@ def test_a_directory_at_the_cited_record_path_is_cannot_tell(tmp_path):
     """
     repo = _planted_record_link(tmp_path, "directory", is_dir=True)
     code, rows, _, _ = _run(repo)
-    intent_rows = _intent_rows(rows)
-    assert subjects(intent_rows) == ["cannot-tell"]
-    assert intent_rows[0]["severity"] == "warn"
-    assert code == 0
+    _assert_cannot_tell(_intent_rows(rows), code)
 
 
 def test_a_superseded_record_behind_a_hardlink_is_reported_not_silent(tmp_path):
@@ -179,53 +181,6 @@ def test_a_superseded_record_behind_a_hardlink_is_reported_not_silent(tmp_path):
         "the only class that can see outside bytes standing at a record path went "
         "silent, so a hardlink would decide the intent verdict with nothing beside it"
     )
-
-
-def test_a_symlinked_ledger_directory_is_cannot_tell(tmp_path):
-    """A link above the cited path is the same defect one level up, and is refused.
-
-    With ``noni/decisions`` itself a link to a directory outside the tree, the leaf
-    classification calls the record an ordinary file and the read follows the parent
-    link, so an outside file decided the verdict. The class classifies the ledger
-    and the directory above it, the way ``probe_ledger`` does, before composing a
-    path under them.
-
-    The link is planted over the directory the intent cites, not alongside a missing
-    one: an intent whose tree the run cannot reach earns no row from any class, and
-    the state under test is the link, not an empty tree.
-    """
-    repo = _planted_ledger_link(tmp_path, "ledger-link")
-    code, rows, _, _ = _run(repo)
-    intent_rows = _intent_rows(rows)
-    assert subjects(intent_rows) == ["cannot-tell"]
-    assert intent_rows[0]["severity"] == "warn"
-    assert code == 0
-    row_text = json.dumps(intent_rows[0])
-    # Neither the target's bytes nor the path to it reaches the row.
-    assert "superseded" not in row_text
-    assert "ledger-lives-here" not in row_text
-    assert RECORD_ID in intent_rows[0]["message"]
-
-
-def test_a_symlinked_parent_of_the_ledger_is_cannot_tell(tmp_path):
-    """``noni/`` itself as a link is refused too — one level up is still outside.
-
-    The state the ledger group calls "symlink" and refuses to list; the intent group
-    reads a record under the same path, so it asks the same two questions. The link
-    is planted over the directory that holds the committed intent as well, so the run
-    owes the read: the group is entered for a file it can reach, and the cited record
-    behind the link is the thing it must refuse.
-    """
-    repo = _planted_ledger_link(tmp_path, "parent-link", parent=True)
-    assert (repo / "noni" / "direction" / "intent.md").is_file(), (
-        "the fixture lost the intent the run has to be owed a read of"
-    )
-    code, rows, _, _ = _run(repo)
-    intent_rows = _intent_rows(rows)
-    assert subjects(intent_rows) == ["cannot-tell"]
-    assert intent_rows[0]["severity"] == "warn"
-    assert code == 0
-    assert "outside-nonni" not in json.dumps(intent_rows[0])
 
 
 def test_the_cited_record_row_quotes_no_stat_fault_text(tmp_path, monkeypatch):

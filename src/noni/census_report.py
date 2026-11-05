@@ -81,9 +81,8 @@ EXIT_TOOL_MISSING = 3
 # ``note:`` line, the NDJSON branch carries the same sentence on the summary
 # record's ``not_evaluated`` field, and the fix hint of the class repeats it, so
 # one run cannot say one thing in one mode and its opposite in the other. The
-# literal is pinned by tests/test_docs_promises.py, tests/test_quickstart_promises.py
-# and the scrape in tests/test_quickstart.py, and docs/QUICKSTART.md and
-# skills/census/SKILL.md quote it.
+# docs that quote the literal are scraped from this constant, so a rename reddens
+# the pages rather than leaving them quoting a line nothing prints.
 ORDERING_CLOSED_NOT_EVALUATED = (
     "ordering-closed was not evaluated: no --issue-state FILE was given, so whether "
     "an ordered issue is closed is not asked (the census never contacts a tracker)")

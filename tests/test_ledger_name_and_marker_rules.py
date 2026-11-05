@@ -27,17 +27,23 @@ The closed key set, and the parity of the two programs' field lists, are in
 
 from __future__ import annotations
 
-import json
 import re
 import subprocess
 from pathlib import Path
 
 from _harness import REPO, subprocess_env
+from ledger_class_support import (
+    _comment_above,
+    _decode_jq_class,
+    _line_free_classes,
+    _names_strip_as_basis,
+)
 from ledger_schema_fixtures import (
     CENSUS_SH,
     SCHEMA_JQ,
     _assert_both_clean,
     _assert_both_refuse,
+    _assert_sh_names_the_schema_fault,
     _baseline,
     _ledger,
 )
@@ -47,73 +53,14 @@ FILE_GROUP_RECORD = ("\x1c", "\x1d", "\x1e")
 # Each of the three json writes into the bytes unescaped, which is why the rule
 # cannot be a check for a newline alone: the value is one JSON string and two lines.
 RAW_SEPARATORS = ("\x85", "\u2028", "\u2029")
-# A name made of nothing but characters str.strip() removes.
+# A name made of nothing but a character the blank rule refuses: the four of
+# ``ledger_schema.BLANKS`` (space, tab, U+000B, U+000C), each alone and each
+# doubled, plus the empty string. The blank-class parity test below compares
+# BLANKS itself against the shipped jq class, so these five spellings exercise
+# the rule and do not restate the set.
 BLANKS = ("", "   ", "\t", " \t ", "\x0b\x0c")
 # A name an operator would actually type: spaces, a dot, a digit.
 ORDINARY = "Dr. A. Reyes"
-
-
-def _decode_jq_class(class_text: str) -> set[str]:
-    """The characters a jq bracketed class names, decoded from its two-character escapes.
-
-    Takes the text rather than the file so a caller can hand it a mutated copy: a
-    decoder that ignored the ``\\uXXXX`` forms would still answer the two breaks the
-    class spells with a backslash letter, and pass against a set it never compared.
-    jq's string escapes are json's, so json is the decoder -- no table of ours to
-    drift from the syntax the shipped program uses. A stray character is refused
-    rather than joined in: LF and CR entered the old assertion that way, from the
-    class text rather than from what the class names.
-    """
-    # The blank class is anchored, the line class is not, so the anchors belong to
-    # the text and not to what the class names: they are taken off the ends here and
-    # refused anywhere else, so a class that named a caret fails loudly rather than
-    # being quietly stripped of it.
-    core = class_text.lstrip("^").rstrip("$*")
-    assert core.startswith("[") and core.endswith("]"), (
-        f"not a bracketed class: {class_text!r}")
-    body = core[1:-1]
-    assert "^" not in body and "$" not in body, (
-        f"an anchor sits inside the class: {class_text!r}")
-    # The file writes every member as two characters, a backslash and a letter, and
-    # the blank class carries a doubled lead for the members json would otherwise
-    # read as an escaped backslash. Halving the pairs puts the text in the form json
-    # -- and jq, whose string escapes are json's -- actually parses.
-    body = body.replace("\\\\", "\\")
-    try:
-        decoded = json.loads(f'"{body}"')
-    except json.JSONDecodeError as err:
-        msg = f"class is not a decodable json string: {class_text!r} ({err})"
-        raise AssertionError(msg) from err
-    assert "\\" not in decoded, f"an escape survived decoding: {decoded!r}"
-    named = set(decoded)
-    assert len(named) == len(decoded), (
-        f"the class names one character twice: {class_text!r} -> {decoded!r}")
-    return named
-
-
-def _line_free_classes(text: str) -> tuple[str, str]:
-    """The blank class and the line-break class of ``line_free``, in that order.
-
-    Each class is read with one regex, as the body of a ``test()`` string. The
-    pattern's own classes are written with escapes, so a backslash in the shipped
-    text stays a member instead of ending the match: a scan that walked the text
-    two characters at a time dropped the blank class that way, leaving the parity
-    assertion to compare one class against ten breaks.
-    """
-    definition = re.search(r"def line_free:.*?\)\);", text, re.S)
-    assert definition, "line_free no longer holds the two test() forms to parse"
-    classes = re.findall(r"test[(]\"([^\"]*)\"", definition.group(0))
-    # The blank class is anchored -- "^[ ... ]*$" -- so its trailing "]" is not the
-    # last character, and a test for the brackets at the two ends would drop it and
-    # leave one class to compare against the ten breaks.
-    def _bracketed(candidate: str) -> bool:
-        core = candidate.lstrip("^").rstrip("$*")
-        return core.startswith("[") and core.endswith("]")
-
-    bracketed = [c for c in classes if _bracketed(c)]
-    assert len(bracketed) == 2, (
-        f"expected the blank class and the line class, got {classes}")
-    return bracketed[0], bracketed[1]
 
 
 def _fail_recorder() -> tuple[list[tuple[int, str]], callable]:
@@ -169,13 +116,43 @@ def test_the_jq_line_class_names_every_break_the_python_set_names():
         f"the jq line class and LINE_BREAKS differ: jq "
         f"{sorted(ord(c) for c in named_breaks)} "
         f"vs python {sorted(ord(c) for c in LINE_BREAKS)}")
-    # The blank class is the whitespace str.strip() removes, minus the breaks (a
-    # value carrying one is refused above) and minus the three json writes raw.
+    # The blank class names four characters exactly -- space, tab, U+000B and
+    # U+000C -- which is BLANKS, not the wider class str.strip() removes.
     named_blanks = _decode_jq_class(blank_class)
     assert named_blanks == set(BLANKS), (
         f"the jq blank class and BLANKS differ: jq "
         f"{sorted(ord(c) for c in named_blanks)} "
         f"vs python {sorted(ord(c) for c in BLANKS)}")
+
+
+def test_both_blank_rules_name_the_four_characters_and_not_str_strip():
+    """Both places that document the blank rule state the four characters, not
+    ``str.strip()``.
+
+    The set is four characters -- space, tab, U+000B, U+000C -- while
+    ``str.strip()`` also removes U+001C-U+001F, U+0085, U+00A0, U+1680, the
+    U+2000-U+200A run, U+202F, U+205F and U+3000. Naming the wider basis was the
+    bug: it described a rule neither census enforces (a name of nothing but U+00A0
+    is accepted by both), and the parity test above could not catch it because the
+    *code* was right and only the prose was wrong. So the prose is asserted the way
+    the class is: read off the shipped bytes, in the two places it is written -- the
+    ``BLANKS`` comment in ``noni/ledger_schema.py`` and the blank-class comment of
+    ``line_free`` in the jq program.
+    """
+    writer_comment = _comment_above((REPO / "src" / "noni" / "ledger_schema.py"
+                                     ).read_text(encoding="utf-8"), "BLANKS = (")
+    jq_comment = _comment_above(SCHEMA_JQ.read_text(encoding="utf-8"),
+                                "def line_free:")
+    for label, comment in (("ledger_schema.BLANKS", writer_comment),
+                           ("census-schema.jq line_free", jq_comment)):
+        assert "U+000B" in comment and "U+000C" in comment, (
+            f"{label}: the comment must name the four characters it refuses, "
+            f"not the wider str.strip() basis: {comment}")
+        stated = [line for line in comment.splitlines()
+                  if "str.strip" in line and not line.lstrip().startswith("# It is not")]
+        assert not any(_names_strip_as_basis(line) for line in stated), (
+            f"{label}: the comment still names str.strip() as the basis of the "
+            f"blank set, which is wider than the four characters: {comment}")
 
 
 def test_a_class_missing_a_break_fails_the_decoding_of_it(tmp_path):
@@ -255,7 +232,8 @@ def test_all_three_entry_points_agree_on_every_break_and_blank(tmp_path):
         calls, fail = _fail_recorder()
         assert flag_refusals(fail, 2, refuse_name, re.compile(r"[a-z0-9-]+"),
                              "slug", "scope", "asked-by", name, None,
-                             is_single_line) == 2, f"{label}: flag_refusals accepted it"
+                             is_single_line, {}, False) == 2, (
+            f"{label}: flag_refusals accepted it")
 
         # 2. Both censuses. The row must name the field either way, which is the
         # agreement that matters; census.py's in-process message is asserted
@@ -276,7 +254,7 @@ def test_all_three_entry_points_agree_on_every_break_and_blank(tmp_path):
                        line_free=is_single_line) is None
     assert flag_refusals(fail, 2, refuse_name, re.compile(r"[a-z0-9-]+"), "slug",
                          "scope", "asked-by", ORDINARY, None,
-                         is_single_line) is None
+                         is_single_line, {}, False) is None
     ok_record = _baseline()
     ok_record["id"] = "2026-10-04-name-ok"
     ok_record["decided_by"] = ORDINARY
@@ -363,6 +341,36 @@ def test_a_one_option_question_without_the_marker_is_refused_by_both(tmp_path):
     verdicts = _assert_both_refuse(tmp_path, record, "option",
                                    "unmarked one-option question")
     assert "single_option" in verdicts["census.py"][1], verdicts["census.py"][1]
+
+
+def test_a_scalar_question_entry_is_refused_by_both_and_named(tmp_path):
+    """A ``questions`` array holding a bare value -- ``5``, ``"a"``, ``true`` -- is
+    refused by both censuses at exit 10, each naming the shape.
+
+    The regression is the blank diagnostic: every ``has()`` in the shipped jq
+    program faults on a number, a string or a boolean, jq exits 5, and census.sh
+    (which discards jq's stderr) printed ``schema violation:  (10:schema)`` -- the
+    exit code right and the reason named by nothing. census.py has always called it
+    "question entry is not an object", the wording the AC names, so the shim's row
+    is compared against it through the same shared assertion.
+
+    The marker is planted on two of the three cases: ``marker_earned`` reads
+    ``.options`` of every item once the marker is set, so a guard sitting only in
+    the questions rule leaves the fault live on the marked record.
+    """
+    for index, scalar in enumerate((5, "a", True)):
+        record = _baseline()
+        record["id"] = f"2026-10-04-scalar-{index}"
+        record["questions"] = [scalar]
+        if index:
+            # The marked form reaches the item through the marker's own count.
+            record["single_option"] = True
+        label = f"a questions array holding {scalar!r}"
+        _assert_both_refuse(tmp_path, record, "question entry is not an object",
+                            label, subdir=f"scalar-{index}")
+        _assert_sh_names_the_schema_fault(tmp_path, record,
+                                          "question entry is not an object", label,
+                                          subdir=f"scalar-sh-{index}")
 
 
 def test_an_earned_marker_over_mixed_questions_is_clean_in_both(tmp_path):
@@ -461,14 +469,3 @@ def test_census_sh_exits_three_when_the_schema_program_is_missing(tmp_path):
     assert "3:schema-program-missing" in out, out
     assert "id\tdate\tby\tstatus\tlive\tsupersedes" not in out, (
         f"a census that could not apply a schema printed a report: {out}")
-
-
-def _run_sh_from(script, ledger) -> tuple[int, str]:
-    """census.sh at an arbitrary path over ``ledger``: the orphan-sibling case."""
-    import subprocess
-    import sys
-
-    proc = subprocess.run([sys.executable and "bash", str(script), str(ledger)],
-                          capture_output=True, text=True,
-                          env=subprocess_env(), timeout=120)
-    return proc.returncode, proc.stdout + proc.stderr

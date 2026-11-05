@@ -39,6 +39,8 @@ from docs_promises import (
 from quickstart_golden import CI
 from quickstart_runner import route_commands
 
+from noni import public_safety
+
 # What one CI system's vocabulary looks like on a page. Each token is matched as a
 # word, not as a substring: a gate that flagged the word "uses" in ordinary prose
 # would be a gate a writer routes around by rewording. ``steps:`` is deliberately
@@ -214,3 +216,41 @@ def test_the_forge_example_runs_the_page_s_own_census_commands() -> None:
             f"{' '.join(census_argv)}: {steps}")
     assert [argv[3] for argv in steps if argv[:2] == ["noni", "census"]] == [
         ".", STATE_DIR], f"the example's two routes are wrong: {steps}"
+
+
+def test_the_forge_page_names_where_the_deny_list_lives_for_a_strict_run() -> None:
+    """The forge copy tells a reader where the deny-list goes before it offers
+    ``--strict``, and names both places the census will look.
+
+    The step the page prints runs without ``--strict``, and the page says so; the
+    half that was missing is what a team who later adds the flag has to do first.
+    Under ``--strict`` the hygiene class fails the job on a tree with no usable
+    deny-list entry, so an example that invites the opt-in without saying where the
+    file lives leaves a reader with a red job and nothing to fix. Both sources are
+    required -- the tree's own default file, at the root of the tree ``--repo``
+    names, and the env var for a tree that carries no default -- because
+    ``public_safety.load_denylist`` tries exactly those two, in that order. The
+    names come from the product's constants, so a rename reddens the page rather
+    than leaving it pointing at a file the census never opens.
+    """
+    text = read(FORGE_CI_README)
+    assert public_safety.DENYLIST_FILENAME in text, (
+        f"the forge page does not name {public_safety.DENYLIST_FILENAME!r}, so a "
+        "team that adds --strict is told to create a file the page never locates")
+    assert public_safety.DENYLIST_ENV_VAR in text, (
+        f"the forge page does not name the {public_safety.DENYLIST_ENV_VAR} route, "
+        "the one source available to a tree with no default deny-list of its own")
+    # The location, not just the name: on Route B the audited tree is the state
+    # clone, so the path the reader needs is the clone's own root.
+    assert f"{STATE_DIR}/{public_safety.DENYLIST_FILENAME}" in text, (
+        f"the forge page does not say the deny-list goes at the root of the tree "
+        f"--repo names, as {STATE_DIR}/{public_safety.DENYLIST_FILENAME}")
+    assert "usable entry" in text.lower(), (
+        "the forge page offers --strict without naming its precondition, an "
+        "inactive hygiene row fails the job however many files are present")
+    # Ordering: the reader meets the flag's name before the location that unlocks
+    # it -- the step is documented un-strict, and the deny-list is its opt-in.
+    assert text.index(public_safety.DENYLIST_ENV_VAR) > text.index("`--strict`"), (
+        "the forge page names the deny-list location before it introduces "
+        "--strict, which reads as though the flag were the default step")
+

@@ -15,7 +15,10 @@ page says and what the table says are the same set, along with the section's
 ``--strict`` promise.
 
 Split out of ``tests/test_census_unified.py``; the builders are in
-``tests/census_fixtures.py`` and the runners in ``tests/census_run.py``.
+``tests/census_fixtures.py`` and the runners in ``tests/census_run.py``. The page
+readers are in ``tests/quickstart_ci_page.py``, which both this module and the
+launches in ``tests/test_quickstart_ci.py`` import, so neither test module pulls
+the other's fixtures in.
 """
 
 from __future__ import annotations
@@ -23,7 +26,31 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import census
+from quickstart_ci_page import (
+    ci_commands,
+    ci_section,
+    documented_fail_codes,
+    documented_warn_codes,
+    forge_documented_codes,
+)
+
 REPO = Path(__file__).resolve().parent.parent
+
+
+def _codes_by_severity() -> tuple[set[int], set[int]]:
+    """``CHECKS`` split by default severity, as ``(fail_codes, warn_codes)``.
+
+    The one declaration (``src/noni/census_report.py``) read once, so both page
+    readers -- the quickstart's bullets and the forge page's prose -- are compared
+    against the same derivation rather than each rebuilding it and drifting.
+    """
+    fail = {code for code, severity, _fix in census.CHECKS.values()
+            if severity == "fail"}
+    warn = {code for code, severity, _fix in census.CHECKS.values()
+            if severity == "warn"}
+    return fail, warn
+
 
 class TestCheckContractIsDerived:
     """The check ids, codes and severities have exactly one source (CHECKS);
@@ -95,28 +122,22 @@ class TestQuickstartCISetsAgreeWithTheTable:
     """The CI section's two documented sets are the table, not a second list.
 
     The sets are read out of the page's own bullets by
-    :func:`test_quickstart_ci.documented_fail_codes` /
-    ``documented_warn_codes`` -- the one page parser, shared with the launches --
-    so what is compared is the text a reader copies, and this module keeps no copy
-    of it.
+    :func:`quickstart_ci_page.documented_fail_codes` /
+    ``documented_warn_codes`` -- the one page parser, shared with the launches in
+    ``tests/test_quickstart_ci.py`` -- so what is compared is the text a reader
+    copies, and this module keeps no copy of it.
     """
 
     def test_the_documented_fail_set_is_the_table_fail_severity(self):
-        import census
-        from test_quickstart_ci import documented_fail_codes
-
         fail = documented_fail_codes()
-        expected = {code for code, sev, _fix in census.CHECKS.values() if sev == "fail"}
+        expected, _warn = _codes_by_severity()
         assert fail == expected, (
             f"the page's fail set {sorted(fail)} is not the census's fail classes "
             f"{sorted(expected)} (src/noni/census_report.py CHECKS)")
 
     def test_the_documented_warn_set_is_the_table_warn_severity(self):
-        import census
-        from test_quickstart_ci import documented_warn_codes
-
         warn = documented_warn_codes()
-        expected = {code for code, sev, _fix in census.CHECKS.values() if sev == "warn"}
+        _fail, expected = _codes_by_severity()
         assert warn == expected, (
             f"the page's warn set {sorted(warn)} is not the census's warn classes "
             f"{sorted(expected)} (src/noni/census_report.py CHECKS)")
@@ -124,9 +145,6 @@ class TestQuickstartCISetsAgreeWithTheTable:
     def test_the_two_documented_sets_are_disjoint_and_jointly_complete(self):
         """A code on neither side leaves a build to guess; on both sides it is
         documented as failing and not failing at once."""
-        import census
-        from test_quickstart_ci import documented_fail_codes, documented_warn_codes
-
         fail, warn = documented_fail_codes(), documented_warn_codes()
         assert not (fail & warn), f"a code is documented on both sides: {fail & warn}"
         assert fail | warn == set(census.CLASS_CODE.values()), (
@@ -141,9 +159,6 @@ class TestQuickstartCISetsAgreeWithTheTable:
         every warn class the page lists must be one ``--strict`` promotes, so the
         sentence cannot describe a mode the census does not have.
         """
-        import census
-        from test_quickstart_ci import ci_commands, ci_section
-
         section = ci_section()
         assert "--strict" in section, "the CI section no longer mentions --strict"
         assert "without `--strict`" in section, (
@@ -160,6 +175,50 @@ class TestQuickstartCISetsAgreeWithTheTable:
                 assert name in _strict_help(), (
                     f"--strict no longer promotes {name}, so the page's sentence "
                     "about warn classes failing at their own code is stale")
+
+
+class TestForgeCISetsAgreeWithTheTable:
+    """The forge example's two prose sets are the same table, not a second list.
+
+    ``integrations/github-issues/README.md`` is the page a team pastes from, and it
+    repeats both sets in prose rather than in the quickstart's bullets. It is also
+    the page the CI-neutrality gate deliberately exempts, so nothing else reads it:
+    a gate written over ``docs_promises.DOC_PAGES`` stays green while this page
+    drifts. Dropping a code from either list here reddens a test, which is the whole
+    point of comparing it against ``CHECKS`` rather than against the quickstart.
+    """
+
+    def test_the_forge_fail_set_is_the_table_fail_severity(self):
+        fail, _warn = forge_documented_codes()
+        expected, _warn_expected = _codes_by_severity()
+        assert fail == expected, (
+            f"the forge page's fail set {sorted(fail)} is not the census's fail "
+            f"classes {sorted(expected)} "
+            "(integrations/github-issues/README.md vs census_report.CHECKS)")
+
+    def test_the_forge_warn_set_is_the_table_warn_severity(self):
+        _fail, warn = forge_documented_codes()
+        _fail_expected, expected = _codes_by_severity()
+        assert warn == expected, (
+            f"the forge page's warn set {sorted(warn)} is not the census's warn "
+            f"classes {sorted(expected)} "
+            "(integrations/github-issues/README.md vs census_report.CHECKS)")
+
+    def test_the_forge_page_and_the_quickstart_document_the_same_two_sets(self):
+        """The two pages sell one recipe, so a reader pastes one verdict from either.
+
+        The table comparison above is the substantive half; this one catches the
+        page-level drift the table alone would forgive -- a set rendered in a shape
+        the forge reader cannot match, or a rewrite that left one page documenting
+        the other's classes.
+        """
+        forge_fail, forge_warn = forge_documented_codes()
+        assert forge_fail == documented_fail_codes(), (
+            f"the forge page's fail set {sorted(forge_fail)} is not the quickstart's "
+            f"{sorted(documented_fail_codes())}")
+        assert forge_warn == documented_warn_codes(), (
+            f"the forge page's warn set {sorted(forge_warn)} is not the quickstart's "
+            f"{sorted(documented_warn_codes())}")
 
 
 def _strict_help() -> str:

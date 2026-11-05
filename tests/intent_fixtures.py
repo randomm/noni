@@ -13,6 +13,8 @@ the writer's suite too, so it stays where both sides can see it.
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -81,6 +83,37 @@ def repo_with_record(tmp_path: Path, subdir: str = "repo", *,
     return repo
 
 
+def planted_ledger_link(tmp_path: Path, name: str, *, parent: bool = False) -> Path:
+    """A committed repo whose ledger directory (or ``noni/``) is a link outside it.
+
+    One committed record, an intent citing it, then the directory the record lives
+    in replaced by a symlink to an outside directory holding a superseded body for
+    the same id — the state in which a leaf classification calls the record an
+    ordinary file and the read follows the parent link. ``parent`` links ``noni/``
+    itself instead of ``noni/decisions``. Returns the repo.
+    """
+    repo = repo_with_record(tmp_path, name)
+    install_intent(repo)
+    commit_intent(repo)
+    # The body the link leads to, planted outside the audited tree but inside the
+    # fixture root: outside the repo is the state under test, and a name carrying the
+    # cited id is what a leaf classification would accept as the record.
+    inner = repo.parent / name / "ledger-lives-here"
+    inner.mkdir(parents=True)
+    (inner / f"{RECORD_ID}.json").write_text(
+        json.dumps(record(status="superseded", supersedes=RECORD_ID)),
+        encoding="utf-8")
+    target = repo / "noni" if parent else repo / "noni" / "decisions"
+    if parent:
+        # ``noni/`` holds the intent too, so the link leads to a copy of both
+        # directories: the run must still be owed the read of the intent, and still
+        # refuse the record that stands behind the link.
+        shutil.copytree(repo / "noni" / "direction", inner / "direction")
+    shutil.rmtree(target)
+    target.symlink_to(inner)
+    return repo
+
+
 def _commit(repo: Path, rel: str, body: str, date: str = NOW) -> None:
     target = repo / rel
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -136,6 +169,36 @@ def commit_intent(repo: Path, *, decision: str = RECORD_ID,
     _git(repo, "add", INTENT_REL)
     git_pin_date(repo, date, "commit", "-q", "-m",
                  subject if subject is not None else f"intent: {decision}")
+
+
+def planted_record_link(tmp_path: Path, name: str, *,
+                       target: Path | None = None, is_dir: bool = False,
+                       hardlink_to: Path | None = None) -> Path:
+    """A committed repo whose cited record is a planted path, ready for a run.
+
+    The one state every cited-record test needs: a record committed at its id, an
+    intent committed against it, and then the path replaced by something that is not
+    an ordinary file. ``target`` plants a symlink to it (dangling when nothing lives
+    there); ``is_dir`` plants a directory; ``hardlink_to`` plants a hardlink — a
+    state the census cannot see, kept so the limit is asserted and not assumed. With
+    none of them the record is simply removed, which is the plain absence.
+
+    Returns the repo. The subdir is named per caller so two states can stand in one
+    ``tmp_path`` without colliding.
+    """
+    repo = repo_with_record(tmp_path, name)
+    install_intent(repo)
+    commit_intent(repo)
+    record_path = repo / "noni" / "decisions" / f"{RECORD_ID}.json"
+    record_path.unlink()
+    if is_dir:
+        record_path.mkdir()
+    elif hardlink_to is not None:
+        os.link(hardlink_to, record_path)
+    else:
+        record_path.symlink_to(target if target is not None
+                               else tmp_path / "no-such-record.json")
+    return repo
 
 
 def _run(repo: Path, *extra: str) -> tuple[int, list[dict], str, str]:

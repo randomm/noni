@@ -12,8 +12,10 @@ citation rows; the builders and runners are in ``tests/intent_fixtures.py``.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -27,6 +29,8 @@ from intent_fixtures import (
     findings_of,
     install_intent,
     intent_kind_answers,
+    planted_ledger_link as _planted_ledger_link,
+    planted_record_link as _planted_record_link,
     record,
     repo_with_record,
     run_census_in_process,
@@ -58,6 +62,70 @@ def intent_class():
     import noni.census_intent
 
     return Path(noni.census_intent.__file__).read_text(encoding="utf-8")
+
+
+@pytest.fixture
+def intent_ast(intent_class):
+    """The same module parsed, for the pins that are about structure, not spelling.
+
+    A source-text substring pin constrains how the code is written: renaming a local
+    or hoisting a helper breaks it, and an ordering check can pass because a function
+    happens to sit below another one. ``lineno`` from the tree constrains the
+    behaviour and nothing else.
+    """
+    return ast.parse(intent_class)
+
+
+def _function(tree: ast.Module, name: str) -> ast.FunctionDef:
+    """The module-level function ``name``, with a message when it is gone."""
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return node
+    raise AssertionError(f"census_intent.py defines no function {name}")
+
+
+def _call_line(tree: ast.Module, func: str, callee: str) -> int:
+    """The line where ``func`` calls ``callee``, or a failure naming both."""
+    body = _function(tree, func)
+    for node in ast.walk(body):
+        if (isinstance(node, ast.Call)
+                and getattr(node.func, "id", getattr(node.func, "attr", None))
+                == callee):
+            return node.lineno
+    raise AssertionError(f"{func}() no longer calls {callee}(), so the invariant "
+                         "this pin exists for is not the code any more")
+
+
+def _return_line(tree: ast.Module, func: str, *, after: int) -> int:
+    """The first ``return`` inside ``func`` at or after line ``after``."""
+    body = _function(tree, func)
+    lines = sorted(node.lineno for node in ast.walk(body)
+                   if isinstance(node, ast.Return) and node.lineno >= after)
+    if not lines:
+        raise AssertionError(f"{func}() returns nothing after line {after}, so the "
+                             "refusal this pin guards has been removed")
+    return lines[0]
+
+
+def _function_source(tree: ast.Module, name: str, source: str) -> str:
+    """The text of the module-level function ``name`` in ``source``."""
+    return ast.get_source_segment(source, _function(tree, name)) or ""
+
+
+def _json_rows(stdout: str) -> list[dict]:
+    """The finding rows an in-process run printed, as dicts."""
+    return [row for row in (json.loads(line) for line in stdout.splitlines()
+                            if line.strip())
+            if row.get("kind") == "finding"]
+
+
+def _intent_rows(rows: list[dict]) -> list[dict]:
+    """The intent class's own rows of a run that reported other classes too.
+
+    The ledger group always reports its own row beside a planted link, and that row
+    is correct existing behaviour: the assertion under test is this class's.
+    """
+    return [row for row in rows if row["check"] == "intent"]
 
 
 def test_a_record_the_run_could_not_read_is_cannot_tell(tmp_path, monkeypatch):
@@ -119,26 +187,21 @@ def test_a_symlink_at_the_cited_record_path_is_cannot_tell(tmp_path):
 
     The link's target holds a record the class would have called
     ``uncited ... the record is superseded`` (exit 51) had it been read: the
-    census classifies the cited path with its own classifier before any open, so
-    the bytes behind the link are never opened and never become a verdict on the
-    intent. The row names the cited id and the census's classification words, and
-    quotes no byte of, and no path to, what stands behind the link.
+    census refuses the cited path before any open, so the bytes behind the link
+    are never opened and never become a verdict on the intent. The row names the
+    cited id and the census's classification words, and quotes no byte of, and no
+    path to, what stands behind the link.
     """
-    repo = repo_with_record(tmp_path)
-    install_intent(repo)
-    commit_intent(repo)
-    record_path = repo / "noni" / "decisions" / f"{RECORD_ID}.json"
     outside = tmp_path / "outside-record.json"
     outside.write_text(json.dumps(record(status="superseded",
                                         supersedes=RECORD_ID)),
                        encoding="utf-8")
-    record_path.unlink()
-    record_path.symlink_to(outside)
+    repo = _planted_record_link(tmp_path, "planted", target=outside)
     code, rows, _, _ = _run(repo)
     # The ledger group reports its own "record is unreadable: path is a symlink"
     # row beside this one, and that row is correct existing behaviour; this
     # assertion is the intent class's own row and nothing else.
-    intent_rows = [row for row in rows if row["check"] == "intent"]
+    intent_rows = _intent_rows(rows)
     assert subjects(intent_rows) == ["cannot-tell"]
     assert intent_rows[0]["severity"] == "warn"
     assert code == 0
@@ -157,22 +220,17 @@ def test_a_dangling_symlink_at_the_cited_record_path_is_cannot_tell(tmp_path):
     absence branch answers with, so a path this run never opened was reported as
     ``uncited ... which no file under noni/decisions/ carries`` at exit 51: a
     verdict on the direction, drawn from a path the census had not classified.
-    The classification runs first, so the link is a ``cannot-tell`` warn and the
+    The refusal comes first, so the link is a ``cannot-tell`` warn and the
     absence branch never sees it.
     """
-    repo = repo_with_record(tmp_path)
-    install_intent(repo)
-    commit_intent(repo)
-    record_path = repo / "noni" / "decisions" / f"{RECORD_ID}.json"
-    record_path.unlink()
-    record_path.symlink_to(tmp_path / "no-such-record.json")
+    repo = _planted_record_link(tmp_path, "dangling",
+                                target=tmp_path / "no-such-record.json")
     code, rows, _, _ = _run(repo)
-    intent_rows = [row for row in rows if row["check"] == "intent"]
+    intent_rows = _intent_rows(rows)
     assert subjects(intent_rows) == ["cannot-tell"]
     assert intent_rows[0]["severity"] == "warn"
     assert code == 0
-    row_text = json.dumps(intent_rows[0])
-    assert "no-such-record" not in row_text
+    assert "no-such-record" not in json.dumps(intent_rows[0])
 
 
 def test_a_symlink_to_a_directory_at_the_cited_record_path_is_cannot_tell(tmp_path):
@@ -181,19 +239,14 @@ def test_a_symlink_to_a_directory_at_the_cited_record_path_is_cannot_tell(tmp_pa
     Unreadable, and not absent: the row is the classification's, whatever the
     errno a read would have raised would have been.
     """
-    repo = repo_with_record(tmp_path)
-    install_intent(repo)
-    commit_intent(repo)
-    record_path = repo / "noni" / "decisions" / f"{RECORD_ID}.json"
     outside_dir = tmp_path / "outside-dir"
     outside_dir.mkdir()
     (outside_dir / f"{RECORD_ID}.json").write_text(
         json.dumps(record(status="superseded", supersedes=RECORD_ID)),
         encoding="utf-8")
-    record_path.unlink()
-    record_path.symlink_to(outside_dir)
+    repo = _planted_record_link(tmp_path, "dir-link", target=outside_dir)
     code, rows, _, _ = _run(repo)
-    intent_rows = [row for row in rows if row["check"] == "intent"]
+    intent_rows = _intent_rows(rows)
     assert subjects(intent_rows) == ["cannot-tell"]
     assert intent_rows[0]["severity"] == "warn"
     assert code == 0
@@ -208,17 +261,144 @@ def test_a_directory_at_the_cited_record_path_is_cannot_tell(tmp_path):
     classification, which is why the row names the census's own words instead of
     the kernel's.
     """
-    repo = repo_with_record(tmp_path)
-    install_intent(repo)
-    commit_intent(repo)
-    record_path = repo / "noni" / "decisions" / f"{RECORD_ID}.json"
-    record_path.unlink()
-    record_path.mkdir()
+    repo = _planted_record_link(tmp_path, "directory", is_dir=True)
     code, rows, _, _ = _run(repo)
-    intent_rows = [row for row in rows if row["check"] == "intent"]
+    intent_rows = _intent_rows(rows)
     assert subjects(intent_rows) == ["cannot-tell"]
     assert intent_rows[0]["severity"] == "warn"
     assert code == 0
+
+
+def test_a_superseded_record_behind_a_hardlink_is_reported_not_silent(tmp_path):
+    """A hardlink is a state the classifier cannot see, and is not a silent clean.
+
+    ``lstat`` cannot tell a hardlink from an ordinary file, so outside bytes can still
+    stand at the cited path and produce an ``uncited`` verdict: that is the limit of
+    what any leaf classification reaches, and the limit is stated rather than assumed
+    (see the hardlink note in the direction skill). What keeps the state from passing
+    unnoticed is the sibling ``ledger-edited`` fail, which compares the working tree
+    against the committed blob — the outside bytes are reported, by the class that
+    can see them. The run names the ledger group because the plain intent runner
+    filters to this class alone.
+    """
+    outside = tmp_path / "hardlink-target.json"
+    outside.write_text(json.dumps(record(status="superseded",
+                                        supersedes=RECORD_ID)),
+                       encoding="utf-8")
+    repo = _planted_record_link(tmp_path, "hardlink", hardlink_to=outside)
+    rows = _rows(repo, "--only", "intent", "--only", "ledger-edited")
+    intent_rows = _intent_rows(rows)
+    assert subjects(intent_rows) == ["uncited"], (
+        "a cited record whose bytes come from outside the tree produced neither a "
+        f"verdict nor a row: {intent_rows}"
+    )
+    assert "ledger-edited" in {row["check"] for row in rows}, (
+        "the only class that can see outside bytes standing at a record path went "
+        "silent, so a hardlink would decide the intent verdict with nothing beside it"
+    )
+
+
+def test_a_symlinked_ledger_directory_is_cannot_tell(tmp_path):
+    """A link above the cited path is the same defect one level up, and is refused.
+
+    With ``noni/decisions`` itself a link to a directory outside the tree, the leaf
+    classification calls the record an ordinary file and the read follows the parent
+    link, so an outside file decided the verdict. The class classifies the ledger
+    and the directory above it, the way ``probe_ledger`` does, before composing a
+    path under them.
+
+    The link is planted over the directory the intent cites, not alongside a missing
+    one: an intent whose tree the run cannot reach earns no row from any class, and
+    the state under test is the link, not an empty tree.
+    """
+    repo = _planted_ledger_link(tmp_path, "ledger-link")
+    code, rows, _, _ = _run(repo)
+    intent_rows = _intent_rows(rows)
+    assert subjects(intent_rows) == ["cannot-tell"]
+    assert intent_rows[0]["severity"] == "warn"
+    assert code == 0
+    row_text = json.dumps(intent_rows[0])
+    # Neither the target's bytes nor the path to it reaches the row.
+    assert "superseded" not in row_text
+    assert "ledger-lives-here" not in row_text
+    assert RECORD_ID in intent_rows[0]["message"]
+
+
+def test_a_symlinked_parent_of_the_ledger_is_cannot_tell(tmp_path):
+    """``noni/`` itself as a link is refused too — one level up is still outside.
+
+    The state the ledger group calls "symlink" and refuses to list; the intent group
+    reads a record under the same path, so it asks the same two questions. The link
+    is planted over the directory that holds the committed intent as well, so the run
+    owes the read: the group is entered for a file it can reach, and the cited record
+    behind the link is the thing it must refuse.
+    """
+    repo = _planted_ledger_link(tmp_path, "parent-link", parent=True)
+    assert (repo / "noni" / "direction" / "intent.md").is_file(), (
+        "the fixture lost the intent the run has to be owed a read of"
+    )
+    code, rows, _, _ = _run(repo)
+    intent_rows = _intent_rows(rows)
+    assert subjects(intent_rows) == ["cannot-tell"]
+    assert intent_rows[0]["severity"] == "warn"
+    assert code == 0
+    assert "outside-nonni" not in json.dumps(intent_rows[0])
+
+
+def test_the_cited_record_row_quotes_no_stat_fault_text(tmp_path, monkeypatch):
+    """The row quotes the classification, never the classifier's fault text.
+
+    ``census._file_kind`` folds an ``OSError`` from the stat into its problem half,
+    and every other row built from such text is passed through the census's bounder.
+    This row is built from fixed words instead (see ``_classify_words``), which bounds
+    it and keeps a host path out of a report that promises to be path-free without
+    depending on the bounder being reached at all.
+    """
+    import noni.census as census
+
+    repo = _planted_record_link(tmp_path, "fault", is_dir=True)
+    long_text = "/home/operator/secret-dir " + "x" * 4000
+    real = census._file_kind
+
+    def answer(path, kind="file"):
+        if Path(path).name == f"{RECORD_ID}.json":
+            return "nonregular", long_text
+        return real(path, kind)
+
+    monkeypatch.setattr(census, "_file_kind", answer)
+    code, out, err = run_census_in_process(repo, "--only", "intent")
+    intent_rows = [row for row in _json_rows(out) if row["check"] == "intent"]
+    assert subjects(intent_rows) == ["cannot-tell"]
+    assert code == 0
+    message = intent_rows[0]["message"]
+    assert len(message) <= 300, f"a row past the census's own bound: {message!r}"
+    assert "/home/" not in message, f"a host path reached the row: {message!r}"
+    assert "xxxx" not in message, f"fault text reached the row: {message!r}"
+    assert err == ""
+
+
+def test_a_cited_record_classified_with_no_problem_names_no_none(tmp_path, monkeypatch):
+    """A classifier that named a kind and no problem does not print ``(None)``.
+
+    The tuple the classifier returns has no type that rules the ``None`` half out,
+    so the row must supply words of its own rather than interpolating the absence.
+    """
+    import noni.census as census
+
+    repo = _planted_record_link(tmp_path, "unnamed", is_dir=True)
+    real = census._file_kind
+
+    def answer(path, kind="file"):
+        if Path(path).name == f"{RECORD_ID}.json":
+            return "nonregular", None
+        return real(path, kind)
+
+    monkeypatch.setattr(census, "_file_kind", answer)
+    code, out, _err = run_census_in_process(repo, "--only", "intent")
+    intent_rows = [row for row in _json_rows(out) if row["check"] == "intent"]
+    assert subjects(intent_rows) == ["cannot-tell"]
+    assert code == 0
+    assert "None" not in intent_rows[0]["message"], intent_rows[0]["message"]
 
 
 def test_the_cited_record_link_survives_a_filter_that_named_no_intent_class(tmp_path):
@@ -228,18 +408,9 @@ def test_the_cited_record_link_survives_a_filter_that_named_no_intent_class(tmp_
     whole-artifact: without the marker the run printed no intent row at all and
     exited 0, which is a clean verdict bought by a path nobody opened.
     """
-    repo = repo_with_record(tmp_path)
-    install_intent(repo)
-    commit_intent(repo)
-    record_path = repo / "noni" / "decisions" / f"{RECORD_ID}.json"
-    outside = tmp_path / "outside-record.json"
-    outside.write_text(json.dumps(record(status="superseded",
-                                        supersedes=RECORD_ID)),
-                       encoding="utf-8")
-    record_path.unlink()
-    record_path.symlink_to(outside)
+    repo = _planted_record_link(tmp_path, "filter")
     rows = _rows(repo, "--only", "session-double")
-    intent_rows = [row for row in rows if row["check"] == "intent"]
+    intent_rows = _intent_rows(rows)
     assert subjects(intent_rows) == ["cannot-tell"]
     assert intent_rows[0]["severity"] == "warn"
 
@@ -248,46 +419,107 @@ def test_strict_promotes_the_cited_record_link_row(tmp_path):
     """``--strict`` promotes the run's blindness, as it promotes every cannot-tell.
 
     The row is the intent class's own cannot-tell, so it leaves the run at 51 under
-    ``--strict`` and at 0 without it: the same exit rule the intent-file row obeys.
+    ``--strict``: the same exit rule the intent-file row obeys. The unfiltered exit
+    is already asserted by every test above, so only the promoted half is asked here.
     """
-    repo = repo_with_record(tmp_path)
-    install_intent(repo)
-    commit_intent(repo)
-    record_path = repo / "noni" / "decisions" / f"{RECORD_ID}.json"
-    outside = tmp_path / "outside-record.json"
-    outside.write_text(json.dumps(record(status="superseded",
-                                        supersedes=RECORD_ID)),
-                       encoding="utf-8")
-    record_path.unlink()
-    record_path.symlink_to(outside)
-    assert _run(repo)[0] == 0
+    repo = _planted_record_link(tmp_path, "strict")
     assert _run(repo, "--strict")[0] == 51
 
 
-def test_the_cited_record_is_classified_before_it_is_read(intent_class):
-    """The order is the invariant, so it is pinned at the line that owns it.
+def test_the_cited_record_is_classified_before_it_is_read(intent_ast):
+    """The order is the invariant, so it is pinned where the order lives.
 
     A fixture cannot state "no open was attempted" — a reader that classified and
     then opened anyway passes every filesystem assertion above on a machine whose
-    target is readable. Pinned at the source instead, alongside the loop test:
-    the classifier is asked of the cited path, the non-regular answer returns
-    before the read, and the read takes a path the classification already decided.
+    target is readable. Pinned at the syntax tree instead, alongside the loop test:
+    inside ``check_intent`` the classifier is asked of the cited path, a ``return``
+    follows that answers the non-regular case, and only then is the reader called.
+
+    Pinned by ``lineno`` rather than by string position: renaming the local, hoisting
+    a helper, or moving the reader above ``check_intent`` all preserve the invariant,
+    and a substring index breaks on each of them — or keeps passing for the wrong
+    reason when the reader merely happens to be defined below the class.
     """
-    classify = intent_class.index('file_kind(record)')
-    read = intent_class.index("record.read_bytes()")
-    assert classify < read, (
-        "the cited decision record is read before the census's classifier is "
-        "asked of it, so a planted link is followed and its bytes decide the "
-        "intent verdict"
+    classify = _call_line(intent_ast, "check_intent", "file_kind")
+    refusal = _return_line(intent_ast, "check_intent", after=classify)
+    read = _call_line(intent_ast, "check_intent", "_record_body")
+    assert classify < refusal < read, (
+        "the cited decision record is no longer classified first and refused before "
+        "the read: a planted link would be followed, or a path the classifier did not "
+        "call regular would still be opened, and its bytes would decide the verdict"
     )
-    gate = intent_class.index("        return\n", classify)
-    assert gate < read, (
-        "a cited record the classifier did not call regular still reaches the "
-        "read, so the classification is decoration and not a refusal"
+
+
+def test_the_cited_record_open_refuses_a_link_without_following_it(intent_ast,
+                                                                   intent_class):
+    """The refusal lives at the open, not only in the caller's classification.
+
+    A separate ``lstat`` and ``open`` leave an interval in which a path swapped for a
+    link after the classification is still followed, so the promise holds only while
+    the open itself refuses: ``O_NOFOLLOW``, so a link faults instead of being read,
+    and an ``fstat`` of the descriptor that was opened, so nothing non-regular is
+    read. Pinned at the syntax tree for the reason above: no fixture can plant the
+    swap.
+    """
+    opened = _call_line(intent_ast, "_record_body", "open")
+    inspected = _call_line(intent_ast, "_record_body", "fstat")
+    source = _function_source(intent_ast, "_record_body", intent_class)
+    assert opened < inspected, (
+        "the cited-record reader no longer opens and then inspects the descriptor it "
+        "opened, so a link planted after the classification is read through and its "
+        "bytes decide the intent verdict"
     )
-    assert "record.read_bytes()" in intent_class, (
-        "the cited-record reader stopped taking the path the classification "
-        "decided, so it can open a path nobody classified"
+    assert "O_NOFOLLOW" in source and "S_ISREG" in source, (
+        "the cited-record reader lost the flag or the descriptor check that keep a "
+        "link and a non-regular path from being read"
+    )
+
+
+def test_the_cited_record_gate_requires_the_readable_kind(intent_ast):
+    """The gate names the kind it accepts, so an unknown answer cannot reach the read.
+
+    An allow-list of the two answers this class happens to handle would let a kind the
+    classifier gains later fall into the read branch; every other census reader tests
+    the kind it refuses. Pinned so the shape cannot silently invert.
+    """
+    compared = {
+        (type(node.ops[0]).__name__, node.comparators[0].value)
+        for node in ast.walk(_function(intent_ast, "check_intent"))
+        if isinstance(node, ast.Compare) and len(node.ops) == 1
+        and isinstance(node.left, ast.Name) and node.left.id == "record_kind"
+        and isinstance(node.comparators[0], ast.Constant)
+    }
+    assert ("NotEq", "regular") in compared, (
+        "the cited-record gate no longer requires the classifier to have answered "
+        "'regular', so a kind it does not name reaches the read"
+    )
+
+
+def test_the_cited_record_row_marks_itself_whole_artifact(tmp_path):
+    """The marker is what stops a filtered run reporting itself clean.
+
+    ``--only`` survival is asserted elsewhere, but survival can also be bought by a
+    row that was never filtered at all; the marker is the thing the run's row filter
+    reads, so it is asserted on the row the group itself appended. ``_rows`` reads
+    the rendered report, which drops the marker, so the group is called directly.
+    """
+    # The package form: ``tests/census_run.py`` is a fixture module of its own and
+    # would win the plain-name import.
+    from noni import census_run
+    import noni.census as census
+
+    repo = _planted_record_link(tmp_path, "marker")
+    found: list[dict] = []
+    # The group's own composition, with the census's own row factory reached through
+    # the module the census is: ``_row`` is what stamps the marker, so the marker is
+    # asserted where it is set rather than after the report stripped it.
+    census_run._check_intent(repo / "noni" / "direction" / "intent.md",
+                             repo / "noni" / "decisions", repo, False, found)
+    intent_rows = _intent_rows(found)
+    assert subjects(intent_rows) == ["cannot-tell"], found
+    assert intent_rows[0][census.WHOLE_ARTIFACT_KEY] is True, (
+        "the cited-record cannot-tell row is not marked whole-artifact, so a run "
+        "whose --only named no intent class drops it and reports itself clean"
     )
 
 

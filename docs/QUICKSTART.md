@@ -289,15 +289,18 @@ the `ordering-closed` (46) class is not evaluated at all, so a run with no rows
 from it does not mean every ordered issue is open.
 
 The census says so out loud whichever mode you read it in. In human-readable
-mode that is one line, `note: ordering-closed was not evaluated: no
---issue-state FILE was
-given`, printed beside the report. In `--json` mode no such line goes to
-stdout — that stream stays findings and one summary — and the same sentence is
-instead carried on the summary row as its `not_evaluated` field, a list of the
-classes the run did not evaluate and why. Read it from either mode; a CI run
-gating on the rows loses nothing by never printing a `note:` line. Keep the
-ordering group in the run either way (`--only` must name an ordering class, or
-name none), because a run that never reached the class reports nothing about it.
+mode that is one line beside the report:
+
+```text
+note: ordering-closed was not evaluated: no --issue-state FILE was given, so whether an ordered issue is closed is not asked (the census never contacts a tracker)
+```
+
+In `--json` mode no such line goes to stdout — that stream stays findings and
+one summary — and the same sentence is instead carried on the summary row as its
+`not_evaluated` field, a list of the classes the run did not evaluate and why.
+Keep the ordering group in the run either way (`--only` must name an ordering class,
+or name none), because a run that never reached the class reports nothing about
+it.
 
 The census ships no producer. A tracker with a command line and `jq` produce
 one:

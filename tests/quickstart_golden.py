@@ -26,13 +26,17 @@ Consequences of that one decision, all load-bearing:
   reader's own directory are printed exactly as the page spells them.
 
 The install and recipe sections are listed too, because a reader copies them and
-the suite must notice a change in them. Two of these commands are not *launched*:
-the ``git clone`` of the OWNER URL and the ``python3 -m pip install ./noni`` that
-follows it stand for the fixture's materialised clone and its venv install (see
+the suite must notice a change in them. Several of these commands are not
+*launched*:
+the ``git clone`` of the OWNER URL, the ``uv tool install`` that follows it, and
+the ``python3 -m venv`` / ``pip install`` fallback beneath that stand for the
+fixture's materialised clone and its venv install (see
 :func:`quickstart_topology.build_installed_world`), and the ``gh issue list`` recipe is run
 by ``jq`` over a planted payload rather than by ``gh``
 (:func:`quickstart_runner.recipe_gh_argv`). The comparison is over all of them;
-only the launching chooses.
+only the launching chooses. The install is asserted rather than launched on
+purpose: the two forms the page prints need ``uv`` and a venv of their own, which
+the fixture's install already builds for every other command on the page.
 """
 
 from __future__ import annotations
@@ -58,7 +62,9 @@ ISSUE_STATE: tuple[str, ...] = ("The --issue-state",)
 GOLDEN: dict[tuple[str, ...], list[list[str]]] = {
     INSTALL: [
         ["git", "clone", "https://github.com/OWNER/noni", "noni"],
-        ["python3", "-m", "pip", "install", "./noni"],
+        ["uv", "tool", "install", "./noni"],
+        ["python3", "-m", "venv", ".venv"],
+        [".venv/bin/pip", "install", "./noni"],
     ],
     ROUTE_A: [
         ["cd", "your-project"],
@@ -76,6 +82,7 @@ GOLDEN: dict[tuple[str, ...], list[list[str]]] = {
         ["git", "clone", "git@forge.example:you/your-project-direction.git",
          ".noni-state"],
         ["echo", "/.noni-state/", ">>", ".gitignore"],
+        ["printf", "/.noni-state/\\n", ">>", ".git/info/exclude"],
         ["git", "-C", ".noni-state", "config", "user.name", "Casey"],
         ["git", "-C", ".noni-state", "config", "user.email", "casey@example.invalid"],
         ["git", "-C", ".noni-state", "commit", "--allow-empty", "-m",

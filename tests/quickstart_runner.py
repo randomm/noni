@@ -29,13 +29,12 @@ comparison accepted. That ordering is the whole simplification: a move cannot be
 tricked into addressing the wrong tree, because the argv it may touch is one of the
 literal lists in :mod:`quickstart_golden`.
 
-Two page steps are not commands a reader's shell ran, so the launcher asserts them
-instead of exec'ing them: the ``cd`` into a directory the page cannot name (every
-launched command already carries the cwd the harness chose), and the ``echo ... >>
-.gitignore`` line, whose payload is written to the scratch project's ignore file --
-this repository's own ``.gitignore`` is a gate file no test may modify. The install
-section's ``git clone`` and ``pip install`` are the fixture's materialised clone and
-its venv install (see :mod:`quickstart_topology`); the ``gh`` recipe is run through
+Two page steps are not commands a reader's shell ran, so the launcher dispatches them
+in :mod:`quickstart_page_steps` instead of exec'ing them: the ``cd`` into a directory
+the page cannot name (every launched command already carries the cwd the harness
+chose), the page's two ignore-rule lines, and the two clones. The install section's
+``git clone`` and its three install lines are the fixture's materialised clone and its
+venv install (see :mod:`quickstart_topology`); the ``gh`` recipe is run through
 ``jq`` by the issue-state test.
 """
 
@@ -45,11 +44,14 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from _harness import REPO
 from docs_promises import STATE_DIR
-from quickstart_golden import GOLDEN
+from quickstart_golden import GOLDEN, INSTALL
+from quickstart_page_steps import (
+    append_ignore_rule,
+    state_clone,
+    write_intent_draft,
+)
 from quickstart_topology import (
-    CLONE_URL,
     READER_DIR,
     World,
     build_installed_world,
@@ -59,28 +61,27 @@ from quickstart_topology import (
     run_env,
 )
 
-# The draft the page tells a reader to copy and fill: the shipped template, read
-# from the skill rather than restated here, so the page can never promise a draft
-# its own writer would refuse.
-INTENT_TEMPLATE = REPO / "skills" / "direction" / "references" / "intent-template.md"
-
 __all__ = [
     "ORDERING_NOW",
     "World",
+    "append_ignore_rule",
     "build_installed_world",
     "checked",
     "date_arg",
     "fresh_scratch",
     "git",
     "golden",
+    "install_commands",
     "launch",
     "recipe_gh_argv",
     "reroot",
     "route_commands",
     "run_env",
     "run_route_b",
+    "state_clone",
     "state_dir_commands",
     "substitute",
+    "write_intent_draft",
 ]
 
 # A fixed clock for the ordering runs the quickstart's tests make: the ordering
@@ -379,7 +380,7 @@ def launch(world: World, argv: list[str],
         return subprocess.CompletedProcess(argv, 0, "", "")
     if argv[:2] == ["noni", "intent"]:
         return write_intent_draft(world, argv)
-    if argv[0] == "echo":
+    if argv[0] == "echo" or argv[0] == "printf":
         return append_ignore_rule(world, argv)
     if argv[0] == "git" and argv[1] == "clone":
         return state_clone(world, argv)
@@ -399,85 +400,18 @@ def _exec(program: str, argv: list[str], cwd: Path,
         pytest.fail(f"page command hung: {argv}\n{exc}")
 
 
-def write_intent_draft(world: World,
-                       argv: list[str]) -> subprocess.CompletedProcess[str]:
-    """Put the draft the page's intent line reads onto the reader's disk.
+def install_commands() -> list[list[str]]:
+    """The page's Install fences, compared to the golden list but never launched.
 
-    The page tells the reader to copy the skill's template, fill its four sections
-    and hand it over with ``--from``: the harness supplies the file the reader's
-    copy step would have produced, at the path the page's own line names, and hands
-    the launch the *page's* argv untouched. Two things that leaves honest: the
-    writer still reads the path from argv rather than from anything the harness
-    chose, and a golden line that drops ``--from`` or points it elsewhere fails
-    here rather than launching a run whose input nobody reviewed.
-
-    The draft is the shipped template, not a fixture of this test module: a page
-    that installs a draft the writer refuses, or a template that stopped validating,
-    fails here -- which is the promise the page makes to a first-time reader.
+    A reader copies these and the suite has to notice a change in them, which is what
+    :func:`route_commands` does; launching them is the one thing the harness must not
+    do. Each form names a tool the harness cannot assume a test host has (``uv``), or
+    builds a venv of its own, and the page's install promise is discharged for real by
+    :func:`quickstart_topology.install_venv`, whose venv hands every other page
+    command its ``noni``. The assert-only half of the install is spelled out here
+    rather than left to the fence census, which compares the whole page's fences in
+    one flattened list and would not name the Install section as the thing that
+    drifted.
     """
-    position = argv.index("--from")
-    draft = argv[position + 1]
-    assert not draft.startswith("-"), (
-        f"the page's intent line passes --from {draft!r}, which is a flag and not "
-        f"a draft path: {argv}")
-    target = cwd_draft(world, draft)
-    assert not target.exists(), (
-        f"the page's draft path {draft} already exists in the scratch tree, so the "
-        "run could not be attributed to the file this harness wrote")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(INTENT_TEMPLATE.read_text(encoding="utf-8"),
-                      encoding="utf-8")
-    return subprocess.CompletedProcess(argv, 0, "", "")
+    return route_commands(INSTALL)
 
-
-def cwd_draft(world: World, draft: str) -> Path:
-    """Resolve the page's draft path against the directory that command runs in.
-
-    The page's line runs in the reader's own repository (the ``cd`` step), so a
-    relative path means a file of the project, not of the state clone: the intent
-    draft is the reader's own document, and only the artifact the writer commits
-    lands under ``--repo``.
-    """
-    relative = Path(draft)
-    assert not relative.is_absolute(), (
-        f"the page's --from names an absolute path {draft!r}, which the harness "
-        "would have to trust rather than resolve")
-    return world.project / relative
-
-
-def append_ignore_rule(world: World,
-                       argv: list[str]) -> subprocess.CompletedProcess[str]:
-    """The page's ``echo ... >> .gitignore`` line, applied to the scratch tree.
-
-    The payload is taken from the golden list and written to the scratch project's
-    ignore file: this repository's own ``.gitignore`` is a gate file, so the line
-    cannot be replayed by a shell in the tree the tests run from.
-    """
-    entry = argv[1].strip()
-    assert entry.startswith("/") and entry.endswith("/"), (
-        f"the ignore rule is not a rule for a directory: {argv}")
-    assert STATE_DIR in entry, f"the ignore rule does not name the state directory: {argv}"
-    assert argv[2:] == [">>", ".gitignore"], (
-        f"the ignore-rule line writes somewhere other than .gitignore: {argv}")
-    (world.project / ".gitignore").write_text(entry + "\n", encoding="utf-8")
-    return subprocess.CompletedProcess(argv, 0, "", "")
-
-
-def state_clone(world: World, argv: list[str]) -> subprocess.CompletedProcess[str]:
-    """The page's state-repository clone, run for real against the fixture's origin.
-
-    The page prints two clones and they stand for different things. The install
-    section's clone of noni is the fixture's materialised copy (its URL is the
-    OWNER placeholder, and the run stays offline); the state section's clone of the
-    private repository is launched against the bare origin the fixture seeded, so
-    the branch, the upstream and the pushed commits the tests read afterwards are
-    the product of the line the page prints.
-    """
-    if CLONE_URL in " ".join(argv):
-        assert argv[2] == "https://github.com/OWNER/noni" and argv[3] == "noni", (
-            f"the install clone must name the page's placeholder URL: {argv}")
-        return subprocess.CompletedProcess(argv, 0, "", "")
-    assert argv[2].endswith(".git") and argv[3] == STATE_DIR, (
-        f"the page's state clone must name the {STATE_DIR} target: {argv}")
-    return git(world.project, "clone", "-q", str(world.origin), STATE_DIR,
-               env=world.env)

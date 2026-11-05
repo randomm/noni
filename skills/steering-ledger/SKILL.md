@@ -49,6 +49,7 @@ repository never reads as a stray `noni/` beside the project.
 scripts/decide.py --repo REPO --slug SLUG --scope SCOPE --asked-by ROLE
                   --question ID=TEXT [--option ID=OPTION]... [--answer ID=ANSWER]...
                   [--date YYYY-MM-DD] [--source-issue N --source-comment N]  # N positive
+                  [--decided-by WHO] [--on-behalf-of WHO] [--single-option]
                   [--supersedes ID] [--no-commit]
 ```
 
@@ -63,9 +64,9 @@ flags.
 | code | meaning |
 |---|---|
 | `0` | the record was written (and committed unless `--no-commit`) |
-| `2` | invalid input: an argparse failure, an empty or malformed `--slug` or `--date`, a malformed `--question`/`--option`/`--answer`, a `--source-issue`/`--source-comment` that is not a positive integer, a question outside 1-4 or with outside 2-4 options, or `--supersedes` with an unanswered question |
+| `2` | invalid input: an argparse failure, an empty or malformed `--slug` or `--date`, a malformed `--question`/`--option`/`--answer`, a `--source-issue`/`--source-comment` that is not a positive integer, a question outside 1-4 or with outside 2-4 options, an empty or multi-line `--decided-by`/`--on-behalf-of`, `--on-behalf-of` without `--decided-by`, a question with one option when `--single-option` was not given, or `--supersedes` with an unanswered question |
 | `3` | git or identity: `--repo` is not a git work tree, `git config user.name` is not set (the hint names the command), or a git probe timed out or failed for a reason that answered nothing |
-| `4` | a collision or a bad supersede target: the record path exists as anything (a file, a directory or a symlink), or the target is missing, already superseded, untracked, locally modified, not a regular file at its path (a symlink, directory or device), not readable at all, not in the writer's canonical form, dated another day than `--date`, or carries a field the census does not type as a string (`id`, `asked_by`, `by`, `scope`, `date`; `supersedes` as a string or null), a `status` outside `decided`, `open` or `superseded`, `questions` that are not a non-empty list of objects each with a string `id` and a string-or-null `answer`, or a number JSON cannot hold. A `git show` reporting the path is not in HEAD is this code, not `3` |
+| `4` | a collision or a bad supersede target: the record path exists as anything (a file, a directory or a symlink), or the target is missing, already superseded, untracked, locally modified, not a regular file at its path (a symlink, directory or device), not readable at all, not in the writer's canonical form, dated another day than `--date`, or carries a field the census does not type as a string (`id`, `asked_by`, `by`, `scope`, `date`; `supersedes` as a string or null; `decided_by` and `on_behalf_of` as non-empty single-line strings when present), a `status` outside `decided`, `open` or `superseded`, `questions` that are not a non-empty list of objects each with a string `id` and a string-or-null `answer`, or a number JSON cannot hold. A `git show` reporting the path is not in HEAD is this code, not `3` |
 | `5` | the commit failed: both paths are rolled back (index reset, target restored, new record removed), and anything the rollback could not do is named — a failed reset with the paths that may still be staged, or a path it could not restore |
 
 Every refusal leaves the target and the ledger untouched: the writes happen
@@ -96,7 +97,8 @@ that is the only field the writer touches.
 ## The record
 
 One JSON file per record under `noni/decisions/`, named `<id>.json`. The eight
-fields (in order), plus one optional field (`source`):
+fields (in order), plus the optional fields (`source`, `decided_by`,
+`on_behalf_of`, `single_option`):
 
 | field | type | meaning |
 |---|---|---|
@@ -109,9 +111,15 @@ fields (in order), plus one optional field (`source`):
 | `status` | string | `decided`, `open`, or `superseded` |
 | `supersedes` | string | id of the record this one replaces, or `null` |
 | `source` | object, or `null` (optional) | tracker provenance: `{"issue_number": <int>, "comment_id": <int>}` when the record was produced from a tracker-sourced answer; `null` or absent otherwise (a record without it stays valid) |
+| `decided_by` | string (optional) | who made the decision, when that is not the commit author: a login or pseudonym, never a personal-name requirement. Written by `--decided-by`; absent means the commit author decided, which is how every record written before this field stays valid. It never overrides `by` in the report (see Attribution) |
+| `on_behalf_of` | string (optional) | the party a delegated decision was made for, written by `--on-behalf-of`, which the writer refuses without `--decided-by` |
+| `single_option` | `true` (optional) | the marker `--single-option` writes to say a question was asked with one option on purpose, so nothing had to be invented. It is a per-record marker over a per-question bound: with it set, any question may carry one option, and at least one question of the record must. A one-option record without it is a schema violation, and a marker no question of the record carries one option is one too |
 
 A `question` object is `{id, text, options, answer}`. `options` is an array of
-2-4 strings. `answer` is either the chosen option's string (or a free-text
+2-4 strings, or exactly one string for a question of a record that carries
+`single_option` (the marker is read per record and the bound is judged per
+question, and at least one question of a marked record must hold one option).
+`answer` is either the chosen option's string (or a free-text
 escape string) and must name the question it answers by id pairing, or is
 `null` when the question was left open. The full shape, validation rules, and
 the declined/open state are in `references/decisions.md`.
@@ -131,6 +139,13 @@ forgeable locally; the default posture is signed commits, and stranger-detection
 is advisory until forge-verified pushes. The census reports `by` from git so a
 forged file body cannot claim a different author. The full attribution rule is
 in `references/decisions.md`.
+
+Because agents commit under the operator's identity, `by` alone cannot say who
+*decided*. `--decided-by <who>` records that separately, and `--on-behalf-of
+<who>` names the party a delegate acted for. Both are written next to `by`, never
+in place of it: the report's `by` column keeps coming from git, and the census
+checks only that each value is a non-empty single line — it never verifies an
+identity. A record without `decided_by` still means the commit author decided.
 
 ## Supersede
 
@@ -161,7 +176,7 @@ default, so a run with no argument is the usage error `2`.
 |---|---|
 | `0` | clean — every record valid, chain intact |
 | `2` | usage: no ledger directory was given (the state root is named by the caller, never by the cwd) |
-| `3` | jq not found on the reading machine |
+| `3` | jq not found on the reading machine, or the schema program `scripts/census-schema.jq` is missing (`3:schema-program-missing`) |
 | `10` | a record is missing or malformed, or the ledger is unusable (missing/empty dir, bad filename, unreadable git tree) |
 | `12` | a record was edited after commit (supersede instead) |
 | `20` | the supersede chain is broken (dangling, duplicate, orphan, cycle, or a chain resolving to zero or more than one live record) |

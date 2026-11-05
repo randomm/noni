@@ -11,11 +11,21 @@ the ledger by accident.
 
 from __future__ import annotations
 
+from . import ledger_schema as _schema
+
 # census.py types these as non-empty strings ("id must be a non-empty string", and
 # the same for the others). The tests reject ``bool`` by name because Python calls
 # ``True`` an ``int``: json's ``true`` is neither a number nor a string, so it is
 # refused wherever the census wants a string.
 _NON_EMPTY_STRINGS = ("id", "by", "asked_by", "scope", "date")
+
+# The two attribution names are typed the same way, but as fields a record may
+# omit entirely, so they are checked separately below rather than added to the
+# required list above: a target carrying ``"decided_by": 7`` is a record the
+# census refuses with "decided_by must be a non-empty single-line string", and a
+# writer that copied those bytes through a status flip would be repairing the
+# ledger by accident. The predicate is the census's own, in ``ledger_schema``.
+_OPTIONAL_NAMES = _schema.NAME_LINE_FIELDS
 
 
 def _refusal(record: dict, target_id: str, field: str, want: str) -> tuple[str, str]:
@@ -58,6 +68,9 @@ def refuse_target_fields(record: dict, target_id: str,
         value = record.get(field)
         if field in record and (not isinstance(value, str) or not value):
             return _refusal(record, target_id, field, "a non-empty string")
+    for field in _OPTIONAL_NAMES:
+        if field in record and not _schema.is_single_line(record[field]):
+            return _refusal(record, target_id, field, "a non-empty single-line string")
     if "status" in record and record["status"] not in statuses:
         return (f"supersede target {target_id} has a status the census refuses: "
                 f"status not one of {'|'.join(statuses)}",

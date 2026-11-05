@@ -243,6 +243,26 @@ def subjects(rows: list[dict]) -> list[str]:
     return [row["subject"] for row in rows]
 
 
+def _intent_rows(rows: list[dict]) -> list[dict]:
+    """The intent class's own rows of a run that reported other classes too.
+
+    The ledger group always reports its own row beside a planted link, and that row
+    is correct existing behaviour: the assertion under test is this class's alone.
+    """
+    return [row for row in rows if row["check"] == "intent"]
+
+
+def _json_rows(stdout: str) -> list[dict]:
+    """The finding rows an in-process run printed, as dicts.
+
+    ``findings_of`` answers for one class and keeps only three fields; the tests
+    that inspect a row's text or its visibility marker need the whole row.
+    """
+    return [row for row in (json.loads(line) for line in stdout.splitlines()
+                            if line.strip())
+            if row.get("kind") == "finding"]
+
+
 def intent_kind_answers(verdict: str, problem: str | None = None):
     """A ``_file_kind`` replacement that answers ``(verdict, problem)`` for the
     intent path and classifies every other path for real.

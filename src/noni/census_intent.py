@@ -27,6 +27,10 @@ One class, one read of the file, plus the history answer the run already holds:
   ``uncited`` verdict built from bytes read through the link. The refusal lives
   at the open (:func:`_record_body`, ``O_NOFOLLOW`` plus an ``fstat``), so no
   interval between classifying and reading is the thing that keeps a link closed.
+  A hardlink is the stated limit: ``lstat`` cannot tell one from an ordinary file,
+  so a record hardlinked to bytes outside the tree still yields an ``uncited``
+  verdict, beside the ``ledger-edited`` failure that compares the tree to the
+  committed blob.
 
 Nothing here prints or exits: every answer is appended to the caller's
 ``findings`` list through the ``row`` factory the census supplies.
@@ -41,7 +45,6 @@ import stat
 from pathlib import Path
 from typing import Callable
 
-from . import census_text as _text
 from . import intentschema
 
 # A ledger record id is what decide.py writes: <YYYY-MM-DD>-<slug> of lowercase

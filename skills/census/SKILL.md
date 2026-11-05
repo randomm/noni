@@ -55,7 +55,7 @@ directory, is a usage error (exit 2) before any check runs.
 | `ordering-malformed` | 15 | the ordering artifact is there and is not the artifact: unparseable bytes, a non-finite number, a key stated twice, wrong `schema`, a duplicate or non-positive `issue`, a `confirmed` that is not a UTC timestamp (one with no offset included), a `decision` matching no file in the ledger, an `--issue-state` file that does not parse or whose keys are not plain positive issue numbers, or a decision ledger whose listing faulted |
 | `ordering-stale` | 45 | an order entry whose `confirmed` is older than the `--stale-after` threshold relative to `--now` (warn by default; fail under `--strict`) |
 | `ordering-closed` | 46 | an ordered issue the `--issue-state` file says is closed; also the `cannot-tell` row for an entry the file does not mention (warn by default; fail under `--strict`) |
-| `intent` | 51 | `noni/direction/intent.md` is there and is not the artifact: a `## Purpose` / `## Principles` / `## Never` / `## Ask first` heading missing, repeated or out of order, the `Last-confirmed:` line absent or repeated, or the file past its line cap; or the last commit that touched it is not an `intent: <decision-id>` headline naming a record the ledger holds (`uncited`). The `cannot-tell` row for a file this run could not read, for a cited decision record that is a symlink or any other non-regular path, or for a file no commit touched, is a warn (fail under `--strict`); an absent file adds no row at all |
+| `intent` | 51 | `noni/direction/intent.md` is there and is not the artifact: a `## Purpose` / `## Principles` / `## Never` / `## Ask first` heading missing, repeated or out of order, the `Last-confirmed:` line absent or repeated, or the file past its line cap; or the last commit that touched it is not an `intent: <decision-id>` headline naming a record the ledger holds (`uncited`). The `cannot-tell` row for a file this run could not read, for a cited decision record that is a symlink or any other non-regular path, for a ledger directory reached through a symlink, or for a file no commit touched, is a warn (fail under `--strict`); an absent file adds no row at all |
 | `hygiene` | 50 | a tracked file fails the public-repo hygiene scan (machine-local home path, secret shape, active deny-list entry), or the scan/deny-list did not run (warn by default; fail under `--strict`) |
 
 The `warn` classes are reported either way and never move the exit code on
@@ -274,13 +274,14 @@ The same rule extends to the classes that report their own absence:
   The severity split is the ordinary one — a shape or citation the census could
   read and disapprove of is a failure, and anything it could not read (a symlink,
   unreadable bytes, a record it could not open, the decision record the citation
-  names standing as a symlink, a directory or any other non-regular path, or a
-  file no commit ever touched) is a `cannot-tell` warn that `--strict` promotes
-  to 51. A cited record is classified before it is opened, so nothing behind a
-  link is ever read and no byte of an outside file can decide the verdict. The
-  row is marked whole-artifact, so a `--only` filter that named no intent class
-  still shows it: a run that could not read the intent never reports itself
-  clean.
+  names standing as a symlink, a directory or any other non-regular path, the
+  ledger directory or the directory above it being a symlink, or a file no commit
+  ever touched) is a `cannot-tell` warn that `--strict` promotes to 51. A cited
+  record is classified before it is opened and then opened with `O_NOFOLLOW`, so a
+  link is refused rather than followed and no byte of an outside file decides the
+  verdict. The row is marked whole-artifact, so a `--only` filter that named no
+  intent class still shows it: a run that could not read the intent never reports
+  itself clean.
 - **A read the group could not make is reported, never skipped.** An
   `--issue-state` file that does not parse, and a decision ledger whose listing
   faults while an entry cites a decision, each add one row marked whole-artifact:

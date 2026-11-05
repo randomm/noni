@@ -223,7 +223,7 @@ the old bytes and never a truncated file.
 | `intent` (51), subject `section-missing` | the file is missing a heading, repeats one, has the four out of order, its `Last-confirmed:` line is absent or repeated, or a code fence was left unclosed. Edit the draft and re-run `intent.py set`, which refuses a draft it would not have written |
 | `intent` (51), subject `over-cap` | the file is past 200 lines. Move the material that belongs in a dated call into a ledger record and re-run `intent.py set` |
 | `intent` (51), subject `uncited` | the last commit that touched the file is not an `intent: <decision-id>` commit naming a record the ledger holds, so the intent rests on nothing. Re-run `intent.py set --decision ID` with a live record's id rather than editing the commit by hand |
-| `intent` (51), subject `cannot-tell` | the file could not be read (a symlink, a device, unreadable bytes), the decision record it cites is not an ordinary file (a symlink, dangling or not, a directory, a device), or no commit touching the file was found, so nothing was checked. Fix the path, restore the record, or commit the file; the row is a warn and never a silent clean. The census classifies the cited record before opening it, so it never reads through a link and never takes a verdict from bytes outside the repo |
+| `intent` (51), subject `cannot-tell` | the file could not be read (a symlink, a device, unreadable bytes), the decision record it cites is not an ordinary file (a symlink, dangling or not, a directory, a device), the ledger directory or the directory above it is a symlink, or no commit touching the file was found, so nothing was checked. Fix the path, restore the record, or commit the file; the row is a warn and never a silent clean. The census classifies the cited record before opening it and opens it with `O_NOFOLLOW`, so a link is refused rather than followed and no verdict comes from bytes outside the repo. A hardlink is the limit of that: `lstat` cannot tell one from an ordinary file, so a record hardlinked to an outside file still yields an `uncited` verdict, reported beside the `ledger-edited` failure that compares the working tree to the committed blob |
 
 ## The intent edge cases that matter
 
@@ -246,9 +246,11 @@ the old bytes and never a truncated file.
   exit 3 for the writer, a `cannot-tell` row for the census. A path that is not
   an ordinary file has no sections to check and no citation to read, and calling
   it clean would be the worst possible answer. The same holds for the record a
-  citation names: a symlink, a dangling link, a directory or a device at
-  `noni/decisions/<id>.json` is a `cannot-tell` row, never an `uncited` verdict
-  built from whatever the link points at.
+  citation names, and for the ledger directory holding it: a symlink, a dangling
+  link, a directory or a device at `noni/decisions/<id>.json` is a `cannot-tell`
+  row, never an `uncited` verdict built from whatever the link points at. The
+  refusal is at the open (`O_NOFOLLOW` plus a check of the descriptor), so a link
+  cannot be swapped in between the classification and the read.
 - **A commit that touched the file without naming a live record is `uncited`,
   not `cannot-tell`.** The history answered; the answer was the wrong subject.
   Only a history that could not be read at all, or a file that could not be

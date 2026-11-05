@@ -180,6 +180,60 @@ def subjects(rows: list[dict]) -> list[str]:
     return [row["subject"] for row in rows]
 
 
+def intent_kind_answers(verdict: str, problem: str | None = None):
+    """A ``_file_kind`` replacement that answers ``(verdict, problem)`` for the
+    intent path and classifies every other path for real.
+
+    Two tests need the census to meet a path it cannot describe: a parent whose
+    ``lstat`` was declined, and a chain of links that loops. Neither is portable as
+    a fixture -- an unreadable directory is simply readable when the suite runs as
+    root, and whether a loop reaches the run through the classifier or the reader
+    depends on how the link was written -- so the state the tests mean to ask about
+    is installed at the census's own classifier instead. The gate and the class both
+    reach that one seam, so what is under test is the run's answer to a faulting
+    path and not the filesystem's cooperation.
+
+    ``kind`` positional, like every caller: ``census._ledger_probe`` hands the
+    classifier to ``probe_ledger``, which calls it as ``file_kind(ledger,
+    kind="dir")``, so a keyword-only signature is not the seam the run uses.
+    """
+    import noni.census as census
+
+    real = census._file_kind
+
+    def answer(path, kind="file"):
+        if Path(path).name == "intent.md":
+            return verdict, problem
+        return real(path, kind)
+
+    return answer
+
+
+def run_census_in_process(repo: Path, *args: str) -> tuple[int, str, str]:
+    """``census.main`` in this interpreter, so a seam the test patched is the seam
+    the run uses.
+
+    ``_run`` and ``_rows`` launch a subprocess, which is what a row-shape test wants
+    and what a patched-seam test cannot use. This launcher exists for the seams.
+    """
+    import importlib
+    import io
+    from contextlib import redirect_stderr, redirect_stdout
+
+    out, err = io.StringIO(), io.StringIO()
+    with redirect_stdout(out), redirect_stderr(err):
+        rc = importlib.import_module("census").main(
+            ["--repo", str(repo), "--json", "--now", NOW, *args])
+    return rc, out.getvalue(), err.getvalue()
+
+
+def findings_of(stdout: str, check: str) -> list[tuple[str, str, str]]:
+    """The ``(check, subject, severity)`` of every ``check`` row a JSON run printed."""
+    return [(row["check"], row["subject"], row["severity"])
+            for row in (json.loads(line) for line in stdout.splitlines() if line.strip())
+            if row.get("kind") == "finding" and row["check"] == check]
+
+
 class BlindListing:
     """A ``names`` argument that makes a group list the ledger itself.
 

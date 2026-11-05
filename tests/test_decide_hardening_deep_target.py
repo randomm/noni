@@ -327,15 +327,33 @@ def test_hardening_no_decide_path_hands_the_renderer_a_record_past_the_bound(tmp
     Three depths are driven, spanning the window past the bound up to a nesting
     no supported decoder builds at all (the ``RecursionError`` arm's own ground),
     and each is expected to be refused by the reader without reaching the render.
+    Where a depth is below this interpreter's own decoder limit the fixture is
+    asserted decodable first, so there the bound is the only thing that could have
+    answered; where it is not, the arm beside the bound is the one being driven.
     The baseline's own canonical render - the new record this run writes - is
     filtered out of the report, since it is bytes the writer built itself and
-    never came from the target; what must stay empty is the deep entries, and an
-    entry carrying the planted nest is the crash still standing.
+    never came from the target; an entry carrying the planted nest is the crash
+    still standing.
+
+    Two things about that entry list are facts of the writer, measured here
+    rather than assumed, and both are what make the depth assertion say what it
+    claims. On a refused target the writer still calls the render once, with a
+    shallow record of its *own* construction (the fresh supersede, ``status``
+    still ``decided``) that bears the target's ``id`` - so an entry is keyed by
+    the ``id`` it arrived with for the control only, and never as evidence about
+    the target's record, which a refused run hands over in no entry at all. And
+    the depth of an entry is asked only of a record this spy was actually given,
+    so a run that refused at the reader is not reported as a render. That the
+    target's own committed bytes survived is said by the git read, not by this
+    list.
     """
+    import sys
+
     from noni import census_json
     from noni import decide as writer
 
     handed: list[int] = []
+    seen: list[tuple[str, int]] = []
     rendered: list[str] = []
     original_canonical = writer._render
 
@@ -343,10 +361,14 @@ def test_hardening_no_decide_path_hands_the_renderer_a_record_past_the_bound(tmp
         # ``record_object`` is the one read whose result reaches this call, so its
         # own verdict is the second half of the evidence: the depth report says
         # what the renderer was handed, the None report says what it was not.
-        handed.append(census_json._depth_of(record, 10 ** 9))
-        rendered.append(str(record.get("id")))
+        # The depth is asked of the record this spy was actually given, so a run
+        # that refused at the reader is not reported as a render.
+        name = str(record.get("id"))
+        depth = census_json._depth_of(record, 10 ** 9)
+        seen.append((name, depth))
+        handed.append(depth)
+        rendered.append(name)
         return original_canonical(record)
-
     refused: list[int] = []
     from noni import record_read as _reader
 
@@ -361,6 +383,7 @@ def test_hardening_no_decide_path_hands_the_renderer_a_record_past_the_bound(tmp
     from noni import gitwrite
 
     original_record_object = gitwrite.record_object
+    original_canonical_attr = writer._render
     writer._render = _reporting_canonical
     gitwrite.record_object = _counting_record_object
     try:
@@ -369,30 +392,52 @@ def test_hardening_no_decide_path_hands_the_renderer_a_record_past_the_bound(tmp
             body = _target_body(target_id, SCOPE_FIELD,
                                 '"scope": ' + _deep_value(levels))
             assert '"scope": {' in body, f"no deep object at {levels} levels"
+            # The bound, not the decoder, is what refused this fixture: on the
+            # oldest supported interpreter the decoder itself gives out at about
+            # 950 levels, so the assertion is made where it can mean something
+            # and skipped where the arm beside the bound is what would have
+            # answered. It is what separates this probe from the one above.
+            if levels < sys.getrecursionlimit():
+                assert json.loads(body)["scope"]["k"], (
+                    f"the standard reader cannot build the {levels}-level fixture, "
+                    f"so nothing here tests the bound (limit {sys.getrecursionlimit()})")
             repo, _ = _refused_target_repo(tmp_path, f"deeper-{levels}", body)
             proc = _supersede_in_process(repo, write_fails_on=None, monkeypatch=None,
                                          target_id=target_id, render_observer=None)
             assert proc.returncode == 4, f"{levels}: {proc.returncode} {proc.stderr}"
             assert "not a readable JSON object" in proc.stderr, f"{levels}: {proc.stderr}"
-            # The reader was asked and answered None, and the renderer was asked
-            # nothing bearing this target's id: that pair is the fix, stated for
+            # The reader was asked and answered None, and no record past the
+            # bound was handed to the renderer: that pair is the fix, stated for
             # each depth rather than inferred from the exit code alone.
             assert refused, f"{levels}: the reader was never asked"
             assert accepted == [], f"{levels}: the reader accepted a deep record"
+            # The target's deep bytes never reached the renderer's argument. The
+            # id in ``rendered`` cannot say that on its own - the writer renders
+            # once on a refused target with its own shallow record, which carries
+            # this id - so the reader's None and this depth report carry it.
+            assert not any(d > SHALLOW_RECORD_CEILING for d in handed), (
+                f"{levels}: a record past the bound reached the renderer: {seen}")
         # The probe is not a blanket silence: the same spy on a well-formed
-        # target does see renders, so the absence above is a refusal and not a
-        # hook that was never reached.
+        # target does see renders. The real renderer is put back for this one -
+        # the control's job is to prove the render route fires at all, and a
+        # stand-in that returned early would report a render it never did.
         ordinary_id = f"{BASELINE_ID[:10]}-shallow-control"
         ordinary, _ = _refused_target_repo(tmp_path, "shallow-control",
                                            _canonical_body(ordinary_id))
+        writer._render = original_canonical_attr
         control = _supersede_in_process(ordinary, write_fails_on=None,
                                         monkeypatch=None, target_id=ordinary_id,
                                         render_observer=None)
         assert control.returncode == 0, f"control: {control.returncode} {control.stderr}"
         assert ordinary_id in rendered, (
             f"the render probe never fired even for an ordinary record: {rendered}")
+        # A control the probe really did report: the render it saw for the
+        # well-formed target is the writer's own shape, well under the line.
+        assert any(d <= SHALLOW_RECORD_CEILING for d in handed), (
+            f"the probe reported no shallow render to compare the deep entries "
+            f"against: {seen}")
     finally:
-        writer._render = original_canonical
+        writer._render = original_canonical_attr
         gitwrite.record_object = original_record_object
     deep = [d for d in handed if d > SHALLOW_RECORD_CEILING]
     assert deep == [], f"a record past the bound reached the renderer: {deep}"

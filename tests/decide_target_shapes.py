@@ -17,8 +17,6 @@ module is never named ``test_*``.
 
 from __future__ import annotations
 
-import json
-
 from decide_hardening_fixtures import _canonical_body
 from ordering_shapes import _deep
 
@@ -52,18 +50,22 @@ def _deep_value(levels: int) -> str:
 
     Counts depth the way the bound does - one for the returned value, one more
     for each container round it - so a caller can say 'a value of exactly this
-    depth' and have the reader's bound agree with it. Built with ``json.dumps``
-    over an assembled structure rather than by repeating brackets, because the
-    bound is counted on the *parsed* value and the writer's reader must be able
-    to build the fixture first: a value the decoder cannot build is a different
-    refusal, owned by the ``RecursionError`` arm beside this one.
+    depth' and have the reader's bound agree with it.
+
+    Built by repeating the container rounds, never by ``json.dumps`` over an
+    assembled structure: the encoder costs a frame per level and gives out at a
+    depth the decoder has not reached yet (measured on 3.11 at the default limit
+    of 1000: no ``dumps`` past roughly 950, decodes still succeeding at 950). An
+    encoder that recursed first would raise on the fixture instead of handing
+    the caller the text to plant, which is the crash this reader exists to
+    refuse. The caller asserts its own replacement landed and, where the point
+    is that the *bound* answered rather than the decoder, asserts that the
+    standard reader builds the text; ``_deep`` beside this is the value no
+    decoder builds, owned by the ``RecursionError`` arm.
     """
     if levels < 1:
         raise ValueError(f"{levels} levels is not a nest")
-    node: object = "deep"
-    for _ in range(levels - 1):
-        node = {"k": node}
-    return json.dumps(node)
+    return '{"k":' * (levels - 1) + '"deep"' + "}" * (levels - 1)
 
 
 def _target_body(target_id: str, old: str, new: str) -> str:

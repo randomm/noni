@@ -13,17 +13,32 @@ fails a test rather than a first run.
 ## Install noni
 
 noni is not published. `pip install noni` installs some other project's wheel,
-so the two routes that work both name this repository:
+so every route to it names this repository, and none of them runs `pip` against
+your system Python. On a distribution that marks that interpreter
+externally-managed, a system `pip install` stops there with no `noni` on the
+path, and forcing it past the marker installs noni's dependencies into the
+system packages.
+
+The form that also puts `noni` on your PATH is `uv tool install`:
 
 ```bash
 git clone https://github.com/OWNER/noni noni
-python3 -m pip install ./noni
+uv tool install ./noni
 ```
 
-The git URL of your own fork is an equally good target for the second line, and
-`python3 -m pip install -e ./noni` is the editable form. Neither route puts a
-package index between you and the code, and neither is a release: the wheel is
-the same code the clone carries.
+`uv` is a reader-side tool and not a dependency of noni; the git URL of your own
+fork is an equally good target for the second line. Where you would rather not
+install `uv`, build a clean virtual environment instead:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install ./noni
+```
+
+On Debian and Ubuntu that first line needs the `python3-venv` package installed,
+and a venv creation that failed part way leaves a half-made `.venv` you have to
+delete before the next attempt. Either route installs the same code the clone
+carries: no package index sits between you and it, and neither is a release.
 
 The wrappers under `skills/<skill>/scripts/` import the package rather than
 carrying logic, so one of three states has to hold before any of them runs:
@@ -31,7 +46,8 @@ installed as above, installed editable, or `PYTHONPATH=<clone>/src`. A wrapper
 whose package is missing says so on one line and exits 3; it does not raise.
 
 `noni` and the wrapper paths are the same code and print the same bytes. Use
-whichever the rest of this page makes shorter to type.
+whichever the rest of this page makes shorter to type. `.venv/bin/noni <tool>` is
+the same command on the venv route, where `noni` is not yet on your PATH.
 
 ## The state root
 
@@ -52,6 +68,11 @@ Two routes. Both are supported, and both are covered below.
   the ignore rule below, so an agent confined to the project folder can reach
   it. Choose it when the code repository is public and the direction should not
   be published with it.
+- **Where the writers commit**: every noni writer commits straight to the branch
+  it finds checked out in the `--repo` tree, and it never opens a branch or a pull
+  request of its own. Route A therefore asks for direct commits to that branch: on a
+  branch-protected or PR-only project, use Route B, whose commits land on the
+  state repository's own branch.
 
 ## Route A: state inside the project
 
@@ -96,6 +117,15 @@ the state clone is invisible to `git add .` in the project, and the state
 repository's own history stays the only place the direction is committed. It is
 a line you add once, to the project's `.gitignore`.
 
+On a PR-only project, adding a line to `.gitignore` is itself a change to the
+code repository, so write the rule where git reads it without tracking it
+instead — `.git/info/exclude`, which git applies to every worktree of that
+repository:
+
+```bash
+printf '/.noni-state/\n' >> .git/info/exclude
+```
+
 Give the clone an identity, and make its first commit. A clone of a repository
 that has never held a commit has no branch at all, so there would be nothing for
 a first push to name; the writers commit their own records onto that branch and
@@ -125,7 +155,9 @@ noni census --repo .noni-state
 `<record-id>` is the `<date>-<slug>` of a record in the ledger: both direction
 files cite a decision that exists, so run the `decide` line first and read the id
 off the `wrote noni/decisions/<id>.json` line it printed — the id is the date the
-command ran plus `-release-scope`. `intent-draft.md` starts from
+command ran plus `-release-scope`. On this route the line prints
+`.noni-state/noni/decisions/<id>.json`, and the id is the file name without the
+`.json` suffix. `intent-draft.md` starts from
 `skills/direction/references/intent-template.md`, which validates as it stands;
 the writer restamps its `Last-confirmed:` line to this run's UTC day and commits
 the file as `intent: <record-id>`. Both direction files are optional: a project

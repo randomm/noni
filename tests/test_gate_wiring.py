@@ -30,6 +30,12 @@ What is asserted, and why each one matters:
   different gates. The wheel job's install line is pinned too, because the tool
   that builds the distribution is part of the gate the reader's install depends
   on.
+- CONTRIBUTING.md still documents the venv route the gate is built on, after the
+  page-set sweep that moved every *reader's* install onto the quickstart's uv and
+  clean-venv forms. The contributor's editable install is the local half of the
+  CI gate and a different thing from a reader's install, so it stays in this file
+  with the pins it must match rather than following the reader to the quickstart
+  (issue #75).
 
 The total the gate reports today is not asserted here: it moves with the test
 suite, so pinning it would fail on unrelated changes. `coverage report` fails
@@ -279,6 +285,51 @@ def test_ci_names_the_editable_install():
     assert '-e ".[dev]"' in contributing, (
         "CONTRIBUTING.md does not document the editable install CI runs"
     )
+
+
+def test_contributing_keeps_the_developer_install_after_the_page_set_sweep():
+    """The page-set sweep left the contributor's install on the page that runs the gate.
+
+    The sweep that moved every *reader's* install onto the quickstart's uv and
+    clean-venv forms (issue #75) deliberately stopped at this page: a contributor
+    needs an editable install with the pinned dev extra, so the suite, the lint and
+    the coverage gate all run against one pinned tool set, and a reader following
+    ``uv tool install`` gets neither the extras nor an editable tree. CONTRIBUTING.md
+    is the only page that prints the line CI prints, so this is the check that keeps
+    the local half and the CI half of one gate from drifting apart -- which is the
+    same claim the pin equality above makes about the tool versions, made about the
+    install itself.
+
+    The three assertions are the sentence, the command and the CI match, in that
+    order: a page that deleted its Development section would fail on the first, and
+    one that kept the prose and lost the command would fail on the second.
+    """
+    contributing = (REPO / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    # The reader's install belongs to the quickstart and the README points there; a
+    # contributor's route is a different install and this page owns it. Scoped to the
+    # body of the section that carries the install: a cross-reference elsewhere on
+    # the page ("the reader's steps are in docs/QUICKSTART.md") is a sentence worth
+    # keeping, and it is not this page deferring the install.
+    from docs_promises import CONTRIBUTING, section_body
+
+    development = section_body(contributing, "Development")
+    assert "docs/QUICKSTART.md" not in development, (
+        f"{CONTRIBUTING.name}'s Development section now defers its install to the "
+        "quickstart, which is the reader's route: a contributor needs the editable "
+        "install with the dev extra that the CI gate is built on")
+    assert "python -m venv .venv" in development, (
+        "CONTRIBUTING.md no longer makes the venv the gate's tools are installed into")
+    assert '.venv/bin/pip install -e ".[dev]"' in development, (
+        "CONTRIBUTING.md no longer documents the editable install the suite and the "
+        "wrappers need")
+    # The same line, from CI: the page and the workflow are one gate, read twice.
+    line = next((entry for entry in _ci_install_lines() if '-e ".[dev]"' in entry), "")
+    assert line, f"CI has no editable install to compare against: {_ci_install_lines()}"
+    for token in ('-e ".[dev]"', ".venv/bin/pip", "install"):
+        assert token in line, f"the CI editable install lost {token!r}: {line}"
+        assert token in contributing, (
+            f"CONTRIBUTING.md's install line does not carry {token!r}, which CI runs: "
+            f"{line}")
 
 
 def test_ci_runs_ruff_and_the_coverage_gate():

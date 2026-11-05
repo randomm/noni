@@ -133,6 +133,11 @@ The state root is a directory holding (or about to hold) that `noni/` tree, and
   or when a team keeps the direction of several repositories in one private
   place. Same layout, same writers, same census: only the path changes.
 
+Every noni writer commits straight to the branch it finds checked out in the
+`--repo` tree, so the in-project route asks a project for direct commits to its
+own branch: on a branch-protected or PR-only project, use Route B, whose commits
+land on the state repository's own branch.
+
 There is no third mechanism that *selects* the state root: no environment
 variable and no config file names it. The unified census's `--ledger`,
 `--sessions`, `--ordering`, `--intent` and `--issue-state` overrides do not select

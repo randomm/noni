@@ -25,7 +25,8 @@ One class, one read of the file, plus the history answer the run already holds:
   the decision record the citation names, and of the ledger directory that holds
   it: a cited record reached through a link is a ``cannot-tell``, never an
   ``uncited`` verdict built from bytes read through the link. The refusal lives
-  at the open (:func:`_record_body`, ``O_NOFOLLOW`` plus an ``fstat``), so no
+  at the open (``census_intent_readers.read_record``, ``O_NOFOLLOW``,
+  ``O_NONBLOCK`` and an ``fstat``), so no
   interval between classifying and reading is the thing that keeps a link closed.
   A hardlink is the stated limit: ``lstat`` cannot tell one from an ordinary file,
   so a record hardlinked to bytes outside the tree still yields an ``uncited``
@@ -39,13 +40,12 @@ Nothing here prints or exits: every answer is appended to the caller's
 from __future__ import annotations
 
 import errno
-import os
 import re
-import stat
 from pathlib import Path
 from typing import Callable
 
 from . import intentschema
+from .census_intent_readers import read_record as _read_record
 
 # A ledger record id is what decide.py writes: <YYYY-MM-DD>-<slug> of lowercase
 # letters, digits and dashes. The census's own copy of the same shape the writer
@@ -272,7 +272,7 @@ def check_intent(
     # direction's fault and reads uncited; a read the file system refused for some
     # other reason is this run's blindness, and a permission problem on somebody
     # else's file must never be quoted as a finding against the intent.
-    body, read_fault = _record_body(record)
+    body, read_fault = _read_record(record)
     if read_fault is not None and not _absence(read_fault):
         add(SUBJECT_CANNOT_TELL,
             f"cannot-tell: the record {cited} the intent cites could not be read "
@@ -342,11 +342,16 @@ def _ledger_why(ledger: Path,
     classifier the rest of the class uses. Either answer is this run's blindness and
     never a verdict: a link means the records live outside the tree the census was
     asked to audit, and a non-directory means no record can be there.
+
+    The probe's fault types are the ones every other reader of this class catches:
+    a probe that could not answer is blindness of the same kind as a probe that
+    raised, and the classifier half below still gets asked, so the answer never
+    depends on which of the two routes had the good sense to work.
     """
     if ledger_state is not None:
         try:
             state = ledger_state(ledger)
-        except OSError:
+        except (OSError, ValueError, RuntimeError):
             # The probe is a read of the tree like any other, and its fault is not
             # the finding this gate exists for: classify for ourselves below.
             state = None
@@ -359,55 +364,6 @@ def _ledger_why(ledger: Path,
         if kind == "nonregular":
             return LEDGER_NOT_A_DIR
     return None
-
-
-def _record_body(record: Path) -> tuple[bytes | None, OSError | None]:
-    """The bytes of the record, or the fault that stopped the read.
-
-    Two answers, because "the record is wrong" and "this run could not read the
-    record" are different findings and only the first is a verdict on the intent.
-
-    The refusal is at this open and not in the caller's earlier classification:
-    ``O_NOFOLLOW`` makes a link raise ``ELOOP`` instead of being followed, and the
-    ``fstat`` refuses anything that is not a regular file on the very descriptor
-    that was opened. A path swapped for a link between the caller's ``lstat`` and
-    this call is therefore refused too, which is what keeps the class's promise
-    rather than merely intending it.
-    """
-    try:
-        fd = os.open(record, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    except OSError as exc:
-        return None, exc
-    try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            # ENOTDIR is the absence errno, so the descriptor's own verdict is
-            # named apart from it: this is the class's cannot-tell, never the
-            # ``uncited`` the absence branch would have drawn from a path that is
-            # there but holds nothing readable.
-            return None, _NonRegularRecord(record)
-        return os.read(fd, _RECORD_READ_LIMIT), None
-    except OSError as exc:
-        return None, exc
-    finally:
-        os.close(fd)
-
-
-# One read is the whole record: the census's own record cap sits far below this and
-# a body past it is refused as unparseable rather than truncated into a verdict.
-_RECORD_READ_LIMIT = 1 << 20
-
-
-class _NonRegularRecord(OSError):
-    """The opened descriptor is not a regular file.
-
-    Carries an errno outside ``_absence``'s list on purpose: a fifo or a device at
-    the cited path is this run's blindness, and an ENOENT-or-ENOTDIR errno here
-    would be read as "no record here" and come out as an ``uncited`` verdict.
-    """
-
-    def __init__(self, path: Path) -> None:
-        super().__init__(errno.ENXIO, "opened path is not a regular file",
-                         str(path))
 
 
 # Why the census cannot say what the classifier saw: a classifier that named a kind

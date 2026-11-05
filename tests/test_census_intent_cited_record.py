@@ -16,9 +16,14 @@ faults in ``tests/test_census_intent_cannot_tell.py``; the builders and runners 
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
+from intent_child_runs import (
+    child_rows_after_fifo_swap,
+    child_rows_through_split_read,
+)
 from intent_class_ast import (
     call_line as _call_line,
 )
@@ -26,9 +31,6 @@ from intent_class_ast import (
     compare_against,
     intent_class_text,
     intent_module,
-)
-from intent_class_ast import (
-    function_source as _function_source,
 )
 from intent_class_ast import (
     return_line as _return_line,
@@ -280,36 +282,11 @@ def test_the_cited_record_is_classified_before_it_is_read(intent_ast):
     """
     classify = _call_line(intent_ast, "check_intent", "file_kind")
     refusal = _return_line(intent_ast, "check_intent", after=classify)
-    read = _call_line(intent_ast, "check_intent", "_record_body")
+    read = _call_line(intent_ast, "check_intent", "_read_record")
     assert classify < refusal < read, (
         "the cited decision record is no longer classified first and refused before "
         "the read: a planted link would be followed, or a path the classifier did not "
         "call regular would still be opened, and its bytes would decide the verdict"
-    )
-
-
-def test_the_cited_record_open_refuses_a_link_without_following_it(intent_ast,
-                                                                   intent_class):
-    """The refusal lives at the open, not only in the caller's classification.
-
-    A separate ``lstat`` and ``open`` leave an interval in which a path swapped for a
-    link after the classification is still followed, so the promise holds only while
-    the open itself refuses: ``O_NOFOLLOW``, so a link faults instead of being read,
-    and an ``fstat`` of the descriptor that was opened, so nothing non-regular is
-    read. Pinned at the syntax tree for the reason above: no fixture can plant the
-    swap.
-    """
-    opened = _call_line(intent_ast, "_record_body", "open")
-    inspected = _call_line(intent_ast, "_record_body", "fstat")
-    source = _function_source(intent_ast, "_record_body", intent_class)
-    assert opened < inspected, (
-        "the cited-record reader no longer opens and then inspects the descriptor it "
-        "opened, so a link planted after the classification is read through and its "
-        "bytes decide the intent verdict"
-    )
-    assert "O_NOFOLLOW" in source and "S_ISREG" in source, (
-        "the cited-record reader lost the flag or the descriptor check that keep a "
-        "link and a non-regular path from being read"
     )
 
 
@@ -420,8 +397,6 @@ def test_a_fifo_at_the_cited_record_path_is_cannot_tell(tmp_path):
     the row must be the class's ``cannot-tell`` and never the ``uncited`` an absence
     errno would have produced.
     """
-    import os
-
     repo = _planted_record_link(tmp_path, "fifo")
     record_path = repo / "noni" / "decisions" / f"{RECORD_ID}.json"
     record_path.unlink()
@@ -431,3 +406,47 @@ def test_a_fifo_at_the_cited_record_path_is_cannot_tell(tmp_path):
     assert subjects(intent_rows) == ["cannot-tell"], intent_rows
     assert intent_rows[0]["severity"] == "warn"
     assert code == 0
+
+
+def test_a_record_swapped_for_a_fifo_after_classification_does_not_hang(tmp_path):
+    """A fifo planted at the cited path is refused at the open, not waited on.
+
+    The link swap above proves the open refuses a link; this proves it does not wait.
+    A blocking ``open`` of a pipe with no writer never returns, so without
+    ``O_NONBLOCK`` on that same open the census hangs forever and reports nothing at
+    all — a state no classifier assertion can catch, and no in-process test can
+    survive. Hence the child process under a ``timeout=``: the hang fails this test
+    rather than stalling the suite. The row must be the class's ``cannot-tell`` warn,
+    and must name neither the fifo's path nor a verdict drawn from a path nobody read.
+    """
+    rows = child_rows_after_fifo_swap(tmp_path, "fifo-swap")
+    assert subjects(rows) == ["cannot-tell"], (
+        f"the path swapped for a fifo was neither refused nor reported: {rows}")
+    assert rows[0]["severity"] == "warn", rows[0]
+    assert RECORD_ID in rows[0]["message"], rows[0]
+    assert "fifo-swap-fifo" not in json.dumps(rows), (
+        f"the planted fifo's path reached the row: {rows[0]['message']}")
+
+
+def test_a_short_read_still_yields_the_verdict_the_whole_body_gives(tmp_path):
+    """A short ``os.read`` must not truncate the body into a false verdict.
+
+    ``os.read`` is free to hand back fewer bytes than were asked for, and a body cut
+    short mid-document does not parse, so the run reported ``uncited: ... the record
+    is not readable JSON`` at exit 51 about bytes it never held. The reader loops to
+    EOF, so the record's own state comes back: one ``uncited`` row naming the
+    supersession. The seam returns half the body first and the remainder next, which
+    is the shape a short read has; a reader that took only the first chunk reports the
+    parse failure this test refuses to accept. The same run asked not to split proves
+    the seam was the reader's own and the verdict is the loop's doing.
+    """
+    rows = child_rows_through_split_read(tmp_path, "short-read", split=True)
+    assert subjects(rows) == ["uncited"], rows
+    assert "superseded" in rows[0]["message"], rows[0]
+    assert "not readable JSON" not in rows[0]["message"], (
+        f"the body was truncated by a short read: {rows[0]['message']}")
+    whole = child_rows_through_split_read(tmp_path, "whole-read", split=False)
+    assert subjects(whole) == ["uncited"], whole
+    assert "superseded" in whole[0]["message"], whole[0]
+
+

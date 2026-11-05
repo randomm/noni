@@ -139,7 +139,26 @@ def _intent_module(intent_class: str) -> ast.Module:
     return ast.parse(intent_class)
 
 
+def _intent_reader_text() -> str:
+    """The source of the module owning the cited-record reader.
+
+    The reader was split out of the class's module (the size rule), so a pin about
+    the open, the descriptor check or the read loop reads that module: a pin on the
+    class's text would pass on a copy of the reader that the class no longer calls.
+    """
+    import noni.census_intent_readers
+
+    return Path(noni.census_intent_readers.__file__).read_text(encoding="utf-8")
+
+
+def _intent_reader_module(reader_text: str) -> ast.Module:
+    """The reader module parsed, beside the text its pins quote."""
+    return ast.parse(reader_text)
+
+
 # Imported by the test modules and decorated there, so pytest sees a fixture it
 # can resolve by name in the module that requests it.
 intent_class_text = _intent_class_text
 intent_module = _intent_module
+intent_reader_text = _intent_reader_text
+intent_reader_module = _intent_reader_module

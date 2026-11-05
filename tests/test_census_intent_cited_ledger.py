@@ -221,6 +221,47 @@ def test_the_probe_falling_back_to_the_classifier_is_what_refuses_the_link(
         f"the probe's own fault text reached the row: {row['message']!r}")
 
 
+@pytest.mark.parametrize("fault", [
+    pytest.param(lambda: OSError("readdir: I/O error"), id="oserror"),
+    pytest.param(lambda: ValueError("no decoder for these bytes"), id="valueerror"),
+    pytest.param(lambda: RuntimeError("the probe gave up"), id="runtimeerror"),
+])
+def test_the_probe_faulting_with_any_of_the_class_fault_types_falls_back(
+        tmp_path, fault, request):
+    """A probe is a read of the tree, so it faults with the types any read faults with.
+
+    Every other reader of this class catches ``OSError``, ``ValueError`` and
+    ``RuntimeError`` -- the last because ``pathlib`` raises it where ``os`` would raise
+    ``OSError``, the second because a decoder refused the bytes. A gate that caught only
+    ``OSError`` would let the other two escape the census and take the run down with it,
+    which is a worse outcome than the blindness the row exists to report. The tree is the
+    linked one, so the classifier half is the only thing that can answer, and the row
+    proves the fallback ran rather than the exception propagating.
+    """
+    from noni import census_json, census_run, census_text
+
+    repo = _planted_ledger_link(tmp_path,
+                                "probe-" + request.node.callspec.id)
+
+    def faults(_ledger):
+        raise fault()
+
+    census = census_run._census()
+    census._set_run_root(repo)
+    found: list[dict] = []
+    census_run._intent.check_intent(
+        repo / "noni" / "direction" / "intent.md", repo / "noni" / "decisions",
+        repo, found, False,
+        row=census._row, rel_to_root=census._rel_to_root,
+        file_kind=census._file_kind, fault_text=census_text.fault_text,
+        load_json_strict=census_json.load_json_strict,
+        commit_subject=census._intent_commit_subject,
+        ledger_state=faults)
+    row = _assert_cannot_tell(_intent_rows(found))
+    assert "symlink" in row["message"], row
+    assert RECORD_ID in row["message"], row
+
+
 def test_the_cited_record_refuses_a_ledger_link_on_the_classifier_alone(tmp_path,
                                                                         monkeypatch):
     """With the probe short-circuit gone, the classifier half still refuses the link.

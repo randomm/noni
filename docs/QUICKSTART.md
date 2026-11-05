@@ -154,10 +154,12 @@ noni census --repo .noni-state
 
 `<record-id>` is the `<date>-<slug>` of a record in the ledger: both direction
 files cite a decision that exists, so run the `decide` line first and read the id
-off the `wrote noni/decisions/<id>.json` line it printed — the id is the date the
-command ran plus `-release-scope`. On this route the line prints
-`.noni-state/noni/decisions/<id>.json`, and the id is the file name without the
-`.json` suffix. `intent-draft.md` starts from
+off the `wrote .noni-state/noni/decisions/<id>.json` line it printed — the id is the date the
+command ran plus `-release-scope`, and it is the file name without the `.json`
+suffix. Every writer names the file it wrote the same way on both routes: `--repo`
+joined to the path under the state root, spelled identically with and without
+`--no-commit`, so a state clone never reads as a stray `noni/` directory beside
+your project. `intent-draft.md` starts from
 `skills/direction/references/intent-template.md`, which validates as it stands;
 the writer restamps its `Last-confirmed:` line to this run's UTC day and commits
 the file as `intent: <record-id>`. Both direction files are optional: a project

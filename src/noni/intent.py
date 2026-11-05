@@ -38,7 +38,9 @@ path this command wrote (git add -- <path> then git commit --only -- <path>), so
 a file somebody else had staged is neither committed nor unstaged. --no-commit
 writes through the same chain, leaves the file uncommitted and prints one line
 saying so. A successful run prints one line naming the path and the decision it
-cites.
+cites. That path names the file's real location from the caller's working
+directory: --repo joined to noni/direction/intent.md, spelled the same with and
+without --no-commit.
 
 The file's shape lives in intentschema.py in the package, the same rules the
 census's ``intent`` class applies to the bytes on disk; the git and atomic-write
@@ -199,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
                      "intent.py")
 
     if args.no_commit:
-        print(f"{labels.INTENT}: wrote {intentschema.INTENT_REL}; left uncommitted: "
+        print(f"{labels.INTENT}: wrote {target}; left uncommitted: "
               "commit this path before running the census")
         return EXIT_OK
 
@@ -229,7 +231,7 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(EXIT_IO, f"git commit failed for {rel} (the file is written and "
                      f"staged, not committed): {detail}",
                      f"commit {rel} by hand, or re-run intent.py once git answers")
-    print(f"{labels.INTENT}: committed {rel} (decision {args.decision})")
+    print(f"{labels.INTENT}: committed {target} (decision {args.decision})")
     return EXIT_OK
 
 

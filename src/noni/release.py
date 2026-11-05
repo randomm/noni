@@ -155,6 +155,12 @@ def main(argv: list[str] | None = None) -> int:
     # before the register was looked for, so a refusal never leaves a written
     # file behind.
     session_file = repo / rel
+    # The one path token every line this run prints carries: the file's real
+    # location as spelled from the caller's working directory, ``--repo`` joined
+    # to the state-root-relative name. Same string on the success line and on the
+    # left-uncommitted line, so a relative ``--repo .noni-state`` cannot read as a
+    # stray ``noni/`` under the project (issue #77, AC2).
+    target = session_file
     # Both paths this run would read and replace, refused before either is touched:
     # asked after the name was derived and before is_file(), so a dangling link is
     # this refusal rather than the misleading 'register file not found' below
@@ -219,13 +225,13 @@ def main(argv: list[str] | None = None) -> int:
                      "release.py")
 
     if args.no_commit:
-        print(f"{labels.RELEASE}: {session_file} left uncommitted")
+        print(f"{labels.RELEASE}: {target} left uncommitted")
         return EXIT_OK
 
     if not _session_git.in_git_worktree(repo):
         # Nothing to commit into: behave as --no-commit rather than claim a
         # commit that could not happen.
-        print(f"{labels.RELEASE}: {session_file} left uncommitted")
+        print(f"{labels.RELEASE}: {target} left uncommitted")
         return EXIT_OK
 
     ok, why = _session_git.stage_and_commit(repo, rel, f"release: {task}")
@@ -233,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(EXIT_PUSH_FAILED,
                      f"git could not commit {rel} (the change is written): {why}",
                      f"commit {rel} by hand, or re-run release.py once git answers")
-    print(f"{labels.RELEASE}: released {task} from {session_file.name}")
+    print(f"{labels.RELEASE}: released {task} from {target}")
 
     if not args.push:
         return EXIT_OK

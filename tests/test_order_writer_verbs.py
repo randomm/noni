@@ -138,7 +138,10 @@ def test_no_commit_writes_the_file_and_moves_no_head(tmp_path):
     assert _porcelain(repo, ORDER_REL) == f"?? {ORDER_REL}", _porcelain(repo, ORDER_REL)
     printed = proc.stdout.splitlines()
     line = next(row for row in printed if "uncommitted" in row)
-    assert ORDER_REL in line, line
+    # The line names the path as the caller can reach it: ``--repo`` joined to
+    # the artifact's path under the state root, not a state-root-relative tail
+    # (issue #77, AC2).
+    assert f"{repo / ORDER_REL}" in line, line
     assert sum("uncommitted" in row for row in printed) == 1, proc.stdout
 
 

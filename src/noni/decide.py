@@ -56,6 +56,10 @@ is git config user.name; ``date`` is --date or this run's UTC clock.
 both paths and saying the target's status is now ``superseded``: a run that is then
 aborted leaves an edited target, so restoring the chain means restoring that file and
 deleting the new record, not just deleting the record.
+
+Every path the success lines name (``wrote`` on either route) is the file's real
+location from the caller's working directory: --repo joined to noni/decisions/
+<id>.json, spelled the same with and without --no-commit.
 """
 
 from __future__ import annotations
@@ -348,6 +352,10 @@ def main(argv: list[str] | None = None) -> int:
     record_id = f"{date_part}-{args.slug}"
     record_path = ledger / f"{record_id}.json"
     record_rel = record_path.relative_to(repo).as_posix()
+    # The caller-cwd form of every path this run prints (issue #77, AC2): ``--repo``
+    # joined to the record's path under the state root, the same token the
+    # left-uncommitted line names (which prints ``', '.join(record_paths)``).
+    record_paths = [str(record_path)]
     if _path_is_taken(record_path):
         # Tracked or not, and whatever kind of path it is, this name is taken:
         # is_file() follows a link, so a symlink would have read as free and
@@ -361,6 +369,7 @@ def main(argv: list[str] | None = None) -> int:
 
     target: tuple[Path, dict, bytes] | None = None
     target_rel: str | None = None
+    target_paths: list[str] = []
     if args.supersedes is not None:
         found = _load_target(repo, ledger, args.supersedes)
         if isinstance(found, int):
@@ -370,6 +379,8 @@ def main(argv: list[str] | None = None) -> int:
                          found[1] or "name a committed, live record of the chain being corrected")
         target_path, target_record, target_committed = found
         target_rel = target_path.relative_to(repo).as_posix()
+        target_paths = [str(target_path)]
+        record_paths = [str(record_path), str(target_path)]
         # Chain position, filename stem and census replay order all read this date,
         # so another day cuts the record out of the chain it corrects. A value that
         # is not a string was refused by _load_target; this slice is total here.
@@ -442,10 +453,12 @@ def main(argv: list[str] | None = None) -> int:
         # second path now holds: the target's status is superseded, so an operator
         # who aborts the run knows to restore that file as well as delete the new
         # record, or the chain is left with no live record.
-        left = (f"; {target_rel} now holds status {STATUS_SUPERSEDED}"
+        left = (f"; {target_paths[0]} now holds status {STATUS_SUPERSEDED}"
                 if target is not None else "")
-        print(f"{labels.DECIDE}: wrote {', '.join(rels)}{left}; left uncommitted: "
-              "commit these paths before running the census")
+        # ``', '.join(record_paths)`` is the same token list the committed route's
+        # ``wrote`` line prints, so one writer prints one path form on both routes.
+        print(f"{labels.DECIDE}: wrote {', '.join(record_paths)}{left}; "
+              "left uncommitted: commit these paths before running the census")
         return EXIT_OK
     added = _git(repo, "add", "--", *rels)
     if added.returncode != 0:
@@ -468,7 +481,7 @@ def main(argv: list[str] | None = None) -> int:
                          *_undone("git commit failed", str(unredone), detail, rels))
         return _fail(EXIT_COMMIT_FAILED, f"git commit failed: {detail}",
                      f"{', '.join(rels)} are rolled back to their state before this run")
-    print(f"{labels.DECIDE}: wrote {record_path}")
+    print(f"{labels.DECIDE}: wrote {', '.join(record_paths)}")
     return EXIT_OK
 
 

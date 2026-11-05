@@ -59,7 +59,10 @@ it. The marked file is read once, strictly: a file whose bytes cannot be decoded
 ``- status:`` line has no readable value, is refused with exit 2 rather than continued.
 
 --no-commit writes through the same validation chain and runs no git at all, then prints
-exactly ``register.py: <path> left uncommitted``; --push pushes the branch ``git
+exactly ``register.py: <path> left uncommitted``, where ``<path>`` is the file's real
+location from the caller's working directory (``--repo`` joined to
+``noni/sessions/<id>.md``) -- the same token the committed route's
+``registered session <id> -> <path>`` line names; --push pushes the branch ``git
 rev-parse --abbrev-ref HEAD`` names, and with no commit to push (a reuse, or a run that
 found nothing to write) it does nothing. A working copy with no git directory cannot
 commit, so it behaves as --no-commit and prints the same line.
@@ -414,6 +417,11 @@ def main(argv: list[str] | None = None) -> int:
     # allocated. The name written is the one _resolve_target admitted -- this run's
     # allocation, never a name from the marker.
     target_file = repo / target
+    # The one path token every line this run prints carries (issue #77, AC2): the
+    # file's real location as spelled from the caller's working directory, which
+    # ``repo / target`` already is. The success line and the left-uncommitted line
+    # name that one string, so a relative ``--repo .noni-state`` cannot read as a
+    # stray ``noni/`` beside the project.
     if (refused := _session_guard.session_write(_fail, EXIT_USAGE, repo, target,
                                                creates=True)):
         return refused

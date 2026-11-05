@@ -51,6 +51,14 @@ reads or writes state relative to its own location or the current directory
 beyond `--repo`'s default, and a `--repo` naming no directory is refused before
 anything is written.
 
+**The path every line names.** Each writer's success line and its
+`left uncommitted` line name the session file the same way: `--repo` joined to
+`noni/sessions/<session-id>.md`, which is the file's real location as seen from
+the directory you ran the command in. Pass `--repo .noni-state` and both lines
+say `.noni-state/noni/sessions/<session-id>.md`, never the state-root-relative
+tail alone and never a machine-local absolute path — so a private state
+repository cannot be read as a stray `noni/` that appeared beside the project.
+
 Read `references/register.md` before writing a register file. Read
 `references/claim.md` before making a claim or releasing one. Read
 `references/census.md` before reporting on the session state.

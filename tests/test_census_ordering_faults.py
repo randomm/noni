@@ -15,10 +15,12 @@ import shutil
 
 import pytest
 from ordering_fixtures import (
+    _canonical,
     _entry,
     _listing_fault,
     _listing_faults,
     _listing_faults_all_reads,
+    _order,
     _ordering_host_faults,
     _ordering_record_read_faults,
     _repo,
@@ -91,13 +93,21 @@ def test_an_unlistable_ledger_is_reported_and_never_reads_as_clean(tmp_path):
         assert strict == 15, (strict, out, err)
 
 
-def test_an_unlistable_ledger_without_a_citation_adds_no_row(tmp_path):
-    """Nothing was looked up, so nothing was left unchecked: an entry with no
-    ``decision`` cannot have had its citation silently skipped, and the run
+def test_an_unlistable_ledger_with_nothing_to_cite_adds_no_row(tmp_path):
+    """Nothing was looked up, so nothing was left unchecked: the artifact holds
+    no entry at all, so no citation can have been silently skipped, and the run
     stays clean. The row reports a check the run could not perform, not a fault
-    of the ledger in general -- that is the ledger group's own report."""
+    of the ledger in general -- that is the ledger group's own report.
+
+    An empty entries list is what ``_entry`` used to be able to spell an
+    uncited entry with: issue #97 made a null ``decision`` malformed, so there is
+    now no well-formed entry that cites nothing, and "no citation was checked"
+    can only mean "there was none to check". ``_canonical([])`` still goes through
+    ``_order``, which commits it, so the census reads a real artifact and the only
+    fault on offer is the ledger's listing.
+    """
     repo = _repo(tmp_path)
-    _seed(repo, _entry(3, None))
+    _order(repo, _canonical([]))
     with _listing_faults(repo / "noni" / "decisions"):
         code, rows, out, err = _run_in_process(repo, "--strict")
         assert code == 0, (code, out, err)

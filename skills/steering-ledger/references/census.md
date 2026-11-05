@@ -1,6 +1,13 @@
 # The census
 
-`scripts/census.sh` is the read-only, jq-based arbiter for the ledger. It is a
+`noni census` (`skills/census/scripts/census.py`, documented in
+`skills/census/SKILL.md`) is the entry point that enforces the ledger invariants.
+`scripts/census.sh`, the subject of this page, is the ledger shim (with its
+`--sessions` dispatch to the sessions-claims twin): the read-only, jq-based twin
+kept for callers that already run it — for spot checks, not for a gate. It runs
+one `jq` pass per record in a shell loop, so on a ledger of thousands of records
+it costs an order of magnitude more than `noni census` over the same tree; a CI
+step that censuses a real ledger each run belongs on the unified census. It is a
 bash script, so it runs under `bash` or through its own executable bit and its
 bash shebang — never under `python3`, which reads its braces as Python and dies
 on a syntax error before any check runs. This is the one page that states that
@@ -38,13 +45,22 @@ to the caller.
 | `0` | clean — every record valid, chain intact |
 | `2` | usage: no ledger directory was given (the state root is named by the caller, never by the cwd) |
 | `3` | `jq` not found on the reading machine, or the schema program `scripts/census-schema.jq` is missing from beside the shim (`3:schema-program-missing`). Either way the census cannot apply a schema, so it exits honestly rather than reporting a false clean |
-| `10` | a record is missing or malformed (schema violation), or the ledger is unusable: the directory does not exist, contains no `*.json` records, a filename is not a plain `<name>.json` path segment, or the git tree is unreadable on a real repo |
+| `10` | a record is missing or malformed (schema violation), or the ledger is unusable: the directory does not exist, cannot be enumerated, a filename is not a plain `<name>.json` path segment, or the git tree is unreadable on a real repo |
 | `12` | a record was edited after commit (the committed bytes differ from the working tree) |
 | `20` | the supersede chain is broken (dangling, duplicate, orphan, cycle, or a chain resolving to zero or more than one live record) |
 
-**Legacy shim.** This table is the contract of `census.sh`, the per-epic entry
-point. The unified census (`skills/census/scripts/census.py`, documented in
-`skills/census/SKILL.md`) added `ledger-empty` (42, warn; fail under `--strict`)
+A `decisions/` directory that exists and can be read but holds no `*.json`
+record is not a failure: the shim names it `(42:ledger-empty)` on stderr and
+exits `0`, which is what the unified census's `ledger-empty` warn means (the
+unified census promotes that warn to 42 under `--strict`, which this shim has no
+flag for), so the two agree on a freshly attached tree (issue #97). A directory
+it could not enumerate is still `10:empty-ledger` — a read that happened nowhere
+is not an empty ledger.
+
+**Ledger shim.** This table is the contract of `census.sh`, the ledger
+shim. `noni census` is the entry point that enforces. The unified census
+(`skills/census/scripts/census.py`, documented in
+`skills/census/SKILL.md`) owns `ledger-empty` (42, warn; fail under `--strict`)
 for the states where there is no decision record to arbitrate, carrying one of
 the state words `absent`, `not a directory`, `symlink`, or `empty` (`noni/`
 present with no `decisions/` directory, or a `decisions/` directory that holds
@@ -52,8 +68,7 @@ no `*.json` record — operator decision on issue #33, so a freshly attached
 project censuses clean at exit 0). That class only adds rows: a record that is
 bad JSON or violates the schema stays the `ledger-record` exit 10 in both
 censuses, so the code-10 row of this table still covers the malformed and
-unreadable records. The shim keeps its own exit 10 for an empty ledger
-directory (`10:empty-ledger`), where the unified census reports the warn. The
+unreadable records. The
 unified census also owns three classes this shim does not have: `session-same-identity` (43),
 `session-deleted` (44) and `hygiene` (50). Where the two disagree, the unified
 census is the arbiter and this table describes the shim's own exit codes only.

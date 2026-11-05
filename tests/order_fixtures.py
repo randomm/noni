@@ -278,7 +278,7 @@ def _git_verb(cmd: list[str]) -> str | None:
     return cmd[index] if index < len(cmd) else None
 
 
-def _entry(issue: int, decision: str | None = None, confirmed: str = STAMP) -> dict:
+def _entry(issue: int, decision: str = BASELINE_ID, confirmed: str = STAMP) -> dict:
     return {"issue": issue, "decision": decision, "confirmed": confirmed}
 
 
@@ -289,7 +289,7 @@ def _schema_case(**entry_fields):
     """A well-formed document whose single entry has ``entry_fields`` overridden,
     or gained when the name is not one of the entry's three fields."""
     schema = _schema_module()
-    entry = {"issue": 1, "decision": None, "confirmed": "2026-10-27T12:00:00Z"}
+    entry = {"issue": 1, "decision": BASELINE_ID, "confirmed": "2026-10-27T12:00:00Z"}
     for name, value in entry_fields.items():
         entry[name] = value
     return {"schema": schema.ORDER_SCHEMA, "entries": [entry]}

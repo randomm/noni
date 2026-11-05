@@ -51,7 +51,7 @@ def _many_huge_fields() -> str:
     return ('{"schema": "noni.order/1", "entries": [{"issue": 7, "decision": null, '
             '"confirmed": "' + FRESH + '", ' + junk + "}]}")
 
-def _entry(issue: int, decision: str | None = None, confirmed: str = FRESH) -> dict:
+def _entry(issue: int, decision: str = BASELINE_ID, confirmed: str = FRESH) -> dict:
     return {"issue": issue, "decision": decision, "confirmed": confirmed}
 
 def _repo(tmp_path: Path, subdir: str = "repo", records: bool = True) -> Path:

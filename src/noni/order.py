@@ -11,8 +11,11 @@ The file holds two fields:
   schema   -- "noni.order/1", the artifact's version marker
   entries  -- [{issue, decision, confirmed}] in the order the operator wants
 
-``decision`` is the id of the decision record that set the entry's position, or
-null; a run that supplies one is refused (exit 4) when no file under
+``decision`` is the id of the decision record that set the entry's position and
+is never empty: an entry whose ``decision`` is a JSON null, a blank string or
+absent is not an order this writer writes (exit 4, naming the entry), and the
+census reports the same artifact as ``ordering-malformed`` (15). A run that supplies
+one is refused (exit 4) when no file under
 noni/decisions/ carries that id, or when the record it finds is already
 superseded, and the hint names the record that superseded it. ``confirmed`` is
 stamped by the writer (add and confirm stamp it with this run's UTC time, or
@@ -41,8 +44,10 @@ Exit codes:
     4  what the order itself refuses: the issue is already listed (add), absent from the
        order (move, remove, confirm), no file under noni/decisions/ carries the given
        --decision id, the record it finds is superseded (the hint names its successor),
-       or the existing order file is not the artifact this writer writes (unparseable,
-       wrong schema, or malformed entries) so overwriting it would destroy an order
+       an entry of the existing file whose decision is null, blank or absent (the refusal
+       names the entry), or the existing order file is not the artifact this writer writes
+       (unparseable, wrong schema, or malformed entries) so overwriting it would destroy an
+       order
 
 Every refusal (2, 3 or 4) leaves the artifact untouched: reads and checks
 happen before any write, the write goes to a temp file in its own directory and

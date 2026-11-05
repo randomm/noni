@@ -15,6 +15,7 @@ import sys
 
 from _harness import REPO, subprocess_env
 from ordering_fixtures import (
+    BASELINE_ID,
     _commit,
     _entry,
     _human,
@@ -36,7 +37,7 @@ def test_a_state_map_that_is_an_object_of_the_right_shape_is_clean(tmp_path):
     the file may name must not be refused, or the strictness would be a bug
     rather than a rule."""
     repo = _repo(tmp_path)
-    _seed(repo, _entry(7, None), _entry(12, None))
+    _seed(repo, _entry(7, BASELINE_ID), _entry(12, BASELINE_ID))
     path = repo / "issue-state.json"
     path.write_text('{"7": "open", "12": "closed"}', encoding="utf-8")
     code, rows, out, err = _run(repo, "--issue-state", str(path))
@@ -48,7 +49,7 @@ def test_a_missing_state_file_is_malformed_not_silence(tmp_path):
     """The flag was given and its file is not there: that is a broken input,
     whereas giving no flag at all is a class the run declines to evaluate."""
     repo = _repo(tmp_path)
-    _seed(repo, _entry(7, None))
+    _seed(repo, _entry(7, BASELINE_ID))
     code, rows, out, err = _run(repo, "--issue-state", str(repo / "absent.json"))
     assert code == 15, (code, out, err)
     assert rows[0]["subject"] == "issue-state", rows[0]
@@ -58,7 +59,7 @@ def test_the_state_file_path_never_reaches_the_report_verbatim(tmp_path):
     """The row names its subject as an id, and any path the message carries is
     reduced to <path>: a report must not print someone's home directory."""
     repo = _repo(tmp_path)
-    _seed(repo, _entry(7, None))
+    _seed(repo, _entry(7, BASELINE_ID))
     code, rows, _out, _err = _run(repo, "--issue-state", str(repo / "nowhere.json"))
     assert code == 15
     assert str(repo) not in json.dumps(rows), rows
@@ -70,7 +71,7 @@ def test_no_flag_means_the_closed_question_is_not_asked_and_says_so(tmp_path):
     the human-readable run prints one note; the NDJSON stream stays
     findings-only, which is what keeps it byte-reproducible."""
     repo = _repo(tmp_path)
-    _seed(repo, _entry(7, None))
+    _seed(repo, _entry(7, BASELINE_ID))
     code, rows, _out, _err = _run(repo)
     assert code == 0 and rows == [], (code, rows)
     code, out, err = _human(repo)
@@ -79,19 +80,41 @@ def test_no_flag_means_the_closed_question_is_not_asked_and_says_so(tmp_path):
     assert "never contacts a tracker" in out, out
 
 
-def test_the_note_is_not_in_the_json_stream(tmp_path):
-    """A notice about a class that did not run is not a finding: the NDJSON
-    contract is findings plus one summary row, and a caller parses every line."""
+def test_the_note_is_carried_by_both_modes_and_is_not_a_finding_row(tmp_path):
+    """A notice about a class that did not run is not a finding, in either mode.
+
+    The NDJSON contract is findings plus one summary row and a caller parses
+    every line, so the note is not a line of its own -- it is the summary row's
+    ``not_evaluated`` list (issue #97), which is what stops a ``--json`` consumer
+    reading ``"counts": {}`` as 'nothing is closed'. Human mode keeps printing the
+    same sentence as a ``note:`` line. Both halves are read from the same tree:
+    the field is present when no ``--issue-state`` was given and absent when one
+    was, so the signal tracks the flag and not the wall clock (see the
+    reproducibility pair in ``tests/test_census_report_mode.py``).
+    """
     repo = _repo(tmp_path)
-    _seed(repo, _entry(7, None))
+    _seed(repo, _entry(7, BASELINE_ID))
     _code, _rows, out, _err = _run(repo)
-    for line in out.splitlines():
-        assert line.strip() == "" or json.loads(line)["kind"] in ("finding", "summary"), line
+    rows = [json.loads(line) for line in out.splitlines() if line.strip()]
+    for row in rows:
+        assert row["kind"] in ("finding", "summary"), row
+    summaries = [row for row in rows if row["kind"] == "summary"]
+    assert len(summaries) == 1, rows
+    note = summaries[0]["not_evaluated"]
+    assert any("ordering-closed was not evaluated" in line for line in note), note
+    assert any("never contacts a tracker" in line for line in note), note
+    # The same tree with the flag given: the class was evaluated, so the summary
+    # says nothing -- the field is absent, not empty.
+    path = _state(repo, {"7": "open"})
+    _code, _rows, given, _err = _run(repo, "--issue-state", path)
+    rows = [json.loads(line) for line in given.splitlines() if line.strip()]
+    summary = [row for row in rows if row["kind"] == "summary"][0]
+    assert "not_evaluated" not in summary, summary
 
 
 def test_no_note_when_the_state_file_was_given(tmp_path):
     repo = _repo(tmp_path)
-    _seed(repo, _entry(7, None))
+    _seed(repo, _entry(7, BASELINE_ID))
     path = _state(repo, {"7": "open"})
     code, out, err = _human(repo, "--issue-state", path)
     assert code == 0, (code, out, err)
@@ -117,7 +140,7 @@ def test_the_group_honours_only_and_skip(tmp_path):
     """One --only/--skip rule for all four groups: a class the caller did not
     ask for is never reported, and no group runs work whose rows it discards."""
     repo = _repo(tmp_path)
-    _seed(repo, _entry(7, None, STALE))
+    _seed(repo, _entry(7, BASELINE_ID, STALE))
     path = _state(repo, {"7": "closed"})
     args = ("--issue-state", path, "--stale-after", "7")
     only_stale = _run(repo, "--only", "ordering-stale", *args)
@@ -139,7 +162,7 @@ def test_the_lowest_code_wins_across_the_group(tmp_path):
     """A run that fires a fail and two warns exits at the fail's code (15),
     because the group's warnings never lift the verdict on their own."""
     repo = _repo(tmp_path)
-    _seed(repo, _entry(0, None, STALE))  # malformed and stale at once
+    _seed(repo, _entry(0, BASELINE_ID, STALE))  # malformed and stale at once
     code, rows, out, err = _run(repo, "--stale-after", "7")
     assert code == 15, (code, out, err)
     assert {r["check"] for r in rows} == {"ordering-malformed"}, rows

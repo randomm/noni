@@ -152,14 +152,23 @@ def test_a_superseded_decision_is_a_finding_naming_its_successor(tmp_path):
     assert successor in rows[0]["message"], rows[0]
 
 
-def test_a_decision_of_null_is_never_a_finding(tmp_path):
-    """'The operator placed this, no record is cited' is a state the file
-    carries, not a defect: only a named citation is checked."""
+def test_a_decision_of_null_is_an_ordering_malformed_row(tmp_path):
+    """Every entry cites the record that set its position (anti-fabrication,
+    issue #97), so a JSON null is not 'the operator placed this, nothing cited'.
+
+    It earns a row of the malformed class naming the entry's index -- the wording
+    that tells an operator *which* entry to repair, and the same reason
+    ``order.py`` refuses to open the file (see ``tests/test_order_writer_add.py``
+    and the shared table in ``tests/ordering_shapes.py``). An artifact whose
+    only defect is a null decision must never census clean: the writer would
+    refuse it and no command could repair it in place.
+    """
     repo = _repo(tmp_path)
     _seed(repo, _entry(3, None))
     code, rows, out, err = _run(repo)
-    assert code == 0, (code, out, err)
-    assert rows == [], rows
+    assert code == 15, (code, out, err)
+    assert [r["check"] for r in rows] == ["ordering-malformed"], rows
+    assert "entry 1 decision is neither a record id nor null" in rows[0]["message"], rows[0]
 
 
 def test_a_confirmed_stamp_without_an_offset_is_malformed(tmp_path):
@@ -168,7 +177,7 @@ def test_a_confirmed_stamp_without_an_offset_is_malformed(tmp_path):
     already refuses one, and a census that read it as UTC would call clean an
     artifact its own writer refuses to touch."""
     repo = _repo(tmp_path)
-    _order(repo, _canonical([_entry(3, None, "2026-10-26T00:00:00")]))
+    _order(repo, _canonical([_entry(3, BASELINE_ID, "2026-10-26T00:00:00")]))
     code, rows, out, err = _run(repo)
     assert code == 15, (code, out, err)
     assert [r["check"] for r in rows] == ["ordering-malformed"], rows

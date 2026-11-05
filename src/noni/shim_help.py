@@ -21,6 +21,8 @@ exit-code table and its own golden fixtures under tests/fixtures/:
                schema program missing (3:schema-program-missing)
                | 10 record/ledger unusable | 12 edited after commit
                | 20 supersede chain broken
+               | 42 recordless ledger, reported as the ledger-empty warn
+               at exit 0
       a record is valid when it carries the eight top-level required
       fields (plus the optional source, decided_by, on_behalf_of and
       single_option fields) and the chain resolves

@@ -66,10 +66,12 @@ def order_problems(value: object, parse_iso, names_zone) -> list[str]:
     document alike, and a non-finite number is refused here as the backstop for
     a parsed value that came from anywhere but that reader.
 
-    A blank ``decision`` is a defect, not a string: it matches no record file, so
-    the census's own mirror of the writer's rule asks for more than ``isinstance(
-    decision, str)`` — otherwise a hand-repaired artifact could stay clean here
-    while the writer refuses to touch it.
+    A ``decision`` that is not a non-blank id is a defect, not a state the file
+    carries: every entry cites the record that set its position (anti-fabrication,
+    issue #97), so a JSON null is refused like a blank string and neither matches
+    any record file. The census's own mirror of the writer's rule therefore asks
+    for more than ``isinstance(decision, str)`` — otherwise a hand-repaired
+    artifact could stay clean here while the writer refuses to touch it.
 
     A ``confirmed`` with no UTC offset is refused too, as the writer's
     ``orderschema.parse_confirmed`` refuses it: the census's own ``_parse_iso``
@@ -130,8 +132,11 @@ def _entry_problems(entries: list, problems: list[str], parse_iso, names_zone) -
             else:
                 seen.add(issue)
         decision = entry.get("decision")
-        if "decision" in entry and decision is not None \
-                and not (isinstance(decision, str) and decision.strip()):
+        if "decision" in entry and not (isinstance(decision, str) and decision.strip()):
+            # The same rule the writer's ``orderschema`` applies: an entry that
+            # cites nothing is malformed, whether it says so with a null, a blank
+            # string or a number. See the writer's arm for why the missing key is
+            # the gap report above and not this sentence.
             problems.append(f"entry {index} decision is neither a record id nor null")
         confirmed = entry.get("confirmed")
         if "confirmed" in entry and (not isinstance(confirmed, str)

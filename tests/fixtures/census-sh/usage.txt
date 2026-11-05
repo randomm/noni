@@ -4,3 +4,5 @@ eight top-level required
 fields (plus the optional source, decided_by, on_behalf_of and
 codes:   0 clean | 2 no ledger dir given | 3 jq missing or the
 schema program missing (3:schema-program-missing)
+| 20 supersede chain broken
+| 42 recordless ledger, reported as the ledger-empty warn

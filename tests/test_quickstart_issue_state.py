@@ -33,7 +33,7 @@ from pathlib import Path
 
 from docs_promises import issue_state_from_page
 from harness_runners import run_noni
-from ordering_fixtures import _entry, _repo, _seed
+from ordering_fixtures import BASELINE_ID, _entry, _repo, _seed
 from quickstart_runner import ORDERING_NOW, recipe_gh_argv, run_env
 
 # The verdicts a census run that was asked about ``ordering-closed`` can honestly
@@ -83,7 +83,7 @@ def test_the_issue_state_recipe_produces_a_map_the_census_accepts(tmp_path: Path
     """
     filter_text = issue_state_from_page()
     repo = _repo(tmp_path)
-    _seed(repo, _entry(7, None), _entry(12, None))
+    _seed(repo, _entry(7, BASELINE_ID), _entry(12, BASELINE_ID))
     payload = tmp_path / "issues.json"
     payload.write_text(json.dumps([{"number": 7, "state": "CLOSED"},
                                    {"number": 12, "state": "OPEN"}]), encoding="utf-8")
@@ -187,7 +187,7 @@ def test_the_census_run_reads_the_map_the_recipe_produces(tmp_path: Path) -> Non
     cannot be vacuous about a run that read nothing.
     """
     repo = _repo(tmp_path)
-    _seed(repo, _entry(7, None), _entry(12, None))
+    _seed(repo, _entry(7, BASELINE_ID), _entry(12, BASELINE_ID))
     path = tmp_path / "issue-state.json"
     path.write_text(json.dumps({"7": "open", "12": "closed"}), encoding="utf-8")
     without = _census_json_run(repo, None)
@@ -197,8 +197,16 @@ def test_the_census_run_reads_the_map_the_recipe_produces(tmp_path: Path) -> Non
     assert not [line for line in without.stdout.splitlines()
                 if '"check": "ordering-closed"' in line], (
         f"a run with no --issue-state answered the closed class: {without.stdout!r}")
-    assert "ordering-closed was not evaluated" not in without.stdout, (
-        f"--json mode must not print the human-mode note: {without.stdout!r}")
+    # The human-mode ``note:`` line stays off the NDJSON stream, and the class
+    # still has to say it was skipped: it does so on the summary row (issue #97),
+    # which is what stops ``"counts": {}`` reading as "nothing is closed".
+    assert "note: ordering-closed was not evaluated" not in without.stdout, (
+        f"--json mode prints the human-mode note line: {without.stdout!r}")
+    summary = [json.loads(line) for line in without.stdout.splitlines() if line.strip()]
+    summary = [row for row in summary if row.get("kind") == "summary"]
+    assert len(summary) == 1, without.stdout
+    assert any("ordering-closed was not evaluated" in line
+               for line in summary[0].get("not_evaluated", [])), summary[0]
     with_flag = _census_json_run(repo, str(path))
     assert with_flag.returncode == EXIT_MAP_ACCEPTED, (
         f"the run with the recipe's map did not reach its verdict: "

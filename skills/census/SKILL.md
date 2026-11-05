@@ -67,8 +67,9 @@ directory, a symlink, `noni/` present without a `decisions/` directory, or a
 malformed-record failure: a record that is bad JSON or violates the schema
 keeps its `ledger-record` exit 10. A freshly attached project whose
 `noni/decisions/` has no records yet therefore censuses clean at exit 0
-(operator decision on issue #33; the legacy `census.sh` shim is a different
-entry point and keeps its own exit 10 for an empty ledger directory).
+(operator decision on issue #33). The shim agrees with that verdict on that
+directory (see the Rules below), so a freshly attached tree reads the same way to
+either entry point.
 
 When several classes fire at once the lowest code wins; stderr names every
 class that fired.
@@ -253,9 +254,11 @@ The same rule extends to the classes that report their own absence:
   `cannot-tell` row of the same class rather than silence, so a partial map
   cannot read as "every ordered issue is open"; it is a warn by default and
   `--strict` promotes it to 46. And when `--issue-state` was not given at all,
-  the class is not evaluated: the run prints one `note:` line saying so in
-  human-readable mode, and says nothing in `--json` mode, where the NDJSON
-  stream is findings and a notice about a class that did not run is not one. A
+  the class is not evaluated: the run names the class and the reason in both
+  modes. Human-readable mode prints one `note:` line saying so; `--json` mode
+  prints no `note:` line at all and carries the same sentence on the one summary
+  record's `not_evaluated` list, so a machine consumer is not left with `"counts":
+  {}` and no way to tell "nothing closed" from "the question was not asked". A
   recipe that produces the file with a tracker command line and `jq` is in
   `docs/QUICKSTART.md`.
   A missing `noni/direction/order.json` is not a finding at all — the ordering
@@ -335,10 +338,14 @@ substitute for running `scripts/public_safety.py` before publishing.
 
 - **Read-only.** The census never writes, mutates, or creates any file.
   Running it leaves `git status --porcelain` empty.
-- **One entry point.** `census.py` is the canonical entry point. The older
-  per-epic scripts (`census.sh`, `census-sessions.sh`) remain as compatibility
+- **One entry point.** `noni census` (``census.py``) is the canonical entry point
+  and the one that enforces. The older per-epic
+  scripts (`census.sh`, `census-sessions.sh`) remain as compatibility
   shims with a subset of the same exit codes (see the steering-ledger
-  SKILL.md).
+  SKILL.md). `census.sh` is the ledger shim (with its `--sessions` dispatch to
+  the sessions-claims twin): on the states the two share they answer alike, the
+  recordless ledger directory among them — both report it as the `ledger-empty`
+  warn, at exit 0 here and 42 under `--strict`.
 - **Time from `--now`.** All time-based checks use `--now` when given (for
   reproducible output in tests) and the current UTC time otherwise.
 - **No self-reported numbers.** Every metric in `--json` mode names the

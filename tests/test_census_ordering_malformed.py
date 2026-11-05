@@ -150,7 +150,7 @@ def test_a_whole_artifact_row_survives_a_filter_that_did_not_name_its_class(tmp_
     # The per-entry half of the rule is untouched: a stale row of a class the
     # filter omits is still dropped, so --only is still a filter.
     clean = _repo(tmp_path, "per-entry-filter")
-    _seed(clean, _entry(7, None, STALE))
+    _seed(clean, _entry(7, BASELINE_ID, STALE))
     state = _state(clean, {"7": "open"})
     code, rows, _out, _err = _run(clean, "--only", "ordering-closed", "--stale-after", "7",
                                   "--issue-state", state)
@@ -204,7 +204,9 @@ def test_the_filter_keeps_a_whole_artifact_row_of_any_unnamed_class(tmp_path):
             '{"schema": "noni.order/1", "entries": '
             '[{"issue": 1, "decision": null, "confirmed": 1e400}]}', {}, False),
         # The group's other input: the state file the operator was asked to supply.
-        "an unreadable state file": (_canonical([_entry(7, None)]),
+        # One cited entry, whose issue the map does not name, so no per-entry
+        # closed row can join the whole-artifact rows this fault raises.
+        "an unreadable state file": (_canonical([_entry(9, BASELINE_ID)]),
                                      {"7": "perhaps"}, True),
         # A fault of the ledger the whole group's read depends on: every entry
         # is fresh, so the class that is not malformed has a row of its own to
@@ -233,15 +235,51 @@ def test_the_filter_keeps_a_whole_artifact_row_of_any_unnamed_class(tmp_path):
             if _code(repo) == 0:
                 pytest.skip("the reading user can read a 000-mode file")
             argv = (("--issue-state", _state(repo, state_map)) if given_state else ())
+            # The state-file case provokes two whole-artifact rows of one class:
+            # the file's own fault, and the citation this run could not check (the
+            # chmod below). Both are the group's answer to "could you read what you
+            # were asked", and the rule under test is that neither survives a
+            # filter by accident -- so this case pins both, and the other two
+            # faults keep the single-row contract.
+            expected = (["ordering-malformed", "ordering-malformed"] if given_state
+                        else ["ordering-malformed"])
             for extra in filters:
                 code, rows, out, err = _run(repo, *argv, *extra)
                 assert code == 15, f"{label} {extra}: exit {code} rows={rows} out={out} err={err}"
-                assert [r["check"] for r in rows] == ["ordering-malformed"], (
+                assert [r["check"] for r in rows] == expected, (
                     f"{label} {extra}: {rows}")
                 assert rows[0]["severity"] == "fail", f"{label} {extra}: {rows[0]}"
                 assert rows[0]["code"] == 15, f"{label} {extra}: {rows[0]}"
         finally:
             record.chmod(0o644)
+
+
+def test_a_null_or_absent_decision_is_malformed_on_both_sides(tmp_path):
+    """A null decision and an absent one are refused by the writer (exit 4) and
+    reported by the census (exit 15), each naming the entry (issue #97).
+
+    This file owns the writer-vs-census pairing, and the two shapes are the pair
+    an operator can confuse: a repair that adds a blank string fixes neither, and
+    a repair that adds the key with a real id fixes both. So each shape is pinned
+    to its own sentence -- ``decision is neither a record id nor null`` for the
+    null, ``missing field`` for the absent key -- and both are driven from the one
+    shared table (``tests/ordering_shapes.py``), which the writer's own suite
+    reads, so a rule implemented on one side only fails there.
+    """
+    for index, label in enumerate(("decision null", "decision absent")):
+        body, needle = SHAPES[label]
+        repo = _repo(tmp_path, f"decision-{index}")
+        _order(repo, body)
+        writer = subprocess.run(
+            [sys.executable, str(ORDER), "--repo", str(repo), "confirm", "--now", NOW],
+            capture_output=True, text=True, env=subprocess_env(), timeout=120)
+        assert writer.returncode == 4, f"{label}: {writer.returncode} {writer.stderr}"
+        assert needle in writer.stderr, f"{label}: {writer.stderr}"
+        assert "entry 1" in writer.stderr, f"{label} must name the entry: {writer.stderr}"
+        code, rows, out, err = _run(repo)
+        assert code == 15, f"{label}: exit {code} rows={rows} err={err}"
+        assert [r["check"] for r in rows] == ["ordering-malformed"], f"{label}: {rows}"
+        assert needle in rows[0]["message"], f"{label}: {rows[0]}"
 
 
 def test_the_marker_never_reaches_the_reported_row(tmp_path):
@@ -268,7 +306,11 @@ def test_the_marker_never_reaches_the_reported_row(tmp_path):
         assert not any(k.startswith("_") for k in row), f"internal key emitted: {row}"
     summary = [json.loads(line) for line in out.splitlines() if "summary" in line]
     assert len(summary) == 1, out
-    assert set(summary[0]) == {"schema", "kind", "ok", "exit", "counts"}, summary[0]
+    # ``not_evaluated`` appears only when a class was skipped (see
+    # tests/test_census_report_mode.py); this run named only the closed class and
+    # gave no --issue-state, so it carries the note and the five keys stand.
+    assert set(summary[0]) == {"schema", "kind", "ok", "exit", "counts",
+                               "not_evaluated"}, summary[0]
 
 
 def test_the_writer_and_the_census_refuse_the_same_non_finite_artifact(tmp_path):
@@ -297,7 +339,7 @@ def test_a_blank_decision_is_malformed_so_the_writer_and_census_agree(tmp_path):
     repair it."""
     for index, blank in enumerate(("", "   ")):
         repo = _repo(tmp_path, f"blank-decision-{index}")
-        _order(repo, _canonical([_entry(3, None, FRESH)]))
+        _order(repo, _canonical([_entry(3, BASELINE_ID, FRESH)]))
         target = repo / ORDER_REL
         target.write_text(json.dumps(
             {"schema": "noni.order/1", "entries": [{"issue": 3, "decision": blank,

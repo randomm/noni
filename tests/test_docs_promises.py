@@ -122,6 +122,34 @@ def test_the_sessions_shim_exit_3_row_names_its_own_interpreter() -> None:
 
 # --- AC3: the deny-list is named where a reader meets --strict --------------
 
+def test_the_ledger_shim_is_named_the_same_thing_by_every_page_that_names_it() -> None:
+    """One artifact, one name, across the pages that teach it (issue #97).
+
+    The ruling that made ``noni census`` the entry point renamed ``census.sh``
+    the ledger shim, and the phrase landed on five sites in four pages plus the
+    ledger reference. Agreement between the census skill and the steering-ledger
+    skill is only worth what enforces it: a page that renamed the shim on its own
+    would leave the others describing a file that no longer exists by that name.
+    So every page that calls the script anything at all must use this name, and
+    the coinages the rename displaced (a compatibility *twin*, a compatibility or
+    legacy *shim*) may not come back as a synonym a reader would take for a
+    second file.
+    """
+    name = "ledger shim"
+    pages = [(path, text) for path, text in ALL_PAGES if "census.sh" in text]
+    assert pages, "no page names census.sh at all, so this check would pass vacuously"
+    named = [(path, text) for path, text in pages if name in text]
+    assert len(named) >= 3, (
+        f"fewer pages call census.sh the {name!r} than the ruling put it on "
+        f"({len(named)}): {[str(p) for p, _ in pages]}")
+    for path, text in pages:
+        for rival in ("compatibility twin", "compatibility shim", "legacy shim"):
+            assert rival not in text, (
+                f"{_label(path)} calls census.sh a {rival!r} beside the "
+                f"{name!r} the other pages use, so a reader cannot tell whether "
+                "two files are meant")
+
+
 def test_the_deny_list_is_named_where_the_reader_meets_it() -> None:
     """The file's name, location and purpose, on the two pages that sell the
     checks that depend on it: the census skill (where ``--strict`` and the
@@ -267,9 +295,9 @@ def test_the_issue_state_recipe_is_documented_once_and_named() -> None:
     ``docs_promises.ISSUE_STATE_RECIPE``); the note text is checked against the
     product's own string so a rename fails the page.
     """
-    from noni import census_run  # noqa: F401  (the module that prints the note)
+    from noni import census_report  # noqa: F401  (the module that holds and prints the note)
 
-    source = (README.parent / "src" / "noni" / "census_run.py").read_text(encoding="utf-8")
+    source = (README.parent / "src" / "noni" / "census_report.py").read_text(encoding="utf-8")
     assert "ordering-closed was not evaluated" in source, "the note left the product"
     quickstart = read(QUICKSTART)
     assert ISSUE_STATE_RECIPE.search(quickstart), (

@@ -8,6 +8,8 @@
 #                schema program missing (3:schema-program-missing)
 #                | 10 record/ledger unusable | 12 edited after commit
 #                | 20 supersede chain broken
+#                | 42 recordless ledger, reported as the ledger-empty warn
+#                at exit 0
 #       a record is valid when it carries the eight top-level required
 #       fields (plus the optional source, decided_by, on_behalf_of and
 #       single_option fields) and the chain resolves
@@ -73,12 +75,16 @@ fi
 #   10  a record is missing or malformed, or the ledger is unusable —
 #       five distinct sub-classes, all named on the stderr line:
 #       (10:missing-dir) the directory does not exist (operator error —
-#       wrong path); (10:empty-ledger) the directory exists but contains
-#       no *.json records (the ledger may simply be empty); (10:bad-name,
-#       10:unparseable, 10:schema, 10:missing-record, 10:integral-float)
-#       a filename, body, or schema field violates the declared shape (fix
-#       the record);
+#       wrong path); (10:bad-name, 10:unparseable, 10:schema,
+#       10:missing-record, 10:integral-float) a filename, body, or schema
+#       field violates the declared shape (fix the record);
+#       (10:empty-ledger) the directory exists but could not be enumerated
+#       (a read that happened nowhere is not an empty ledger);
 #       (10:git-unavailable) git itself failed on a real repo (fix the tree)
+#   42  a ledger directory that holds no *.json record at all — reported as
+#       (42:ledger-empty) on stderr and exited 0, the unified census's
+#       ledger-empty warn, so a freshly attached project censuses clean here
+#       as it does there (issue #97)
 #   12  a record was edited after commit (working tree differs from git)
 #   20  the supersede chain is broken (dangling, duplicate, orphan, cycle,
 #       or a chain resolving to zero or more than one live record)
@@ -144,7 +150,32 @@ if [ -z "$LEDGER_DIR" ]; then
   usage_error "no ledger directory given"
 fi
 
-command -v jq >/dev/null 2>&1 || { echo "census.sh: jq not found on $(hostname 2>/dev/null || echo unknown)" >&2; exit 3; }
+# The jq probe is the FIRST verdict this script reaches, ahead of the ledger
+# directory check and ahead of every report branch below, including the
+# (42:ledger-empty) one: without jq there is no schema to apply, so no state of
+# the tree has earned a verdict, not even "there is nothing to report". A run
+# that reached the recordless branch first would call an unreadable ledger clean
+# on the very machine that cannot read a record.
+# The probe runs jq rather than asking whether the name resolves: `command -v`
+# is satisfied by a stub that exits 127 without reading anything, and the
+# verdicts below all depend on a jq that actually evaluates a program. The
+# probe asks the question the census depends on — can this machine run jq at
+# all — and answers 3 (the jq-missing code) when it cannot.
+jq -n 1 >/dev/null 2>&1 || { echo "census.sh: jq not found on $(hostname 2>/dev/null || echo unknown)" >&2; exit 3; }
+
+# The schema program is the other half of "can this machine read a record", so
+# it is refused on the same terms and in the same place: ahead of the ledger
+# listing, so the (42:ledger-empty) branch can never be the answer a census
+# gives when it holds no program to apply to a record. Without the program there
+# is no schema, and a census that read the directory and reported nothing would
+# be reporting a clean it never established. A program that exists but cannot be
+# read is the same refusal: a mode-000 sibling is a file jq cannot open, so the
+# probe asks readable as well as present rather than trusting -f alone.
+SCHEMA_JQ_FILE="$SCRIPT_DIR/census-schema.jq"
+if [ ! -f "$SCHEMA_JQ_FILE" ] || [ ! -r "$SCHEMA_JQ_FILE" ]; then
+  echo "census.sh: $SCHEMA_JQ_FILE not found (3:schema-program-missing)" >&2
+  exit 3
+fi
 
 # Refuse every non-directory here rather than at the (10:empty-ledger) branch
 # below: a dangling symlink and a plain file both fail -d, and a fallback that
@@ -202,11 +233,20 @@ if [ -z "$RECORDS" ] && [ "$STATUS" -eq 0 ]; then
   # Distinguish "find failed" (e.g. permission denied) from a truly empty dir.
   find_err="$(find "$LEDGER_DIR" -maxdepth 1 -name '*.json' 2>&1 | head -1)"
   if [ -n "$find_err" ] && ! find "$LEDGER_DIR" -maxdepth 1 -name '*.json' >/dev/null 2>&1; then
+    # A ledger this script could not enumerate is not an empty ledger: nothing
+    # was read, so no verdict about its records was earned. That stays 10, and
+    # the code is set before the line is printed so no path can reach the report
+    # with the message and not the verdict.
+    STATUS=10
     echo "census.sh: find failed to enumerate $LEDGER_DIR: $find_err (10:empty-ledger)" >&2
   else
-    echo "census.sh: no *.json records under $LEDGER_DIR (10:empty-ledger)" >&2
+    # A recordless decisions/ directory is the unified census's ledger-empty warn
+    # (code 42, exit 0), not a failure: a freshly attached project has no records
+    # yet and must not read as permanently red, and this shim has no --strict to
+    # promote the warn with. One verdict on one tree, whichever census is run
+    # (issue #97); the unified census keeps the wording and the promotion.
+    echo "census.sh: no *.json records under $LEDGER_DIR (42:ledger-empty)" >&2
   fi
-  STATUS=10
 fi
 
 # --- Schema -----------------------------------------------------------------
@@ -216,17 +256,10 @@ fi
 # result is the (fixed, jq-generated) violation message. jq stderr is discarded: an unparseable record is
 # distinguished from a schema failure by the follow-up `jq empty` probe, and raw
 # record bytes are never echoed back into the diagnostic line.
-# The program itself is a sibling file read by jq, so the rules live in one
-# place a reader can open and a linter can parse; the path is taken from this
-# script's own directory so a relocated census stays self-contained. A missing
-# sibling is exit 3 (3:schema-program-missing), the same code as a missing jq:
-# without the program there is no schema to apply, and a census that read the
-# ledger and reported nothing would be reporting a clean it never established.
-SCHEMA_JQ_FILE="$SCRIPT_DIR/census-schema.jq"
-if [ ! -f "$SCHEMA_JQ_FILE" ]; then
-  echo "census.sh: $SCHEMA_JQ_FILE not found (3:schema-program-missing)" >&2
-  exit 3
-fi
+# The program is the sibling file checked (and refused with 3:schema-program-
+# missing) beside the jq probe above, so the rules live in one place a reader can
+# open and a linter can parse; the path is taken from this script's own directory
+# so a relocated census stays self-contained.
 # Field extraction after a schema pass: id \t date \t status \t sup \t by \t any_answer
 SCHEMA_DATA_JQ='
   [ .id, .date, .status,

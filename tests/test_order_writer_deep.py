@@ -186,7 +186,7 @@ def test_the_writer_still_reads_the_bytes_it_writes(tmp_path):
     state = _orderstate_module()
     artifact = tmp_path / ORDER_REL
     artifact.parent.mkdir(parents=True, exist_ok=True)
-    artifact.write_text(_canonical([_entry(7, None)]), encoding="utf-8")
+    artifact.write_text(_canonical([_entry(7, BASELINE_ID)]), encoding="utf-8")
     read = state.read_order(artifact)
     assert isinstance(read, state.OrderOk), read
     assert [entry["issue"] for entry in read.entries] == [7]
@@ -325,7 +325,7 @@ def test_a_closed_issue_is_reported_and_removed_by_the_writer(tmp_path):
     clears it, and an issue the map omits gets a cannot-tell row rather than
     silence."""
     repo = _repo(tmp_path)
-    _seed(repo, _entry(7, BASELINE_ID), _entry(8, None))
+    _seed(repo, _entry(7, BASELINE_ID), _entry(8, BASELINE_ID))
     state = repo / "issue-state.json"
     state.write_text(json.dumps({"7": "closed", "9": "open"}), encoding="utf-8")
     code, rows, _ = _census_ordering(repo, "--issue-state", str(state))

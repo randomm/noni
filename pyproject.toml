@@ -104,6 +104,7 @@ include = [
     "src/noni/census_git.py",
     "src/noni/census_hygiene.py",
     "src/noni/census_intent.py",
+    "src/noni/census_intent_readers.py",
     "src/noni/census_json.py",
     "src/noni/census_ledger_checks.py",
     "src/noni/ledger_schema.py",

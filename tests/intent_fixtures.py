@@ -13,6 +13,8 @@ the writer's suite too, so it stays where both sides can see it.
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -81,6 +83,37 @@ def repo_with_record(tmp_path: Path, subdir: str = "repo", *,
     return repo
 
 
+def planted_ledger_link(tmp_path: Path, name: str, *, parent: bool = False) -> Path:
+    """A committed repo whose ledger directory (or ``noni/``) is a link outside it.
+
+    One committed record, an intent citing it, then the directory the record lives
+    in replaced by a symlink to an outside directory holding a superseded body for
+    the same id — the state in which a leaf classification calls the record an
+    ordinary file and the read follows the parent link. ``parent`` links ``noni/``
+    itself instead of ``noni/decisions``. Returns the repo.
+    """
+    repo = repo_with_record(tmp_path, name)
+    install_intent(repo)
+    commit_intent(repo)
+    # The body the link leads to, planted outside the audited tree but inside the
+    # fixture root: outside the repo is the state under test, and a name carrying the
+    # cited id is what a leaf classification would accept as the record.
+    inner = repo.parent / name / "ledger-lives-here"
+    inner.mkdir(parents=True)
+    (inner / f"{RECORD_ID}.json").write_text(
+        json.dumps(record(status="superseded", supersedes=RECORD_ID)),
+        encoding="utf-8")
+    target = repo / "noni" if parent else repo / "noni" / "decisions"
+    if parent:
+        # ``noni/`` holds the intent too, so the link leads to a copy of both
+        # directories: the run must still be owed the read of the intent, and still
+        # refuse the record that stands behind the link.
+        shutil.copytree(repo / "noni" / "direction", inner / "direction")
+    shutil.rmtree(target)
+    target.symlink_to(inner)
+    return repo
+
+
 def _commit(repo: Path, rel: str, body: str, date: str = NOW) -> None:
     target = repo / rel
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -138,6 +171,46 @@ def commit_intent(repo: Path, *, decision: str = RECORD_ID,
                  subject if subject is not None else f"intent: {decision}")
 
 
+def planted_record_link(tmp_path: Path, name: str, *,
+                       target: Path | None = None, is_dir: bool = False,
+                       hardlink_to: Path | None = None,
+                       dangling: bool = False) -> Path:
+    """A committed repo whose cited record stands as a planted path, ready for a run.
+
+    The one state every cited-record test needs: a record committed at its id, an
+    intent committed against it, and then the path replaced by something that is not
+    an ordinary file.
+
+    - ``target`` -- a symlink to it, so the census must refuse to follow it.
+    - ``dangling`` -- a symlink to nothing, which is not an absent record.
+    - ``is_dir`` -- a directory at the path (a device or fifo is the same answer).
+    - ``hardlink_to`` -- a hardlink, a state ``lstat`` cannot tell from an ordinary
+      file, kept so the limit is asserted and not assumed.
+    - none of them -- the record left exactly as committed, for a test that plants
+      the state itself (a swap that happens after the classification).
+
+    Returns the repo. The subdir is named per caller so two states can stand in one
+    ``tmp_path`` without colliding.
+    """
+    repo = repo_with_record(tmp_path, name)
+    install_intent(repo)
+    commit_intent(repo)
+    record_path = repo / "noni" / "decisions" / f"{RECORD_ID}.json"
+    if is_dir:
+        record_path.unlink()
+        record_path.mkdir()
+    elif hardlink_to is not None:
+        record_path.unlink()
+        os.link(hardlink_to, record_path)
+    elif target is not None:
+        record_path.unlink()
+        record_path.symlink_to(target)
+    elif dangling:
+        record_path.unlink()
+        record_path.symlink_to(tmp_path / "no-such-record.json")
+    return repo
+
+
 def _run(repo: Path, *extra: str) -> tuple[int, list[dict], str, str]:
     """The census over the intent class only, as NDJSON plus raw streams."""
     args = [sys.executable, str(CENSUS), "--repo", str(repo), "--json", "--now", NOW,
@@ -180,9 +253,31 @@ def subjects(rows: list[dict]) -> list[str]:
     return [row["subject"] for row in rows]
 
 
-def intent_kind_answers(verdict: str, problem: str | None = None):
+def _intent_rows(rows: list[dict]) -> list[dict]:
+    """The intent class's own rows of a run that reported other classes too.
+
+    The ledger group always reports its own row beside a planted link, and that row
+    is correct existing behaviour: the assertion under test is this class's alone.
+    """
+    return [row for row in rows if row["check"] == "intent"]
+
+
+def _json_rows(stdout: str) -> list[dict]:
+    """The finding rows an in-process run printed, as dicts.
+
+    ``findings_of`` answers for one class and keeps only three fields; the tests
+    that inspect a row's text or its visibility marker need the whole row.
+    """
+    return [row for row in (json.loads(line) for line in stdout.splitlines()
+                            if line.strip())
+            if row.get("kind") == "finding"]
+
+
+def intent_kind_answers(verdict: str, problem: str | None = None, *,
+                        answers: dict[Path, tuple[str, str | None]] | None = None):
     """A ``_file_kind`` replacement that answers ``(verdict, problem)`` for the
-    intent path and classifies every other path for real.
+    intent path, ``(kind, problem)`` for any path named in ``answers``, and
+    classifies every other path for real.
 
     Two tests need the census to meet a path it cannot describe: a parent whose
     ``lstat`` was declined, and a chain of links that loops. Neither is portable as
@@ -204,6 +299,11 @@ def intent_kind_answers(verdict: str, problem: str | None = None):
     def answer(path, kind="file"):
         if Path(path).name == "intent.md":
             return verdict, problem
+        if answers and Path(path) in answers:
+            # A path the test wants classified as something the tree does not
+            # hold, asked through the classifier a direct caller uses when the
+            # run hands it no probe at all.
+            return answers[Path(path)]
         return real(path, kind)
 
     return answer
@@ -232,6 +332,40 @@ def findings_of(stdout: str, check: str) -> list[tuple[str, str, str]]:
     return [(row["check"], row["subject"], row["severity"])
             for row in (json.loads(line) for line in stdout.splitlines() if line.strip())
             if row.get("kind") == "finding" and row["check"] == check]
+
+
+def probe_state_answers(state: str, *, fault: bool = False):
+    """A ``census._ledger_probe`` replacement that answers one ``state`` for any ledger.
+
+    ``probe_ledger`` is the run's own answer for the two levels above a cited
+    record: it classifies the ledger and ``noni/`` and reports ``"symlink"`` for a
+    link at either. A test that means "the run was told the ledger is a link" (or
+    was told a word the ledger module has not invented yet) puts one of these on
+    that seam, so the state under test is the probe's word and not a symlink the
+    host filesystem happens to allow, and the intent group's refusal is exercised
+    through the seam ``census_run._check_intent`` actually uses.
+
+    ``fault`` gives the probe the ``problem`` half an ``OSError`` forced, which is
+    the text a row must never quote. ``listing_fault`` stays None unless a caller
+    says otherwise: the finding under test is the intent class's row, not a second
+    group's blindness.
+    """
+    def answer(_ledger):
+        return _ProbeAnswer(state, fault)
+
+    return answer
+
+
+class _ProbeAnswer:
+    """The fields of a ``LedgerProbe`` the census reads off the probe."""
+
+    def __init__(self, state: str, fault: bool = False) -> None:
+        self.state = state
+        # Text of the kind a stat fault produces: a path and a long tail, which no
+        # row may carry. Deliberately machine-local in shape.
+        self.problem = "/home/operator/secret-dir" + "x" * 400 if fault else None
+        self.listing_fault = None
+        self.names = None
 
 
 class BlindListing:

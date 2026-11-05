@@ -186,36 +186,56 @@ def _hygiene_labels(public_safety) -> set[str]:
 
 
 def _split_violation(violation: str, labels: set[str]) -> tuple[str, int, str] | None:
-    """Split a public_safety violation "<path>:<line>: <label>" into parts.
+    """Split a public_safety violation into (path, line, label-as-emitted), or None.
 
-    Returns (path, line, label) or None when the string is not of that shape.
+    The third field is the row's tail verbatim, so a row that names a fault keeps it in
+    the report: the unreadable-file class spells the refusing syscall's class and errno
+    words after its label, and those words are the finding.
 
-    Splitting cannot be done by counting colons: a tracked path may contain
-    one ("x:y/p.txt" is a legal POSIX filename), so splitting at the first
-    colon truncates the path and garbles the message — which also breaks the
-    documented (artifact, check, subject) sort grouping, because artifact
-    becomes the path prefix before the colon. The label is a fixed string from
-    public_safety's own tables and contains no colon, so the tail is matched
-    against the known label set exactly and everything before ":<line>: " is
-    the path.
+    Splitting cannot count colons: a tracked path may contain one ("x:y/p.txt" is legal),
+    so splitting at the first truncates the path and garbles the message -- which also
+    breaks the documented (artifact, check, subject) grouping. The label is a fixed
+    string from public_safety's own tables and holds no colon, so the tail is matched
+    against the known label set exactly and everything before ":<line>: " is the path. A
+    label match is only the start of the check: the head must still parse as
+    "<path>:<digits>", which stops a shorter label appearing partway through a longer one
+    from claiming the row.
     """
     if not labels:
         return None
     for label in labels:
         suffix = f": {label}"
-        if not violation.endswith(suffix):
+        # A label that is not the tail of the row is not the split, unless the row is a
+        # fault row: "<path>:<line>: <label> (<fault>)".
+        if violation.endswith(suffix):
+            head, tail = violation[: -len(suffix)], label
+        else:
+            head, tail = _fault_row_head(violation, suffix)
+        if head is None:
             continue
-        head = violation[: -len(suffix)]
         path, sep, line_no = head.rpartition(":")
         if sep and path and line_no.isdigit():
-            return path, int(line_no), label
-        # The suffix matched but the head is not "<path>:<digits>". This label
-        # is not the split; a later one in the set may match the same tail with
-        # a head that does parse, so keep looking instead of giving up.
+            return path, int(line_no), tail
+        # The tail matched but the head is not "<path>:<digits>": this label is not the
+        # split, and a later one may match the same tail with a head that parses.
         continue
     return None
 
 
+def _fault_row_head(violation: str, suffix: str) -> tuple[str | None, str]:
+    """The head and label tail of "<path>:<line>: <label> (<fault>)", or (None, "").
+
+    The one shape where a label is not the last thing in the row. A paren alone is not
+    enough to claim it: the tail must read as one fault -- "Class: errno words" or the
+    bare class, so at most one colon -- or it stays a verbatim row.
+    """
+    marker = suffix + " ("
+    if not violation.endswith(")") or marker not in violation:
+        return None, ""
+    head, _, fault = violation.partition(marker)
+    if not fault.endswith(")") or fault.count(":") > 1:
+        return None, ""
+    return head, f"{suffix[2:]} ({fault}"
 def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
                   row: Callable[..., dict], bounded: Callable[[str], str]) -> None:
     """The public-repo hygiene class (warn 50): the tracked-file scan, run

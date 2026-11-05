@@ -13,6 +13,7 @@ citation rows; the builders and runners are in ``tests/intent_fixtures.py``.
 from __future__ import annotations
 
 import contextlib
+import json
 from pathlib import Path
 
 import pytest
@@ -20,11 +21,13 @@ from _harness import SRC
 from intent_fixtures import (
     RECORD_ID,
     BlindListing,
+    _rows,
     _run,
     commit_intent,
     findings_of,
     install_intent,
     intent_kind_answers,
+    record,
     repo_with_record,
     run_census_in_process,
     subjects,
@@ -109,6 +112,183 @@ def test_a_symlink_at_the_intent_path_is_cannot_tell(tmp_path):
     assert subjects(intent_rows) == ["cannot-tell"]
     assert intent_rows[0]["severity"] == "warn"
     assert code == 0
+
+
+def test_a_symlink_at_the_cited_record_path_is_cannot_tell(tmp_path):
+    """A planted link at the cited record path decides nothing.
+
+    The link's target holds a record the class would have called
+    ``uncited ... the record is superseded`` (exit 51) had it been read: the
+    census classifies the cited path with its own classifier before any open, so
+    the bytes behind the link are never opened and never become a verdict on the
+    intent. The row names the cited id and the census's classification words, and
+    quotes no byte of, and no path to, what stands behind the link.
+    """
+    repo = repo_with_record(tmp_path)
+    install_intent(repo)
+    commit_intent(repo)
+    record_path = repo / "noni" / "decisions" / f"{RECORD_ID}.json"
+    outside = tmp_path / "outside-record.json"
+    outside.write_text(json.dumps(record(status="superseded",
+                                        supersedes=RECORD_ID)),
+                       encoding="utf-8")
+    record_path.unlink()
+    record_path.symlink_to(outside)
+    code, rows, _, _ = _run(repo)
+    # The ledger group reports its own "record is unreadable: path is a symlink"
+    # row beside this one, and that row is correct existing behaviour; this
+    # assertion is the intent class's own row and nothing else.
+    intent_rows = [row for row in rows if row["check"] == "intent"]
+    assert subjects(intent_rows) == ["cannot-tell"]
+    assert intent_rows[0]["severity"] == "warn"
+    assert code == 0
+    # No byte of the target's content, and no path to it, reaches the row.
+    row_text = json.dumps(intent_rows[0])
+    assert "superseded" not in row_text
+    assert "outside-record" not in row_text
+    assert str(outside) not in row_text
+    assert RECORD_ID in intent_rows[0]["message"]
+
+
+def test_a_dangling_symlink_at_the_cited_record_path_is_cannot_tell(tmp_path):
+    """A link that goes nowhere is not a record that is not there.
+
+    ``read_bytes`` on a dangling link raises ``ENOENT``, which is the errno the
+    absence branch answers with, so a path this run never opened was reported as
+    ``uncited ... which no file under noni/decisions/ carries`` at exit 51: a
+    verdict on the direction, drawn from a path the census had not classified.
+    The classification runs first, so the link is a ``cannot-tell`` warn and the
+    absence branch never sees it.
+    """
+    repo = repo_with_record(tmp_path)
+    install_intent(repo)
+    commit_intent(repo)
+    record_path = repo / "noni" / "decisions" / f"{RECORD_ID}.json"
+    record_path.unlink()
+    record_path.symlink_to(tmp_path / "no-such-record.json")
+    code, rows, _, _ = _run(repo)
+    intent_rows = [row for row in rows if row["check"] == "intent"]
+    assert subjects(intent_rows) == ["cannot-tell"]
+    assert intent_rows[0]["severity"] == "warn"
+    assert code == 0
+    row_text = json.dumps(intent_rows[0])
+    assert "no-such-record" not in row_text
+
+
+def test_a_symlink_to_a_directory_at_the_cited_record_path_is_cannot_tell(tmp_path):
+    """A link whose target is a directory is the same state, not an EISDIR accident.
+
+    Unreadable, and not absent: the row is the classification's, whatever the
+    errno a read would have raised would have been.
+    """
+    repo = repo_with_record(tmp_path)
+    install_intent(repo)
+    commit_intent(repo)
+    record_path = repo / "noni" / "decisions" / f"{RECORD_ID}.json"
+    outside_dir = tmp_path / "outside-dir"
+    outside_dir.mkdir()
+    (outside_dir / f"{RECORD_ID}.json").write_text(
+        json.dumps(record(status="superseded", supersedes=RECORD_ID)),
+        encoding="utf-8")
+    record_path.unlink()
+    record_path.symlink_to(outside_dir)
+    code, rows, _, _ = _run(repo)
+    intent_rows = [row for row in rows if row["check"] == "intent"]
+    assert subjects(intent_rows) == ["cannot-tell"]
+    assert intent_rows[0]["severity"] == "warn"
+    assert code == 0
+    assert "outside-dir" not in json.dumps(intent_rows[0])
+
+
+def test_a_directory_at_the_cited_record_path_is_cannot_tell(tmp_path):
+    """A directory at the cited path stays a ``cannot-tell`` warn at exit 0.
+
+    It was one before this fix too, by errno accident (``read_bytes`` on a
+    directory raises ``EISDIR``, which is not an absence). Now it arrives by
+    classification, which is why the row names the census's own words instead of
+    the kernel's.
+    """
+    repo = repo_with_record(tmp_path)
+    install_intent(repo)
+    commit_intent(repo)
+    record_path = repo / "noni" / "decisions" / f"{RECORD_ID}.json"
+    record_path.unlink()
+    record_path.mkdir()
+    code, rows, _, _ = _run(repo)
+    intent_rows = [row for row in rows if row["check"] == "intent"]
+    assert subjects(intent_rows) == ["cannot-tell"]
+    assert intent_rows[0]["severity"] == "warn"
+    assert code == 0
+
+
+def test_the_cited_record_link_survives_a_filter_that_named_no_intent_class(tmp_path):
+    """A run whose filter named no intent class still reports the planted link.
+
+    The row is about the artifact the class was asked to read, so it is marked
+    whole-artifact: without the marker the run printed no intent row at all and
+    exited 0, which is a clean verdict bought by a path nobody opened.
+    """
+    repo = repo_with_record(tmp_path)
+    install_intent(repo)
+    commit_intent(repo)
+    record_path = repo / "noni" / "decisions" / f"{RECORD_ID}.json"
+    outside = tmp_path / "outside-record.json"
+    outside.write_text(json.dumps(record(status="superseded",
+                                        supersedes=RECORD_ID)),
+                       encoding="utf-8")
+    record_path.unlink()
+    record_path.symlink_to(outside)
+    rows = _rows(repo, "--only", "session-double")
+    intent_rows = [row for row in rows if row["check"] == "intent"]
+    assert subjects(intent_rows) == ["cannot-tell"]
+    assert intent_rows[0]["severity"] == "warn"
+
+
+def test_strict_promotes_the_cited_record_link_row(tmp_path):
+    """``--strict`` promotes the run's blindness, as it promotes every cannot-tell.
+
+    The row is the intent class's own cannot-tell, so it leaves the run at 51 under
+    ``--strict`` and at 0 without it: the same exit rule the intent-file row obeys.
+    """
+    repo = repo_with_record(tmp_path)
+    install_intent(repo)
+    commit_intent(repo)
+    record_path = repo / "noni" / "decisions" / f"{RECORD_ID}.json"
+    outside = tmp_path / "outside-record.json"
+    outside.write_text(json.dumps(record(status="superseded",
+                                        supersedes=RECORD_ID)),
+                       encoding="utf-8")
+    record_path.unlink()
+    record_path.symlink_to(outside)
+    assert _run(repo)[0] == 0
+    assert _run(repo, "--strict")[0] == 51
+
+
+def test_the_cited_record_is_classified_before_it_is_read(intent_class):
+    """The order is the invariant, so it is pinned at the line that owns it.
+
+    A fixture cannot state "no open was attempted" — a reader that classified and
+    then opened anyway passes every filesystem assertion above on a machine whose
+    target is readable. Pinned at the source instead, alongside the loop test:
+    the classifier is asked of the cited path, the non-regular answer returns
+    before the read, and the read takes a path the classification already decided.
+    """
+    classify = intent_class.index('file_kind(record)')
+    read = intent_class.index("record.read_bytes()")
+    assert classify < read, (
+        "the cited decision record is read before the census's classifier is "
+        "asked of it, so a planted link is followed and its bytes decide the "
+        "intent verdict"
+    )
+    gate = intent_class.index("        return\n", classify)
+    assert gate < read, (
+        "a cited record the classifier did not call regular still reaches the "
+        "read, so the classification is decoration and not a refusal"
+    )
+    assert "record.read_bytes()" in intent_class, (
+        "the cited-record reader stopped taking the path the classification "
+        "decided, so it can open a path nobody classified"
+    )
 
 
 def test_the_run_survives_a_path_it_cannot_classify(tmp_path, monkeypatch):

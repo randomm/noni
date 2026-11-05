@@ -21,7 +21,10 @@ One class, one read of the file, plus the history answer the run already holds:
   already built (``Git.commit_subject``) plus the ledger listing the run already
   took: no second ``git log``, no second readdir.
 - a symlink, a directory, a device, an unreadable file or non-UTF-8 bytes earn
-  one ``cannot-tell`` row and never a crash, never a clean.
+  one ``cannot-tell`` row and never a crash, never a clean. The same is true of
+  the decision record the citation names: a cited record that is not an ordinary
+  file is a ``cannot-tell``, never an ``uncited`` verdict built from bytes read
+  through the link.
 
 Nothing here prints or exits: every answer is appended to the caller's
 ``findings`` list through the ``row`` factory the census supplies.
@@ -197,6 +200,22 @@ def check_intent(
             f"commit subject '{INTENT_SUBJECT_PREFIX}<decision-id>')")
         return
 
+    # The cited record is classified with the same classifier the intent file was
+    # asked of, before any read, and the answer decides whether a read happens at
+    # all: a path behind a link is opened only when it is an ordinary file, so
+    # bytes outside the repo can never become a verdict on the intent.
+    record = ledger / f"{cited}.json"
+    record_kind, record_problem = file_kind(record)
+    if record_kind not in ("absent", "regular"):
+        # A symlink, a directory or a device at the cited path says nothing about
+        # whether the direction stands. The row names the census's own
+        # classification words and the cited id, never a target path or a byte.
+        add(SUBJECT_CANNOT_TELL,
+            f"cannot-tell: the record {cited} the intent cites is not a readable "
+            f"regular file ({record_problem}), so whether it stands could not be "
+            "answered", whole_artifact=True)
+        return
+
     # One read of the cited record answers both halves of the question -- is it
     # there, and does it stand. Two faults are blindness and reported as
     # cannot-tell; the third is a verdict. A read that was stopped (ENOENT, or the
@@ -204,7 +223,7 @@ def check_intent(
     # direction's fault and reads uncited; a read the file system refused for some
     # other reason is this run's blindness, and a permission problem on somebody
     # else's file must never be quoted as a finding against the intent.
-    body, read_fault = _record_body(ledger, cited)
+    body, read_fault = _record_body(record)
     if read_fault is not None and not _absence(read_fault):
         add(SUBJECT_CANNOT_TELL,
             f"cannot-tell: the record {cited} the intent cites could not be read "
@@ -233,14 +252,17 @@ def _absence(fault: OSError) -> bool:
     return fault.errno in (errno.ENOENT, errno.ENOTDIR)
 
 
-def _record_body(ledger: Path, cited: str) -> tuple[bytes | None, OSError | None]:
-    """The bytes of the record ``cited`` names, or the fault that stopped the read.
+def _record_body(record: Path) -> tuple[bytes | None, OSError | None]:
+    """The bytes of the already-classified record, or the fault that stopped the read.
 
     Two answers, because "the record is wrong" and "this run could not read the
     record" are different findings and only the first is a verdict on the intent.
+    The caller classifies ``record`` first: this opens a path only after the
+    census's classifier called it an ordinary file, which is what keeps a link at
+    the cited path from being read through.
     """
     try:
-        return (ledger / f"{cited}.json").read_bytes(), None
+        return record.read_bytes(), None
     except OSError as exc:
         return None, exc
 

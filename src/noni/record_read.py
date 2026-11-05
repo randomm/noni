@@ -18,6 +18,10 @@ Three things a plain ``json.loads`` does not answer with a refusal:
 - a value the decoder did build can still overflow the walk that inspects it, if
   that walk recurses. Which is why :func:`holds_non_finite` is iterative, as the
   copies in ``orderschema`` and ``census_json`` already are.
+- a record the decoder did build on a generous interpreter is still handed to the
+  writer's renderer, whose own ``json.dumps`` recurses. That is where 3.12 and
+  later leave the crash standing, so :func:`record_object` applies the same depth
+  bound the strict readers enforce.
 
 None of the three reaches a caller: a target the writer cannot read is the
 writer's "not a readable JSON object" refusal, and a run that died instead
@@ -29,6 +33,9 @@ from __future__ import annotations
 
 import json
 import math
+from typing import NoReturn
+
+from .census_json import MAX_DEPTH, _depth_of
 
 
 def record_object(raw: bytes) -> dict | None:
@@ -50,12 +57,26 @@ def record_object(raw: bytes) -> dict | None:
     of ``ValueError``, so naming the one never named the other. Either escaping
     would turn a target this writer cannot read into a traceback instead of the
     refusal it earns.
+
+    The arms are not enough on their own, and the reason is the decoder's own
+    generosity. Where it gives up is a property of the build: 3.11 stops just
+    under the recursion limit, but 3.12 and later decode thousands of levels, and
+    a record it built that deep is still handed to the writer's renderer, whose
+    ``json.dumps`` recurses. So the depth bound the strict readers already
+    enforce - :data:`noni.census_json.MAX_DEPTH`, asked with their own iterative
+    :func:`~noni.census_json._depth_of` - is applied here too, and a record past
+    it is None: not a record, which is the same refusal every other unreadable
+    shape earns. Between the bound and the interpreter's ceiling the bound answers
+    first; past that ceiling the arm is what turns the decoder's giving up into a
+    refusal rather than a crash, which is why the arm is kept beside it.
     """
     try:
         record = json.loads(raw.decode("utf-8"), parse_constant=refuse_constant)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError):
         return None
     if not isinstance(record, dict) or holds_non_finite(record):
+        return None
+    if _depth_of(record, MAX_DEPTH + 1) > MAX_DEPTH:
         return None
     return record
 
@@ -86,11 +107,13 @@ def holds_non_finite(value: object) -> bool:
     return False
 
 
-def refuse_constant(token: str) -> float:
+def refuse_constant(token: str) -> NoReturn:
     """The reader's answer to ``NaN``/``Infinity``/``-Infinity``: refuse the token.
 
     ``parse_constant`` is asked to return the value; raising is how it refuses, and
-    the ``ValueError`` travels the same except arm as a malformed document, so no
-    token is named back to the operator.
+    the ``ValueError`` travels the same except arm as a malformed document. The
+    wording is fixed and names no token, as ``census_json.refuse_constant`` words
+    it: the token is text read from an untrusted record, and a refusal that quotes
+    it hands that content to whatever prints the exception.
     """
-    raise ValueError(f"not a JSON number: {token}")
+    raise ValueError("not a JSON number")

@@ -17,8 +17,16 @@ module is never named ``test_*``.
 
 from __future__ import annotations
 
+import json
+
 from decide_hardening_fixtures import _canonical_body
 from ordering_shapes import _deep
+
+# The record depth the writer's reader refuses. A record a few levels deeper than
+# any writer renders, and far below the depth at which any supported
+# interpreter's decoder gives up: the window where only this product's own bound
+# can answer, which is exactly the window the lens review found unguarded.
+DEEP_RECORD_LEVELS = 300
 
 # The canonical ``scope`` and the canonical option the pathological fixtures
 # replace. Named here so the cases that drive them differ only in which field
@@ -37,6 +45,25 @@ DEEP_ARRAY_IN_SCOPE = '"scope": [' + _deep() + "]"
 # in ``scope``: legal JSON syntax, so nothing in the decoder's grammar objects and
 # the fault comes out of ``int()`` instead.
 DIGIT_LIMIT_SCOPE = '"scope": 1' + "0" * 100000
+
+
+def _deep_value(levels: int) -> str:
+    """Legal JSON text holding a value that nests ``levels`` levels deep.
+
+    Counts depth the way the bound does - one for the returned value, one more
+    for each container round it - so a caller can say 'a value of exactly this
+    depth' and have the reader's bound agree with it. Built with ``json.dumps``
+    over an assembled structure rather than by repeating brackets, because the
+    bound is counted on the *parsed* value and the writer's reader must be able
+    to build the fixture first: a value the decoder cannot build is a different
+    refusal, owned by the ``RecursionError`` arm beside this one.
+    """
+    if levels < 1:
+        raise ValueError(f"{levels} levels is not a nest")
+    node: object = "deep"
+    for _ in range(levels - 1):
+        node = {"k": node}
+    return json.dumps(node)
 
 
 def _target_body(target_id: str, old: str, new: str) -> str:

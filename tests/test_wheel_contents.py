@@ -76,7 +76,9 @@ def _build_wheel(source_root: Path, tmp_path: Path) -> Path:
     build_tree = tmp_path / "build-tree"
     # parents=True: the caller may hand over a fresh output directory of its own
     # (the suite's fixture does, and so does the broken-backend test below).
-    build_tree.mkdir(parents=True)
+    # exist_ok: a caller that staged an input the copy list does not carry (the
+    # license, in test_wheel_license.py) has to be able to make that tree first.
+    build_tree.mkdir(parents=True, exist_ok=True)
     for name in ("src", "pyproject.toml"):
         source = source_root / name
         target = build_tree / name

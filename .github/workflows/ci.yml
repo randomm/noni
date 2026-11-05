@@ -37,6 +37,13 @@ jobs:
       - name: Install noni (editable)
         run: .venv/bin/pip install --no-cache-dir -e ".[dev]"
 
+      # The public-repo hygiene scrub AGENTS.md names. Exit 1 is a violation and
+      # fails the job; exit 2 means the untracked deny-list class did not run
+      # (tests/quickstart_gate.py pins the number), which is the state of a
+      # public runner, so the step passes on 0 or 2 and on nothing else.
+      - name: Public-repo hygiene scrub
+        run: .venv/bin/python scripts/public_safety.py || [ "$?" -eq 2 ]
+
       - name: Lint
         run: .venv/bin/ruff check .
 

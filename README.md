@@ -114,8 +114,8 @@ absence it reports as an unevaluated check. It recomputes everything it reports
 from git history plus those files on every run: metrics are derived, never
 self-reported. The skills are the unit of product: an agent loads
 `skills/<skill>/SKILL.md`, which names the script to run, its flags and its exit
-codes. How to put the four core skills in front of your agents, and what an agent
-does from session start to close: [docs/ONBOARDING.md](docs/ONBOARDING.md).
+codes. How to put the four core skills before your agents, and what one does
+from session start to close: [docs/ONBOARDING.md](docs/ONBOARDING.md).
 
 ## Status
 
@@ -147,4 +147,4 @@ publishing a public tree, follow the scrub checklist in
 [docs/PUBLISHING.md](docs/PUBLISHING.md). The committed check covers
 machine-local paths and secret shapes; operator names, external project or tool
 names and hostnames are covered only by the untracked deny-list that checklist
-requires.
+requires: the code is Apache-2.0; a security problem goes privately to [SECURITY.md](SECURITY.md).

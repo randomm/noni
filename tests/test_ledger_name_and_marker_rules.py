@@ -27,6 +27,7 @@ The closed key set, and the parity of the two programs' field lists, are in
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -50,6 +51,69 @@ RAW_SEPARATORS = ("\x85", "\u2028", "\u2029")
 BLANKS = ("", "   ", "\t", " \t ", "\x0b\x0c")
 # A name an operator would actually type: spaces, a dot, a digit.
 ORDINARY = "Dr. A. Reyes"
+
+
+def _decode_jq_class(class_text: str) -> set[str]:
+    """The characters a jq bracketed class names, decoded from its two-character escapes.
+
+    Takes the text rather than the file so a caller can hand it a mutated copy: a
+    decoder that ignored the ``\\uXXXX`` forms would still answer the two breaks the
+    class spells with a backslash letter, and pass against a set it never compared.
+    jq's string escapes are json's, so json is the decoder -- no table of ours to
+    drift from the syntax the shipped program uses. A stray character is refused
+    rather than joined in: LF and CR entered the old assertion that way, from the
+    class text rather than from what the class names.
+    """
+    # The blank class is anchored, the line class is not, so the anchors belong to
+    # the text and not to what the class names: they are taken off the ends here and
+    # refused anywhere else, so a class that named a caret fails loudly rather than
+    # being quietly stripped of it.
+    core = class_text.lstrip("^").rstrip("$*")
+    assert core.startswith("[") and core.endswith("]"), (
+        f"not a bracketed class: {class_text!r}")
+    body = core[1:-1]
+    assert "^" not in body and "$" not in body, (
+        f"an anchor sits inside the class: {class_text!r}")
+    # The file writes every member as two characters, a backslash and a letter, and
+    # the blank class carries a doubled lead for the members json would otherwise
+    # read as an escaped backslash. Halving the pairs puts the text in the form json
+    # -- and jq, whose string escapes are json's -- actually parses.
+    body = body.replace("\\\\", "\\")
+    try:
+        decoded = json.loads(f'"{body}"')
+    except json.JSONDecodeError as err:
+        msg = f"class is not a decodable json string: {class_text!r} ({err})"
+        raise AssertionError(msg) from err
+    assert "\\" not in decoded, f"an escape survived decoding: {decoded!r}"
+    named = set(decoded)
+    assert len(named) == len(decoded), (
+        f"the class names one character twice: {class_text!r} -> {decoded!r}")
+    return named
+
+
+def _line_free_classes(text: str) -> tuple[str, str]:
+    """The blank class and the line-break class of ``line_free``, in that order.
+
+    Each class is read with one regex, as the body of a ``test()`` string. The
+    pattern's own classes are written with escapes, so a backslash in the shipped
+    text stays a member instead of ending the match: a scan that walked the text
+    two characters at a time dropped the blank class that way, leaving the parity
+    assertion to compare one class against ten breaks.
+    """
+    definition = re.search(r"def line_free:.*?\)\);", text, re.S)
+    assert definition, "line_free no longer holds the two test() forms to parse"
+    classes = re.findall(r"test[(]\"([^\"]*)\"", definition.group(0))
+    # The blank class is anchored -- "^[ ... ]*$" -- so its trailing "]" is not the
+    # last character, and a test for the brackets at the two ends would drop it and
+    # leave one class to compare against the ten breaks.
+    def _bracketed(candidate: str) -> bool:
+        core = candidate.lstrip("^").rstrip("$*")
+        return core.startswith("[") and core.endswith("]")
+
+    bracketed = [c for c in classes if _bracketed(c)]
+    assert len(bracketed) == 2, (
+        f"expected the blank class and the line class, got {classes}")
+    return bracketed[0], bracketed[1]
 
 
 def _fail_recorder() -> tuple[list[tuple[int, str]], callable]:
@@ -90,25 +154,67 @@ def test_the_jq_line_class_names_every_break_the_python_set_names():
 
     The class is parsed out of the shipped ``line_free`` rather than retyped: the
     assertion is about the shipped bytes, and a copy here would drift with them.
+    It is decoded, not scanned: the file spells every member as a two-character
+    escape, so the reading this replaced named nothing but the ``\\n`` and ``\\r``
+    that happen to sit in the class, added LF and CR from a raw-character fallback
+    it did not need, and compared no break against ``LINE_BREAKS``. The blank class
+    is checked the same way in the same breath: it is the other half of the
+    predicate, and a drift there is the same bug.
+    """
+    from noni.ledger_schema import BLANKS, LINE_BREAKS
+
+    blank_class, line_class = _line_free_classes(SCHEMA_JQ.read_text(encoding="utf-8"))
+    named_breaks = _decode_jq_class(line_class)
+    assert named_breaks == set(LINE_BREAKS), (
+        f"the jq line class and LINE_BREAKS differ: jq "
+        f"{sorted(ord(c) for c in named_breaks)} "
+        f"vs python {sorted(ord(c) for c in LINE_BREAKS)}")
+    # The blank class is the whitespace str.strip() removes, minus the breaks (a
+    # value carrying one is refused above) and minus the three json writes raw.
+    named_blanks = _decode_jq_class(blank_class)
+    assert named_blanks == set(BLANKS), (
+        f"the jq blank class and BLANKS differ: jq "
+        f"{sorted(ord(c) for c in named_blanks)} "
+        f"vs python {sorted(ord(c) for c in BLANKS)}")
+
+
+def test_a_class_missing_a_break_fails_the_decoding_of_it(tmp_path):
+    """The parity test above can fail: drop one break from the shipped class and the
+    decoded set no longer equals ``LINE_BREAKS``.
+
+    Without this the assertion is only as good as its own decoder, and the decoder
+    this replaced passed on the shipped file while comparing two characters out of
+    ten. Every break is dropped in turn, so one missing member anywhere in the class
+    is caught rather than the one member this test happened to name. The mutation is
+    on copies under ``tmp_path``; the shipped file is only ever read, so nothing here
+    can leave the schema short a break.
     """
     from noni.ledger_schema import LINE_BREAKS
 
-    text = SCHEMA_JQ.read_text(encoding="utf-8")
-    definition = re.search(r"def line_free:.*?\)\);", text, re.S)
-    assert definition, "line_free no longer holds the two test() forms to parse"
-    # The SECOND test() is the line-break class; the first is the blank test.
-    classes = re.findall(r"test\(\"(\[.*?\])\"\)", definition.group(0), re.S)
-    assert len(classes) == 1, f"expected one bracketed class to parse, got {classes}"
-    named = set()
-    for code in re.findall(r"\\u([0-9a-fA-F]{4})", classes[0]):
-        named.add(chr(int(code, 16)))
-    # The two characters the class spells with a backslash letter rather than \u.
-    for spelled, char in (("\\n", "\n"), ("\\r", "\r")):
-        if spelled in classes[0]:
-            named.add(char)
-    assert named == set(LINE_BREAKS), (
-        f"the jq line class and LINE_BREAKS differ: jq {sorted(ord(c) for c in named)} "
-        f"vs python {sorted(ord(c) for c in LINE_BREAKS)}")
+    shipped = SCHEMA_JQ.read_text(encoding="utf-8")
+    _blank, line_class = _line_free_classes(shipped)
+    assert _decode_jq_class(line_class) == set(LINE_BREAKS), (
+        "the shipped class already fails the parity test above")
+    checked = 0
+    for break_char in LINE_BREAKS:
+        # The class spells LF and CR with a backslash letter and the other eight
+        # with \uXXXX, which is the spelling the shipped bytes actually use -- the
+        # assert below catches a class that stopped spelling a break either way.
+        spelling = {"\n": "\\n", "\r": "\\r"}.get(
+            break_char, f"\\u{ord(break_char):04x}")
+        mutated = tmp_path / f"census-schema-{ord(break_char):04x}.jq"
+        mutated.write_text(shipped.replace(spelling, ""), encoding="utf-8")
+        assert mutated.read_text(encoding="utf-8") != shipped, (
+            f"the shipped class does not spell U+{ord(break_char):04X} as {spelling}, "
+            "so dropping it would mutate nothing")
+        checked += 1
+        _mut_blank, mut_line = _line_free_classes(mutated.read_text(encoding="utf-8"))
+        decoded = _decode_jq_class(mut_line)
+        assert break_char not in decoded and decoded != set(LINE_BREAKS), (
+            f"dropping {spelling} from the class left the decoded set unchanged: "
+            f"{sorted(ord(c) for c in decoded)}")
+    assert checked == len(LINE_BREAKS), (
+        f"only {checked} of {len(LINE_BREAKS)} breaks were mutated")
 
 
 # --- the name rules, three entry points -------------------------------------

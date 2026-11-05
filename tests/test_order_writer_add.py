@@ -9,9 +9,6 @@ import shutil
 from _harness import (
     _git_e2,
 )
-from ordering_shapes import (
-    MALFORMED_SHAPES,
-)
 from order_fixtures import (
     BASELINE_ID,
     NOW,
@@ -32,6 +29,9 @@ from order_fixtures import (
     _schema_module,
     _seed,
     _supersede_baseline,
+)
+from ordering_shapes import (
+    MALFORMED_SHAPES,
 )
 
 

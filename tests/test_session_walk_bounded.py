@@ -22,6 +22,15 @@ is now bounded structurally: it iterates the parts of the name relative to the r
 so there is no upward step to bound and no ancestor can be examined however the root
 was spelled.
 
+The third fault is how the module is reached. The walk answers its questions with the
+two ``lstat`` helpers and the templates of :mod:`noni._session_paths`, and that module
+re-exports the walk's entry points -- so the pair imports each other, and an eager
+import on either side makes ``python -c "import noni._session_walk"`` die with
+"cannot import name ... from partially initialized module". Nothing in the package
+imports the walk by its own name (callers go through ``_session_paths``), so the whole
+suite stayed green while the module could not be imported first. The last test here
+imports it in a fresh interpreter, which is the only shape that shows it.
+
 The timeouts are not decoration. A regression of the first fault is a hang, and a
 hanging test is a suite that never reports anything, so each case that could hang runs
 either under ``pytest-timeout`` where it is installed or in a subprocess with a hard
@@ -105,6 +114,23 @@ def test_a_name_that_is_not_a_file_under_the_root_is_refused_fast():
         # blame either: the sentence describes the NAME it was handed.
         assert "symlink" not in low, f"{rel!r} blamed a symlink: {headline}"
         assert rel in headline, f"{rel!r}: the refusal must name it: {headline}"
+
+
+def test_the_walk_module_imports_in_a_fresh_interpreter():
+    """``import noni._session_walk`` first, with no sibling loaded, and it must work.
+
+    A fresh interpreter is the point: in the suite the walk is always reached after
+    :mod:`noni._session_paths` has finished, which is exactly the ordering that hides
+    a cycle between the pair. Run in a child for the same reason the bounded-name
+    cases are -- an import-time fault is the child's exit status and its traceback,
+    not an exception the parent can inspect after its own imports have settled.
+    """
+    script = ("import sys; sys.path.insert(0, {src!r})\n"
+              "import noni._session_walk\n").format(src=str(SRC))
+    proc = subprocess.run([sys.executable, "-B", "-c", script],
+                          capture_output=True, text=True, timeout=BOUND_SECONDS)
+    assert proc.returncode == 0, (
+        f"the walk must be importable on its own: {proc.stderr.strip()}")
 
 
 def test_a_good_name_under_the_root_is_not_refused():

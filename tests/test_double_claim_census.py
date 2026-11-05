@@ -13,8 +13,48 @@ out, and both claims land.
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 
 from conftest import _git_ok, build_bare_origin, push_with_retry, run_claim, run_register
+from session_git_support import _pinned_allocation_driver
+
+from noni import census as _census
+
+# The name shape the census accepts for an allocated register file, read off the
+# census's own pattern: the id a mint produces has to satisfy the check the census
+# applies to it, and a suite that retyped the pattern would keep passing if the two
+# drifted apart. The double-claim fixture above asserts distinctness; this is the
+# other half of what "distinct" has to mean.
+SESSION_SHAPE = _census.SESSION_NAME_RE
+
+# The allocation the collision case pins, and the victim's bytes: see
+# test_register_refuses_an_allocation_that_lands_on_an_existing_file.
+VICTIM_SID = "2026-01-01-dead07"
+VICTIM_BODY = (f"# session {VICTIM_SID}\n\n"
+               "- identity: someone-else\n"
+               "- host/worktree: host-a (repo-a)\n"
+               "- started: 2026-01-01T00:00:00Z\n"
+               "- status: active\n"
+               "- claims:\n"
+               "  - claim: #42\n")
+
+
+def _run_pinned(driver, repo, session_id: str, *extra: str
+                ) -> subprocess.CompletedProcess[str]:
+    """One register run whose allocation is ``session_id``, launched as the CLI runs it.
+
+    The shared pinned-allocation driver, with the harness env (which pins
+    ``PYTHONPATH`` to this tree's ``src/``) and the id the driver reads from
+    ``NONI_TEST_SESSION_ID``.
+    """
+    from _harness import subprocess_env
+
+    env = subprocess_env()
+    env["NONI_TEST_SESSION_ID"] = session_id
+    return subprocess.run([sys.executable, str(driver), "--repo", str(repo),
+                           "--identity", "developer", *extra],
+                          capture_output=True, text=True, env=env, timeout=120)
 
 
 def _sid_of(stdout: str) -> str:
@@ -50,7 +90,7 @@ def test_two_clones_double_claim_census_flags(tmp_path, run_sessions_census):
     # Extract the session ids from the register output.
     sid_a = _sid_of(reg_a.stdout)
     sid_b = _sid_of(reg_b.stdout)
-    assert sid_a != sid_b, "session-ids must be distinct (collision-free by construction)"
+    assert sid_a != sid_b, "session-ids must be distinct"
 
     # Commit each register file.
     _git_ok(clone_a, "add", "noni/sessions/")
@@ -97,6 +137,13 @@ def test_register_allocates_distinct_files(tmp_path):
     sid1 = _sid_of(reg1.stdout)
     sid2 = _sid_of(reg2.stdout)
     assert sid1 != sid2
+    # Distinct is the whole promise the writer makes about a random id: the mint is
+    # 6 hex characters over one UTC day, so a repeat is rare rather than impossible
+    # and the writer confirms the name it got rather than trusting it. The shape a
+    # minted id must keep is the census's own -- the census reports every other name
+    # as a malformed row -- so it is read off that pattern rather than retyped here.
+    assert SESSION_SHAPE.fullmatch(f"{sid1}.md"), sid1
+    assert SESSION_SHAPE.fullmatch(f"{sid2}.md"), sid2
 
     # The files exist and are distinct.
     files = list((repo / "noni" / "sessions").glob("*.md"))
@@ -107,3 +154,32 @@ def test_register_allocates_distinct_files(tmp_path):
     other_file = str(repo / "noni" / "sessions" / f"{sid1}.md")
     reg3 = run_register(repo, "reviewer", file=other_file)
     assert reg3.returncode == 2, f"expected exit 2 (refused path), got {reg3.returncode}: {reg3.stderr}"
+
+
+def test_register_refuses_an_allocation_that_lands_on_an_existing_file(tmp_path):
+    """The un-marked allocating route refuses a name that is already held.
+
+    The refusal above closes the ``--file`` route, where the operator names the path.
+    It cannot close this one: an allocating run names nothing, so the only thing
+    standing between a minted id and a committed session file was the mint itself --
+    and 6 hex characters over one UTC day repeat. The allocation is pinned onto the
+    committed file's name because that collision is what the writer must survive, and
+    the file's own bytes are the assertion: overwriting it erased another session's
+    identity and claim rows and reported success.
+    """
+    repo = tmp_path / "repo"
+    sessions = repo / "noni" / "sessions"
+    sessions.mkdir(parents=True)
+    victim = sessions / f"{VICTIM_SID}.md"
+    victim.write_text(VICTIM_BODY, encoding="utf-8")
+    victim_bytes = victim.read_bytes()
+
+    driver = _pinned_allocation_driver(tmp_path, VICTIM_SID)
+    proc = _run_pinned(driver, repo, VICTIM_SID, "--no-commit")
+
+    assert proc.returncode == 2, f"expected exit 2, got {proc.returncode}: {proc.stderr}"
+    assert f"{VICTIM_SID}.md" in proc.stderr, proc.stderr
+    assert victim.read_bytes() == victim_bytes, (
+        "an allocation that landed on a committed session file replaced it")
+    assert [p.name for p in sessions.glob("*.md")] == [f"{VICTIM_SID}.md"], (
+        "the refused run left a second file beside the one it refused to touch")

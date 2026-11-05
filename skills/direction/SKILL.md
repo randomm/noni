@@ -130,8 +130,8 @@ steering-ledger record that set the entry's position, and it is never empty: an
 entry whose `decision` is `null`, blank or absent is not an order this writer
 writes (exit 4, naming the entry) and the census reports it as
 `ordering-malformed` (15) -- a position nobody can look up is a position nobody
-decided. `confirmed` is
-the UTC timestamp the writer stamped when the operator last confirmed the entry.
+decided. `confirmed` is the UTC timestamp the writer stamped when the operator
+last confirmed the entry.
 
 The file is written in one canonical form: keys in the order above, two-space
 indent, one trailing newline. A file that is not in that form is refused, never
@@ -221,7 +221,7 @@ the old bytes and never a truncated file.
 
 | census row | what to do with this skill |
 |---|---|
-| `ordering-malformed` (15) | the file is not the artifact: unparseable, a number that is not finite, a key stated twice, wrong `schema`, a duplicate or non-positive `issue`, a `confirmed` that is not a UTC timestamp (including one with no offset), a `decision` that is not a non-blank record id (a blank string, a `null` or any other value; an absent `decision` reports as a missing field), a `decision` matching no record, an `--issue-state` file that does not parse or whose keys are not plain issue numbers, or a decision ledger whose listing faulted. The writer refuses to overwrite such a file (exit 4): repair it to the documented shape and commit it in the canonical form, or remove it and rebuild the queue with `order.py add` |
+| `ordering-malformed` (15) | the file is not the artifact: unparseable, a number that is not finite, a key stated twice, wrong `schema`, a duplicate or non-positive `issue`, a `confirmed` that is not a UTC timestamp (including one with no offset), a `decision` that is blank, `null`, absent, or not a string, a `decision` matching no record, an `--issue-state` file that does not parse or whose keys are not plain issue numbers, or a decision ledger whose listing faulted. The writer refuses to overwrite such a file (exit 4): repair it to the documented shape and commit it in the canonical form, or remove it and rebuild the queue with `order.py add` |
 | `ordering-stale` (45) | an entry nobody confirmed within the threshold. `confirm` it if the position still stands, `remove` it if it does not |
 | `ordering-closed` (46) | the issue is closed in the `--issue-state` map, so it is not work to do next: `remove` it. A `cannot-tell` row of the same class says the map does not mention the issue -- the fix belongs to whoever produced the map, not to this file |
 | `intent` (51), subject `section-missing` | the file is missing a heading, repeats one, has the four out of order, its `Last-confirmed:` line is absent or repeated, or a code fence was left unclosed. Edit the draft and re-run `intent.py set`, which refuses a draft it would not have written |
@@ -302,10 +302,10 @@ the old bytes and never a truncated file.
   writer's, applied to the bytes on disk: a blank `decision` is malformed there
   too, not just here, even though a blank string is a string, and so is a
   `decision` of `null` -- every entry cites the record that set its position, so
-  an entry that cites nothing is an ordering nobody can replay. Repair the file to
-  what this writer emits, not merely to something that parses -- a hand-repaired
-  file the census accepts and the writer still refuses can never be corrected
-  with `order.py`, because every verb refuses to open it.
+  an entry that cites nothing is an ordering nobody can replay. Repair the file
+  to what this writer emits, not merely to something that parses -- a
+  hand-repaired file the census accepts and the writer still refuses can never
+  be corrected with `order.py`, because every verb refuses to open it.
 - **The writer is not the arbiter.** It validates what it writes; it does not
   decide whether the ledger, the session register or the order are sound. Run
   the census for that.

@@ -26,7 +26,7 @@ from __future__ import annotations
 import re
 
 from _harness import REPO
-from docs_commands import block_commands, fenced_blocks, read
+from docs_commands import block_commands, fenced_blocks, fenced_pairs, read
 from docs_promises import (
     DOC_PAGES,
     FORGE_CI_README,
@@ -37,7 +37,10 @@ from docs_promises import (
     section_body,
 )
 from quickstart_golden import CI
+from quickstart_page import COEXISTENCE_HEADING, product_section_8
 from quickstart_runner import route_commands
+
+from noni import public_safety
 
 # What one CI system's vocabulary looks like on a page. Each token is matched as a
 # word, not as a substring: a gate that flagged the word "uses" in ordinary prose
@@ -214,3 +217,134 @@ def test_the_forge_example_runs_the_page_s_own_census_commands() -> None:
             f"{' '.join(census_argv)}: {steps}")
     assert [argv[3] for argv in steps if argv[:2] == ["noni", "census"]] == [
         ".", STATE_DIR], f"the example's two routes are wrong: {steps}"
+
+
+def test_the_forge_page_names_where_the_deny_list_lives_for_a_strict_run() -> None:
+    """The forge copy tells a reader where the deny-list goes before it offers
+    ``--strict``, and names both places the census will look.
+
+    The step the page prints runs without ``--strict``, and the page says so; the
+    half that was missing is what a team who later adds the flag has to do first.
+    Under ``--strict`` the hygiene class fails the job on a tree with no usable
+    deny-list entry, so an example that invites the opt-in without saying where the
+    file lives leaves a reader with a red job and nothing to fix. Both sources are
+    required -- the tree's own default file, at the root of the tree ``--repo``
+    names, and the env var for a tree that carries no default -- because
+    ``public_safety.load_denylist`` tries exactly those two, in that order. The
+    names come from the product's constants, so a rename reddens the page rather
+    than leaving it pointing at a file the census never opens.
+    """
+    text = read(FORGE_CI_README)
+    assert public_safety.DENYLIST_FILENAME in text, (
+        f"the forge page does not name {public_safety.DENYLIST_FILENAME!r}, so a "
+        "team that adds --strict is told to create a file the page never locates")
+    assert public_safety.DENYLIST_ENV_VAR in text, (
+        f"the forge page does not name the {public_safety.DENYLIST_ENV_VAR} route, "
+        "the one source available to a tree with no default deny-list of its own")
+    # The location, not just the name: on Route B the audited tree is the state
+    # clone, so the path the reader needs is the clone's own root.
+    assert f"{STATE_DIR}/{public_safety.DENYLIST_FILENAME}" in text, (
+        f"the forge page does not say the deny-list goes at the root of the tree "
+        f"--repo names, as {STATE_DIR}/{public_safety.DENYLIST_FILENAME}")
+    assert "usable entry" in text.lower(), (
+        "the forge page offers --strict without naming its precondition, an "
+        "inactive hygiene row fails the job however many files are present")
+    # Ordering: the reader meets the flag's name before the location that unlocks
+    # it -- the step is documented un-strict, and the deny-list is its opt-in.
+    assert text.index(public_safety.DENYLIST_ENV_VAR) > text.index("`--strict`"), (
+        "the forge page names the deny-list location before it introduces "
+        "--strict, which reads as though the flag were the default step")
+
+
+def test_the_coexistence_position_names_no_driver_and_stays_prose() -> None:
+    """The coexistence position is written in driver-neutral words, and runs nothing.
+
+    The section exists to tell a team with a work driver of their own which of
+    noni's layers they still run, so the temptation it lives beside is the one this
+    gate closes: naming the driver, and pasting that driver's commands onto a core
+    page. Both halves are the purity rule's (docs/PRODUCT.md 3), and both are
+    mechanical. The vocabulary sweep reuses :func:`_ci_token` over the one page set
+    the neutrality gate already reads -- the same rule that keeps a pipeline's
+    ``uses:`` off the core now keeps any driver's own verbs off it, and the section
+    is written so a reader who brings a different driver still recognises it. The
+    fence check is the section's own: its position is documentation, and a command
+    line grown under this heading is one the launcher never runs.
+    """
+    token = _ci_token()
+    # Located by the heading rather than asserted section-by-section: only the
+    # quickstart carries this section, and ``docs_promises.section_body`` asserts a
+    # page has the heading it was asked for -- a helper that keeps every other core
+    # page's own sections honest would here fail on a README that never promised one.
+    carrying = [(label, section_body(text, COEXISTENCE_HEADING))
+                for label, text in _core_pages() if COEXISTENCE_HEADING in text]
+    assert len(carrying) == 1, (
+        f"exactly one core page carries the coexistence section, got "
+        f"{len(carrying)}: the position belongs on the quickstart alone")
+    offenders = [(label, line.strip())
+                 for label, body in carrying for line in body.splitlines()
+                 if token.search(line)]
+    assert not offenders, (
+        f"the coexistence section carries driver or CI-system vocabulary, which "
+        f"belongs under integrations/: {offenders}")
+
+    body = section_body(read(QUICKSTART), COEXISTENCE_HEADING)
+    commands = [argv for info, lines in fenced_pairs(body) if info == "bash"
+                for argv in block_commands(lines)]
+    assert not commands, (
+        f"the coexistence section prints {len(commands)} command(s) no golden list "
+        f"covers, so the position has become a step nothing runs: {commands}")
+
+
+def test_the_product_page_links_the_coexistence_position_in_one_bullet() -> None:
+    """docs/PRODUCT.md 8 points at the coexistence section, from one E4 bullet.
+
+    The epic map is the binding page's own list of what the epics owe, so the
+    driver-claims adapter's follow-up line belongs inside the E4 entry rather than
+    as a paragraph beside it -- a free-floating note under the heading would let the
+    adapter be dropped from E4 while the page still read as if it were promised.
+    Located word by word over the whole section: the page wraps at its own column,
+    so the words are the contract and the line they broke on is not, which is why
+    this does not scan markdown lines for the heading. :func:`_e4_lines` does the
+    structural half -- the sentence has to sit inside the E4 bullet.
+    """
+    import re
+
+    section = product_section_8()
+    heading = r"\s+".join(re.escape(word) for word in COEXISTENCE_HEADING.split())
+    assert re.search(heading, section), (
+        f"docs/PRODUCT.md 8 no longer names the coexistence section, so the epic "
+        f"map does not point a reader at the position: {section!r}")
+    assert "docs/QUICKSTART.md" in section, (
+        "docs/PRODUCT.md 8 names the section without naming the page that carries "
+        "it, so the reference has nothing to resolve against")
+    e4 = _e4_lines(section)
+    assert re.search(heading, " ".join(e4)), (
+        f"the coexistence reference sits outside the E4 adapters bullet, so a "
+        f"reader of the epic map would not find the follow-up where the adapter is "
+        f"promised: {e4!r}")
+    assert "follow-up" in " ".join(e4), (
+        f"the E4 entry lost its follow-up framing, so the adapter reads as shipped: "
+        f"{e4!r}")
+
+
+def _e4_lines(section: str) -> list[str]:
+    """The lines of the E4 bullet of the epic map, its continuation lines included.
+
+    The map is a list whose entries run to several wrapped lines, so a bullet is the
+    line starting with the marker plus every following line that is not a new entry
+    or the end of the section. Read over the section's own lines rather than by
+    regex over the text: the entry the reference belongs to is a structural fact
+    about the list, and a sentence moved under another epic's entry is the drift this
+    exists to catch.
+    """
+    lines = section.splitlines()
+    start = [i for i, line in enumerate(lines)
+             if line.startswith("- ") and line.lower().lstrip("- *").startswith("e4")]
+    assert len(start) == 1, (
+        f"the epic map must hold exactly one E4 entry to carry the follow-up, got "
+        f"{len(start)}: {section!r}")
+    body = lines[start[0] + 1:]
+    end = next((i for i, line in enumerate(body)
+                if line.startswith("- ") or line.startswith("## ")), len(body))
+    return [lines[start[0]], *body[:end]]
+

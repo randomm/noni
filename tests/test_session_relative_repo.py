@@ -1,4 +1,5 @@
-"""The private-state route as a reader names it: a relative ``--repo`` (issue #66).
+"""The private-state route as a reader names it: a relative ``--repo`` (issue #66,
+and the printed path token of issue #77 AC2).
 
 docs/PRODUCT.md 7 sells a second state root -- a separate repository carrying the
 same ``noni/`` layout, selected by passing its path as ``--repo``. The shape a
@@ -15,6 +16,15 @@ four writers exited 3 with its file written and uncommitted. No such helper
 exists any more -- the writers build the name once with
 :func:`noni._session_git.writer_name` -- which is why these tests hold: they pin
 the fault the removed helper used to produce.
+
+Issue #77 found the same blind spot in the *printed* path. A ``--no-commit`` run
+named the file by its state-root-relative path while the committed run named it
+by the path from the caller's cwd, so on Route B the uncommitted line read as a
+stray ``noni/`` having appeared beside the project. The last tests here run each
+session writer twice with one relative ``--repo`` -- once committed, once with
+``--no-commit`` -- and require both lines to carry the same path token. The
+direction writers (order, intent, decide) have no session file to build, so
+``tests/test_writer_path_form.py`` covers them.
 
 One module holds all four verbs rather than one test in each suite, because the
 property is the shared primitive's and every launcher in it is the same
@@ -49,6 +59,13 @@ SID = "2026-10-01-cccccc"
 REL = f"noni/sessions/{SID}.md"
 DOUBLED = f"{STATE_DIR}/noni/sessions/{SID}.md"
 
+# The token a Route B caller must be handed on both routes: the session file as
+# reached from the project directory, ``--repo`` component included (issue #77).
+# Only writers addressed by an id carry it -- close, release and claim name the
+# one session this file's fixture commits; register mints a fresh id per run and
+# its own pair is checked for the same *form* instead.
+TOKEN = DOUBLED
+
 
 def _refused_run(cwd: Path, script: Path, *args: str) -> subprocess.CompletedProcess[str]:
     """One writer from ``cwd`` with no committer identity, so git refuses the commit.
@@ -82,6 +99,81 @@ def _assert_clone_clean(state: Path) -> None:
     assert _git_ok(state, "status", "--porcelain").stdout.splitlines() == [], (
         "a completed run left the state clone dirty"
     )
+
+
+def _one_line(stdout: str, label: str) -> str:
+    """The single output line carrying ``label``, or the failure that says so.
+
+    Exactly one match is a precondition of every path comparison below: two lines
+    would make it ambiguous which one agreed, and none would make the assertion
+    vacuous.
+    """
+    matching = [row for row in stdout.splitlines() if label in row]
+    assert len(matching) == 1, f"expected one {label!r} line, got {matching}"
+    return matching[0]
+
+
+def _run_ok(cwd: Path, script: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """One writer launched from ``cwd``, whose exit code has to be 0.
+
+    ``--repo`` is handed over exactly as a Route B reader types it -- a bare
+    directory name -- so the pair of runs one test builds differ by the
+    ``--no-commit`` flag and nothing else.
+    """
+    proc = run_from(cwd, script, *args)
+    assert proc.returncode == 0, (f"{script.name} {args}: {proc.returncode}"
+                                  f"\nstdout: {proc.stdout}\nstderr: {proc.stderr}")
+    return proc
+
+
+def _assert_named_on_both_routes(label: str, committed: str, uncommitted: str,
+                                 same_file: bool = True) -> None:
+    """Both lines name the path as spelled from the caller's cwd.
+
+    The token is ``--repo`` joined to the path under the state root, which is the
+    string that actually locates the file in the directory the command ran in. It
+    is compared exactly rather than by substring: the bare state-root-relative
+    spelling that one route used to print satisfies a ``in`` test for nothing, and
+    a line that printed the absolute machine path (the other form this bug took)
+    fails it too, because the token would carry the tmp_path prefix.
+
+    ``same_file`` says whether the two runs addressed one path. Three writers are
+    addressed by an id, so both runs name the caller's own session and the two
+    tokens must be equal; register mints a fresh id per run, and its pair is
+    compared for the same *form* under the directory rather than the same name.
+    """
+    committed_token = _path_token(committed)
+    uncommitted_token = _path_token(uncommitted)
+    prefix = f"{STATE_DIR}/noni/sessions/"
+    assert committed_token.startswith(prefix), (
+        f"the committed {label} line names {committed_token!r}, not a path under "
+        f"the --repo the caller typed: {committed}")
+    assert uncommitted_token.startswith(prefix), (
+        f"the --no-commit {label} line names {uncommitted_token!r}, which a Route "
+        f"B reader reads as a noni/ beside the project: {uncommitted}")
+    if not same_file:
+        # Same directory, same depth, one file name inside it: what may not vary
+        # between the two lines is the shape of the answer, only the id.
+        assert "/" not in uncommitted_token[len(prefix):], uncommitted_token
+        assert committed_token.count("/") == uncommitted_token.count("/") == 3, (
+            committed_token, uncommitted_token)
+        return
+    assert committed_token == uncommitted_token, (
+        f"the two {label} lines name the same file differently: "
+        f"{committed_token!r} vs {uncommitted_token!r}")
+
+
+def _path_token(line: str) -> str:
+    """The whitespace-delimited path inside one printed line.
+
+    Exactly one token of a line may look like a path under the state root; a line
+    carrying none (or a second one) says the writer's wording changed, and the
+    comparison would have been made against the wrong word.
+    """
+    candidates = [word.rstrip(".;,") for word in line.split() if "/" in word]
+    named = [word for word in candidates if word.endswith(".md")]
+    assert len(named) == 1, f"expected one path in {line!r}, found {named}"
+    return named[0]
 
 
 # --- register ---------------------------------------------------------------
@@ -267,3 +359,80 @@ def test_release_with_a_relative_repo_names_the_repo_relative_path_when_refused(
     # AC4: the row is removed on disk, and nothing landed in the clone.
     assert "- claim: #1" not in session.read_text(encoding="utf-8")
     assert _git_ok(state, "rev-parse", "HEAD").stdout.strip() == head_before
+
+
+# --- the printed path token, committed and uncommitted (issue #77, AC2) ------
+#
+# One relative --repo, one writer, two runs: the flag flipped is the only
+# difference, so the two lines the writer prints are the pair the pilot read as
+# two different files. Each pair runs in its own fixture tree, because these
+# writers are not idempotent across the pair: a close that landed leaves nothing
+# for the second close to name, and release removes the row it would ask for.
+
+
+def test_register_prints_the_same_path_token_committed_and_uncommitted(tmp_path):
+    """``registered session <id> -> <path>`` and ``<path> left uncommitted`` agree.
+
+    register mints a fresh id per run, so the two runs name two files; what has
+    to agree is the form, and that neither line ever drops the ``--repo``
+    component the bug dropped on one of the two routes.
+    """
+    project, _state, _session = _nested_state(tmp_path, SID, name="token-register")
+    committed = _run_ok(project, REGISTER, "--repo", STATE_DIR, "--identity",
+                        "developer")
+    uncommitted = _run_ok(project, REGISTER, "--repo", STATE_DIR, "--identity",
+                          "reviewer", "--no-commit")
+
+    committed_line = _one_line(committed.stdout, "->")
+    uncommitted_line = _one_line(uncommitted.stdout, "left uncommitted")
+    _assert_named_on_both_routes("register", committed_line, uncommitted_line,
+                                 same_file=False)
+
+
+def test_close_prints_the_same_path_token_committed_and_uncommitted(tmp_path):
+    """``closed session <id> in <path>`` and ``<path> left uncommitted`` agree."""
+    project_a, _state_a, _a = _nested_state(tmp_path, SID, name="token-close-committed")
+    project_b, _state_b, _b = _nested_state(tmp_path, SID, name="token-close-uncommitted")
+
+    committed = _run_ok(project_a, CLOSE, "--repo", STATE_DIR, "--session-id", SID)
+    uncommitted = _run_ok(project_b, CLOSE, "--repo", STATE_DIR, "--session-id", SID,
+                          "--no-commit")
+    _assert_named_on_both_routes(
+        "close",
+        _one_line(committed.stdout, "closed session"),
+        _one_line(uncommitted.stdout, "left uncommitted"))
+
+
+def test_release_prints_the_same_path_token_committed_and_uncommitted(tmp_path):
+    """``released <task> from <path>`` and ``<path> left uncommitted`` agree."""
+    project_a, _state_a, _a = _nested_state(tmp_path, SID, name="token-rel-committed")
+    project_b, _state_b, _b = _nested_state(tmp_path, SID, name="token-rel-uncommitted")
+
+    committed = _run_ok(project_a, RELEASE, "--repo", STATE_DIR, "--session-id", SID,
+                        "--task", "#1")
+    uncommitted = _run_ok(project_b, RELEASE, "--repo", STATE_DIR, "--session-id", SID,
+                          "--task", "#1", "--no-commit")
+    _assert_named_on_both_routes(
+        "release",
+        _one_line(committed.stdout, "released"),
+        _one_line(uncommitted.stdout, "left uncommitted"))
+
+
+def test_claim_prints_the_same_path_token_committed_and_uncommitted(tmp_path):
+    """``committed claim <task> in <path>`` and ``appended ... to <path>`` agree.
+
+    The shape that differed between the two lines (a bare id on one, a path on
+    the other) is exactly what AC2 forbids, and what the pilot read as a second
+    ``noni/`` tree beside the project.
+    """
+    project_a, _state_a, _a = _nested_state(tmp_path, SID, name="token-claim-committed")
+    project_b, _state_b, _b = _nested_state(tmp_path, SID, name="token-claim-uncommitted")
+
+    committed = _run_ok(project_a, CLAIM, "--repo", STATE_DIR, "--session-id", SID,
+                        "--task", "#42")
+    uncommitted = _run_ok(project_b, CLAIM, "--repo", STATE_DIR, "--session-id", SID,
+                          "--task", "#7", "--no-commit")
+    _assert_named_on_both_routes(
+        "claim",
+        _one_line(committed.stdout, "committed claim"),
+        _one_line(uncommitted.stdout, "left uncommitted"))

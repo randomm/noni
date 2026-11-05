@@ -192,23 +192,33 @@ def supersede_target(load: Callable[[Path, Path, str],
     return (target_path, target_record, target_committed), target_rel, None
 
 
-def success_line(label: str, record_path: Path, rels: list[str],
-                 target_rel: str | None, superseded: str,
-                 no_commit: bool) -> str:
-    """The one line a successful run prints.
-
-    ``--no-commit`` names both paths and says committing them is the caller's job:
-    the census reads the working tree, so those files read as uncommitted (an edited
-    target is census.sh exit 12). It also names what the second path now holds -- the
-    target's status is ``superseded``, so an operator who aborts the run knows to
-    restore that file as well as delete the new record, or the chain is left with no
-    live record.
+def target_paths_of(target: "tuple[Path, dict, bytes] | None",
+                    record_path: Path) -> tuple[list[str], list[str]]:
+    """The ``(record_paths, target_paths)`` the success line names: caller-cwd form,
+    record first and target second (issue #77, AC2). Supersedes are the only run
+    with two; a run that supersedes nothing names only the record.
     """
+    if target is None:
+        return [str(record_path)], []
+    return [str(record_path), str(target[0])], [str(target[0])]
+
+
+def success_line(label: str, record_paths: list[str],
+                 target_paths: list[str], superseded: str,
+                 no_commit: bool) -> str:
+    """The one line a successful run prints, naming caller-cwd paths (#77, AC2).
+
+    ``--no-commit`` says committing them is the caller's job (the census reads the
+    working tree, so an edited target is census.sh exit 12) and names what the second
+    path now holds, so an operator who aborts knows to restore the target as well as
+    delete the new record.
+    """
+    wrote = ', '.join(record_paths)
     if not no_commit:
-        return f"{label}: wrote {record_path}"
-    left = (f"; {target_rel} now holds status {superseded}"
-            if target_rel is not None else "")
-    return (f"{label}: wrote {', '.join(rels)}{left}; left uncommitted: "
+        return f"{label}: wrote {wrote}"
+    left = (f"; {target_paths[0]} now holds status {superseded}"
+            if target_paths else "")
+    return (f"{label}: wrote {wrote}{left}; left uncommitted: "
             "commit these paths before running the census")
 
 

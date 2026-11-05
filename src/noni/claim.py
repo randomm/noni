@@ -368,6 +368,11 @@ def main(argv: list[str] | None = None) -> int:
         return _report(EXIT_USAGE, f"{labels.CLAIM}: {headline}",
                        f"{labels.CLAIM}: fix: {hint}")
     session_file = repo / rel
+    # The one path token every line this run prints carries (issue #77, AC2): the
+    # file's real location as spelled from the caller's working directory,
+    # ``--repo`` joined to the state-root-relative name, identical on the
+    # committed line and on the left-uncommitted line.
+    target = session_file
     # Both paths this run would read and append to, refused before either is touched:
     # asked after the name was derived and before is_file(), so a dangling link is
     # this refusal rather than the misleading 'register file not found' below
@@ -440,12 +445,12 @@ def main(argv: list[str] | None = None) -> int:
         # a targeted push.
         if branch is None:
             print(
-                f"{labels.CLAIM}: appended {task} to {session_file.name}; "
+                f"{labels.CLAIM}: appended {task} to {target}; "
                 f"left uncommitted for the caller to commit"
             )
         else:
             print(
-                f"{labels.CLAIM}: appended {task} to {session_file.name}; "
+                f"{labels.CLAIM}: appended {task} to {target}; "
                 f"left uncommitted for the caller to commit "
                 f"(--branch {branch} was validated but nothing was committed or pushed)"
             )
@@ -467,7 +472,7 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return EXIT_PUSH_FAILED
-    print(f"{labels.CLAIM}: committed claim {task} in {session_file.name}")
+    print(f"{labels.CLAIM}: committed claim {task} in {target}")
 
     if not args.push:
         return EXIT_OK

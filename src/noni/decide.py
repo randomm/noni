@@ -62,6 +62,10 @@ is git config user.name; ``date`` is --date or this run's UTC clock.
 both paths and saying the target's status is now ``superseded``: a run that is then
 aborted leaves an edited target, so restoring the chain means restoring that file and
 deleting the new record, not just deleting the record.
+
+Every path the success lines name (``wrote`` on either route) is the file's real
+location from the caller's working directory: --repo joined to noni/decisions/
+<id>.json, spelled the same with and without --no-commit.
 """
 
 from __future__ import annotations
@@ -141,9 +145,7 @@ gitwrite.EXIT_PROBE_TIMEOUT = EXIT_GIT
 
 
 def _render(record: dict) -> str:
-    """The record's bytes in :data:`FIELD_ORDER`: the renderer is shared with the
-    census's canonical-form comparison in :func:`ledger_schema.render`.
-    """
+    """The record's bytes in :data:`FIELD_ORDER`, via the census's own renderer."""
     return _schema.render(record, FIELD_ORDER)
 
 
@@ -154,16 +156,12 @@ def _written(exc: OSError, what: str) -> str:
 
 def _name_flags(args: argparse.Namespace,
                 options_by_question: dict[str, list[str]]) -> int | None:
-    """The usage refusals that read one flag at a time: the slug, the two free-text
-    ids, the two attribution names, their pairing, and the single-option marker.
+    """The single-flag usage refusals, worded in this writer's voice.
 
-    The rules live in :func:`noni._writer.flag_refusals` beside the other writer
-    mechanics; this is the seam that hands them the writer's printer, its usage code,
-    the census's own line predicate (``is_single_line``) and the options each
-    question ended up with, so a blank or multi-line name is refused as input rather
-    than committed as a record the census then reports at exit 10, and a
-    ``--single-option`` run that asked no one-option question is refused for the same
-    reason: the marker claims a one-option question and the record must show one.
+    :func:`noni._writer.flag_refusals` holds the rules; this seam hands it the
+    writer's printer and usage code, the census's ``is_single_line`` predicate and
+    each question's options, so a shape the census reports at exit 10 is refused at
+    the flag instead.
     """
     return _writer.flag_refusals(_fail, EXIT_USAGE,
                                  _decide_flags.refuse_name,
@@ -178,30 +176,42 @@ def _pair_flags_to_questions(flag: str, pairs: list[tuple[str, str]],
                              seen: set[str]) -> int | None:
     """The exit code printed when ``pairs`` names a question no ``--question`` asks.
 
-    The rule is :func:`noni.ledger_schema.pair_refusal`, shared with the record
-    schema so an orphan id is refused the same way wherever it is found.
+    The rule is :func:`noni.ledger_schema.pair_refusal`, shared with the record schema
+    so an orphan id is refused the same way wherever it is found.
     """
     refusal = _schema.pair_refusal(flag, pairs, seen)
     return None if refusal is None else _fail(EXIT_USAGE, *refusal)
 
 
 def _path_is_taken(path: Path) -> bool:
-    """Whether anything already sits at ``path``, whatever kind of path it is.
-
-    ``lexists`` does not follow a link, so a symlink counts as taken where
-    ``is_file()`` reports the name free; a directory or device counts too.
-    """
+    """Whether anything sits at ``path``: ``lexists`` does not follow a link."""
     return os.path.lexists(path)
 
 
+# The record's name, its two path spellings, and the caller-cwd tokens its
+# success line prints: see :func:`_record_name`.
+RecordName = tuple[str, Path, str, list[str], list[str]]
+
+
+def _record_name(repo: Path, ledger: Path, date_part: str, slug: str) -> RecordName:
+    """The record's ``(id, path, rel, record_paths, target_paths)`` for one run.
+
+    :func:`noni._writer.ledger_name` allocates the name; this seam adds the
+    caller-cwd tokens (#77, AC2), which a supersede extends through
+    :func:`noni._writer.target_paths_of`.
+    """
+    record_id, record_path, record_rel = _writer.ledger_name(repo, ledger, date_part,
+                                                             slug)
+    return (record_id, record_path, record_rel, [str(record_path)], [])
+
+
 def _parse_pairs(values: list[str], flag: str) -> tuple[list[tuple[str, str]], str | None]:
-    """``ID=VALUE`` repeats as ordered pairs: :func:`ledger_schema.parse_pairs`."""
+    """``ID=VALUE`` repeats as pairs: :func:`ledger_schema.parse_pairs`."""
     return _schema.parse_pairs(values, flag)
 
 
 def _source_provenance(issue: int | None, comment: int | None) -> dict | None | int:
-    """The record's ``source`` object, ``None`` for no provenance, or the exit
-    code of the refusal printed.
+    """The record's ``source`` object, ``None`` for none, or the refusal's exit code.
     """
     provenance, refusal = _schema.source_provenance(issue, comment)
     return _fail(EXIT_USAGE, *refusal) if refusal is not None else provenance
@@ -210,8 +220,8 @@ def _source_provenance(issue: int | None, comment: int | None) -> dict | None | 
 def _open_ledger(repo: Path, ledger: Path) -> int | None:
     """The exit-5 refusal for a ledger directory that cannot be created, or None.
 
-    The allocation itself is :func:`noni._writer.allocate_ledger`; this is the seam
-    that gives its refusal this writer's exit code and voice.
+    :func:`noni._writer.allocate_ledger` does the allocation; this seam gives its
+    refusal this writer's exit code and voice.
     """
     refusal = _writer.allocate_ledger(labels.DECIDE, repo, ledger)
     return None if refusal is None else _fail(EXIT_COMMIT_FAILED, *refusal)
@@ -219,8 +229,7 @@ def _open_ledger(repo: Path, ledger: Path) -> int | None:
 
 def _identity(repo: Path) -> str | int:
     """The tree's ``git config user.name``, or the exit code of the exit-3 refusal
-    printed: the two git probes and their verdicts are
-    :func:`noni._writer.identity`, shared with the shape the target read refuses.
+    printed: the two git probes are :func:`noni._writer.identity`.
     """
     by, refusal = _writer.identity(labels.DECIDE, _git, repo)
     if refusal is not None:
@@ -232,13 +241,11 @@ def _write_pair(repo: Path, record_path: Path, record: dict, target_rel: str | N
                 rels: list[str], record_rel: str, committed_bytes: bytes | None,
                 target: tuple[Path, dict, bytes] | None,
                 ledger: Path) -> str | int:
-    """Land both paths, or hand back the exit code of the refusal printed and leave
-    the tree as it was; the empty string means both landed.
+    """Land both paths, or the exit code of the refusal printed; '' is both landed.
 
-    The renders, the atomic writes and the target's status flip are
-    :func:`noni._writer.write_record`; a refusal to render is the exit-4 case and a
-    filesystem fault is rolled back here, because only this writer knows both paths
-    it claimed and the target's committed bytes to put back.
+    The renders, the writes and the target's status flip are
+    :func:`noni._writer.write_record`; a render refusal is exit 4 and a filesystem
+    fault rolls back here, where both claimed paths and the target's bytes are known.
     """
     try:
         refusal = _writer.write_record(_write_atomic, _render, record_path, record,
@@ -256,9 +263,8 @@ def _refuse_unwritten(repo: Path, rels: list[str], target_rel: str | None,
                       ledger: Path, exc: OSError) -> int:
     """Roll the run's paths back after a write that did not land, and refuse.
 
-    os.replace never half-writes, so a path that failed is a path still holding what
-    it held before this run; the rollback puts the target's committed bytes back and
-    the refusal names what the undo could not do rather than calling the tree clean.
+    os.replace never half-writes, so a failed path holds what it held before this
+    run; the refusal names what the undo could not do rather than call the tree clean.
     """
     unredone = _rollback(repo, rels, target_rel, record_rel, committed_bytes)
     detail = _written(exc, "the record could not be written")
@@ -271,9 +277,8 @@ def _refuse_unwritten(repo: Path, rels: list[str], target_rel: str | None,
 def _refuse_taken_name(record_path: Path) -> int:
     """The exit-4 refusal for a record name that is already spoken.
 
-    Tracked or not, and whatever kind of path it is: ``is_file()`` follows a link,
-    so a symlink would have read as free and ``os.replace`` would have put a record
-    where somebody's link stood.
+    ``is_file()`` follows a link, so a symlink would have read as free and
+    ``os.replace`` would have written through it.
     """
     return _fail(
         EXIT_COLLISION,
@@ -285,11 +290,10 @@ def _refuse_taken_name(record_path: Path) -> int:
 
 def _commit(repo: Path, rels: list[str], target_rel: str | None, record_rel: str,
             committed_bytes: bytes | None, message: str) -> int | None:
-    """Stage and commit exactly the paths this run wrote, or hand back the exit
-    code of the refusal printed and leave nothing claimed as rolled back.
+    """Stage and commit exactly this run's paths, or the exit code of the refusal.
 
     The two git steps and their rollback are :func:`noni._writer.stage_and_commit`;
-    this is the seam that turns its refusal into this writer's exit 5.
+    this seam turns its refusal into this writer's exit 5.
     """
     refusal = _writer.stage_and_commit(labels.DECIDE, repo, rels, message,
                                        target_rel, record_rel, committed_bytes)
@@ -298,11 +302,11 @@ def _commit(repo: Path, rels: list[str], target_rel: str | None, record_rel: str
 
 def _load_target(repo: Path, ledger: Path,
                  target_id: str) -> tuple[Path, dict, bytes] | tuple[str, str] | int:
-    """A target as ``(path, record, committed_bytes)``, a ``(headline, hint)`` refusal
-    pair, or the exit code a probe refusal printed; nothing is written on refusal.
-    gitwrite probes the tree and holds the target's whole schema (the live-record
-    rules, every field type the census names, and the committed bytes compared
-    against ``_render``), so a value the renderer cannot name is a refusal.
+    """A target as ``(path, record, committed_bytes)``, a refusal pair, or the exit
+    code a probe refusal printed; nothing is written on refusal.
+
+    gitwrite holds the target's schema and the bytes compared against ``_render``, so
+    a value the renderer cannot name is a refusal.
     """
     path = ledger / f"{target_id}.json"
     found = _load_committed_target(labels.DECIDE, repo, path, target_id,
@@ -312,24 +316,19 @@ def _load_target(repo: Path, ledger: Path,
 
 
 def _validate_usage(args: argparse.Namespace) -> tuple[str, list[dict], list[str]] | int:
-    """Flags-only checks, before git is consulted: returns
-    ``(date_part, questions, unanswered)`` for flags that can produce a valid
-    record, or the exit code of the refusal already printed.
+    """Flags-only checks, before git is consulted: :func:`_build_record_flags`.
 
     The order is the one the refusals need: the record's parts are parsed first
-    because two of the flag rules read them. The slug decides the filename, so
-    nothing is parsed from a run whose slug is not a slug, and the name and marker
-    refusals come after the options are known -- the marker has to be able to see
-    whether any question ended up with one option.
+    because two of the flag rules read them, and the name and marker refusals come
+    after the options are known.
     """
     return _build_record_flags(args)
 
 
 def _build_record_flags(args: argparse.Namespace) -> tuple[str, list[dict], list[str]] | int:
     """The flags that assemble the record: ``--date``, the ``--question`` /
-    ``--option`` / ``--answer`` triples, the name and marker refusals, and the
-    ``--supersedes`` rules. Returns ``(date_part, questions, unanswered)``, or the
-    exit code of the refusal printed.
+    ``--option`` / ``--answer`` triples, the name and marker refusals and the
+    ``--supersedes`` rules; returns ``(date_part, questions, unanswered)``.
     """
     if not SLUG_RE.fullmatch(args.slug):
         return _fail(EXIT_USAGE, f"slug {args.slug!r} is not a slug",
@@ -445,17 +444,23 @@ def main(argv: list[str] | None = None) -> int:
     if opened is not None:
         return opened
 
-    record_id, record_path, record_rel = _writer.ledger_name(repo, ledger, date_part,
-                                                             args.slug)
+    record_id, record_path, record_rel, record_paths, target_paths = _record_name(
+        repo, ledger, date_part, args.slug)
     if _path_is_taken(record_path):
         return _refuse_taken_name(record_path)
 
-    target, target_rel, refusal = _writer.supersede_target(
-        _load_target, labels.DECIDE, repo, ledger, args.supersedes, date_part)
-    if isinstance(refusal, int):
-        return refusal  # a git probe on the target hung; the refusal is printed
-    if refusal is not None:
-        return _fail(EXIT_COLLISION, *refusal)
+    target: tuple[Path, dict, bytes] | None = None
+    target_rel: str | None = None
+    if args.supersedes is not None:
+        target, target_rel, refusal = _writer.supersede_target(
+            _load_target, labels.DECIDE, repo, ledger, args.supersedes, date_part)
+        if isinstance(refusal, int):
+            return refusal  # a git probe on the target hung; the refusal is printed
+        if refusal is not None:
+            return _fail(EXIT_COLLISION, *refusal)
+        # The caller-cwd form of every path this run prints (issue #77, AC2): the
+        # record, and the target beside it for a supersede.
+        record_paths, target_paths = _writer.target_paths_of(target, record_path)
 
     # --- the writes: every check above has passed --------------------------
     record = _schema.record_body(record_id=record_id, date_part=date_part,
@@ -472,13 +477,18 @@ def main(argv: list[str] | None = None) -> int:
                           committed_bytes, target, ledger)
     if isinstance(written, int):
         return written
+
     def _report() -> int:
-        line = _writer.success_line(labels.DECIDE, record_path, rels, target_rel,
-                                    STATUS_SUPERSEDED, args.no_commit)
-        print(line)
+        print(_writer.success_line(labels.DECIDE, record_paths, target_paths,
+                                   STATUS_SUPERSEDED, args.no_commit))
         return EXIT_OK
 
     if args.no_commit:
+        # The census reads the working tree, so these files read as uncommitted (an
+        # edited target is census.sh exit 12): the line names both paths, says that
+        # committing them is the caller's job, and says what the second path now
+        # holds, so an operator who aborts the run knows to restore the target as
+        # well as delete the new record.
         return _report()
     committed = _commit(repo, rels, target_rel, record_rel, committed_bytes, message)
     if committed is not None:

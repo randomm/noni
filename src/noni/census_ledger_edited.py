@@ -23,6 +23,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
+from .census_ledger import ledger_name
 from .census_report import CLASS_CODE, CLASS_SEVERITY, _promote
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, nothing imported at runtime
@@ -116,6 +117,7 @@ def check_ledger_deleted(ledger: Path, git: Git | None, root: Path, findings: li
                          row: Callable[..., dict],
                          rel_to_root: Callable[[Path, Path], str],
                          cannot_tell: Callable[[str, str, bool, list[dict]], None],
+                         ledger_name: ledger_name,
                          ) -> bool:
     """The deleted-record check (append-only ledger rule).
 
@@ -145,7 +147,16 @@ def check_ledger_deleted(ledger: Path, git: Git | None, root: Path, findings: li
     directory is gone: records are append-only, so a committed ``decisions/``
     directory deleted whole is the deletion the operator must be told about,
     while a session register is expected to hold no file at all for a project
-    that has never opened a session."""
+    that has never opened a session.
+
+    The out-of-tree cannot-tell names the ledger by
+    ``ledger_name(rel_to_root(root, ledger))``, the identifier every other row of
+    this group uses: for an override the rooting helper could not answer, the
+    path it hands back is a host directory, and this row's reason is prose the
+    reader sees, not a field they join on. An in-tree ledger — the normal case,
+    where this branch is never reached — keeps its root-relative path wherever
+    the identifier is asked for.
+    """
     if git is None:
         # No git tree was named at all (not a repository, or rev-parse could
         # not answer): there is nothing to ask.
@@ -166,8 +177,9 @@ def check_ledger_deleted(ledger: Path, git: Git | None, root: Path, findings: li
         # perfectly normal state for a legitimate out-of-tree override.
         cannot_tell(
             "ledger-edited",
-            f"the ledger path ({rel_to_root(root, ledger)}) is outside the audited git tree, "
-            "so whether a committed record was deleted cannot be answered", strict, findings)
+            f"the ledger path ({ledger_name(rel_to_root(root, ledger))}) is outside the "
+            "audited git tree, so whether a committed record was deleted cannot be "
+            "answered", strict, findings)
         return False
     for rel in sorted(git.added_paths_under(prefix)):
         if (top / rel).is_file():
@@ -175,27 +187,37 @@ def check_ledger_deleted(ledger: Path, git: Git | None, root: Path, findings: li
         subject = rel.rsplit("/", 1)[-1]
         findings.append(
             row("ledger-edited", False, subject, str(top / rel),
-                 f"deleted: record {subject} is missing from the working tree because it was "
-                 "deleted or renamed (in git history but absent now; the change is uncommitted "
-                 "or committed); decision records are append-only: restore the original path "
-                 "(git checkout <commit> -- <path>) and record any change as a new superseding "
-                 "record instead of deleting or renaming", root)
+                f"deleted: record {subject} is missing from the working tree because it was "
+                "deleted or renamed (in git history but absent now; the change is uncommitted "
+                "or committed); decision records are append-only: restore the original path "
+                "(git checkout <commit> -- <path>) and record any change as a new superseding "
+                "record instead of deleting or renaming", root)
         )
     return False
 
 def check_ledger_chain(
     valid: list[tuple[str, Path, dict]], ledger: Path, root: Path, findings: list[dict],
     *, row: Callable[..., dict],
+    rel_to_root: Callable[[Path, Path], str],
+    ledger_name: ledger_name,
 ) -> None:
     """Supersede-chain analysis: dangling, duplicate, orphan, cycle, and the
     single-live-record-per-chain rule.
 
     Only records that parsed cleanly (valid) can contribute to chain
     analysis: an unparseable record's supersedes field is unreadable, so its
-    chain state is genuinely unknowable."""
+    chain state is genuinely unknowable.
+
+    Every row of this class names the ledger as its ``artifact``, which for an
+    out-of-tree ``--ledger`` is a path the caller spelled out of its own cwd: the
+    identifier from ``ledger_name`` is what goes there, so no chain row puts a
+    host directory in a field a caller groups and sorts on. An in-tree ledger is
+    named root-relative, unchanged."""
     # ledger-chain is a fail class: --strict does not change its severity.
-    def add(check: str, subject: str, artifact: str, message: str) -> None:
+    def add(check: str, subject: str, message: str) -> None:
         findings.append(row(check, False, subject, artifact, message, root))
+
+    artifact = ledger_name(rel_to_root(root, ledger))
 
     ids = {rid for rid, _p, _o in valid}
     supers = {rid: o["supersedes"] for rid, _p, o in valid}
@@ -209,15 +231,15 @@ def check_ledger_chain(
             add(
                 "ledger-chain",
                 target,
-                str(ledger),
                 f"duplicate: {target} is superseded by more than one record ({', '.join(sorted(children))})",
             )
     for rid in sorted(ids):
         sup = supers[rid]
         if sup is not None and sup not in ids:
-            add("ledger-chain", rid, str(ledger), f"dangling: {rid} supersedes {sup} (no such record)")
+            add("ledger-chain", rid, f"dangling: {rid} supersedes {sup} (no such record)")
         if sup is None and status[rid] == "superseded" and rid not in succ:
-            add("ledger-chain", rid, str(ledger), f"orphan: {rid} is marked superseded but no record supersedes it")
+            add("ledger-chain", rid,
+                f"orphan: {rid} is marked superseded but no record supersedes it")
     for rid in sorted(ids):
         seen = set()
         t: str | None = rid
@@ -229,7 +251,7 @@ def check_ledger_chain(
             seen.add(t)
             t = supers[t]
         if cycle:
-            add("ledger-chain", rid, str(ledger), f"cycle: {rid} is in a supersedes cycle")
+            add("ledger-chain", rid, f"cycle: {rid} is in a supersedes cycle")
     chains: dict[str, list[str]] = {}
     for rid in ids:
         root_id = rid
@@ -245,6 +267,8 @@ def check_ledger_chain(
         if root_id not in ids:
             continue
         if len(live) == 0:
-            add("ledger-chain", root_id, str(ledger), f"zero-live: chain {root_id} resolves to no live record")
+            add("ledger-chain", root_id,
+                f"zero-live: chain {root_id} resolves to no live record")
         elif len(live) > 1:
-            add("ledger-chain", root_id, str(ledger), f"multi-live: chain {root_id} resolves to more than one live record")
+            add("ledger-chain", root_id,
+                f"multi-live: chain {root_id} resolves to more than one live record")

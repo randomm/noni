@@ -452,7 +452,8 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
                  cannot_tell=_append_cannot_tell,
                  edit_check=_check_ledger_edited,
                  deletion_check=_check_ledger_deleted,
-                 chain_check=_check_ledger_chain)
+                 chain_check=_check_ledger_chain,
+                 ledger_name=_ledger_name)
 
 
 def _check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,

@@ -25,6 +25,11 @@ REPO = Path(__file__).resolve().parent.parent
 README = REPO / "README.md"
 CONTRIBUTING = REPO / "CONTRIBUTING.md"
 QUICKSTART = REPO / "docs" / "QUICKSTART.md"
+# The agent-onboarding page (issue #73): the sole home of the instruction that
+# makes the four core skills available to a team's agents, and of the
+# per-session protocol. It prints no command, so joining ``DOC_PAGES`` costs it
+# nothing at the fence census and buys it every promise test over the page set.
+ONBOARDING = REPO / "docs" / "ONBOARDING.md"
 PRODUCT = REPO / "docs" / "PRODUCT.md"
 PUBLISHING = REPO / "docs" / "PUBLISHING.md"
 
@@ -42,9 +47,20 @@ DOC_PAGES: tuple[Path, ...] = (
     README,
     CONTRIBUTING,
     QUICKSTART,
+    ONBOARDING,
     PRODUCT,
     PUBLISHING,
 )
+
+# The four core skills, each named by the path of the page a loader reads. The
+# onboarding page has to name all four literally (issue #73 AC1), so the names
+# live here as data beside the page set rather than as strings inside one test:
+# the reader that builds a skill directory list and the test that pins the page
+# then agree on one list, and a fifth core skill is a failure in both places.
+SKILL_NAMES: tuple[str, ...] = ("steering-ledger", "direction", "sessions-claims",
+                                "census")
+SKILL_PAGE_PATHS: tuple[str, ...] = tuple(f"skills/{name}/SKILL.md"
+                                          for name in SKILL_NAMES)
 SKILL_PAGES: tuple[Path, ...] = tuple(sorted((REPO / "skills").rglob("*.md")))
 
 # The state directory the quickstart's second route clones into the project.

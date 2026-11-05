@@ -3,22 +3,25 @@
 ``tests/test_quickstart.py`` runs the quickstart's commands. This module reads
 the same pages for the claims a command cannot settle, over the one set of files
 the issue named: the README, CONTRIBUTING, ``docs/*.md`` and every page under
-``skills/``. Three claims, each of which was the cause of a real first-run
-failure an agent hit by following only the docs:
+``skills/``. The install claims -- no package index, no system Python, the README's
+pointer -- live in ``tests/test_docs_install_promises.py``, which reads the very
+same page set through ``tests/docs_page_set.py``; the split is the 500-line cap in
+``tests/test_file_size_limit.py``, along the seam of one promise per module. Three
+claims remain here, each of which was the cause of a real first-run failure an
+agent hit by following only the docs:
 
 - **The shell shims are shown as shell.** ``census.sh`` and
   ``census-sessions.sh`` are bash scripts; a page that shows one under
   ``python3`` hands the reader a Python traceback instead of the exit-code
   contract the same page documents. Conversely the ``.py`` entry points are
   shown under an interpreter, because that is how the README launches them.
-- **No page tells a reader to install from a package index.** ``pip install
-  noni`` does not fail: it installs somebody else's wheel and leaves a ``noni``
-  with no census in it, which is worse than a message. The pages must say the
-  package is not published and give the form that works.
 - **Where a reader meets ``--strict`` and the hygiene class, the deny-list is
   named.** The file, its location, its purpose, and the three states in which
   creating it does not yet switch the class on -- including the one a reader
   who "just made the file" lands in.
+- **The quickstart is reachable and carries its two recipes.** The README links it
+  by exact path, the ``--issue-state`` recipe is printed with every flag the
+  census's reader needs, and the state route is named the way the code names it.
 
 Each check reads the product's own constants rather than a copy of them, so the
 page that drifts fails and the product that renames fails, in the same place.
@@ -27,13 +30,12 @@ page that drifts fails and the product that renames fails, in the same place.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import pytest
 from docs_commands import block_commands, read
+from docs_page_set import ALL_PAGES, _label, bash_of
 from docs_promises import (
     DENYLIST_STATES,
-    DOC_PAGES,
     ISSUE_STATE_FILTER,
     ISSUE_STATE_RECIPE,
     PUBLISHING,
@@ -41,36 +43,17 @@ from docs_promises import (
     README,
     SKILL_PAGES,
     STATE_DIR,
-    bash_blocks_text,
     expected_denylist_states,
-)
-
-# Every page whose commands a reader may copy, as (path, text) pairs, read once.
-ALL_PAGES: tuple[tuple[Path, str], ...] = tuple(
-    (path, read(path)) for path in (*DOC_PAGES, *SKILL_PAGES)
 )
 
 # A line that runs a shell script under an interpreter. ``python3 skills/x/y.py``
 # is fine and expected; ``python3 .../census.sh`` is the failure.
 _PYTHON_OVER_SH = re.compile(r"\bpython3?\b[^\n|;&]*?\S+\.sh\b", re.IGNORECASE)
 
-# The install claim a page may not make as an *instruction*: a bare ``pip
-# install noni``, which resolves on the public index to a different project
-# entirely. Two shapes are legitimate and are excused by position rather than by
-# wording: an install that names a path or a URL after the package name, and a
-# mention of the bare command inside prose that is warning the reader away from
-# it -- the sentence that names the command to tell the reader it does not do
-# what they think. The second exemption is what keeps a truthful retraction from
-# being flagged as the claim it retracts.
-_BARE_PIP_INSTALL = re.compile(r"pip install noni\b(?![-/\w])")
-
-def _label(path: Path) -> str:
-    return str(path.relative_to(README.parent))
-
 
 def _command_lines(path: object, text: str) -> list[str]:
     """Every command line any fenced block of one page prints."""
-    return [line for block in bash_blocks_text(text) for line in block]
+    return [line for block in bash_of(text) for line in block]
 
 
 # --- AC5: the shell shims are shown as shell --------------------------------
@@ -135,52 +118,6 @@ def test_the_sessions_shim_exit_3_row_names_its_own_interpreter() -> None:
     assert not offenders, (
         f"pages table the sessions shim's exit codes without naming NONI_PYTHON, "
         f"which is the interpreter exit 3 is about: {offenders}")
-
-
-# --- AC1: no page sends a reader to a package index -------------------------
-
-def test_no_page_tells_a_reader_to_install_from_a_package_index() -> None:
-    """``pip install noni`` appears nowhere as an instruction.
-
-    The command does not fail, which is the problem: it installs an unrelated
-    project's wheel, and the reader's ``noni census`` then names a module that
-    does not exist. Every page that offers an install route names the clone or
-    the git URL instead.
-
-    The exemption is per line, not per page, and it is earned: a line that
-    names the bare command has to say in the same breath that it is the wrong
-    command. ``fails``, ``not``, ``other`` and ``different`` are the words a
-    retraction carries, so a page that simply told the reader to run it is still
-    caught. A line that fails this test after a rewrite is a page that lost its
-    retraction, which is exactly the drift the check exists for.
-    """
-    retracting = re.compile(r"\b(not|no |other|different|instead|avoid|never)\b", re.I)
-    offenders: list[tuple[str, str]] = []
-    for path, text in ALL_PAGES:
-        for line in text.splitlines():
-            if not _BARE_PIP_INSTALL.search(line):
-                continue
-            if _BARE_PIP_INSTALL.search(line) and retracting.search(line):
-                continue
-            offenders.append((_label(path), line.strip()))
-    assert not offenders, (
-        f"pages tell the reader to install from an index without retracting it: {offenders}")
-
-
-def test_the_pages_that_install_noni_say_the_index_does_not_have_it() -> None:
-    """Whichever page carries an install command also says noni is unpublished.
-
-    Checked over the set rather than hard-coded to one page, so moving the
-    install prose cannot satisfy the README test and leave the claim unmade.
-    """
-    carrying = [(path, text) for path, text in ALL_PAGES
-                if re.search(r"pip install[^\n]*\./noni|pip install[^\n]*git\+https", text)]
-    assert carrying, "no page gives an install form that names the repository"
-    missing = [_label(path) for path, text in carrying
-               if "not published" not in text.lower()
-               and "no package index" not in text.lower()
-               and "pypi" not in text.lower()]
-    assert not missing, f"pages give an install form without saying the index lacks noni: {missing}"
 
 
 # --- AC3: the deny-list is named where a reader meets --strict --------------
@@ -310,7 +247,7 @@ def test_the_issue_state_recipe_carries_every_flag_the_reader_needs() -> None:
     ``shlex`` strips the quoting), so a flag lost from the printed line is caught
     here while ``tests/test_quickstart.py`` runs the filter itself.
     """
-    blocks = [" ".join(block) for block in bash_blocks_text(read(QUICKSTART))]
+    blocks = [" ".join(block) for block in bash_of(read(QUICKSTART))]
     recipe = [block for block in blocks
               if re.search(r"(?<![\w-])gh\s+issue\s+list\b", block)]
     assert len(recipe) == 1, (
@@ -362,6 +299,7 @@ def test_the_state_route_is_named_the_way_the_code_names_it() -> None:
             continue
         head = line.split("|")[0]
         ok = ("--repo" in head or "-C" in head or "echo" in head
+              or "printf" in head
               or re.search(r"git clone\s+\S+\s+\.\S*\s*$", head.strip()))
         assert ok, (
             f"a state-route command does not name the state root explicitly: {line!r}")
@@ -405,6 +343,59 @@ def test_the_publishing_checklist_still_owns_the_gate() -> None:
         "the checklist that actually gates on it")
 
 
+def test_the_coexistence_section_offers_no_command_the_page_does_not_run() -> None:
+    """The driver-coexistence section is prose, so it prints no fence of its own.
+
+    Every command-bearing fence on the quickstart belongs to a section the golden
+    command list covers, and this section's whole purpose is a position a reader
+    takes rather than a step they type: a bash fence added under this heading would
+    be a command the launcher never runs and no review covered, and the fence census
+    in ``tests/test_quickstart.py`` catches it only because it compares the page's
+    whole flattened list. The check belongs here too because it is a claim about
+    this section: the position is documentation, and documentation that has grown a
+    command line has grown something the suite does not run.
+    """
+    from docs_commands import fenced_pairs
+    from docs_promises import section_body
+    from quickstart_page import COEXISTENCE_HEADING
+
+    body = section_body(read(QUICKSTART), COEXISTENCE_HEADING)
+    blocks = [lines for info, lines in fenced_pairs(body) if info == "bash"]
+    commands = [argv for lines in blocks for argv in block_commands(lines)]
+    assert not commands, (
+        f"the coexistence section prints {len(commands)} command(s), which the "
+        f"golden list does not cover: {commands}"
+    )
+
+
+def test_the_forge_page_links_the_coexistence_position() -> None:
+    """The forge copy links the coexistence section, because its own page sells claims.
+
+    The generic step stays uncluttered: a team with no driver reads the quickstart
+    and types the census line, and does not need a paragraph about a driver they do
+    not run. The page that does need it is the forge copy -- the page whose own
+    commands claim an issue before they work it, which is the exact situation the
+    section addresses. It is read explicitly rather than through ``DOC_PAGES``
+    because it is the one page the neutrality gate exempts, so a gate written over
+    the core set stays green while this page drifts.
+    """
+    from docs_promises import FORGE_CI_README
+    from quickstart_page import COEXISTENCE_HEADING
+
+    example = read(FORGE_CI_README)
+    # Located word by word with any run of whitespace between them: the forge page
+    # wraps the link's heading text to its own column, exactly as the quickstart
+    # page wraps its headings, and the words are the contract.
+    heading = r"\s+".join(re.escape(word) for word in COEXISTENCE_HEADING.split())
+    assert re.search(heading, example), (
+        f"{FORGE_CI_README.name} claims issues without pointing at the page that "
+        f"says what to do when a driver already keeps its own claims: name "
+        f"{COEXISTENCE_HEADING!r} and link docs/QUICKSTART.md")
+    assert "docs/QUICKSTART.md" in example, (
+        f"{FORGE_CI_README.name} names the section without naming the page that "
+        "carries it, so the link has nothing to resolve against")
+
+
 def test_commands_the_pages_print_are_all_parseable() -> None:
     """Every fenced bash block on every page in scope lexes as commands.
 
@@ -413,7 +404,7 @@ def test_commands_the_pages_print_are_all_parseable() -> None:
     than a broken promise.
     """
     for path, text in ALL_PAGES:
-        for block in bash_blocks_text(text):
+        for block in bash_of(text):
             try:
                 block_commands(block)
             except AssertionError as exc:

@@ -15,22 +15,33 @@ The commands are the page's own: they come from
 :func:`quickstart_runner.launch`, which refuses an argv no golden list prints.
 Nothing here types a census command of its own.
 
-The page parser below (:func:`documented_fail_codes`, :func:`documented_warn_codes`,
-:func:`ci_commands`, :func:`ci_section`) is public for
-``tests/test_census_check_contract.py``, the module that holds the check contract
-and asserts the documented sets and the ``--strict`` prose against the table.
+The page parsers this module used to hold -- :func:`quickstart_ci_page.ci_commands`,
+:func:`quickstart_ci_page.documented_fail_codes`,
+:func:`quickstart_ci_page.documented_warn_codes`,
+:func:`quickstart_ci_page.ci_section` -- live in ``tests/quickstart_ci_page.py``,
+the non-test helper the check-contract module imports too, so the launches here and
+the table agreement there read the same page through one reader.
 """
 
 from __future__ import annotations
 
-import re
+import ast
 from pathlib import Path
 
 import census
+import quickstart_ci_page
 from _harness import _commit_file
 from census_fixtures import _session_body
+from docs_commands import read
 from docs_promises import QUICKSTART, STATE_DIR
-from quickstart_golden import CI
+from quickstart_ci_page import (
+    FAIL_SET_PATTERN,
+    WARN_SET_PATTERN,
+    ci_commands,
+    ci_section,
+    documented_fail_codes,
+    documented_warn_codes,
+)
 from quickstart_runner import (
     World,
     checked,
@@ -49,13 +60,25 @@ _CLAIMED_TASK = "#42"
 _CLAIMANT_IDS = ("2026-10-01-aaaaaa", "2026-10-01-bbbbbb")
 
 
-def ci_commands() -> list[list[str]]:
-    """The CI section's commands, as the page prints them (golden-checked).
+def _import_helper_clean(launch_modules: tuple[str, ...]) -> list[str]:
+    """The launch-layer modules the page reader pulls in on import, read from its AST.
 
-    Public because the agreement module checks the documented step against them:
-    the same parsed lines, not a second reading of the fences.
+    The static reading is the honest one: this module is already loaded alongside the
+    launch layer by the tests around it, so a ``sys.modules`` probe in-process would
+    report the suite's imports and not the helper's own, and a helper that drifted
+    into launching would still look clean.
     """
-    return route_commands(CI)
+    source = Path(quickstart_ci_page.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    imported: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported += [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.append(node.module)
+    return [name for name in imported
+            if any(name == module or name.startswith(module + ".")
+                   for module in launch_modules)]
 
 
 def _ci_census_command(*, state: bool) -> list[str]:
@@ -216,42 +239,60 @@ def test_the_ci_step_fails_a_route_b_build_on_a_planted_double_claim(
         "--repo no longer decides which tree was read")
 
 
-# --- the documented sets against the one declaration ------------------------
+def test_the_documented_ci_set_bullets_are_the_ci_section_s_only_two() -> None:
+    """The two set bullets the reader gates a build on live in the CI section.
 
-_FAIL_SET = re.compile(r"\*\*fail the build\*\* on ([\d, and]+);")
-_WARN_SET = re.compile(r"\*\*report without failing\*\* on ([\d, and]+)\.")
-
-
-def _documented_codes(pattern: re.Pattern) -> set[int]:
-    """One set of codes as the CI section prints them, read out of the page.
-
-    Located by the bullet's own wording so a rewrite that drops the set fails here
-    rather than leaving the agreement test comparing an empty set against the table.
+    The launches above earn the exit codes; this settles where the page is allowed
+    to state them. The reader of the helper parses the CI section alone and insists
+    on exactly one bullet per set, so a third bullet -- with invented codes, beside
+    any heading -- is a failure rather than a second copy nobody compares. The
+    second half is the cheap one and the reason it is asserted here rather than
+    trusted: without it, narrowing the helper's parse to one section could have
+    quietly dropped both bullets and left the agreement tests comparing an empty
+    set, which is the same shape as a page that never documented a set at all.
     """
-    text = QUICKSTART.read_text(encoding="utf-8")
-    match = pattern.search(text)
-    assert match, f"the CI section no longer prints its codes as {pattern.pattern!r}"
-    codes = {int(token) for token in re.findall(r"\d+", match.group(1))}
-    assert codes, f"the documented set is empty: {match.group(1)!r}"
-    return codes
+    body = ci_section()
+    bullets = [line.strip() for line in body.splitlines()
+               if line.strip().startswith("- **")]
+    assert len(bullets) == 2, (
+        f"the CI section must gate a build on exactly two documented sets, found "
+        f"{len(bullets)}: {bullets}")
+    assert documented_fail_codes(), "the CI section documents no fail set"
+    assert documented_warn_codes(), "the CI section documents no warn set"
+    # The scoping half, stated over the whole page. Narrowing the reader to the CI
+    # section is what stops a stray bullet elsewhere being read as this section's
+    # set; it is also why a second set written outside the section would otherwise
+    # go unnoticed -- the fence census and the golden comparison cover the page's
+    # commands, not its bullets. A reader who found a second pair in another section
+    # would have nothing to tell them which governs, so the page gets exactly two.
+    page_lines = read(QUICKSTART).splitlines()
+    strays = [line.strip() for line in page_lines
+              if FAIL_SET_PATTERN.search(line) or WARN_SET_PATTERN.search(line)]
+    assert len(strays) == 2, (
+        f"the page must state its two gate sets in the CI section and nowhere "
+        f"else; found {len(strays)} set bullets: {strays}")
+    assert all(line in bullets for line in strays), (
+        f"a set bullet sits outside the CI section: {set(strays) - set(bullets)}")
 
 
-def documented_fail_codes() -> set[int]:
-    """The codes the page says fail a build."""
-    return _documented_codes(_FAIL_SET)
+def test_the_page_reader_pulls_no_launch_layer_in() -> None:
+    """Importing the page reader is an import of the page readers, nothing more.
 
-
-def documented_warn_codes() -> set[int]:
-    """The codes the page says a build reports without failing."""
-    return _documented_codes(_WARN_SET)
-
-
-def ci_section() -> str:
-    """The CI section's own text, located by its heading.
-
-    Public for the agreement module, which asserts prose promises about this one
-    section rather than re-locating it by heading.
+    The reason the four parsers left this module is that
+    ``tests/test_census_check_contract.py`` -- a contract test that runs no command
+    -- had to reach them, and reaching them through this module dragged the launch
+    layer and the session-scoped fixtures of ``conftest`` into it. The split only
+    buys what it claims if the helper stays launch-free, which is a property of the
+    helper's imports and so belongs to the suite rather than to a docstring: a later
+    edit that reaches for :func:`quickstart_runner.launch` here would quietly undo
+    the split, and every test in the contract module would still be green.
     """
-    from docs_promises import section_body
+    launched = ("quickstart_topology", "quickstart_page_steps", "_harness")
+    observed = _import_helper_clean(launched)
+    assert not observed, (
+        f"tests/quickstart_ci_page.py pulls the launch layer in on import: "
+        f"{observed}; the contract module that reads the documented sets would then "
+        "need the fixtures no contract test uses")
 
-    return section_body(QUICKSTART.read_text(encoding="utf-8"), CI[0])
+
+

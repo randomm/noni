@@ -33,8 +33,11 @@ def test_no_commit_appends_without_touching_git(tmp_path):
     proc = run_claim(repo, SESSION_ID, "#42", **{"no-commit": None})
     assert proc.returncode == 0, f"expected exit 0, got {proc.returncode}: {proc.stderr}"
     # One line naming the file and saying the change is uncommitted (the
-    # documented needle, not a paraphrase of it).
-    assert f"appended #42 to {SESSION_ID}.md" in proc.stdout
+    # documented needle, not a paraphrase of it). The path is the caller-cwd
+    # form -- ``--repo`` joined to ``noni/sessions/<id>.md`` -- the same token
+    # the committed line names (issue #77, AC2).
+    assert f"appended #42 to {repo / 'noni' / 'sessions' / f'{SESSION_ID}.md'}" \
+        in proc.stdout
     assert "left uncommitted" in proc.stdout
     assert "- claim: #42" in _session_path(repo).read_text(), "row must remain in the worktree"
     assert _git_text(repo, "rev-parse", "HEAD") == head_before, "no git commit may run"

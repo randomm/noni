@@ -266,11 +266,13 @@ def materialise_clone(dest: Path) -> None:
 def install_venv(installed: InstalledWorld) -> None:
     """The page's install step, run once per module: a venv holding the clone's package.
 
-    The venv and pip themselves are the two steps the suite launches that are not a
-    command on the page (the page's reader gets a working pip from their own
-    machine), so their env carries the two additions the install needs and no launch
-    does: this tree's ``src/`` on ``PYTHONPATH`` (so the build backend imports from
-    the tree being measured) and coverage's hook (so the suite's subprocess coverage
+    The venv and pip themselves are the two steps the suite launches that the page
+    only shows as asserted (the page prints `uv tool install` as its primary form and
+    this venv pair as its fallback; the launcher compares those fences and never runs
+    them -- see :func:`quickstart_runner.install_commands`), so their env carries the
+    two additions the install needs and no launch does: this tree's ``src/`` on
+    ``PYTHONPATH`` (so the build backend imports from the tree being measured) and
+    coverage's hook (so the suite's subprocess coverage
     still fires). :func:`run_env` keeps both out of every launch, which is where the
     page's guarantee lives; nothing added here reaches a page command, and the
     ``noni --help`` that :func:`build_installed_world` runs under the clean env is

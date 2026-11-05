@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from . import public_safety as _PACKAGE_PUBLIC_SAFETY
+from .census_text import fault_text
 
 # The artifact a not-run hygiene row names, in the census's own hygiene artifact
 # namespace. It is a fixed package-relative literal rather than a path computed
@@ -281,19 +282,48 @@ def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
     # is not trusted to supply the vocabulary the publishing gate checks.
     # Without it the class reports itself inactive below rather than pretending
     # the operator-name half ran.
-    with _pinned_hygiene_env():
+    #
+    # The scan's own stderr is silenced for the census (see
+    # :class:`_QuietScanStderr`): the deny-list state it announces is the row
+    # appended below, and a --json run's stderr is to carry this run's own usage
+    # and tool faults and nothing else.
+    with _pinned_hygiene_env(), _QuietScanStderr():
         try:
             violations, _source, denylist = public_safety.scrub_tracked_files(top)
+        except OSError as e:
+            # The scan's own read of the tree faulted. ``OSError`` renders itself
+            # as the errno words *plus the path it failed on*, so the row is
+            # built from the exception's fields rather than from its string:
+            # ``fault_text`` keeps the class and the ``strerror`` (the half that
+            # says what failed) and never the filename (the half that says where,
+            # which no row may print). The scrubber would be the only thing
+            # between a host directory and a published report if the string were
+            # quoted, and it has lost every race it has been in.
+            add(
+                "hygiene scan",
+                scan_artifact,
+                f"hygiene scan did not run: {fault_text(e)} — this run is not a "
+                "hygiene-clean guarantee",
+            )
+            return
         except Exception as e:
             # "Report, never crash": any exception from the scan (a failing or
             # hung git ls-files, an unreadable deny-list store, a malformed
             # pattern table) becomes the not-run row, never a traceback that
             # discards every finding already collected in this run. A public
             # safety scan must not be able to take the whole census down.
+            #
+            # Not a filesystem fault, so there is no filename to withhold and
+            # the exception's own message IS the finding: public_safety raises
+            # RuntimeError(f"git ls-files failed: ...") for a scan whose git call
+            # did not come back, and a row that named only the class would say
+            # that something failed and nothing about what. The text is still
+            # somebody else's, so it goes through the scrub-and-clip net that
+            # ``bounded`` is.
             add(
                 "hygiene scan",
                 scan_artifact,
-                bounded(f"hygiene scan did not run: {e} — this run is not a "
+                bounded(f"hygiene scan did not run: {type(e).__name__}: {e} — this run is not a "
                         "hygiene-clean guarantee"),
             )
             return
@@ -335,6 +365,78 @@ def _denylist_state(denylist: Any) -> str:
     if status != "ok":
         return str(status)
     return "present but empty" if not getattr(denylist, "entries", []) else "ok"
+
+
+class _QuietScanStderr:
+    """Install a throwaway stderr for the scan, and put the real one back first.
+
+    ``public_safety`` announces an inactive deny-list on ``sys.stderr`` from two
+    places (``scrub_tracked_files`` for absent/corrupt, ``load_denylist`` for an
+    unreadable candidate, which also leaks a machine-local absolute path). The
+    census already reports that same state as a documented ``deny-list`` warn row
+    with its own fix hint, so repeating it on stderr makes ``census --json`` a
+    stream a machine consumer has to redirect to be clean (issue #77, AC3).
+
+    It is redirected only around the one call, and only for the census, because
+    ``public_safety`` is a gate file: its standalone CLI keeps its banner
+    (``scripts/public_safety.py``, docs/PUBLISHING.md step 1) and its signature
+    is not widened for a caller's convenience.
+
+    The manager is a class rather than a :func:`contextlib.contextmanager`
+    generator so the restore is stated where it happens: ``__exit__`` reassigns
+    ``sys.stderr`` on the way out, at a point the interpreter has already chosen,
+    rather than in a ``finally`` whose position relative to the caller's own
+    handler is the interpreter's business. Nothing in the census depends on which
+    side of that handler the restore lands: every ``Exception`` the scan raises --
+    a hung or failing ``git ls-files``, an unreadable deny-list store, a malformed
+    pattern table -- is caught by ``check_hygiene``'s ``except Exception`` and
+    becomes the not-run row, and a ``BaseException`` (a Ctrl-C landing on the
+    scan's 30 s git call) travels on to the interpreter with its traceback intact.
+    "report, never crash" is that guard, not this manager; the manager's job ends
+    at putting the stream back, and it does so before anything else can observe
+    the swap.
+
+    The buffer keeps the first few writes and nothing else: a banner is a plain
+    line and is dropped, and the cap bounds the buffer against a scan that wrote
+    without stopping. ``write``/``flush``/``isatty``/``writable`` are answered so
+    a caller that inspects the stream during the scan gets a reply rather than an
+    ``AttributeError``; ``fileno`` is deliberately absent, because the census
+    never hands its stderr to a child and a stub for it would only let a caller
+    believe it had a descriptor.
+    """
+
+    # Enough of a stream for the calls the scan makes, so a caller that inspects
+    # the stream during the scan gets an answer rather than an AttributeError.
+    _KEEPS = 3
+
+    def __init__(self) -> None:
+        self._chunks: list[str] = []
+        self._previous: object = None
+
+    def __enter__(self) -> None:
+        self._previous = sys.stderr
+        sys.stderr = self
+        return None
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+        # Restore first, then let the exception travel: see the docstring.
+        sys.stderr = self._previous
+        self._previous = None
+        return False
+
+    def write(self, text: str, /) -> int:
+        if len(self._chunks) < self._KEEPS:
+            self._chunks.append(text)
+        return len(text)
+
+    def flush(self) -> None:
+        return None
+
+    def isatty(self) -> bool:
+        return False
+
+    def writable(self) -> bool:
+        return True
 
 
 @contextlib.contextmanager

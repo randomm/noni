@@ -43,11 +43,14 @@ class LedgerProbe:
     of a ``decisions/`` directory that exists, stats as a directory, and cannot
     be listed. The read answered nothing, so no word of LEDGER_EMPTY_MESSAGES
     describes it — those four name states of the tree, and "unlistable" is a
-    fault of this run's read. ``state`` keeps "empty" so the git-backed deletion
-    question is still put when git can answer it (the probe's inability to list
-    is not git's inability to answer), while ``_check_ledger`` renders the fault
-    as a `ledger-edited` cannot-tell row and stays silent on the empty class —
-    which is why the text travels beside ``problem`` instead of inside it.
+    fault of this run's read. ``state`` keeps "empty" because that is what the
+    tree looks like from outside, while ``_check_ledger`` renders the fault as a
+    `ledger-edited` cannot-tell row and stays silent on the empty class — which
+    is why the text travels beside ``problem`` instead of inside it. The
+    cannot-tell is the group's whole answer: that early return skips every check
+    below it, so the git-backed deletion question is not put either — a listing
+    fault silences git's deletion answer as well as the group's own read. Both
+    halves are pinned in ``tests/test_census_ledger_deleted_directory.py``.
 
     Both fault fields are built by ``census_text.fault_text``, which reads the
     exception's class and its ``strerror`` and never its filename: the path a

@@ -5,7 +5,12 @@ minutes are not enough: it carries the install forms (there is no package index
 to install from), both state-root routes, the ignore rule, the one-time first
 push, the deny-list file and the ``--issue-state`` recipe. The enforcement rule
 of ``docs/PRODUCT.md`` §6 says prose is convention, not enforcement, so this
-module reads the page as data and runs it.
+module reads the page as data and runs it. Its prose-only claims -- the install
+toolchain, the route-choice clause, the deny-list and prerequisite wording -- are
+in ``tests/test_quickstart_promises.py``, which reads the same page through
+:mod:`quickstart_page`; the split is the 500-line cap in
+``tests/test_file_size_limit.py``, and the seam is the one this module already
+drew between reviewing the page and running it.
 
 The harness has two halves, and each answers a different question:
 
@@ -52,6 +57,9 @@ from quickstart_gate import (
     run_gate_on_tree_with_no_denylist,
 )
 from quickstart_golden import COVERED_SECTIONS, GOLDEN
+from quickstart_page import page_text
+from quickstart_page_steps import GIT_INFO_EXCLUDE, ignore_rules_written
+from quickstart_page_steps import RULE as IGNORE_RULE
 from quickstart_runner import (
     World,
     checked,
@@ -61,14 +69,12 @@ from quickstart_runner import (
     run_route_b,
 )
 
-from noni import public_safety
-
 # The harness's must-succeed wrapper, under the short name the assertions below use.
 _checked = checked
 
 
 def _page() -> str:
-    return read(QUICKSTART)
+    return page_text()
 
 
 # --- Is this the page we reviewed? ------------------------------------------
@@ -118,22 +124,6 @@ def test_the_quickstart_page_is_linked_and_within_its_size():
     lines = _page().count("\n")
     assert lines <= 400, f"docs/QUICKSTART.md is {lines} lines; the cap is 400"
 
-
-def test_the_page_covers_both_routes_the_issue_named():
-    """Both state routes are named with their commands, not just described.
-
-    The default route is in-project state; the second is a private state
-    repository cloned inside the project as ``.noni-state`` with an ignore rule
-    and a one-time first push. A page that dropped the ignore rule or the push
-    would still read well and still leave a reader with a writer that fails.
-    """
-    text = _page()
-    lowered = text.lower()
-    for phrase in ("noni/", STATE_DIR):
-        assert phrase in text, f"the quickstart does not name {phrase!r}"
-    assert "gitignore" in lowered, "the ignore rule is not on the page"
-    assert "push -u origin" in text, "the one-time first push is not on the page"
-    assert "--repo " + STATE_DIR in text, "the state-repo route has no --repo form"
 
 
 def test_no_comment_line_is_a_command_the_page_means_to_run():
@@ -198,7 +188,9 @@ def test_route_b_commands_all_exit_zero(world: World) -> None:
     ``--repo .noni-state``. Each of those steps is a place the page can be
     subtly wrong -- a push before the branch exists, an ignore rule that ignores
     the wrong path, a writer pointed at the project instead of the state clone --
-    and each is observed here rather than assumed.
+    and each is observed here rather than assumed. The two ignore lines are the one
+    pair whose effect is not visible in any exit code, so they get a walk of their own
+    in :func:`test_the_page_s_pr_only_ignore_rule_actually_hides_the_state_clone`.
     """
     run_route_b(world)
 
@@ -338,44 +330,6 @@ def test_the_ordering_note_appears_in_human_mode_and_not_in_json(world: World) -
     assert not [row for row in rows if row.get("kind") == "finding"], rows
 
 
-def test_the_page_says_what_is_skipped_without_the_state_file() -> None:
-    """The page states the census's own note text, and that it is human-readable
-    output only.
-
-    The census prints the note on stdout in human mode and nothing in ``--json``
-    mode; a reader told only that "the check does not run" will go looking for it
-    in a ``--json`` stream and conclude the census is silent. The literal is the
-    product's own, so a rename of the note fails here rather than leaving the page
-    quoting a line nobody prints.
-    """
-    source = (REPO / "src" / "noni" / "census_run.py").read_text(encoding="utf-8")
-    assert "ordering-closed was not evaluated" in source, "the note left the product"
-    text = _page()
-    assert "ordering-closed was not evaluated" in text, "the page does not name the note"
-    assert "never contacts a tracker" in text, "the page does not say why"
-    assert "json" in text.lower(), "the page does not say the note is human-mode only"
-
-
-def test_the_page_names_the_deny_list_a_strict_run_needs() -> None:
-    """Where the page meets --strict and the hygiene class, it names the file.
-
-    The name, the location and the purpose, plus the state a reader who "just
-    created the file" lands in: a file of blanks and comments only is still
-    inactive. The name is read from the product's own constant, so a rename fails
-    the page rather than letting it document a file that no longer exists.
-    """
-    text = _page()
-    assert public_safety.DENYLIST_FILENAME in text, (
-        f"the page does not name {public_safety.DENYLIST_FILENAME!r}")
-    assert public_safety.DENYLIST_ENV_VAR in text, (
-        f"the page does not name the {public_safety.DENYLIST_ENV_VAR} route")
-    assert public_safety.default_denylist_file(REPO).name in text
-    lowered = text.lower()
-    for phrase in (*DENYLIST_STATES, "#"):
-        assert phrase in text or phrase in lowered, (
-            f"the deny-list section does not mention {phrase!r}")
-
-
 def test_the_deny_list_states_are_named_and_the_gate_refuses_an_inactive_class(
     tmp_path: Path,
 ) -> None:
@@ -412,29 +366,113 @@ def test_the_deny_list_states_are_named_and_the_gate_refuses_an_inactive_class(
         f"the gate's refusal did not name the class it skipped: {proc.stderr!r}")
 
 
-def test_the_page_says_no_package_index_carries_noni() -> None:
-    """The install prose retracts the package-index claim instead of repeating it.
 
-    ``pip install noni`` does not fail: it installs a different project's wheel
-    and leaves the reader with a ``noni`` that has no census in it. The page has to
-    say so, and give the two forms that do work.
+def test_the_page_s_pr_only_ignore_rule_actually_hides_the_state_clone(
+    world: World,
+) -> None:
+    """Each ignore line the page prints is launched on its own, then read back from disk.
+
+    Route B prints the same rule twice -- ``echo ... >> .gitignore`` for an ordinary
+    project, ``printf ... >> .git/info/exclude`` for a PR-only one -- and the page's
+    promise for the second is the reason it exists: a project that cannot take a
+    commit to its own ``.gitignore`` still gets the state clone hidden from
+    ``git status``. Nothing read that file back, so a payload no shell can render (a
+    lone ``%`` is an invalid conversion specification: the reader's step exits 1 and
+    writes nothing), a step that truncated the file instead of appending to it, and a
+    rule that reached neither file each left the suite green.
+
+    Each line therefore runs into a tree seeded with the reader's own prior rules, and
+    the file is read afterwards: the rule has to be there, the reader's lines have to
+    still be there, and ``git check-ignore`` -- git's reading of its own files, not
+    this suite's pattern matching -- has to name the file the page's line writes.
+    Each line runs against a tree holding only its own target file: walked together
+    they would collide, because git reports only the first file whose rule matches and
+    a PR-only rule that wrote nothing at all would still read as ignored through the
+    other variant -- which is the situation a reader on a PR-only project is in, since
+    that reader never runs the ``echo`` line.
     """
-    lowered = _page().lower()
-    assert "not published" in lowered, "the page does not say noni is absent from the index"
-    assert "pip install ./noni" in _page(), "the page gives no install form naming the clone"
-    assert "PYTHONPATH" in _page(), "the page does not name the PYTHONPATH route"
+    reader_lines = ["*.local", "/build/"]
+    for target in (".gitignore", GIT_INFO_EXCLUDE):
+        argv = _ignore_line_for(world, target)
+        _leave_only(world, target)
+        _seed_ignore_file(world, target, reader_lines)
+        _checked(launch(world, argv, world.project), f"ignore line {argv}")
+        written = ignore_rules_written(world)[target]
+        for line in reader_lines:
+            assert line in written, (
+                f"the page's {argv[0]} line destroyed the reader's {line!r} in "
+                f"{target}, which is a file the project already owns: {written}")
+        assert written.count(IGNORE_RULE) == 1, (
+            f"the page's {argv[0]} line did not append {IGNORE_RULE!r} to {target} "
+            f"exactly once: {written}")
+        _assert_git_ignores_the_state_tree(world, argv, target)
 
 
-def test_the_page_names_the_three_prerequisites() -> None:
-    """jq, an identity in the state tree, and a Python 3 the wrapper can exec.
+def _leave_only(world: World, keep: str) -> None:
+    """Remove every ignore file of the project but ``keep``, as a PR-only reader has it.
 
-    Each one decides whether a first run works, and none of them is something noni
-    can check for the reader before they type the command.
+    A reader on a branch-protected project never runs the ``echo`` line, so the state
+    of their tree is the exclude file and nothing else: leaving the other variant on
+    disk during this test would let git satisfy the probe from a file the reader under
+    test never wrote.
     """
-    text = _page()
-    assert "jq" in text, "the page does not name jq"
-    assert "user.name" in text and "user.email" in text, "the page omits the git identity"
-    assert "NONI_PYTHON" in text, "the page does not name the wrapper's interpreter variable"
+    for other in (".gitignore", GIT_INFO_EXCLUDE):
+        if other != keep:
+            (world.project / other).unlink(missing_ok=True)
+
+
+def _ignore_line_for(world: World, target: str) -> list[str]:
+    """The page's one ignore line for ``target``, from the compared golden list.
+
+    Read through :func:`quickstart_runner.route_commands` rather than typed here, so
+    the line this test launches is the line the golden list pins and the page prints.
+    Exactly one per target: two lines writing to the same file would leave this test
+    guessing which of the page's steps a failure belongs to.
+    """
+    lines = [argv for argv in route_commands(("Route B",))
+             if argv[0] in ("echo", "printf") and argv[-1] == target]
+    assert len(lines) == 1, (
+        f"the page must print exactly one ignore rule for {target}, got {lines}")
+    return lines[0]
+
+
+def _seed_ignore_file(world: World, target: str, lines: list[str]) -> None:
+    """The reader's pre-existing rules in one ignore file, before the page's line runs.
+
+    A file with nothing in it cannot show a truncating step: an empty file plus a
+    rule reads the same as an existing file plus a rule. The path is created here
+    because the page's own step is what the test is about, and a step that could only
+    ever succeed against a file the harness made is a step nothing tested.
+    """
+    path = world.project / target
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
+
+
+def _assert_git_ignores_the_state_tree(world: World, argv: list[str],
+                                       target: str) -> None:
+    """One ignore file, on its own, has to hide the state clone from the project.
+
+    The file is left holding exactly what the page's line put in it -- the reader's
+    prior rules are dropped, so a pass is the rule the page printed and not a rule the
+    harness seeded with a shape git happens to honour.
+    """
+    path = world.project / target
+    only_rule = [line for line in path.read_text(encoding="utf-8").splitlines()
+                 if line == IGNORE_RULE]
+    path.write_text("".join(f"{line}\n" for line in only_rule), encoding="utf-8")
+    probe = world.state / "noni" / "decisions" / "probe.json"
+    probe.parent.mkdir(parents=True, exist_ok=True)
+    probe.write_text("{}\n", encoding="utf-8")
+    relative = str(probe.relative_to(world.project))
+    ignored = git(world.project, "check-ignore", "-v", relative, env=world.env)
+    assert ignored.returncode == 0, (
+        f"git still sees the state clone after the page's {argv[0]} line, so a "
+        f"writer's commit would turn up in the project's own status: "
+        f"rc={ignored.returncode} out={ignored.stdout!r} err={ignored.stderr!r}")
+    assert target in ignored.stdout and IGNORE_RULE in ignored.stdout, (
+        f"git ignored the path through a file other than the one the page's "
+        f"{argv[0]} line names: {ignored.stdout!r}")
 
 
 # --- helpers used only by this module ---------------------------------------

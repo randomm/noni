@@ -4,8 +4,7 @@ noni is an attachable direction layer for a Git project that several agents or
 people work on at once. It keeps the standing intent, the decisions, the agreed
 order of work, the session register and the claims as plain files committed to
 the repository, and one read-only script reports where the work has drifted from
-that direction.
-There is no service to run and no database to keep in step.
+that direction, with no service to run and no database to keep in step.
 
 ## The problem
 
@@ -67,11 +66,13 @@ python3 ../noni/skills/census/scripts/census.py --repo .
 Run these from a release of noni you trust: they execute its scripts.
 
 Installing is the other route, and the same code either way. There is no PyPI
-package: `pip install noni` buys a different project's wheel. Install from the
-clone you just made (or from its git URL) and one `noni` command replaces a path
-per tool (`noni census`, `decide`, `register`, `claim`, `release`, `close`,
-`order`, `intent`), printing the same bytes as the scripts above. `noni --help`
-names the eight subcommands.
+package: `pip install noni` buys a different project's wheel. Install it from the
+clone you just made with `uv tool install`, or inside a clean virtual environment:
+the commands are the *Install noni* section of
+[docs/QUICKSTART.md](docs/QUICKSTART.md), and neither runs `pip` against a system
+Python, which current distributions refuse outright. One `noni` command then
+replaces a path per tool (`noni census`, `decide`, `register`, `claim`, `release`,
+`close`, `order`, `intent`), printing the same bytes as the scripts above.
 
 The census is read-only: it never writes, so `git status --porcelain` is empty
 after either run.
@@ -111,10 +112,10 @@ has written neither censuses clean. The census also reads input it does
 not own: the `--issue-state` map an adapter or the operator supplies, whose
 absence it reports as an unevaluated check. It recomputes everything it reports
 from git history plus those files on every run: metrics are derived, never
-self-reported.
-
-The skills are the unit of product: an agent loads `skills/<skill>/SKILL.md`,
-which names the script to run, the flags it takes and the exit codes it returns.
+self-reported. The skills are the unit of product: an agent loads
+`skills/<skill>/SKILL.md`, which names the script to run, its flags and its exit
+codes. How to put the four core skills in front of your agents, and what an agent
+does from session start to close: [docs/ONBOARDING.md](docs/ONBOARDING.md).
 
 ## Status
 

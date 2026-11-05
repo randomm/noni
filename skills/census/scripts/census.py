@@ -6,8 +6,8 @@ is the compatibility entry point the skills document: it hands its argv to the
 package and exits with the package's code, so the in-place form and
 ``noni census`` print the same bytes. It carries no logic of its own.
 
-The package must be installed (``pip install -e ".[dev]"`` or the built wheel)
-or importable on ``PYTHONPATH``; without it this wrapper names the fault and
+The package must be installed (docs/QUICKSTART.md, *Install noni*) or
+importable on ``PYTHONPATH``; without it this wrapper names the fault and
 exits non-zero rather than raising a traceback.
 """
 

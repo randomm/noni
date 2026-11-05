@@ -102,22 +102,39 @@ def allocate(printer: Printer, code: int, name: Callable[[], str],
     ``retries`` is floored at zero: a bound below that would never enter the loop and
     so would report a refusal about a name it never minted. A run that mints no name
     has no taken name to report, so it asks once.
+
+    Both refusals ask the GUARD for its answer and branch on ``is not None``, then do
+    the printing themselves and return ``code``. They must not branch on what the
+    printer returned: a printer is the writer's own function and nothing obliges it to
+    hand back the code it was passed -- one that fell off its end or returned a falsy
+    count would turn a refused path into a green light and let the allocating writer
+    exit 0 on a name it was refused. Asking the guard keeps the verdict here and leaves
+    the printer its one job of saying the two lines.
     """
+    minted = 0
+    rel = ""
     for _ in range(max(0, retries) + 1):
+        minted += 1
         session_id = name()
         rel = to_rel(session_id)
         if not rel:
             # Not a name at all: the caller refuses it as an argument, so return the
             # id and the empty name rather than deciding that code here.
             return session_id, rel
-        if (refused := session_write(printer, code, repo, rel, creates=True)):
-            return refused
-        if (refused := taken_refusal(repo, rel)):
+        if (refused := _session_paths.session_file_refusal(repo, rel,
+                                                           creates=True)) is not None:
+            # The path itself is no path this writer may write -- a link or an odd
+            # kind -- so the printer says so and the run stops on the argument code.
+            _report(printer, code, refused)
+            return code
+        if taken_refusal(repo, rel) is not None:
             # Spoken: another mint, until the bound runs out.
             continue
         return session_id, rel
-    return _report(printer, code, _session_paths.all_taken_refusal(repo, rel,
-                                                                    max(0, retries)))
+    # Every name this run minted was spoken, and the count handed to the sentence is
+    # the mints the loop actually made, not the bound it was given.
+    _report(printer, code, _session_paths.all_taken_refusal(repo, rel, minted))
+    return code
 
 
 def _report(printer: Printer, code: int,
@@ -125,8 +142,13 @@ def _report(printer: Printer, code: int,
     """One refusal through the writer's printer, or None when there was nothing to say.
 
     The printer is the writer's, so its prefix, its two-line shape and anything else
-    it does (counting, capturing) stay with the command the operator ran.
+    it does (counting, capturing) stay with the command the operator ran. Its RETURN
+    VALUE is not consulted: the code a refusal exits with is the one the caller passed
+    in, not something a printer gets to decide, so a printer that returned 0 or None
+    still yields ``code`` here. ``allocate`` asks this helper for the printing alone and
+    returns ``code`` itself, rather than routing its branch on the return value at all.
     """
     if refused is None:
         return None
-    return printer(code, *refused)
+    printer(code, *refused)
+    return code

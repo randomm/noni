@@ -33,7 +33,16 @@ from __future__ import annotations
 import errno
 import os
 
-from noni import _session_guard, _session_paths
+from register_allocation_drivers import (
+    VICTIM_BODY,
+    always_taken_driver,
+    run_scripted,
+)
+from register_refusal_fixtures import _no_committer_env
+
+from noni import _session_body, _session_guard, _session_paths
+
+SID = "2026-10-01-cccccc"
 
 SID = "2026-10-01-cccccc"
 
@@ -165,3 +174,116 @@ def test_allocate_with_a_negative_retry_bound_asks_once(tmp_path):
             f"retries={retries}: {allocated!r}")
         assert len(minted) == 1, f"retries={retries}: minted {len(minted)} names"
     assert printed == [], f"a free name was reported as taken: {printed}"
+
+
+def test_a_printer_that_returns_zero_still_refuses_on_the_code(tmp_path):
+    """The refusal is the guard's verdict, never the printer's return value.
+
+    ``allocate`` used to branch on what the printer handed back, and the writers'
+    printers happen to return the code they were passed. Nothing in the signature
+    obliges a printer to: one that counted refusals, or simply fell off its own end,
+    returned a falsy value, and the path refusal became a green light -- the
+    allocating route went on to write and exited 0 on a path its own guard refused,
+    which is the same class of fault issue #103 is about. Both refusals therefore ask
+    the guard and branch on ``is not None``, and ``code`` is what comes back whatever
+    the printer returns. The path refusal is planted as a symlinked ``noni`` (the
+    shape that sends the write outside the state root) and the taken refusal as a
+    committed file at the minted name; neither may write a byte.
+    """
+    for falsy in (0, None):
+        printed = []
+
+        def printer(code, headline, hint, _printed=printed, _falsy=falsy):
+            # Both loop variables bound as defaults, so each round keeps its own
+            # record and its own return value (ruff B023).
+            _printed.append((code, headline, hint))
+            return _falsy
+
+        # The linked path: the path guard must refuse, and the taken-name guard must
+        # never be reached.
+        linked = tmp_path / f"linked-{falsy}"
+        linked.mkdir()
+        (tmp_path / f"elsewhere-{falsy}").mkdir()
+        (linked / "noni").symlink_to(tmp_path / f"elsewhere-{falsy}")
+        allocated = _session_guard.allocate(
+            printer, 2, lambda: SID, lambda sid: f"noni/sessions/{sid}.md", linked, 3)
+        assert allocated == 2, f"printer->{falsy}: {allocated!r}"
+        assert printed and printed[0][0] == 2, f"{falsy}: {printed}"
+        assert "symlink" in printed[0][1], printed[0][1]
+        assert not (tmp_path / f"elsewhere-{falsy}" / "sessions").exists(), (
+            f"printer->{falsy}: a refused run created the sessions directory")
+
+        # Every name spoken: the bound refusal must print too, on the same code.
+        taken = tmp_path / f"taken-{falsy}"
+        sessions = taken / "noni" / "sessions"
+        sessions.mkdir(parents=True)
+        (sessions / f"{SID}.md").write_text(VICTIM_BODY, encoding="utf-8")
+        printed.clear()
+        allocated = _session_guard.allocate(
+            printer, 2, lambda: SID, lambda sid: f"noni/sessions/{sid}.md", taken, 3)
+        assert allocated == 2, f"printer->{falsy}: {allocated!r}"
+        assert printed and printed[0][0] == 2, f"{falsy}: {printed}"
+        assert "every session name" in printed[0][1], printed[0][1]
+        assert (sessions / f"{SID}.md").read_text(encoding="utf-8") == VICTIM_BODY, (
+            f"printer->{falsy}: a refused run replaced the held file")
+
+
+def test_the_all_taken_sentence_counts_the_names_the_loop_minted(tmp_path):
+    """The sentence names every name the run tried, not one fewer than it tried.
+
+    ``allocate`` used to report ``retries`` where the loop mints ``retries + 1``
+    names, so the operator was told three names were tried when four had been -- a
+    number that read as a shorter search than the run made. The count is taken off
+    the loop, so it says what happened for any bound including the floored one.
+    """
+    root = tmp_path / "all-taken"
+    sessions = root / "noni" / "sessions"
+    sessions.mkdir(parents=True)
+    (sessions / f"{SID}.md").write_text(VICTIM_BODY, encoding="utf-8")
+
+    def recording(printed):
+        """A printer that behaves like the writers' and records what it was given."""
+
+        def printer(code, headline, hint):
+            printed.append((code, headline, hint))
+            return code
+
+        return printer
+
+    for retries in (0, 1, 3):
+        printed = []
+        minted = []
+
+        def name(_minted=minted):
+            # Bound as a default so the closure holds THIS round's list (ruff B023).
+            _minted.append(SID)
+            return SID
+
+        allocated = _session_guard.allocate(recording(printed), 2, name,
+                                            lambda sid: f"noni/sessions/{sid}.md",
+                                            root, retries)
+        assert allocated == 2, f"retries={retries}: {allocated!r}"
+        assert len(minted) == retries + 1, f"retries={retries}: {len(minted)} mints"
+        assert f"{retries + 1} names" in printed[0][1], printed[0][1]
+
+
+def test_register_reports_the_names_it_minted_when_all_are_taken(tmp_path):
+    """The end-to-end half of the count: register's own two lines name every mint.
+
+    The guard-level test above pins the number the loop holds; this one pins the
+    number the operator reads, on the real route with the real printer, because the
+    sentence the writer prints is the product.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    sessions = repo / "noni" / "sessions"
+    sessions.mkdir(parents=True)
+    (sessions / f"{SID}.md").write_text(VICTIM_BODY, encoding="utf-8")
+    driver = always_taken_driver(tmp_path)
+
+    proc = run_scripted(driver, repo, SID, identity=False,
+                        env=_no_committer_env(tmp_path))
+
+    assert proc.returncode == 2, f"{proc.returncode}: {proc.stdout}{proc.stderr}"
+    expected = _session_body.ALLOCATION_RETRIES + 1
+    assert f"{expected} names found no free one" in proc.stderr, proc.stderr

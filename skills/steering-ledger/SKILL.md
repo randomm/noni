@@ -37,6 +37,12 @@ keeps its direction in a private state repository. The script's own location
 never decides where state is read from or written to, and a `--repo` naming no
 directory is refused before anything is written.
 
+**The path every line names.** The `wrote` line names the record's real location
+from the directory the command ran in: `--repo` joined to
+`noni/decisions/<id>.json`. It is spelled the same with and without `--no-commit`,
+and a `--supersedes` line names both paths that way, so a private state
+repository never reads as a stray `noni/` beside the project.
+
 ## Writing a record
 
 ```

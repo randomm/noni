@@ -52,6 +52,10 @@ somebody else had staged is neither committed nor unstaged. --no-commit writes
 through the same chain, leaves the file uncommitted and prints one line saying
 so. Every run prints the resulting order, one line per entry: the 1-based
 position, the issue, and the decision (or -) and confirmed timestamp it carries.
+The path the success line names (wrote, committed, or left uncommitted) is the
+artifact's real location as seen from the caller's working directory: ``--repo``
+followed by noni/direction/order.json, spelled exactly the same with and without
+--no-commit.
 
 The artifact's shape lives in orderschema.py in the package, the git and
 atomic-write mechanics in order_gitwrite.py, and the reads of that state (the
@@ -66,6 +70,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import re
 import sys
 from pathlib import Path
 
@@ -83,6 +88,80 @@ EXIT_OK: int = 0
 EXIT_USAGE: int = 2
 EXIT_IO: int = 3
 EXIT_REFUSAL: int = 4
+
+
+# One token of a usage line, as argparse recognises them: a bracketed group stays
+# together, anything else is a word. Same expression argparse's own
+# ``_format_usage`` uses to pack a long usage line, kept here so the formatter
+# below can pack the two halves of the line itself.
+_USAGE_PART_RE = re.compile(r"\(.*?\)+(?=\s|$)|\[.*?\]+(?=\s|$)|\S+")
+
+
+def _pack_usage_parts(parts: list[str], indent: str, prefix: str | None,
+                      text_width: int) -> list[str]:
+    """Fill ``parts`` into lines no wider than ``text_width``, the way argparse does.
+
+    A copy of the inner ``get_lines`` of argparse's ``_format_usage`` (including its
+    rule that the first line loses the indent when a prefix already sits before it),
+    lifted to a module function so :class:`_VerbFirstFormatter` can pack the
+    positionals and the optionals separately instead of handing both to one call.
+    """
+    lines: list[str] = []
+    line: list[str] = []
+    line_len = len(prefix) - 1 if prefix is not None else len(indent) - 1
+    for part in parts:
+        if line and line_len + 1 + len(part) > text_width:
+            lines.append(indent + " ".join(line))
+            line = []
+            line_len = len(indent) - 1
+        line.append(part)
+        line_len += len(part) + 1
+    if line:
+        lines.append(indent + " ".join(line))
+    if prefix is not None and lines:
+        lines[0] = lines[0][len(indent):]
+    return lines
+
+
+class _VerbFirstFormatter(argparse.HelpFormatter):
+    """Put the verb positionals ahead of the flag block in the ``usage:`` line.
+
+    argparse composes the usage line as ``optionals + positionals``, unconditionally:
+    with ``--repo`` required and five flags declared before the verbs, ``order.py
+    --help`` rendered ``... [--no-commit] subcommand [issue]``, burying the one word
+    the caller has to choose. The docstring's Usage block and
+    ``skills/direction/SKILL.md`` both spell the verb first, and a help line that
+    contradicts the two texts a reader copies from is the bug (issue #77).
+
+    Handing the parent a reordered action list does not work: it splits the list
+    back into optionals and positionals before it renders. So this formatter renders
+    the two halves itself with argparse's own action formatter -- which is what
+    keeps every ``metavar``, bracket and required-argument marking exactly as
+    argparse would print them -- and packs them with :func:`_pack_usage_parts`, so
+    ``COLUMNS`` still decides where the line breaks. The argument surface, the group
+    sections, the ``choices``/``metavar`` table and the refusal wording of an
+    argparse error are untouched, and a caller that passed its own ``usage=`` is
+    passed straight through.
+    """
+
+    def _format_usage(self, usage, actions, groups, prefix):
+        positionals = [action for action in actions if not action.option_strings]
+        optionals = [action for action in actions if action.option_strings]
+        if usage is not None or not positionals or not optionals:
+            # Nothing to move: a caller-supplied line, a flags-only parser and a
+            # positionals-only parser all render as the parent renders them.
+            return super()._format_usage(usage, actions, groups, prefix)
+        if prefix is None:
+            prefix = " " * self._current_indent + "usage: "
+        parts = [self._format_actions_usage(positionals, groups),
+                 self._format_actions_usage(optionals, groups)]
+        text_width = max(self._width - self._current_indent, 11)
+        indent = " " * (len(prefix) + len(self._prog) + 1)
+        lines = _pack_usage_parts([self._prog] + _USAGE_PART_RE.findall(parts[0]),
+                                  indent, prefix, text_width)
+        lines.extend(_pack_usage_parts(_USAGE_PART_RE.findall(parts[1]),
+                                       indent, None, text_width))
+        return prefix + "\n".join(lines) + "\n\n"
 
 
 def _digests(data: bytes) -> str:
@@ -107,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
         prog=labels.ORDER,
         description="Write the ordered list of issues the operator wants worked next "
                     "(noni/direction/order.json) and commit it.",
+        formatter_class=_VerbFirstFormatter,
     )
     parser.add_argument("--repo", required=True, help="repository root")
     parser.add_argument("subcommand", help="add, move, remove or confirm")
@@ -290,7 +370,10 @@ def main(argv: list[str] | None = None) -> int:
         # The census reads the working tree, so this file reads as uncommitted;
         # the one line says so and names the path, and committing it is the
         # caller's job.
-        print(f"{labels.ORDER}: wrote {orderschema.ORDER_REL}; left uncommitted: "
+        # The caller-cwd form (``--repo`` plus the artifact's path under it), the
+        # same token the committed route prints, so one writer prints one path
+        # form whatever the flag says (issue #77, AC2).
+        print(f"{labels.ORDER}: wrote {order_path}; left uncommitted: "
               "commit this path before running the census")
         return EXIT_OK
 
@@ -321,7 +404,7 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(EXIT_IO, f"git commit failed for {rel} (the file is written and "
                      f"staged, not committed): {detail}",
                      f"commit {rel} by hand, or re-run order.py once git answers")
-    print(f"{labels.ORDER}: committed {rel} ({verb})")
+    print(f"{labels.ORDER}: committed {order_path} ({verb})")
     return EXIT_OK
 
 

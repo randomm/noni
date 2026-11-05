@@ -108,7 +108,8 @@ alone with the subject `intent: <decision-id>` (`git add -- <path>`, then
 `git commit --only -- <path>`, so a file somebody else had staged is neither
 committed nor unstaged). A run that changes no byte says the file is unchanged
 and commits nothing. `--no-commit` writes through the same validation chain and
-stops before git, with one line saying the file is left uncommitted.
+stops before git, with one line saying the file is left uncommitted and naming it
+by the same path the committed route names.
 
 ## The artifact
 
@@ -145,6 +146,9 @@ anything is written.
 
 ## Writing the order
 
+The verb comes first, after `--repo`: what you are doing to the order, then the
+issue, then the flags that qualify it. `order.py --help` prints the same order.
+
 ```
 scripts/order.py --repo REPO add ISSUE --decision ID [--at N] [--now ISO-8601] [--no-commit]
 scripts/order.py --repo REPO move ISSUE --to N [--now ISO-8601] [--no-commit]
@@ -173,6 +177,13 @@ from the command line alone. A `--now` with no UTC offset is refused.
 uncommitted. The census reads the working tree, so an uncommitted order reads as
 far as the next census run in that same working copy and no further. Committing
 it is the caller's obligation.
+
+**The path every line names.** The `wrote`, `committed` and `left uncommitted`
+lines of both writers name the artifact's real location from the directory the
+command ran in: `--repo` joined to `noni/direction/order.json` (or
+`noni/direction/intent.md`). On Route B that is `.noni-state/noni/direction/order.json`,
+and it is spelled identically with and without `--no-commit`, so a private state
+repository never reads as a stray `noni/` beside the project.
 
 The commit stages only the path this command wrote (`git add -- <path>`, then
 `git commit --only -- <path>`), so a file somebody else had staged is neither

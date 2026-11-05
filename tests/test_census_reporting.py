@@ -205,6 +205,88 @@ class TestClean:
         assert before == after, f"git status changed: {before!r} -> {after!r}"
 
 class TestJsonMode:
+    """``--json`` is a machine contract: stdout is finding rows plus one summary
+    row, and stderr carries this run's own usage and tool faults and nothing the
+    scan printed (issue #77, AC3). The human mode keeps its banner."""
+
+    def _clean_repo(self, tmp_path):
+        """A state root with no findings for the non-hygiene classes.
+
+        Hygiene stays in ``requested``: with no deny-list configured (the
+        autouse conftest clears ``NONI_SCRUB_DENYLIST``) that is the one class
+        that always reports, and so the only one that ever printed the banner
+        this contract removes.
+        """
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                     json.dumps(_valid_record(), indent=2))
+        return repo
+
+    def test_json_writes_nothing_to_stderr_on_a_clean_run(self, tmp_path):
+        """The absent-deny-list banner is not repeated on stderr in --json mode.
+
+        The state root is deliberately one whose deny-list is INACTIVE: an
+        active deny-list prints nothing, so a test written that way would pass
+        whether the banner fired or not. The paired non-vacuity assertion is the
+        deny-list row on stdout: the state is still reported, as a documented
+        finding row with its fix hint, which is why the banner is redundant.
+        """
+        repo = self._clean_repo(tmp_path)
+        rc, out, err = _run_census(repo, "--now", "2026-10-02T00:00:00Z",
+                                   json_out=True)
+        assert err == "", f"a clean --json run wrote to stderr: {err!r}"
+        assert rc == 0, f"expected 0, got {rc}\n{out}\n{err}"
+        rows = _ndjson_rows(out)
+        deny_rows = [r for r in rows if r.get("kind") == "finding"
+                     and r.get("subject") == "deny-list"]
+        assert len(deny_rows) == 1, (
+            f"the run must still report the inactive deny-list as a row: {rows}")
+
+    def test_json_writes_nothing_to_stderr_with_a_corrupt_denylist(self, tmp_path):
+        """The second stderr writer is silenced too, and it leaked an absolute path.
+
+        ``public_safety.load_denylist`` prints its own ``deny-list <path>
+        unreadable`` notice for a candidate it cannot decode, and that path is
+        machine-local. A test of the absent case alone would leave it standing.
+        """
+        repo = self._clean_repo(tmp_path)
+        # Not committed: the deny-list is untracked operator config, and a
+        # tracked non-UTF-8 file would be a hygiene violation row of its own.
+        (repo / ".noni-scrub-denylist").write_bytes(b"\xff\xfe\x00not-utf8")
+        rc, out, err = _run_census(repo, "--now", "2026-10-02T00:00:00Z",
+                                   json_out=True)
+        assert err == "", f"a corrupt deny-list leaked a banner to stderr: {err!r}"
+        assert str(repo) not in out, f"an absolute path reached stdout: {out!r}"
+        rows = _ndjson_rows(out)
+        deny_rows = [r for r in rows if r.get("kind") == "finding"
+                     and r.get("subject") == "deny-list"]
+        assert len(deny_rows) == 1, f"the corrupt state must still be a row: {rows}"
+        assert "corrupt" in deny_rows[0]["message"], deny_rows[0]
+        assert rc == 0, f"expected 0, got {rc}\n{out}\n{err}"
+
+    def test_json_stdout_and_the_human_banner_are_unchanged(self, tmp_path):
+        """Silencing the banner moved no byte of stdout and none of human mode.
+
+        The contract AC3 removes a stderr line, nothing else: the same run's
+        NDJSON is byte-stable across two runs, and the human report still names
+        the skipped class (the wording ``scripts/public_safety.py``'s own gate
+        and docs/PUBLISHING.md step 1 rely on).
+        """
+        repo = self._clean_repo(tmp_path)
+        args = ["--now", "2026-10-02T00:00:00Z"]
+        _rc1, out1, err1 = _run_census(repo, *args, json_out=True)
+        _rc2, out2, err2 = _run_census(repo, *args, json_out=True)
+        assert out1 == out2, "two identical --json runs differed"
+        assert err1 == err2 == ""
+        rows = _ndjson_rows(out1)
+        assert [r["kind"] for r in rows].count("summary") == 1
+        assert all(r["kind"] in ("finding", "summary") for r in rows), rows
+        _rc, human, err_human = _run_census(repo, *args)
+        assert "deny-list" in human, human
+        assert "deny-list class SKIPPED" not in err_human, (
+            f"the census's human report must not print the gate's banner: "
+            f"{err_human!r}")
+
     def test_json_emits_ndjson_to_stdout(self, tmp_path):
         repo = _init_repo(tmp_path / "repo")
         _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md",

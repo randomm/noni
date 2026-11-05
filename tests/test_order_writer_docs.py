@@ -1,7 +1,14 @@
 """The order skill's documents against the writer that produced them.
 
 Extracted from the order writer suite: SKILL.md, the reference, and the fixture
-the census and the writer both read."""
+the census and the writer both read.
+
+The two ``Usage:`` texts are part of that contract: the docstring block and the
+four command lines of ``skills/direction/SKILL.md`` are what ``order --help``
+must agree with (issue #77, AC1), so the positional reading of both lives in
+``tests/order_usage_support.py`` and is asserted here next to the flag-set
+parity this module already pinned. The rendered help itself is run by
+``tests/test_order_writer_usage.py``, which compares it against these lines."""
 
 from _harness import (
     ORDER,
@@ -17,6 +24,12 @@ from order_fixtures import (
     _module_exit_codes,
     _order_ast,
     _parser_flags,
+)
+from order_usage_support import (
+    VERBS,
+    assert_verb_precedes_flags,
+    docstring_verb_lines,
+    skill_md_verb_lines,
 )
 
 
@@ -41,6 +54,46 @@ def test_docstring_usage_flags_match_the_parser():
     assert documented == parser, f"Usage block {sorted(documented)} vs parser {sorted(parser)}"
     for forbidden in ("--push", "--strict", "--json"):
         assert forbidden not in parser, f"{forbidden} is out of scope for order.py"
+
+
+def test_both_usage_texts_put_the_verb_before_the_flags():
+    """The two documents spell the verb first, so the help has a form to match.
+
+    ``test_docstring_usage_flags_match_the_parser`` compares flag *sets* and is
+    indifferent to order, which is how the help drifted behind the flags while
+    both pages stayed correct (issue #77). Each of the four verb lines of the
+    docstring block and each of the four command lines of SKILL.md is read
+    through the one reader the help is compared with, so the two halves of AC1
+    cannot be checked against two different readings of a line.
+    """
+    doc = docstring_verb_lines()
+    assert len(doc) == 4, f"the docstring prints {len(doc)} verb lines: {doc}"
+    pages = skill_md_verb_lines()
+    assert len(pages) == 4, f"SKILL.md prints {len(pages)} verb lines: {pages}"
+
+    for line in doc:
+        assert_verb_precedes_flags(line, f"order.py docstring {line!r}")
+    for line in pages:
+        assert_verb_precedes_flags(line, f"skills/direction/SKILL.md {line!r}")
+
+    # The two documents agree with each other on the verbs and on the flags
+    # each verb takes, so a reader copying either line gets the same command.
+    # The verb is the word each page prints straight after the ``--repo`` value,
+    # which is the position AC1 puts it in on the help line too.
+    def verbs(lines: list[str]) -> list[str]:
+        out: list[str] = []
+        for line in lines:
+            words = line.split()
+            out.append(words[words.index("REPO") + 1])
+        return out
+
+    assert verbs(doc) == list(VERBS), verbs(doc)
+    assert verbs(pages) == list(VERBS), verbs(pages)
+    for doc_line, page_line, verb in zip(doc, pages, VERBS, strict=True):
+        assert _doc_usage_flags(f"Usage:\n    {doc_line}") == \
+            _doc_usage_flags(f"Usage:\n    {page_line}"), (
+            f"the {verb} line differs between the docstring and SKILL.md: "
+            f"{doc_line!r} vs {page_line!r}")
 
 
 def test_docstring_names_the_refusals_the_code_performs():

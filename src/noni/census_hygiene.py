@@ -281,7 +281,12 @@ def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
     # is not trusted to supply the vocabulary the publishing gate checks.
     # Without it the class reports itself inactive below rather than pretending
     # the operator-name half ran.
-    with _pinned_hygiene_env():
+    #
+    # The scan's own stderr is silenced for the census (see
+    # :class:`_QuietScanStderr`): the deny-list state it announces is the row
+    # appended below, and a --json run's stderr is to carry this run's own usage
+    # and tool faults and nothing else.
+    with _pinned_hygiene_env(), _QuietScanStderr():
         try:
             violations, _source, denylist = public_safety.scrub_tracked_files(top)
         except Exception as e:
@@ -335,6 +340,78 @@ def _denylist_state(denylist: Any) -> str:
     if status != "ok":
         return str(status)
     return "present but empty" if not getattr(denylist, "entries", []) else "ok"
+
+
+class _QuietScanStderr:
+    """Install a throwaway stderr for the scan, and put the real one back first.
+
+    ``public_safety`` announces an inactive deny-list on ``sys.stderr`` from two
+    places (``scrub_tracked_files`` for absent/corrupt, ``load_denylist`` for an
+    unreadable candidate, which also leaks a machine-local absolute path). The
+    census already reports that same state as a documented ``deny-list`` warn row
+    with its own fix hint, so repeating it on stderr makes ``census --json`` a
+    stream a machine consumer has to redirect to be clean (issue #77, AC3).
+
+    It is redirected only around the one call, and only for the census, because
+    ``public_safety`` is a gate file: its standalone CLI keeps its banner
+    (``scripts/public_safety.py``, docs/PUBLISHING.md step 1) and its signature
+    is not widened for a caller's convenience.
+
+    The manager is a class rather than a :func:`contextlib.contextmanager`
+    generator so the restore is stated where it happens: ``__exit__`` reassigns
+    ``sys.stderr`` on the way out, at a point the interpreter has already chosen,
+    rather than in a ``finally`` whose position relative to the caller's own
+    handler is the interpreter's business. Nothing in the census depends on which
+    side of that handler the restore lands: every ``Exception`` the scan raises --
+    a hung or failing ``git ls-files``, an unreadable deny-list store, a malformed
+    pattern table -- is caught by ``check_hygiene``'s ``except Exception`` and
+    becomes the not-run row, and a ``BaseException`` (a Ctrl-C landing on the
+    scan's 30 s git call) travels on to the interpreter with its traceback intact.
+    "report, never crash" is that guard, not this manager; the manager's job ends
+    at putting the stream back, and it does so before anything else can observe
+    the swap.
+
+    The buffer keeps the first few writes and nothing else: a banner is a plain
+    line and is dropped, and the cap bounds the buffer against a scan that wrote
+    without stopping. ``write``/``flush``/``isatty``/``writable`` are answered so
+    a caller that inspects the stream during the scan gets a reply rather than an
+    ``AttributeError``; ``fileno`` is deliberately absent, because the census
+    never hands its stderr to a child and a stub for it would only let a caller
+    believe it had a descriptor.
+    """
+
+    # Enough of a stream for the calls the scan makes, so a caller that inspects
+    # the stream during the scan gets an answer rather than an AttributeError.
+    _KEEPS = 3
+
+    def __init__(self) -> None:
+        self._chunks: list[str] = []
+        self._previous: object = None
+
+    def __enter__(self) -> None:
+        self._previous = sys.stderr
+        sys.stderr = self
+        return None
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+        # Restore first, then let the exception travel: see the docstring.
+        sys.stderr = self._previous
+        self._previous = None
+        return False
+
+    def write(self, text: str, /) -> int:
+        if len(self._chunks) < self._KEEPS:
+            self._chunks.append(text)
+        return len(text)
+
+    def flush(self) -> None:
+        return None
+
+    def isatty(self) -> bool:
+        return False
+
+    def writable(self) -> bool:
+        return True
 
 
 @contextlib.contextmanager

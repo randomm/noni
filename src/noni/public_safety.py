@@ -62,12 +62,12 @@ from . import public_safety_io as _io
 # #91 created. Bound here as the private names the scan and its tests already use, so
 # ``public_safety`` keeps owning them: the tests bend ``os.open``/``os.read``/``os.close``
 # through this module's ``os``, and the deny-list loader below calls these names. Binding,
-# not copying -- the functions are one object, in one place.
+# not copying -- the functions are one object, in one place. ``_open_regular`` is the one
+# exception: it is defined below, once, as the thin wrapper the AST pins read.
 _MAX_SCAN_FILE_BYTES = _io.MAX_SCAN_FILE_BYTES
 _NOT_REGULAR = _io.NOT_REGULAR
 _close = _io.close
 _fault_pair = _io.fault_pair
-_open_regular = _io.open_regular
 _read_bytes_capped = _io.read_bytes_capped
 
 # Default location of the untracked local deny-list, relative to the tree being
@@ -172,10 +172,10 @@ def _is_self_file(rel: str) -> bool:
 def _open_regular(path: Path) -> tuple[int | None, tuple[str, str] | None]:
     """The guarded open of one path: see ``public_safety_io.open_regular``.
 
-    Kept as the scan's own name because the AST pins of ``test_public_safety_non_regular``
-    and the deny-list loader below both reach the guard through it, so the promise "every
-    blocking open in this package goes through one guarded opener" stays checkable in the
-    module that owns the scan.
+    Kept as the scan's own name, and defined only here, because the AST pins of
+    ``test_public_safety_non_regular`` and the deny-list loader below both reach the guard
+    through it, so the promise "every blocking open in this package goes through one
+    guarded opener" stays checkable in the module that owns the scan.
     """
     return _io.open_regular(path)
 
@@ -250,7 +250,7 @@ def load_denylist(repo: Path) -> DenylistResult:
             try:
                 raw_bytes = _read_bytes_capped(fd)
             except OSError as e:
-                raw, reason = None, str(e)
+                raw, reason = None, ": ".join(filter(None, _fault_pair(e)))
             else:
                 if raw_bytes is None:
                     raw, reason = None, "past the scan's size bound"

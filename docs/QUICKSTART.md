@@ -117,14 +117,19 @@ noni decide --repo .noni-state --slug release-scope --scope release \
   --question "q1=Ship the beta this week?" \
   --option "q1=Ship it" --option "q1=Wait a week" \
   --answer "q1=Wait a week"
+noni intent --repo .noni-state set --from ./intent-draft.md --decision <record-id>
 noni order --repo .noni-state add 12 --decision <record-id>
 noni census --repo .noni-state
 ```
 
-`<record-id>` is the `<date>-<slug>` of a record in the ledger: the ordering
-artifact cites a decision that exists, so run the `decide` line first and read
-the id off the `wrote noni/decisions/<id>.json` line it printed — the id is the
-date the command ran plus `-release-scope`. Sessions come next.
+`<record-id>` is the `<date>-<slug>` of a record in the ledger: both direction
+files cite a decision that exists, so run the `decide` line first and read the id
+off the `wrote noni/decisions/<id>.json` line it printed — the id is the date the
+command ran plus `-release-scope`. `intent-draft.md` starts from
+`skills/direction/references/intent-template.md`, which validates as it stands;
+the writer restamps its `Last-confirmed:` line to this run's UTC day and commits
+the file as `intent: <record-id>`. Both direction files are optional: a project
+that has written neither earns no `intent` (51) or `ordering` rows at all. Sessions come next.
 `register` allocates its own session id and prints it, so you never choose one,
 and `claim`, `release` and `close` all take that id as `--session-id`:
 
@@ -172,7 +177,7 @@ run.
 Run it without `--strict`, and gate the build on these two sets, which are the
 census's own classes split by their default severity:
 
-- **fail the build** on 10, 12, 15, 20, 30, 31 and 32;
+- **fail the build** on 10, 12, 15, 20, 30, 31, 32 and 51;
 - **report without failing** on 40, 41, 42, 43, 44, 45, 46 and 50.
 
 `skills/census/SKILL.md` owns that table with the class names beside each code.

@@ -52,6 +52,17 @@ WHOLE_ARTIFACT_KEY = "_whole_artifact"
 # census_ordering.py beside this file (see the loader under 'Ordering checks').
 ORDERING_CHECKS = frozenset({"ordering-malformed", "ordering-stale", "ordering-closed"})
 
+# The intent group is one check over one file, so it needs no group set beside it
+# the way the ledger, sessions and ordering groups do: the run's one --only rule
+# (a group runs when any class of its reporting set was asked for) is decided for
+# it by the name itself. The fourth subject of the class, `cannot-tell`, is a row
+# of `intent` rather than a class of its own — it answers the citation question —
+# and, like every cannot-tell row, it is a warn whatever --strict does not say
+# (see the severity override in census_intent.check_intent). A missing
+# noni/direction/intent.md is not a finding: standing intent is optional, so the
+# group adds no row at all when the artifact is absent.
+INTENT_CHECKS = frozenset({"intent"})
+
 # One threshold flag, two thresholds: --stale-after pins both classes to the
 # number the caller named, and without it each class gets the default that
 # belongs to it (see the threshold block in main for why the flag's presence
@@ -124,6 +135,14 @@ CHECKS: dict[str, tuple[int, str, str]] = {
         "remove the personal path, secret shape or deny-list name from the tracked file (rewrite "
         "history if it was ever committed), and keep the local deny-list present so the deny-list "
         "class stays active",
+    ),
+    "intent": (
+        51, "fail",
+        "repair noni/direction/intent.md to the four sections the direction skill documents "
+        "(## Purpose, ## Principles, ## Never, ## Ask first, in that order, each once, with one "
+        "'Last-confirmed: YYYY-MM-DD' line, within 200 lines) and write it with "
+        "skills/direction/scripts/intent.py, which commits it as 'intent: <decision-id>' naming a "
+        "record the ledger holds; an unreadable file is reported by this class and never as clean",
     ),
     "ordering-malformed": (
         15, "fail",

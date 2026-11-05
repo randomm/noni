@@ -46,6 +46,7 @@ PRODUCT_MODULES = (
     "src/noni/census.py",
     "src/noni/census_git.py",
     "src/noni/census_hygiene.py",
+    "src/noni/census_intent.py",
     "src/noni/census_json.py",
     "src/noni/census_ledger_checks.py",
     "src/noni/ledger_schema.py",
@@ -66,6 +67,8 @@ PRODUCT_MODULES = (
     "src/noni/decide.py",
     "src/noni/gitenv.py",
     "src/noni/gitwrite.py",
+    "src/noni/intent.py",
+    "src/noni/intentschema.py",
     "src/noni/labels.py",
     "src/noni/order.py",
     "src/noni/order_gitwrite.py",
@@ -108,9 +111,10 @@ CLOSE = SESSIONS_SKILL / "close.py"
 RELEASE = SESSIONS_SKILL / "release.py"
 DECIDE = STEERING_SKILL / "decide.py"
 ORDER = DIRECTION_SKILL / "order.py"
+INTENT = DIRECTION_SKILL / "intent.py"
 CENSUS = CENSUS_SKILL / "census.py"
 
-# The five tools the ``noni`` command dispatches: subcommand -> the wrapper that
+# The seven tools the ``noni`` command dispatches: subcommand -> the wrapper that
 # must produce the same bytes. The sessions census has no subcommand of its own
 # (it is the shim's --sessions dispatch), so it is compared through its wrapper
 # against the package module directly.
@@ -120,4 +124,5 @@ TOOL_WRAPPERS: tuple[tuple[str, Path], ...] = (
     ("claim", CLAIM),
     ("decide", DECIDE),
     ("order", ORDER),
+    ("intent", INTENT),
 )

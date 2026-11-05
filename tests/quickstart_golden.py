@@ -85,6 +85,8 @@ GOLDEN: dict[tuple[str, ...], list[list[str]]] = {
          "--question", "q1=Ship the beta this week?",
          "--option", "q1=Ship it", "--option", "q1=Wait a week",
          "--answer", "q1=Wait a week"],
+        ["noni", "intent", "--repo", ".noni-state", "set", "--from",
+         "./intent-draft.md", "--decision", "<record-id>"],
         ["noni", "order", "--repo", ".noni-state", "add", "12", "--decision",
          "<record-id>"],
         ["noni", "census", "--repo", ".noni-state"],

@@ -46,9 +46,15 @@ class Git:
         self._total_commits: int | None = None
         self._commit_author: dict[str, str] = {}
         self._commit_ts: dict[str, int] = {}
+        self._commit_subject: dict[str, str] = {}
         if top is not None and top.is_dir():
             head = self._run(["rev-parse", "HEAD"])
-            log = self._run(["log", "--all", "--format=%H%x1f%ct%x1f%an", "--name-only"])
+            # One history read per run, and the subject is one more field of it:
+            # the intent class asks 'did the last commit that touched this path
+            # cite a record', and that question is answered from the same walk
+            # rather than a second `git log` per audited file.
+            log = self._run(["log", "--all", "--format=%H%x1f%ct%x1f%an%x1f%s",
+                             "--name-only"])
             if head is not None and log is not None:
                 self.available = True
                 self._parse(log)
@@ -79,9 +85,22 @@ class Git:
         current = None
         for line in log.splitlines():
             if "\x1f" in line:
-                commit, ts, author = line.split("\x1f")
+                fields = line.split("\x1f")
+                if len(fields) < 4:
+                    # A malformed header line answers nothing, so it is skipped
+                    # rather than trusted: the last path seen stays the previous
+                    # commit's and its files are attributed to a commit this run
+                    # did not read. Same shape ``git log`` has never produced, so
+                    # this arm is a net, not a branch a real tree reaches.
+                    current = None
+                    continue
+                commit, ts, author = fields[0], fields[1], fields[2]
                 current = commit
                 self._commit_author[commit] = author
+                # The subject is the last field, so one that carries the
+                # separator keeps its tail: joined, not indexed, or a subject
+                # holding the byte would be truncated.
+                self._commit_subject[commit] = "\x1f".join(fields[3:])
                 if self._total_commits is None:
                     self._total_commits = 0
                 self._total_commits += 1
@@ -124,6 +143,20 @@ class Git:
 
     def commit_author(self, commit: str) -> str:
         return self._commit_author.get(commit, "")
+
+    def commit_subject(self, relpath: str) -> str | None:
+        """The subject of the latest commit containing ``relpath``, or None.
+
+        None answers both 'this path is in no commit this view saw' and 'git
+        could not answer at all' — the same conflation ``last_commit`` already
+        makes, and the reason its callers report a cannot-tell rather than a
+        verdict. The subject is returned verbatim; the caller that prints it
+        bounds it.
+        """
+        entry = self._last_commit.get(relpath)
+        if entry is None:
+            return None
+        return self._commit_subject.get(entry[1])
 
     def last_author(self, relpath: str) -> str:
         entry = self._last_commit.get(relpath)

@@ -1,6 +1,6 @@
 ---
 name: census
-description: Run the unified noni census — a single read-only script that checks the steering ledger (schema, edit-after-commit, supersede chain), the session register (double-claim, claim-without-register, malformed, stalled) and the ordering artifact (malformed order, stale entries, ordered-but-closed issues) and returns an honest exit code. Use when the operator or any agent needs to verify the protocol invariants before merging, when triaging a failing census, or when the question is "is the ledger, the session register and the order in a valid state?" Do NOT use for writing, fixing, or mutating anything — the census is strictly read-only.
+description: Run the unified noni census — a single read-only script that checks the steering ledger (schema, edit-after-commit, supersede chain), the session register (double-claim, claim-without-register, malformed, stalled) the ordering artifact (malformed order, stale entries, ordered-but-closed issues) and the standing intent file (missing or repeated sections, a file past its cap, an intent whose last commit cites no record) and returns an honest exit code. Use when the operator or any agent needs to verify the protocol invariants before merging, when triaging a failing census, or when the question is "are the ledger, the session register, the order and the intent in a valid state?" Do NOT use for writing, fixing, or mutating anything — the census is strictly read-only.
 ---
 
 # census
@@ -27,6 +27,7 @@ directory, is a usage error (exit 2) before any check runs.
 | `--ledger PATH` | `<repo>/noni/decisions` | override the ledger directory |
 | `--sessions PATH` | `<repo>/noni/sessions` | override the sessions directory |
 | `--ordering PATH` | `<repo>/noni/direction/order.json` | override the ordering artifact |
+| `--intent PATH` | `<repo>/noni/direction/intent.md` | override the standing intent file (its citation is still answered against the run's `--ledger`) |
 | `--issue-state FILE` | — | JSON map `{"<issue>": "open"\|"closed"}` produced by an adapter or the operator; the only route by which closed state reaches the census, which never contacts a tracker |
 | `--now ISO-8601` | current UTC | fixed timestamp for time-based checks (reproducible output) |
 | `--stale-after` | `7d` for `session-stalled`, `30d` for `ordering-stale` | staleness threshold; positive whole days as `<N>` or `<N>d` (e.g. `7` or `7d`). Given explicitly, it is the one threshold both classes use; omitted, each class keeps its own default |
@@ -54,6 +55,7 @@ directory, is a usage error (exit 2) before any check runs.
 | `ordering-malformed` | 15 | the ordering artifact is there and is not the artifact: unparseable bytes, a non-finite number, a key stated twice, wrong `schema`, a duplicate or non-positive `issue`, a `confirmed` that is not a UTC timestamp (one with no offset included), a `decision` matching no file in the ledger, an `--issue-state` file that does not parse or whose keys are not plain positive issue numbers, or a decision ledger whose listing faulted |
 | `ordering-stale` | 45 | an order entry whose `confirmed` is older than the `--stale-after` threshold relative to `--now` (warn by default; fail under `--strict`) |
 | `ordering-closed` | 46 | an ordered issue the `--issue-state` file says is closed; also the `cannot-tell` row for an entry the file does not mention (warn by default; fail under `--strict`) |
+| `intent` | 51 | `noni/direction/intent.md` is there and is not the artifact: a `## Purpose` / `## Principles` / `## Never` / `## Ask first` heading missing, repeated or out of order, the `Last-confirmed:` line absent or repeated, or the file past its line cap; or the last commit that touched it is not an `intent: <decision-id>` headline naming a record the ledger holds (`uncited`). The `cannot-tell` row for a file this run could not read, or for a file no commit touched, is a warn (fail under `--strict`); an absent file adds no row at all |
 | `hygiene` | 50 | a tracked file fails the public-repo hygiene scan (machine-local home path, secret shape, active deny-list entry), or the scan/deny-list did not run (warn by default; fail under `--strict`) |
 
 The `warn` classes are reported either way and never move the exit code on
@@ -92,6 +94,7 @@ class that fired.
 45  ordering-stale (warn by default; failure under --strict)
 46  ordering-closed (warn by default; failure under --strict)
 50  hygiene (warn by default; failure under --strict)
+51  intent
 ```
 
 A clean exit with warnings is normal: a cannot-tell staleness probe (no git
@@ -262,6 +265,18 @@ The same rule extends to the classes that report their own absence:
   A missing `noni/direction/order.json` is not a finding at all — the ordering
   layer is optional — so an attached project that has never ordered anything
   adds no ordering rows to its census.
+- **`intent` (51) reports the file, and the commit that wrote it.** The class
+  reads `noni/direction/intent.md` once and asks two questions of it: is it the
+  artifact its writer writes (four sections in order, one stamp line, under the
+  cap), and did the last commit that touched it cite a decision the ledger holds.
+  A missing file adds no row: standing intent is optional, exactly as the
+  ordering layer is, and a project that has never written one censuses clean.
+  The severity split is the ordinary one — a shape or citation the census could
+  read and disapprove of is a failure, and anything it could not read (a
+  symlink, unreadable bytes, a record it could not open, a file no commit ever
+  touched) is a `cannot-tell` warn that `--strict` promotes to 51. The row is
+  marked whole-artifact, so a `--only` filter that named no intent class still
+  shows it: a run that could not read the intent never reports itself clean.
 - **A read the group could not make is reported, never skipped.** An
   `--issue-state` file that does not parse, and a decision ledger whose listing
   faults while an entry cites a decision, each add one row marked whole-artifact:

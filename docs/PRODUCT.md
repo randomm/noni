@@ -101,10 +101,24 @@ All noni state of one project lives under one **state root**, in this layout:
 
 ```
 <state root>/noni/
-  direction/   standing direction, release trains, Now-state ordering
+  direction/   intent.md: the standing intent; order.json: the ordered list of work
   decisions/   steering ledger: one file per dated record
   sessions/    one committed file per session (registration + claims), one writer each
 ```
+
+Both files under `direction/` are optional and each has exactly one writer:
+`intent.py` writes `intent.md` and `order.py` writes `order.json`. Absence is a
+state, not a fault, and the census adds no row for a file that was never written.
+
+**Precedence** is the rule that makes the intent file answerable rather than
+decorative. When a question comes up, the answer is the most recent applicable
+record in `decisions/` (the end of its supersede chain); otherwise the four
+sections of `intent.md` (`Purpose`, `Principles`, `Never`, `Ask first`); and if
+neither settles it, the agent asks the operator and does not guess. An item under
+`Ask first` is never decided autonomously. Because standing direction is
+traceable, the writer refuses to install an intent whose `--decision` the ledger
+does not hold or has superseded, and the census reports an intent whose last
+commit cites no live record (§7's `intent` class, 51).
 
 The state root is a directory holding (or about to hold) that `noni/` tree, and
 `--repo` is the only flag that names it:
@@ -121,9 +135,9 @@ The state root is a directory holding (or about to hold) that `noni/` tree, and
 
 There is no third mechanism that *selects* the state root: no environment
 variable and no config file names it. The unified census's `--ledger`,
-`--sessions`, `--ordering` and `--issue-state` overrides do not select it
-either; they replace the path under it, and a leading `~` given by the caller is
-expanded in those four values and nowhere else — the sessions census takes one
+`--sessions`, `--ordering`, `--intent` and `--issue-state` overrides do not select
+it either; they replace the path under it, and a leading `~` given by the caller is
+expanded in those five values and nowhere else — the sessions census takes one
 plain path argument and does no expansion of it. Every shipped tool resolves
 every other `noni/` path from `--repo` — never from the tool's own location, and
 never from the current directory beyond `--repo`'s default.
@@ -131,7 +145,7 @@ never from the current directory beyond `--repo`'s default.
 A `--repo` that is missing, or is not a directory, stops the command with a
 clear message and a non-zero code (the fail-closed rule, §6). The code is the
 one that command already uses for a mistake in its own arguments: 2 for
-`order`, `register` and the unified census, 4 for `claim`, `close` and
+`intent`, `order`, `register` and the unified census, 4 for `claim`, `close` and
 `release`, 3 for `decide` (the same refusal `decide` gives a `--repo` that is
 not a git work tree). The codes are not interchangeable — each is that tool's
 existing refusal, and a caller tells a wrong path from a fault of the tree by

@@ -2,10 +2,10 @@
 
 One command, one subcommand per shipped tool: ``census``, ``register``,
 ``claim``, ``close``, ``release``, ``decide`` (a supersede is ``decide``'s
-``--supersedes`` flag) and ``order``. The argv after the subcommand is handed to
-that tool's own ``main`` verbatim, so flags, output, exit codes and ``--help``
-bytes are exactly what the in-place script produces — which is what the paired
-wrapper-vs-console test asserts.
+``--supersedes`` flag), ``order`` and ``intent``. The argv after the subcommand
+is handed to that tool's own ``main`` verbatim, so flags, output, exit codes and
+``--help`` bytes are exactly what the in-place script produces — which is what
+the paired wrapper-vs-console test asserts.
 
 This module holds no behaviour of its own: adding a tool means a row in
 ``TOOLS`` and nothing else.
@@ -27,6 +27,7 @@ TOOLS: dict[str, tuple[str, str]] = {
     "release": ("noni.release", "main"),
     "decide": ("noni.decide", "main"),
     "order": ("noni.order", "main"),
+    "intent": ("noni.intent", "main"),
 }
 
 # One line per subcommand, for this command's own --help. Each tool's flags and
@@ -39,6 +40,7 @@ SUMMARIES: dict[str, str] = {
     "release": "remove one claim row from a session's register file",
     "decide": "write one dated steering decision record (supersede with --supersedes)",
     "order": "write the ordered list of issues to work next",
+    "intent": "write the standing intent file the agents read first",
 }
 
 

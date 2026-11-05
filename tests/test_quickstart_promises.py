@@ -20,6 +20,12 @@ by following only the docs:
 - **The deny-list, the ``--issue-state`` note and the three prerequisites are named
   in the words the product itself uses**, so a rename on the product side reddens a
   page rather than leaving it documenting a file nobody reads or a note nobody prints.
+- **The driver-coexistence position is on the page, in the product's own words.** A
+  team whose work driver already keeps claim state has to be told which of noni's
+  layers it still runs and which it skips, and that skipping claims means never
+  creating ``noni/sessions/`` rather than creating it empty -- the one
+  distinction whose row the census's own ``session-deleted`` cannot-tell carries
+  (:mod:`tests.test_census_sessions_listing_gates`).
 
 The page is this repository's own reviewed file, so nothing here defends against it;
 the golden list in :mod:`quickstart_golden` makes the hostile-page question impossible
@@ -33,11 +39,17 @@ from docs_commands import read
 from docs_promises import (
     DENYLIST_STATES,
     PRODUCT,
+    QUICKSTART,
     STATE_DIR,
+)
+from quickstart_page import (
+    COEXISTENCE_HEADING,
+    flowed_section,
+    page_text,
+    product_section_8,
 )
 from quickstart_page import ROUTE_CHOICE_CLOSE as _ROUTE_CHOICE_CLOSE
 from quickstart_page import ROUTE_CHOICE_START as _ROUTE_CHOICE_START
-from quickstart_page import flowed_section, page_text
 from quickstart_runner import install_commands
 
 from noni import public_safety
@@ -205,3 +217,89 @@ def test_the_page_names_the_three_prerequisites() -> None:
     assert "jq" in text, "the page does not name jq"
     assert "user.name" in text and "user.email" in text, "the page omits the git identity"
     assert "NONI_PYTHON" in text, "the page does not name the wrapper's interpreter variable"
+
+
+def test_the_page_states_the_driver_coexistence_position() -> None:
+    """The section every claim-skipping team reads exists, and carries the three facts.
+
+    A pilot team that attaches noni usually already runs a work driver that keeps
+    its own per-issue state, worktree claims and a queue, and noni's sessions and
+    claims layer would be a second claim system beside it. The page has to say
+    which layers such a team runs and which it skips, because the alternative --
+    both registers, kept current by hand -- is the state the census reads as one
+    register and arbitrates badly. The facts are located inside the section rather
+    than searched over the page, so prose about a driver under some other heading
+    cannot satisfy them (:mod:`quickstart_page` states why these locators are
+    section-scoped and whitespace-collapsed).
+    """
+    section = flowed_section(COEXISTENCE_HEADING)
+    facts = ("per-issue state", "worktree claims", "queue",
+             "sessions and claims layer is optional", "Never both by hand",
+             "claim checks simply find no sessions",
+             "`noni/sessions/` **does not exist**",
+             "do not create it as an empty directory",
+             "`cannot-tell` row of the `session-deleted` class",
+             "`integrations/`")
+    missing = [fact for fact in facts if fact not in section]
+    assert not missing, (
+        f"the coexistence section omits {missing}, which is the position a team "
+        f"with its own driver steers by: {section!r}"
+    )
+
+
+def test_the_coexistence_section_names_the_two_direction_artifacts() -> None:
+    """The layers a coexisting team still runs are named by their committed paths.
+
+    "Always use the direction layer" is not actionable until the page names the two
+    files it means, and a path the product moved would leave the reader maintaining
+    a directory nothing reads. The ordering path is read from the writer's own
+    schema module; the ledger directory is derived from the census's own default for
+    it -- the one spelling the arbiter that reads the ledger commits to -- rather
+    than typed here, so the rename that moves either path reddens this page instead
+    of leaving it pointing at a location the tools never write.
+    """
+    import re
+
+    from noni import intentschema, orderschema
+
+    run_source = (REPO / "src" / "noni" / "census_run.py").read_text(encoding="utf-8")
+    ledger = re.search(r'root\s*/\s*"(noni)"\s*/\s*"(decisions)"', run_source)
+    assert ledger, (
+        "census_run no longer spells the ledger default as root / 'noni' / "
+        "'decisions', so this page's ledger path has no product source to read")
+    ledger_dir = f"`{ledger.group(1)}/{ledger.group(2)}/`"
+    order_path = f"`{orderschema.ORDER_REL}`"
+
+    section = flowed_section(COEXISTENCE_HEADING)
+    assert ledger_dir in section, (
+        f"the coexistence section does not name the steering ledger at "
+        f"{ledger_dir} -- the path the census resolves as its ledger default")
+    assert order_path in section, (
+        f"the coexistence section does not name the ordering artifact at "
+        f"{order_path} -- the path the ordering writer's own schema names")
+    assert intentschema.INTENT_REL not in section, (
+        "the coexistence section names the standing intent, which the product "
+        "states as optional in two places (docs/QUICKSTART.md's Route B, "
+        "skills/direction/SKILL.md) and this section does not need")
+
+
+def test_product_md_epic_map_points_at_the_coexistence_position() -> None:
+    """docs/PRODUCT.md 8's E4 entry names the driver-claims adapter as the follow-up.
+
+    The binding page and the reader's page split the work: the quickstart states
+    the position, and the epic map tells the reader which epic owes the adapter
+    that would mirror a driver's claims instead. Read from §8 rather than from the
+    whole page, so a sentence about an adapter under a different heading is not
+    this claim, and read the quickstart link as a path that has to resolve.
+    """
+    section = flowed_section("8. Epic map", product_section_8())
+    assert "driver-claims adapter" in section, (
+        f"docs/PRODUCT.md 8 no longer names the driver-claims adapter as the "
+        f"follow-up: {section!r}")
+    assert "follow-up" in section, "the E4 entry dropped its follow-up framing"
+    assert "docs/QUICKSTART.md" in section, (
+        "the E4 entry does not point at the page that carries the position")
+    assert QUICKSTART.is_file(), "docs/QUICKSTART.md is missing while §8 links it"
+    assert COEXISTENCE_HEADING in read(QUICKSTART), (
+        "the E4 entry links the quickstart, which no longer carries the section "
+        f"named {COEXISTENCE_HEADING!r}")

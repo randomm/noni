@@ -20,8 +20,16 @@ import re
 from docs_commands import read
 from docs_promises import QUICKSTART
 
-__all__ = ["ROUTE_CHOICE_CLOSE", "ROUTE_CHOICE_START", "flowed_section",
-           "flowed_text", "page_text", "product_section_7"]
+__all__ = ["COEXISTENCE_HEADING", "ROUTE_CHOICE_CLOSE", "ROUTE_CHOICE_START",
+           "flowed_section", "flowed_text", "page_text", "product_section_7",
+           "product_section_8"]
+
+# The heading the driver-coexistence section publishes under, and the one locator
+# its assertions scope to. Named here because two modules read that section --
+# this page's promises and the docs-page CI-neutrality gate -- and a heading the
+# page renamed in one of the two would leave the other checking a section that no
+# longer exists (the same reason the route-choice clause below is a constant).
+COEXISTENCE_HEADING = "Using noni alongside a driver that keeps its own claims"
 
 # The two ends of the clause that tells a reader where the writers' commits land and
 # which project should therefore take the private state route. Located by phrase
@@ -74,7 +82,21 @@ def product_section_7() -> str:
     rather than by number-in-prose, and collapsed like every other locator here,
     so the check reads the words and not the column they wrapped at.
     """
-    from docs_commands import read as _read
     from docs_promises import PRODUCT
 
-    return flowed_section("7. State layout", _read(PRODUCT))
+    return flowed_section("7. State layout", read(PRODUCT))
+
+
+def product_section_8() -> str:
+    """``docs/PRODUCT.md`` section 8 (the epic map), as the page prints it.
+
+    Not whitespace-collapsed: this section's unit is the bullet, and the reader of
+    it that the CI-neutrality gate reuses counts markdown lines inside one bullet.
+    """
+    from docs_promises import PRODUCT, section_body
+
+    body = section_body(read(PRODUCT), "8. Epic map")
+    assert body.lstrip().startswith("## 8."), (
+        "docs/PRODUCT.md no longer opens its epic map with a `## 8.` heading, so "
+        f"this locator is reading the wrong span: {body[:40]!r}")
+    return body

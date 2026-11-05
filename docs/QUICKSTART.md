@@ -223,6 +223,27 @@ says what switches the class on. `--strict` is the opt-in a team adds once that
 file holds at least one usable entry, and under it every warn class above fails
 the build at its own code.
 
+## Using noni alongside a driver that keeps its own claims
+
+A team attaching noni may already run a work driver of its own: one that keeps
+per-issue state, worktree claims and a queue. noni does not compete with it.
+
+- **The direction layer is always used.** The steering ledger
+  (`noni/decisions/`) and the ordering artifact (`noni/direction/order.json`) are
+  the shared direction layer, and a team that attaches noni runs them.
+- **The sessions and claims layer is optional.** Where a driver already owns
+  claim state, the team either skips noni claims outright or mirrors the
+  driver's claims into noni's register through an adapter under
+  `integrations/`, once one exists. Never both by hand: two claim systems
+  written by hand disagree, and the census reads one register.
+- **The census still runs, and its claim checks simply find no sessions.**
+  That is the state this page documents for such a team, and the state is that
+  `noni/sessions/` **does not exist**: do not create it as an empty directory.
+  A register that is absent is a clean state and the sessions group stays
+  wordless; a register that exists and cannot be listed earns a `cannot-tell`
+  row of the `session-deleted` class instead. Skipping claims therefore means
+  not writing the directory, not writing an empty one.
+
 ## The deny-list, and why --strict fails on a fresh attach
 
 `--strict` promotes every warn class to a failure at its own code, `hygiene`

@@ -165,9 +165,19 @@ def _rel_to(top: Path, path: Path) -> str | None:
 
 
 def _rel_to_root(root: Path, path: Path) -> str:
+    """``path`` spelled from ``root``, or verbatim when it does not live under it.
+
+    ``resolve`` is the one step that cannot be trusted: it follows the chain a
+    symlinked artefact stands at, and ``pathlib`` turns an ``ELOOP`` into
+    ``RuntimeError``, which is no kind of answer about a path. A row's artifact is
+    its root-relative identifier and nothing more, so the unresolvable path is
+    reported as it was given rather than ending the run.
+    """
     try:
         return path.resolve().relative_to(root.resolve()).as_posix()
     except ValueError:
+        return str(path)
+    except RuntimeError:
         return str(path)
 
 
@@ -248,6 +258,48 @@ def _ledger_probe(ledger: Path) -> _ledger.LedgerProbe:
     by the loader under 'Ledger and hygiene splits' below.
     """
     return _ledger.probe_ledger(ledger, _file_kind)
+
+
+def _intent_commit_subject(rel: str) -> str | None:
+    """The subject of the last commit that touched ``rel``, from this run's view.
+
+    The seam the intent group asks its citation question through, and the reason
+    the class costs no second ``git log`` of its own: the answer is a lookup over
+    the history the run already parsed. The view is built over the root
+    :func:`_run_root` recorded for the run in flight — the tree ``--repo`` named —
+    and never over the process's own directory, so an intent outside that tree is
+    never answered for. None means the view holds no commit for that path, or no
+    view could be built at all (no run in flight, no git tree, or a history read
+    that could not answer), and the group's cannot-tell rule depends on that being
+    an answer rather than a verdict.
+    """
+    root = _run_root()
+    if root is None:
+        return None
+    top = _git_top(root)
+    if top is None:
+        return None
+    git = Git(top)
+    return git.commit_subject(rel) if git.available else None
+
+
+# The root of the run in flight, or None between runs. Set by
+# ``census_run._run`` through :func:`_set_run_root` and read by
+# :func:`_intent_commit_subject`. A one-element list rather than a module-level
+# rebinding so the record is visible through the module object a test already
+# imported; and a run that never started answers None, which is the honest
+# direction for a seam called outside a run: no root named, no history answered.
+_RUN_ROOT: list[Path | None] = [None]
+
+
+def _set_run_root(root: Path) -> None:
+    """Record the tree the run in flight audits; see :func:`_intent_commit_subject`."""
+    _RUN_ROOT[0] = root
+
+
+def _run_root() -> Path | None:
+    """The root recorded by :func:`_set_run_root`, or None when no run is in flight."""
+    return _RUN_ROOT[0]
 
 
 def _ledger_name(rel: str) -> str:

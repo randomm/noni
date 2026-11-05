@@ -116,6 +116,7 @@ _STATE_DOCS: dict[str, Path] = {
     r"noni/sessions/?": Path("skills/sessions-claims/SKILL.md"),
     r"noni/direction/?": Path("skills/direction/SKILL.md"),
     r"noni/direction/order\.json": Path("skills/direction/SKILL.md"),
+    r"noni/direction/intent\.md": Path("skills/direction/SKILL.md"),
     r"\.venv/bin/[\w.-]+": Path("pyproject.toml"),
 }
 

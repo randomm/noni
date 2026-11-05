@@ -282,7 +282,7 @@ class TestCheckFilters:
                      "session-double", "session-claim", "session-malformed",
                      "session-stalled", "probe",
                      "ledger-empty", "session-same-identity", "session-deleted",
-                     "hygiene",
+                     "hygiene", "intent",
                      "ordering-malformed", "ordering-stale", "ordering-closed"}
         assert set(lines) == expected, f"got {lines}"
 

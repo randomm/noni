@@ -46,15 +46,18 @@ STATUS_SUPERSEDED = "superseded"
 STATUSES = ("decided", "open", "superseded")
 
 
-def _fail(code: int, message: str, hint: str | None = None) -> int:
+def _fail(code: int, message: str, hint: str | None = None,
+          label: str | None = None) -> int:
     """Print a refusal as a headline plus a 'fix:' line naming what resolves it,
-    and hand back the exit code. One shape for every refusal in this writer.
+    and hand back the exit code. One shape for every refusal of a writer.
 
-    The label is the writer's own program name from ``noni.labels``, not this
+    The label is the running program's own name from ``noni.labels``, not this
     file's name: a refusal raised by the reader still has to read as coming from
-    ``order.py``, whichever route reached it.
+    ``order.py``, whichever route reached it. ``intent.py`` passes its own label,
+    because a second writer reuses these reads and its refusals are its own, so
+    the name a caller sees is the name it invoked.
     """
-    label = f"{labels.ORDER}:"
+    label = label or f"{labels.ORDER}:"
     print(label, message, file=sys.stderr)
     if hint:
         print(label, "fix:", hint, file=sys.stderr)

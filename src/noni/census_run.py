@@ -33,16 +33,20 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from . import census_intent as _intent
 from . import census_json as _census_json
 from . import census_ordering as _ordering
 from . import census_ordering_readers as _ordering_readers
 from . import census_sessions_checks as _sessions_checks
+from . import census_text as _text
+from . import intentschema
 from .census_cli import _build_parser
 from .census_report import (
     CLASS_CODE,
     EXIT_CLEAN,
     EXIT_TOOL_MISSING,
     EXIT_USAGE,
+    INTENT_CHECKS,
     LEDGER_CHECKS,
     ORDERING_CHECKS,
     ORDERING_STALE_AFTER_DEFAULT,
@@ -159,6 +163,50 @@ def _check_ordering(
                              ledger_name=census._ledger_name)
 
 
+def _check_intent(
+    intent: Path, ledger: Path, root: Path, strict: bool, findings: list[dict]
+) -> None:
+    """The intent group, run by the module beside the census.
+
+    The row factory, the root-relative identifier, the path classifier, the
+    fault wording and the strict JSON reader are read off the census at the call
+    rather than closed over at import, so the row shape, the machine-local-path
+    rule and the bound on a foreign message keep their single owner in
+    ``census.py`` and a seam a test puts on any of them is the one the moved group
+    uses. The group reads one file and one record of its own; ``commit_subject``
+    is the run's one history view asked for the subject of the last commit that
+    touched the file, which is what keeps the whole run to a single ``git log``.
+    """
+    census = _census()
+    _intent.check_intent(
+        intent, ledger, root, findings, strict,
+        row=census._row, rel_to_root=census._rel_to_root,
+        file_kind=census._file_kind, fault_text=_text.fault_text,
+        load_json_strict=_census_json.load_json_strict,
+        commit_subject=census._intent_commit_subject)
+
+
+def _intent_present(intent: Path) -> bool:
+    """Whether a read of ``intent`` is owed, for the group's filter gate.
+
+    Classified through the census's own classifier, the one the class itself uses,
+    so the gate and the rows can never disagree about what stands at the path. A
+    bare ``Path.exists`` would be both wrong and unsafe here: it follows links, so
+    it answers False for the symlink whose cannot-tell row the gate exists to keep
+    (dangling, or a chain that loops), and it propagates the ``OSError`` of a
+    parent it cannot read -- which would end a filtered run with a traceback on
+    exactly the input the class reports as ``cannot-tell``. "Anything the run could
+    not classify is worth a read" is the honest rule, and the class owns every
+    verdict that read produces, the fault's included.
+
+    The classifier is asked by a call rather than bound at import so the seam a
+    test puts on ``census._file_kind`` is the one the gate uses: this run's gate
+    and this run's rows then answer for the path from one seam.
+    """
+    kind, _ = _census()._file_kind(intent)
+    return kind != "absent"
+
+
 def _run(argv: list[str] | None = None) -> int:
     """The body of the census run, called by ``census.main``.
 
@@ -167,6 +215,13 @@ def _run(argv: list[str] | None = None) -> int:
     row mechanic is asked of the census module once per body (``census =
     _census()``, then ``census._`` …), so a seam a test puts on a census name is
     the seam this body uses.
+
+    ``_set_run_root`` records the tree being audited before any group runs: the
+    intent class asks the history view for the subject of the last commit that
+    touched its file, and that question is answered through a census seam a test
+    can replace — ``census._intent_commit_subject(rel)``, which consults the root
+    recorded here. A caller that replaces the seam needs nothing from this body;
+    a caller that does not gets the view built for ``--repo`` and nothing else.
     """
     args = _build_parser().parse_args(sys.argv[1:] if argv is None else argv)
     census = _census()
@@ -231,18 +286,25 @@ def _run(argv: list[str] | None = None) -> int:
     sessions = Path(args.sessions) if args.sessions else root / "noni" / "sessions"
     ordering = (Path(args.ordering) if args.ordering
                 else root / "noni" / "direction" / "order.json")
+    intent = (Path(args.intent) if args.intent
+              else root / intentschema.INTENT_REL)
     issue_state_path = Path(args.issue_state) if args.issue_state else None
     ledger = Path(os.path.expanduser(str(ledger)))
     sessions = Path(os.path.expanduser(str(sessions)))
     ordering = Path(os.path.expanduser(str(ordering)))
+    intent = Path(os.path.expanduser(str(intent)))
     if issue_state_path is not None:
         issue_state_path = Path(os.path.expanduser(str(issue_state_path)))
 
     top = census._git_top(root)
     git = census.Git(top) if top is not None else None
+    # The one root this run audits, recorded on the census for the duration of
+    # the call so the intent group's history question is answered for the tree
+    # --repo named and no other (see census._set_run_root).
+    census._set_run_root(root)
 
     findings: list[dict] = []
-    # One --only/--skip rule for all four groups: a group runs when any class
+    # One --only/--skip rule for all five groups: a group runs when any class
     # of its reporting set was asked for, and keeps only the rows of the
     # classes actually named. The ledger group is reported as a unit (the
     # empty-ledger probe owns states the record pass must not duplicate), so
@@ -316,6 +378,30 @@ def _run(argv: list[str] | None = None) -> int:
             print("note: ordering-closed was not evaluated: no --issue-state FILE was "
                   "given, so whether an ordered issue is closed is not asked "
                   "(the census never contacts a tracker)")
+
+    # The intent class is its own group: one file, one cited record, and the
+    # citation question answered from the history view this run already took. The
+    # ledger's listing is not handed down -- the group reads the one record the
+    # citation names and reads the answer for itself. Like every other group its
+    # path defaults under --repo and ``census_cli`` gives it the same kind of path
+    # override the ledger, sessions and ordering groups have.
+    #
+    # The group is entered whenever a class of it was asked for, and also whenever
+    # the census's own classifier says a read is owed: every cannot-tell row this
+    # class can raise is raised from a read of that file (the bytes, their
+    # encoding, or the history of the path), so a run that skipped the read while a
+    # file was there would report the same clean verdict as a run that read it and
+    # found nothing -- the inversion ``keep``'s whole-artifact term exists to
+    # prevent, which only ever applies to a row the group actually appended. An
+    # absent file is the one state this class says nothing about at all (see
+    # ``check_intent``), so the cheap classification keeps a filtered run of a
+    # project that wrote no intent from paying for a read whose answer is known to
+    # be no row. The gate asks the classifier rather than ``Path.exists`` because
+    # a path the filesystem will not describe is a read the run owes, not a crash:
+    # ``check_intent`` owns that verdict, and the gate must not reach it first.
+    if INTENT_CHECKS & requested or _intent_present(intent):
+        _check_intent(intent, ledger, root, args.strict, findings)
+        findings[:] = keep(findings)
 
     # hygiene is its own check group: it scans the tracked files of the census's
     # own git tree (never the --ledger/--sessions overrides). The group is entered

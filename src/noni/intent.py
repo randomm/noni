@@ -75,11 +75,64 @@ EXIT_IO: int = 3
 EXIT_REFUSAL: int = 4
 
 
+# The one verb the writer owns, spelled once so the usage line, the unknown-verb
+# refusal and the missing-verb hint cannot name three different sets.
+VERBS: tuple[str, ...] = ("set",)
+
+# The verb list the two refusals name, spelled once from ``VERBS``.
+_VERB_LIST = ", ".join(VERBS)
+
+# The usage line, spelled once and handed to argparse as ``usage=``.
+#
+# argparse composes a usage line as ``optionals + positionals``, unconditionally, so
+# the verb was printed behind every flag while this docstring's ``Usage:`` block and
+# ``skills/direction/SKILL.md`` both spell it first. ``order.py`` carries the same
+# decision, the reasoning and the 3.14 history behind it: this is the same line for
+# the parser that writer does not have (issue #98). The flag block is the parser's
+# own declaration, in declaration order, with the metavar argparse prints for each,
+# and the flag-set parity of ``tests/test_intent_writer_docs.py`` compares the two:
+# a flag added to the parser belongs here too.
+_USAGE = (f"{labels.INTENT} --repo REPO subcommand"
+          " [--from FILE] [--decision ID] [--now ISO-8601] [--no-commit] [-h]")
+
+# The missing-positional message argparse composes for a required positional. The
+# verbs are added to argparse's own refusal rather than replacing it, so the usage
+# line, the wording and the exit code stay what every other tool prints for the same
+# mistake.
+_MISSING_SUBCOMMAND = "the following arguments are required: subcommand"
+
+
+class _VerbedParser(argparse.ArgumentParser):
+    """The parser of a one-verb writer, naming the verbs when the verb is missing.
+
+    ``intent.py --repo R`` with no verb got argparse's own refusal, which names the
+    slot (``subcommand``) and not the one word that fills it: only an *invalid*
+    verb reached the fix line that named it, so the commonest mistake printed the
+    least useful answer (issue #98). This parser keeps argparse's own refusal and
+    adds the verbs to it, so the usage line, the wording and the exit code are
+    unchanged and one more line names the accepted verb.
+
+    ``order.py`` carries the same parser; the two writers share only this shape,
+    which their own verb sets make different. The parser is not reshaped with
+    ``add_subparsers`` or ``choices=``, both of which would move the verb out of the
+    usage line and take the refusal off the path the pinned wording stands for.
+    """
+
+    def error(self, message: str):
+        if _MISSING_SUBCOMMAND in message:
+            self.print_usage(sys.stderr)
+            print(f"{self.prog}: {message}", file=sys.stderr)
+            print(f"{self.prog}: fix: choose from: {_VERB_LIST}", file=sys.stderr)
+            raise SystemExit(EXIT_USAGE)
+        super().error(message)
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
+    parser = _VerbedParser(
         prog=labels.INTENT,
         description="Write the standing intent file the agents read first "
                     f"({intentschema.INTENT_REL}) and commit it.",
+        usage=_USAGE,
     )
     parser.add_argument("--repo", required=True, help="repository root")
     parser.add_argument("subcommand", help="set")
@@ -94,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="write the file and leave it uncommitted for the caller")
     args = parser.parse_args(argv)
 
-    if args.subcommand != "set":
+    if args.subcommand not in VERBS:
         return _fail(EXIT_USAGE, f"subcommand {args.subcommand!r} is not 'set'",
                      f"{labels.INTENT} --repo REPO set --from FILE --decision ID")
     if args.source is None:

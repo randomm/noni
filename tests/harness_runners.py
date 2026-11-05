@@ -69,7 +69,7 @@ def run_noni(*args: str, env: Mapping[str, str] | None = None,
 
     Launched as ``python -m noni.cli`` rather than the ``noni`` script so the
     job needs no console-script entry on PATH while still going through the
-    console module's own dispatch; ``tests/test_console_equivalence.py`` runs
+    console module's own dispatch; ``tests/test_console_routes.py`` runs
     the ``noni`` script itself against the installed wheel.
 
     Like :func:`run_wrapper`, this forces the pinned ``COLUMNS`` on a
@@ -77,6 +77,28 @@ def run_noni(*args: str, env: Mapping[str, str] | None = None,
     width whatever the caller's environment says.
     """
     cmd = [sys.executable, "-m", "noni.cli", *args]
+    full = subprocess_env() if env is None else dict(env)
+    full["COLUMNS"] = HELP_COLUMNS
+    return subprocess.run(cmd, capture_output=True, text=True, env=full,
+                          timeout=timeout, **_cwd_kwarg(cwd))
+
+
+def run_module(*args: str, env: Mapping[str, str] | None = None,
+               cwd: Path | None = None,
+               timeout: int = 120) -> subprocess.CompletedProcess[str]:
+    """The package route ``python -m noni ...``, as a subprocess.
+
+    The third route to the same command: the console script is what an installed
+    copy puts on ``PATH``, :func:`run_noni` drives the console module directly, and
+    this drives the package itself, which is the route a reader on the quickstart's
+    ``PYTHONPATH=<clone>/src`` form actually has (issue #98). It goes through
+    ``noni.__main__``, so it covers the module that makes that route exist at all.
+
+    Same contract as :func:`run_noni`: the pinned ``COLUMNS`` is forced even on a
+    caller-supplied env, so a ``--help`` byte comparison between the three routes
+    does not depend on the width of the terminal the suite ran under.
+    """
+    cmd = [sys.executable, "-m", "noni", *args]
     full = subprocess_env() if env is None else dict(env)
     full["COLUMNS"] = HELP_COLUMNS
     return subprocess.run(cmd, capture_output=True, text=True, env=full,

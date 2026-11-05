@@ -42,8 +42,11 @@ carries: no package index sits between you and it, and neither is a release.
 
 The wrappers under `skills/<skill>/scripts/` import the package rather than
 carrying logic, so one of three states has to hold before any of them runs:
-installed as above, installed editable, or `PYTHONPATH=<clone>/src`. A wrapper
-whose package is missing says so on one line and exits 3; it does not raise.
+installed as above, installed editable, or `PYTHONPATH=<clone>/src`. On that last
+state the command to type is `PYTHONPATH=<clone>/src python3 -m noni <tool>`, which
+runs the same CLI as `noni <tool>`; there is no `noni` on your PATH yet, because
+nothing was installed. A wrapper whose package is missing says so on one line and
+exits 3; it does not raise.
 
 `noni` and the wrapper paths are the same code and print the same bytes. Use
 whichever the rest of this page makes shorter to type. `.venv/bin/noni <tool>` is
@@ -341,4 +344,5 @@ Three things outside noni decide whether a first run works:
   the interpreter named by `NONI_PYTHON` and defaults to `python3`. That
   interpreter also has to import the package, so the wrappers under
   `skills/<skill>/scripts/` need the install above or `PYTHONPATH=<clone>/src`
-  whichever route you took.
+  whichever route you took. On the `PYTHONPATH` form the tools are reached with
+  `python3 -m noni` rather than `noni`, which is the same command by another name.

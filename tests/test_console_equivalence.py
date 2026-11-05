@@ -32,6 +32,7 @@ from _harness import (
     CENSUS_SESSIONS_PY,
     CLAIM,
     DECIDE,
+    INTENT,
     ORDER,
     REGISTER,
     REPO,
@@ -47,6 +48,21 @@ from _harness import (
 # One baseline repo per test: a committed decision record the order writer can
 # cite, so the tools have real state to act on.
 BASELINE_ID = "2026-10-01-baseline"
+
+# A draft the intent writer accepts: the four sections and one stamp line. Written
+# here rather than read from the shipped template, because this module compares two
+# routes and must not fail because a document changed its prose.
+INTENT_DRAFT = """# Intent
+Last-confirmed: 2026-10-01
+## Purpose
+Ship the beta.
+## Principles
+Prefer the boring technology.
+## Never
+Never force push.
+## Ask first
+Anything that costs money.
+"""
 
 # The identity the writers commit under. decide.py takes ``by`` from
 # ``git config user.name`` and refuses exit 3 without it, so a launched writer
@@ -334,6 +350,33 @@ def test_order_wrapper_matches_noni_order_help():
     left, right = run_wrapper(ORDER, "--help"), run_noni("order", "--help")
     _assert_same(left, right, "order --help")
     assert left.stdout.startswith("usage: order.py "), left.stdout[:80]
+
+
+def test_intent_wrapper_matches_noni_intent(tmp_path):
+    """The intent writer's success line and its refusal line both pair."""
+    repo = _repo(tmp_path)
+    draft = tmp_path / "draft.md"
+    draft.write_text(INTENT_DRAFT, encoding="utf-8")
+    left = run_wrapper(INTENT, "--repo", str(repo), "set", "--from", str(draft),
+                       "--decision", BASELINE_ID, "--now", "2026-10-02T00:00:00Z",
+                       "--no-commit")
+    assert left.returncode == 0, left.stderr
+    # A draft that is not an intent file is the refusal path: the shape check runs
+    # before anything is written, so both routes see the same bytes and refuse.
+    draft.write_text("# Intent\n## Purpose\nOnly one section.\n", encoding="utf-8")
+    again_left = run_wrapper(INTENT, "--repo", str(repo), "set", "--from", str(draft),
+                             "--decision", BASELINE_ID)
+    again_right = run_noni("intent", "--repo", str(repo), "set", "--from", str(draft),
+                           "--decision", BASELINE_ID)
+    _assert_same(again_left, again_right, "intent refusal")
+    assert again_left.returncode == 4, again_left.stderr
+    assert again_left.stderr.startswith("intent.py:"), again_left.stderr
+
+
+def test_intent_wrapper_matches_noni_intent_help():
+    left, right = run_wrapper(INTENT, "--help"), run_noni("intent", "--help")
+    _assert_same(left, right, "intent --help")
+    assert left.stdout.startswith("usage: intent.py "), left.stdout[:80]
 
 
 def test_census_sessions_wrapper_matches_the_package(tmp_path):

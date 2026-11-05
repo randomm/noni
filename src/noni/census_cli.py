@@ -44,6 +44,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ordering", default=None,
                         help="ordering artifact (default: "
                              "<repo>/noni/direction/order.json)")
+    parser.add_argument("--intent", default=None, metavar="FILE",
+                        help="standing intent file (default: "
+                             "<repo>/noni/direction/intent.md); its citation is "
+                             "answered against the --ledger of this run, so the "
+                             "override moves the file and not the ledger")
     parser.add_argument("--issue-state", default=None, metavar="FILE",
                         help='JSON map {"<issue>": "open"|"closed"} produced by an adapter '
                              "or the operator; without it the ordering-closed check is not "

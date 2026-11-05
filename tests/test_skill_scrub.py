@@ -106,6 +106,10 @@ def test_skill_files_present():
     assert "SKILL.md" in direction_rels, f"direction SKILL.md missing; have: {direction_rels}"
     assert "scripts/order.py" in direction_rels, (
         f"scripts/order.py missing; have: {direction_rels}")
+    assert "scripts/intent.py" in direction_rels, (
+        f"scripts/intent.py missing; have: {direction_rels}")
+    assert "references/intent-template.md" in direction_rels, (
+        f"references/intent-template.md missing; have: {direction_rels}")
     # The writer's helper modules are package modules now, not files of this
     # skill; the wrapper that the skill documents is what must remain here.
 
@@ -123,11 +127,13 @@ def test_package_files_present():
     """
     shipped = {p.name for p in (REPO / "src" / "noni").glob("*.py")}
     for module in (
-        "census.py", "census_hygiene.py", "census_json.py", "census_ledger.py",
+        "census.py", "census_hygiene.py", "census_intent.py", "census_json.py",
+        "census_ledger.py",
         "census_ordering.py", "census_ordering_readers.py", "census_sessions.py",
         "census_sessions_probe.py", "census_text.py",
         "claim.py", "cli.py",
-        "decide.py", "gitenv.py", "gitwrite.py", "labels.py", "order.py",
+        "decide.py", "gitenv.py", "gitwrite.py", "intent.py", "intentschema.py",
+        "labels.py", "order.py",
         "order_gitwrite.py",
         "orderschema.py", "orderstate.py", "public_safety.py", "register.py",
         "shim_help.py", "targetschema.py",

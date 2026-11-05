@@ -45,6 +45,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from _harness import REPO
 from docs_promises import STATE_DIR
 from quickstart_golden import GOLDEN
 from quickstart_topology import (
@@ -57,6 +58,11 @@ from quickstart_topology import (
     git,
     run_env,
 )
+
+# The draft the page tells a reader to copy and fill: the shipped template, read
+# from the skill rather than restated here, so the page can never promise a draft
+# its own writer would refuse.
+INTENT_TEMPLATE = REPO / "skills" / "direction" / "references" / "intent-template.md"
 
 __all__ = [
     "ORDERING_NOW",
@@ -291,12 +297,17 @@ def run_route_b(world: World) -> list[list[str]]:
     return commands
 
 
-# The two lines that carry an id a collector produced rather than one the reader
-# typed: the ordering writer's ``--decision`` and the claim writer's ``--session-id``.
-_ID_CONSUMERS: tuple[tuple[str, ...], ...] = (("noni", "order"), ("noni", "claim"))
+# The three lines that carry an id a collector produced rather than one the reader
+# typed: both direction writers' ``--decision`` and the claim writer's
+# ``--session-id``. The intent writer is here because it asks the same question of
+# the ledger as the ordering writer does, so it earns the same two refusals: a
+# golden line pre-filled with a value, and a token no writer could have produced.
+_ID_CONSUMERS: tuple[tuple[str, ...], ...] = (
+    ("noni", "intent"), ("noni", "order"), ("noni", "claim"))
 
 # The flag each consumer carries its id in, keyed by the command pair.
-_ID_FLAGS = {("noni", "order"): "--decision", ("noni", "claim"): "--session-id"}
+_ID_FLAGS = {("noni", "intent"): "--decision", ("noni", "order"): "--decision",
+             ("noni", "claim"): "--session-id"}
 
 
 def _assert_consumed_id(argv: list[str], filled: list[str]) -> None:
@@ -366,6 +377,8 @@ def launch(world: World, argv: list[str],
             f"the page's cd must name the placeholder for the reader's own "
             f"repository ({READER_DIR}): {argv}")
         return subprocess.CompletedProcess(argv, 0, "", "")
+    if argv[:2] == ["noni", "intent"]:
+        return write_intent_draft(world, argv)
     if argv[0] == "echo":
         return append_ignore_rule(world, argv)
     if argv[0] == "git" and argv[1] == "clone":
@@ -384,6 +397,52 @@ def _exec(program: str, argv: list[str], cwd: Path,
                               text=True, env=env, timeout=180)
     except subprocess.TimeoutExpired as exc:  # pragma: no cover - a hung command
         pytest.fail(f"page command hung: {argv}\n{exc}")
+
+
+def write_intent_draft(world: World,
+                       argv: list[str]) -> subprocess.CompletedProcess[str]:
+    """Put the draft the page's intent line reads onto the reader's disk.
+
+    The page tells the reader to copy the skill's template, fill its four sections
+    and hand it over with ``--from``: the harness supplies the file the reader's
+    copy step would have produced, at the path the page's own line names, and hands
+    the launch the *page's* argv untouched. Two things that leaves honest: the
+    writer still reads the path from argv rather than from anything the harness
+    chose, and a golden line that drops ``--from`` or points it elsewhere fails
+    here rather than launching a run whose input nobody reviewed.
+
+    The draft is the shipped template, not a fixture of this test module: a page
+    that installs a draft the writer refuses, or a template that stopped validating,
+    fails here -- which is the promise the page makes to a first-time reader.
+    """
+    position = argv.index("--from")
+    draft = argv[position + 1]
+    assert not draft.startswith("-"), (
+        f"the page's intent line passes --from {draft!r}, which is a flag and not "
+        f"a draft path: {argv}")
+    target = cwd_draft(world, draft)
+    assert not target.exists(), (
+        f"the page's draft path {draft} already exists in the scratch tree, so the "
+        "run could not be attributed to the file this harness wrote")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(INTENT_TEMPLATE.read_text(encoding="utf-8"),
+                      encoding="utf-8")
+    return subprocess.CompletedProcess(argv, 0, "", "")
+
+
+def cwd_draft(world: World, draft: str) -> Path:
+    """Resolve the page's draft path against the directory that command runs in.
+
+    The page's line runs in the reader's own repository (the ``cd`` step), so a
+    relative path means a file of the project, not of the state clone: the intent
+    draft is the reader's own document, and only the artifact the writer commits
+    lands under ``--repo``.
+    """
+    relative = Path(draft)
+    assert not relative.is_absolute(), (
+        f"the page's --from names an absolute path {draft!r}, which the harness "
+        "would have to trust rather than resolve")
+    return world.project / relative
 
 
 def append_ignore_rule(world: World,

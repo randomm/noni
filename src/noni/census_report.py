@@ -257,7 +257,18 @@ def _render(
     (``finding``, ``summary``) stays closed. The field is omitted when there is
     nothing to say, so a run that evaluated everything keeps the byte stream it
     had before the field existed.
+
+    ``list[str]`` is the field's contract, not a description of what happens to
+    be passed today: one sentence per element, the class named first. A note that
+    arrived as a dict or a pair would print as a ``note: {...}`` line in one mode
+    and an object inside a list in the other, which is the per-mode-diverging
+    shape this field exists to prevent, so a producer is refused here rather than
+    a consumer surprised later.
     """
+    for note in notes:
+        if not isinstance(note, str):
+            raise TypeError(
+                f"a census note must be a sentence, got {type(note).__name__}: {note!r}")
     if json_out:
         for f in sorted(findings, key=_finding_sort_key):
             row = {

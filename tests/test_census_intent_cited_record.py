@@ -107,8 +107,7 @@ def test_a_dangling_symlink_at_the_cited_record_path_is_cannot_tell(tmp_path):
     The refusal comes first, so the link is a ``cannot-tell`` warn and the
     absence branch never sees it.
     """
-    repo = _planted_record_link(tmp_path, "dangling",
-                                target=tmp_path / "no-such-record.json")
+    repo = _planted_record_link(tmp_path, "dangling", dangling=True)
     code, rows, _, _ = _run(repo)
     intent_rows = _intent_rows(rows)
     assert subjects(intent_rows) == ["cannot-tell"]
@@ -292,7 +291,7 @@ def test_the_cited_record_link_survives_a_filter_that_named_no_intent_class(tmp_
     whole-artifact: without the marker the run printed no intent row at all and
     exited 0, which is a clean verdict bought by a path nobody opened.
     """
-    repo = _planted_record_link(tmp_path, "filter")
+    repo = _planted_record_link(tmp_path, "filter", dangling=True)
     rows = _rows(repo, "--only", "session-double")
     intent_rows = _intent_rows(rows)
     assert subjects(intent_rows) == ["cannot-tell"]
@@ -306,7 +305,7 @@ def test_strict_promotes_the_cited_record_link_row(tmp_path):
     ``--strict``: the same exit rule the intent-file row obeys. The unfiltered exit
     is already asserted by every test above, so only the promoted half is asked here.
     """
-    repo = _planted_record_link(tmp_path, "strict")
+    repo = _planted_record_link(tmp_path, "strict", dangling=True)
     assert _run(repo, "--strict")[0] == 51
 
 
@@ -386,7 +385,7 @@ def test_the_cited_record_row_marks_itself_whole_artifact(tmp_path):
     import noni.census as census
     from noni import census_run
 
-    repo = _planted_record_link(tmp_path, "marker")
+    repo = _planted_record_link(tmp_path, "marker", dangling=True)
     found: list[dict] = []
     # The group's own composition, with the census's own row factory reached through
     # the module the census is: ``_row`` is what stamps the marker, so the marker is
@@ -399,3 +398,58 @@ def test_the_cited_record_row_marks_itself_whole_artifact(tmp_path):
         "the cited-record cannot-tell row is not marked whole-artifact, so a run "
         "whose --only named no intent class drops it and reports itself clean"
     )
+
+
+def test_a_record_swapped_for_a_link_after_classification_is_not_read(tmp_path):
+    """A link planted between the classification and the read is refused at the open.
+
+    A check-then-read leaves an interval, and a run that classifies and then opens
+    anyway is exactly the state no filesystem fixture can produce — by the time the
+    census looks, the path is whatever the planter left. Driven in-process through
+    the census's own classifier seam: the classifier answers "regular" for the cited
+    path, and only then is the path replaced by a link to an outside file holding a
+    superseded record. A reader that trusted the earlier answer would print
+    ``uncited ... the record is superseded`` at exit 51 from outside bytes; the
+    reader that refuses at the open reports the class's own ``cannot-tell``.
+    """
+    import noni.census as census
+    from noni import census_run
+
+    repo = _planted_record_link(tmp_path, "swap")
+    record_path = repo / "noni" / "decisions" / f"{RECORD_ID}.json"
+    outside = tmp_path / "swapped-target.json"
+    outside.write_text(json.dumps(record(status="superseded",
+                                        supersedes=RECORD_ID)),
+                       encoding="utf-8")
+    real_kind = census._file_kind
+
+    def classify_then_swap(path, kind="file"):
+        """Answer for real, then plant the link the classification just approved.
+
+        Positional ``kind``, like the census's own classifier: the class asks this
+        seam for the ledger and its parent with ``kind="dir"``, so a keyword-only
+        signature would fault before the state under test was reached.
+        """
+        answer = real_kind(path, kind)
+        if Path(path).name == f"{RECORD_ID}.json" and answer[0] == "regular":
+            if record_path.is_file():
+                record_path.unlink()
+                record_path.symlink_to(outside)
+        return answer
+
+    found: list[dict] = []
+    census._file_kind = classify_then_swap
+    try:
+        census_run._check_intent(repo / "noni" / "direction" / "intent.md",
+                                 repo / "noni" / "decisions", repo, False, found)
+    finally:
+        census._file_kind = real_kind
+
+    intent_rows = _intent_rows(found)
+    assert subjects(intent_rows) == ["cannot-tell"], (
+        "a path swapped for a link after the classification was read through, so "
+        f"bytes outside the repo decided the intent verdict: {intent_rows}"
+    )
+    row_text = json.dumps(intent_rows[0])
+    assert "superseded" not in row_text
+    assert "swapped-target" not in row_text

@@ -173,15 +173,21 @@ def commit_intent(repo: Path, *, decision: str = RECORD_ID,
 
 def planted_record_link(tmp_path: Path, name: str, *,
                        target: Path | None = None, is_dir: bool = False,
-                       hardlink_to: Path | None = None) -> Path:
-    """A committed repo whose cited record is a planted path, ready for a run.
+                       hardlink_to: Path | None = None,
+                       dangling: bool = False) -> Path:
+    """A committed repo whose cited record stands as a planted path, ready for a run.
 
     The one state every cited-record test needs: a record committed at its id, an
     intent committed against it, and then the path replaced by something that is not
-    an ordinary file. ``target`` plants a symlink to it (dangling when nothing lives
-    there); ``is_dir`` plants a directory; ``hardlink_to`` plants a hardlink — a
-    state the census cannot see, kept so the limit is asserted and not assumed. With
-    none of them the record is simply removed, which is the plain absence.
+    an ordinary file.
+
+    - ``target`` -- a symlink to it, so the census must refuse to follow it.
+    - ``dangling`` -- a symlink to nothing, which is not an absent record.
+    - ``is_dir`` -- a directory at the path (a device or fifo is the same answer).
+    - ``hardlink_to`` -- a hardlink, a state ``lstat`` cannot tell from an ordinary
+      file, kept so the limit is asserted and not assumed.
+    - none of them -- the record left exactly as committed, for a test that plants
+      the state itself (a swap that happens after the classification).
 
     Returns the repo. The subdir is named per caller so two states can stand in one
     ``tmp_path`` without colliding.
@@ -190,14 +196,18 @@ def planted_record_link(tmp_path: Path, name: str, *,
     install_intent(repo)
     commit_intent(repo)
     record_path = repo / "noni" / "decisions" / f"{RECORD_ID}.json"
-    record_path.unlink()
     if is_dir:
+        record_path.unlink()
         record_path.mkdir()
     elif hardlink_to is not None:
+        record_path.unlink()
         os.link(hardlink_to, record_path)
-    else:
-        record_path.symlink_to(target if target is not None
-                               else tmp_path / "no-such-record.json")
+    elif target is not None:
+        record_path.unlink()
+        record_path.symlink_to(target)
+    elif dangling:
+        record_path.unlink()
+        record_path.symlink_to(tmp_path / "no-such-record.json")
     return repo
 
 

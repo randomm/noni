@@ -13,7 +13,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from _harness import REPO
+from _harness import REPO, subprocess_env
 
 CENSUS_SH = REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"
 CENSUS_SESSIONS_SH = REPO / "skills" / "sessions-claims" / "scripts" / "census-sessions.sh"
@@ -21,9 +21,20 @@ FIXTURES = REPO / "tests" / "fixtures" / "census-sh"
 
 
 def _run_help(script: Path) -> str:
+    """``script --help``, through the harness's own child environment.
+
+    Every launcher of a product script in this suite goes through
+    ``subprocess_env()``: that is what puts this tree's ``src/`` first on the
+    child's ``sys.path`` and turns on the subprocess half of the coverage gate.
+    The shim's ``--help`` is not generated here -- it prints the package constant
+    ``noni.shim_help.CENSUS_SH_HELP`` through a ``python3 -c`` import -- so a run
+    that inherited the ambient environment would be comparing the *installed*
+    package's help against this tree's fixture, and a host holding an editable
+    install of another checkout would certify a help text this tree does not ship.
+    """
     proc = subprocess.run(
         ["bash", str(script), "--help"],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, env=subprocess_env(), timeout=30,
     )
     assert proc.returncode == 0, f"{script.name} --help: exit {proc.returncode}\n{proc.stderr}"
     return proc.stdout

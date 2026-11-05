@@ -227,8 +227,8 @@ def flag_refusals(fail: Callable[[int, str, str | None], int], exit_usage: int,
                   slug: str, scope: str, asked_by: str, decided_by: str | None,
                   on_behalf_of: str | None,
                   line_free: Callable[[object], bool],
-                  options_by_question: dict[str, list[str]] | None = None,
-                  single_option: bool = False) -> int | None:
+                  options_by_question: dict[str, list[str]],
+                  single_option: bool) -> int | None:
     """The exit code of the first usage refusal the flags earn, or None.
 
     The rules, in the order they are refused: the slug is what the census accepts as
@@ -243,7 +243,10 @@ def flag_refusals(fail: Callable[[int, str, str | None], int], exit_usage: int,
     name who they acted for. The marker rule is the writer's half of a rule both
     censuses report: ``options_by_question`` maps each question id to the options
     given for it, so the check sees what the record will hold rather than the flag
-    alone. ``fail`` and ``exit_usage`` are the caller's printer and code, so every
+    alone. Both are required and neither has a default: the marker rule reads the
+    options map unconditionally, so a defaulting ``None`` would be a signature that
+    advertised a call it could not honour -- it would raise, not refuse. ``fail``
+    and ``exit_usage`` are the caller's printer and code, so every
     refusal is worded in one voice.
     """
     if not slug_re.fullmatch(slug):

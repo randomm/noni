@@ -4,7 +4,10 @@
 `skills/census/SKILL.md`) is the entry point that enforces the ledger invariants.
 `scripts/census.sh`, the subject of this page, is the ledger shim (with its
 `--sessions` dispatch to the sessions-claims twin): the read-only, jq-based twin
-kept for callers that already run it. It is a
+kept for callers that already run it — for spot checks, not for a gate. It runs
+one `jq` pass per record in a shell loop, so on a ledger of thousands of records
+it costs an order of magnitude more than `noni census` over the same tree; a CI
+step that censuses a real ledger each run belongs on the unified census. It is a
 bash script, so it runs under `bash` or through its own executable bit and its
 bash shebang — never under `python3`, which reads its braces as Python and dies
 on a syntax error before any check runs. This is the one page that states that

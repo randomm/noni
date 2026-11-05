@@ -88,10 +88,10 @@ LINE_BREAKS = ("\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85",
 # name made of one of those is not blank to this rule -- the four breaks among
 # them (U+001C-U+001E, U+0085, U+2028, U+2029 and the rest of ``LINE_BREAKS``) are
 # refused as more than one line, never as a blank, and the others name somebody.
-# The census mirrors this set in jq (the
-# whitespace class of ``line_free`` in
-# ``skills/steering-ledger/scripts/census-schema.jq``), so a hand-edited record
-# holding a blank name is refused by both entry points and not only at the flag.
+# The census mirrors this set in jq: the blank class of ``line_free`` in
+# ``skills/steering-ledger/scripts/census-schema.jq`` reads the same four
+# characters, so a hand-edited record holding a blank name is refused by both
+# entry points and not only at the flag.
 BLANKS = (" ", "\t", "\v", "\f")
 
 # A UTC ISO-8601 second-resolution timestamp (the record date shape).

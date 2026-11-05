@@ -156,9 +156,13 @@ def test_wheel_metadata_declares_the_license_the_file_shows(licensed_wheel: Path
     dropped ``license`` key produces.
     """
     message = _metadata(licensed_wheel)
-    declared = " ".join(message.get_all("License") or [])
-    assert "Apache-2.0" in declared or "Apache License" in declared, (
-        f"the wheel declares no Apache license: License header is {declared!r}"
+    # The pinned backend renders license = {file = "LICENSE"} as an empty
+    # License: header plus a License-File: pointer, so the claim a reader
+    # can act on is the file entry: an absent declaration drops both.
+    files = message.get_all("License-File") or []
+    assert any(n.endswith("LICENSE") for n in files), (
+        f"the wheel points at no license file: License-File is {files!r}, "
+        f"License is {message.get_all('License')!r}"
     )
     assert "License :: OSI Approved :: Apache Software License" in (
         message.get_all("Classifier") or []

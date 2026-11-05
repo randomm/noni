@@ -167,8 +167,8 @@ the anti-fabrication rule (the agent never answers for the operator) are in
 
 ## Census
 
-`scripts/census.sh <state-root>/noni/decisions` is the ledger shim: read-only,
-jq-based, and it exits with an honest code. It is the compatibility twin, not the
+`scripts/census.sh <state-root>/noni/decisions` is read-only,
+jq-based, and it exits with an honest code. It is the ledger shim, not the
 enforcer — `noni census` (the unified census, `skills/census/scripts/census.py`,
 documented in `skills/census/SKILL.md`) is the entry point that enforces. It is a
 bash script: run it as `bash
@@ -188,19 +188,17 @@ default, so a run with no argument is the usage error `2`.
 | `20` | the supersede chain is broken (dangling, duplicate, orphan, cycle, or a chain resolving to zero or more than one live record) |
 
 A `decisions/` directory that holds no `*.json` record is none of the above: the
-shim names it `(42:ledger-empty)` on stderr and exits 0, the same verdict the
-unified census gives it.
+shim names it `(42:ledger-empty)` on stderr and exits 0. That is the unified
+census's `ledger-empty` warn, which it also reports at exit 0 and promotes to 42
+under `--strict` — a code this shim has no flag for — so the two entry points
+agree on a freshly attached tree (issue #97). `skills/census/SKILL.md` documents
+the unified census's own side of that contract, including the three classes this
+shim does not have.
 
 When several invariant classes fail at once, the lowest code wins
 (`10 < 12 < 20`); the stderr message says whether the higher-numbered checks
 were skipped. The census does not check operator confirmation: it cannot see
 whether the operator confirmed an answer, so it never claims to (below).
-
-The table above is `census.sh`. The unified census reports a recordless
-`noni/decisions/` directory as the `ledger-empty` warn 42 (exit 0, 42 under
-`--strict`), and so does this shim on stderr (`42:ledger-empty`) at exit 0: the
-two entry points agree on a freshly attached tree (issue #97). See
-`skills/census/SKILL.md`.
 
 The exit-code contract and how to read the report are in `references/census.md`.
 

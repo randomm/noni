@@ -183,6 +183,41 @@ class TestHygiene:
         finally:
             _clear_denylist()
 
+    def test_an_unreadable_tracked_file_is_a_finding_not_a_silent_clean(self, tmp_path):
+        """A tracked regular file the scan may not open earns exactly one row.
+
+        The census level of the lens HIGH: before the fix the sealed file was
+        skipped as silently as a pipe is, so ``census --only hygiene`` over that tree
+        reported the deny-list half and nothing else -- a hygiene-clean-looking run
+        on bytes nobody had read. The row is asserted in full (subject, artifact,
+        message, warn code) and the sealed path is the artifact, so the class puts
+        the finding where a caller can group it; the fault's class is named and the
+        path the exception carried is not.
+        """
+        from _harness import _plant_unreadable_tracked_file
+
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                      json.dumps(_valid_record(), indent=2))
+        _plant_unreadable_tracked_file(repo, "sealed.md")
+        _with_denylist(tmp_path, "synthetic-project-name")
+        try:
+            rc, out, err = _run_census(repo, "--only", "hygiene", json_out=True)
+            strict_rc, _o, _e = _run_census(repo, "--only", "hygiene", "--strict")
+        finally:
+            _clear_denylist()
+
+        assert rc == 0, f"hygiene is warn: expected 0 without --strict, got {rc}\n{err}"
+        rows = [r for r in _ndjson_rows(out) if r.get("check") == "hygiene"]
+        assert len(rows) == 1, f"expected the one unreadable-file row: {rows}"
+        row = rows[0]
+        assert row["subject"] == "sealed.md:0", row
+        assert row["artifact"] == "sealed.md", row
+        assert "could not be read" in row["message"] and "PermissionError" in row["message"], row
+        assert _HOME_PATH not in row["message"], f"the row leaked a host path: {row}"
+        assert row["code"] == 50 and row["severity"] == "warn", row
+        assert strict_rc == 50, f"--strict did not lift the finding: exit {strict_rc}"
+
     def test_absent_denylist_is_reported_inactive_never_clean(self, tmp_path):
         """With no deny-list the class never reads "clean": it emits exactly
         one row naming the inactive state, even on a violation-free tree."""

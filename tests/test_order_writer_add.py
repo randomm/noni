@@ -9,6 +9,9 @@ import shutil
 from _harness import (
     _git_e2,
 )
+from ordering_shapes import (
+    MALFORMED_SHAPES,
+)
 from order_fixtures import (
     BASELINE_ID,
     NOW,
@@ -45,28 +48,40 @@ def test_add_creates_the_file_and_commits_only_that_path(tmp_path):
 
 
 def test_an_entry_whose_decision_is_null_is_refused_by_every_verb(tmp_path):
-    """Every entry cites a decision (anti-fabrication, issue #97), so a hand-
-    written ``"decision": null`` is not a state the file may carry.
+    """Every entry cites a decision (anti-fabrication, issue #97), so neither a
+    hand-written ``"decision": null`` nor an entry that omits the key is a state
+    the file may carry.
 
-    The three states the rule separates are pinned apart: a null decision earns
-    the refusal naming the entry, an absent key earns the missing-field refusal,
-    and the writer's own output -- which always writes the key -- round-trips.
-    The refusal is the writer's own code 4 and it leaves the artifact untouched,
-    because overwriting an order the operator committed is worse than refusing
-    the run.
+    Both states run the whole verb set: the rule is that no order writer verb
+    opens such a file, and one enforced by four verbs and missed by the fifth is
+    the gap this pins shut. The two states keep their own sentences -- the null
+    is refused as a decision that is neither a record id nor null, the absent key
+    as a missing field -- so a reader learns whether the repair is an id or a
+    key. The refusal is the writer's own code 4 and it leaves the artifact
+    untouched, because overwriting an order the operator committed is worse than
+    refusing the run.
     """
-    repo = _repo(tmp_path)
-    _seed(repo, _entry(1, None))
-    before = _order_path(repo).read_bytes()
-    for verb in (("confirm",), ("confirm", "1"), ("move", "1", "--to", "1"),
-                 ("remove", "2"), ("add", "9", "--decision", BASELINE_ID)):
-        proc = _order(repo, *verb, "--now", NOW)
-        assert proc.returncode == 4, f"{verb}: {proc.returncode} {proc.stderr}"
-        assert "entry 1 decision is neither a record id nor null" in proc.stderr, \
-            f"{verb}: {proc.stderr}"
-    assert _order_path(repo).read_bytes() == before, "a refused run rewrote the artifact"
-    # The key's presence in what the writer does write: an absent key is a
-    # different refusal (the missing-field row), so the two states stay distinct.
+    # Both shapes come from the shared table (``tests/ordering_shapes.py``), the
+    # one list the census's ordering suite reads too, so neither half of the
+    # contract can quietly drop a state.
+    for label in ("decision null", "decision absent"):
+        body, needle = MALFORMED_SHAPES[label]
+        repo = _repo(tmp_path, f"decision-{label.replace(' ', '-')}")
+        _order_path(repo).parent.mkdir(parents=True, exist_ok=True)
+        _order_path(repo).write_text(body, encoding="utf-8")
+        before = _order_path(repo).read_bytes()
+        for verb in (("confirm",), ("confirm", "1"), ("move", "1", "--to", "1"),
+                     ("remove", "2"), ("add", "9", "--decision", BASELINE_ID)):
+            proc = _order(repo, *verb, "--now", NOW)
+            assert proc.returncode == 4, f"{label} {verb}: {proc.returncode} {proc.stderr}"
+            assert needle in proc.stderr, f"{label} {verb}: {proc.stderr}"
+            assert "entry 1" in proc.stderr, \
+                f"{label} {verb} must name the entry: {proc.stderr}"
+        assert _order_path(repo).read_bytes() == before, \
+            f"{label}: a refused run rewrote the artifact"
+    # What the writer does write: the key present with a real id, in the
+    # documented order, and the census content with it.
+    repo = _repo(tmp_path, "decision-cited")
     _seed(repo, _entry(1, BASELINE_ID))
     assert _order(repo, "confirm", "--now", NOW).returncode == 0
     body = _order_path(repo).read_text(encoding="utf-8")

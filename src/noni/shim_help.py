@@ -17,11 +17,13 @@ exit-code table and its own golden fixtures under tests/fixtures/:
 
   census.sh <state-root>/noni/decisions        the decisions census (E1)
       columns: id date by status live supersedes
-      codes:   0 clean | 2 no ledger dir given | 3 jq missing
+      codes:   0 clean | 2 no ledger dir given | 3 jq missing or the
+               schema program missing (3:schema-program-missing)
                | 10 record/ledger unusable | 12 edited after commit
                | 20 supersede chain broken
       a record is valid when it carries the eight top-level required
-      fields (plus the optional source field) and the chain resolves
+      fields (plus the optional source, decided_by, on_behalf_of and
+      single_option fields) and the chain resolves
 
   census.sh --sessions <state-root>/noni/sessions   the sessions census (E2)
       one NDJSON row per finding; read-only, output to stdout only

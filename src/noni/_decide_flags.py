@@ -9,10 +9,14 @@ the flags and hands the caller either the pieces of a valid record or the code
 of the refusal it already printed.
 
 The rules themselves: ``--date`` is a real calendar day; one to four
-``--question`` flags, each ``ID=TEXT`` with distinct ids; and a supersede is
-refused while any question is unanswered. ``--option`` / ``--answer`` pairing, the
-slug and the 2-4-options-per-question rule stay in decide.py next to the record
-renderer they feed.
+``--question`` flags, each ``ID=TEXT`` with distinct ids; the ``--decided-by`` /
+``--on-behalf-of`` names are non-empty single-line strings, decided by the
+census's own predicate the caller hands in, and ``--on-behalf-of``
+is refused without ``--decided-by``; and a supersede is refused while any question
+is unanswered. ``--option`` / ``--answer`` pairing, the slug, the
+2-4-options-per-question rule and the marker's one-option requirement stay in
+decide.py next to the record renderer they
+feed.
 """
 
 from __future__ import annotations
@@ -31,6 +35,11 @@ DATE_FLAG_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # module imports nothing from decide.py (decide.py imports this one), so the
 # code and the format come in as arguments rather than being restated here.
 Fail = Callable[[int, str, str | None], int]
+
+# The census's own test for the one-line shape, handed in the same way the
+# printer is: the writer must refuse exactly what the census reports, and a copy
+# of that rule kept here could drift from it in silence.
+LineFree = Callable[[object], bool]
 
 
 def parse_date(date: str | None, *, fail: Fail, exit_usage: int) -> tuple[str | None, int | None]:
@@ -80,6 +89,34 @@ def parse_questions(values: list[str], *, fail: Fail,
         seen.add(qid)
         questions.append((qid, text))
     return questions, None
+
+
+def refuse_name(flag: str, value: str | None, *, fail: Fail,
+                exit_usage: int, line_free: LineFree) -> int | None:
+    """The census's shape for one of the two name flags, or the code of the
+    refusal printed. ``None`` (flag absent) is not a refusal: both names are
+    optional and a record without them means the commit author decided.
+
+    The rule is the census's own (`decided_by`/`on_behalf_of` must be non-empty
+    single-line strings), stated once so the writer refuses at the flag what the
+    census would otherwise report at exit 10 after the record was committed. The
+    blank and the line rules are both carried by ``line_free``, the census's own
+    predicate handed in by the caller: a name that is only whitespace names
+    nobody, and a name carrying a break is not one name. Keeping both in the
+    handed-in predicate is what stops the writer and the two censuses disagreeing
+    on either.
+    """
+    if value is None:
+        return None
+    if not line_free(value):
+        # One predicate, two refusals: the flag is empty when the census calls it
+        # blank, and not a single line when it carries a break.
+        if not value.strip():
+            return fail(exit_usage, f"{flag} is empty",
+                        f"name a login or pseudonym, e.g. {flag} operator-ann")
+        return fail(exit_usage, f"{flag} is not a single line",
+                    f"one name per {flag}: no line break in the value")
+    return None
 
 
 def check_supersede(supersedes: str | None, date: str | None,

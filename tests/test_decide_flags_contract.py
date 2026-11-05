@@ -119,10 +119,71 @@ def test_the_helper_takes_every_rule_from_its_arguments_and_keeps_none():
     calls = re.findall(r"_decide_flags\.(\w+)\(([^)]*)\)", source, re.S)
     assert len(calls) >= 3, calls
     for name, arguments in calls:
-        assert name in {"parse_date", "parse_questions", "check_supersede"}, name
+        assert name in {"parse_date", "parse_questions", "check_supersede",
+                       "refuse_name"}, name
         assert "fail=_fail" in arguments, f"{name} is called without the caller's printer"
         assert "exit_usage=EXIT_USAGE" in arguments, \
             f"{name} is called without the caller's usage code"
+    # The name rule is reached through the helper that owns the flag refusals, so
+    # the seam is one call wider than the three older rules: decide.py hands
+    # ``refuse_name`` to ``_writer.flag_refusals`` together with its own printer,
+    # its usage code and the census's line predicate. A seam that dropped the
+    # predicate -- or kept a second copy of "what is one line" -- is how a name the
+    # census reports at exit 10 gets committed, so all three are asserted to cross.
+    seams = re.findall(r"_writer\.flag_refusals\(([^)]*)\)", source, re.S)
+    assert len(seams) == 1, seams
+    seam = seams[0]
+    assert "_decide_flags.refuse_name" in seam, \
+        "the flag seam no longer hands the name rule to the helper"
+    assert "fail=_fail" in seam or "_fail, EXIT_USAGE" in seam.replace("\n", " "), \
+        "the flag seam is called without the caller's printer and usage code"
+    assert "EXIT_USAGE" in seam, "the flag seam is called without the caller's code"
+    assert "is_single_line" in seam, \
+        "the flag seam is called without the census's own line predicate"
+    helper_source = (REPO / "src" / "noni" / "_decide_flags.py").read_text(encoding="utf-8")
+    assert "LINE_BREAKS" not in helper_source and "\\u2028" not in helper_source, \
+        "the helper keeps its own copy of the line-break set instead of the argument"
+
+
+def test_the_name_rule_refuses_through_the_callers_printer_and_code():
+    """``refuse_name`` obeys the same contract as the three older rules.
+
+    The name check refuses at the flag rather than letting the census report the
+    record later, so it must print through the caller's printer with the caller's
+    usage code, and it must obey the predicate it is handed rather than one of its
+    own: a value the caller's ``line_free`` calls a line is accepted whatever the
+    helper thinks of it.
+    """
+    calls: list[tuple[int, str, str | None]] = []
+
+    def fail(code: int, message: str, hint: str | None = None) -> int:
+        calls.append((code, message, hint))
+        return code
+
+    def line_free(value: object) -> bool:
+        return isinstance(value, str) and bool(value) and "\n" not in value
+
+    refused = _decide_flags.refuse_name("--decided-by", "", fail=fail,
+                                        exit_usage=decide.EXIT_USAGE,
+                                        line_free=line_free)
+    assert refused == decide.EXIT_USAGE
+    refused = _decide_flags.refuse_name("--on-behalf-of", "ops\nlead", fail=fail,
+                                        exit_usage=decide.EXIT_USAGE,
+                                        line_free=line_free)
+    assert refused == decide.EXIT_USAGE
+    assert calls and all(code == decide.EXIT_USAGE for code, _m, _h in calls), calls
+    assert all("--" in message for _c, message, _h in calls), \
+        "the refusal must name the flag it refused"
+    calls.clear()
+    assert _decide_flags.refuse_name("--decided-by", "Dana Reyes", fail=fail,
+                                     exit_usage=decide.EXIT_USAGE,
+                                     line_free=line_free) is None
+    # A predicate the caller hands in is the whole rule: a value this line_free
+    # calls a line is accepted even carrying a break the census's own set names.
+    assert _decide_flags.refuse_name("--decided-by", "a\fb", fail=fail,
+                                     exit_usage=decide.EXIT_USAGE,
+                                     line_free=line_free) is None
+    assert calls == []
 
 
 def test_the_supersede_rule_takes_its_two_flags_as_arguments():

@@ -67,7 +67,10 @@ def _limit_for(rel: str, path: Path) -> int | None:
     if path.name.lower() == "skill.md":
         return SKILL_MD_LIMIT
     suffix = path.suffix.lower()
-    if suffix in (".py", ".sh"):
+    if suffix in (".py", ".sh", ".jq"):
+        # .jq is the census's schema program: shipped, read by path from a shell
+        # script, and load-bearing for every record the ledger holds, so it is
+        # source by this rule's own reasoning even though no shebang names it.
         return SOURCE_LIMIT
     if suffix in (".yml", ".yaml") and rel.startswith(".github/workflows/"):
         return SOURCE_LIMIT
@@ -168,6 +171,9 @@ def test_the_checker_reports_planted_oversized_files(tmp_path) -> None:
         "long.py": "# x\n" + "# y\n" * 500,
         "CAPS.PY": "# x\n" + "# y\n" * 500,
         "run.sh": "# x\n" + "# y\n" * 500,
+        # The census's schema program: a .jq file is source under the rule, so one
+        # just over the cap must be reported and not skipped for its suffix.
+        "schema.jq": "# x\n" + "# y\n" * 500,
         ".github/workflows/x.yml": "# x\n" + "# y\n" * 500,
         # The shebang catch-all file too, with a # comment rather than a second
         # #! line so the interpreter line does not make it 502.
@@ -215,6 +221,7 @@ def test_the_checker_reports_planted_oversized_files(tmp_path) -> None:
     assert reported["long.py"] == ("501 lines", SOURCE_LIMIT)
     assert reported["CAPS.PY"] == ("501 lines", SOURCE_LIMIT)
     assert reported["run.sh"] == ("501 lines", SOURCE_LIMIT)
+    assert reported["schema.jq"] == ("501 lines", SOURCE_LIMIT)
     assert reported[".github/workflows/x.yml"] == ("501 lines", SOURCE_LIMIT)
     assert reported["hook"] == ("501 lines", SOURCE_LIMIT)
     assert reported["skills/demo/SKILL.md"] == ("401 lines", SKILL_MD_LIMIT)

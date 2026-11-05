@@ -186,6 +186,27 @@ def test_census_script_is_executable():
         assert script.stat().st_mode & 0o111, f"{name} is not executable"
 
 
+def test_the_schema_program_is_a_tracked_sibling_of_the_shim():
+    """``census-schema.jq`` is tracked in git and sits beside ``census.sh``.
+
+    census.sh reads the program by path and exits 3 (``3:schema-program-missing``)
+    when it is absent, so a skill pack that carried the shim but not the program is
+    a census that fails on every run. Tracked-ness is the property that survives
+    packaging here: the wheel ships the package and not the skill directory (see
+    ``tests/test_wheel_contents.py``), so the skill's own inventory is what keeps
+    the pair together.
+    """
+    scripts = REPO / "skills" / "steering-ledger" / "scripts"
+    assert (scripts / "census-schema.jq").is_file(), "the schema program is not in the tree"
+    tracked = subprocess.run(["git", "-C", str(REPO), "ls-files",
+                              "skills/steering-ledger/scripts"],
+                             capture_output=True, text=True, timeout=60)
+    assert tracked.returncode == 0, tracked.stderr
+    names = {line.split("/")[-1] for line in tracked.stdout.split()}
+    assert "census-schema.jq" in names, f"the schema program is untracked: {sorted(names)}"
+    assert {"census.sh", "decide.py"} <= names, sorted(names)
+
+
 # The four sessions writers, each documented in SKILL.md as
 # ``scripts/<name>.py --repo ...`` -- the form that fails with "Permission
 # denied" on a fresh clone when the bit is missing.

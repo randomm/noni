@@ -65,6 +65,15 @@ from ._safe_text import safe_path
 # :func:`stage_and_commit`, so nothing here may import it at module scope -- hence
 # the local import inside :func:`_answer`. ``gitwrite`` is the far safer neighbour:
 # it imports only gitenv and targetschema.
+#
+# The same rule holds the walk off this module's top. The walk asks the two
+# questions defined here, so it imports them; were this module to import it back
+# at module scope, the pair would be a cycle, and ``python -c "import
+# noni._session_walk"`` -- the walk read on its own, which is the shape a reader
+# or a traceback lands on -- would fail with "cannot import name ... from a
+# partially initialized module". Hence the local import inside :func:`_walk`,
+# which is the only statement here that reaches the walk: it runs after both
+# modules exist, so either module is importable first.
 
 # The word every refusal here carries, and the word the tests assert is present:
 # one spelling shared with the state-root refusal, so either message tells the
@@ -194,6 +203,18 @@ def _answer(path: Path, kind: str, headline: str, hint: str) -> tuple[str, str]:
     text = safe_path(str(path))
     return (headline.format(path=text, kind=kind),
             hint.format(path=text, directory=_sessions_rel()))
+
+
+def _walk():
+    """The walk module, imported at the call: see the import-pair note above.
+
+    :mod:`noni._session_walk` imports this module for the two ``lstat`` questions
+    and the refusal templates, so a module-level import here would close the loop.
+    Deferring it to the call keeps both modules importable on their own; the four
+    names below re-export the walk's entry points through this module's name.
+    """
+    from . import _session_walk
+    return _session_walk
 
 
 def _sessions_rel() -> str:
@@ -336,18 +357,37 @@ def all_taken_refusal(repo: Path, rel: object, tries: int) -> tuple[str, str]:
                    ALL_TAKEN_REFUSAL_HINT)
 
 
-# The walk lives in :mod:`noni._session_walk`, re-exported here so every caller keeps
-# one import for the whole guard: ``_session_git`` asks for ``write_refusal`` and the
-# four writers for ``session_file_refusal``, and a test that pins the wording still
-# reaches the templates by this module's name. Nothing else may import it from the
-# other module directly -- the point of the split is one entry point, not two. The
-# re-export is the only use these names have in THIS file, hence the F401 exception
-# with its reason on the line.
-from ._session_walk import (  # noqa: E402,F401  (re-export: one entry point for the guard)
-    outside_root_refusal,
-    session_file_refusal,
-    walk_refusal,
-    write_refusal,
-)
+# The walk lives in :mod:`noni._session_walk`, re-exported here through :func:`_walk`
+# so every caller keeps one import for the whole guard: ``_session_git`` asks for
+# ``write_refusal`` and the four writers for ``session_file_refusal``, and a test that
+# pins the wording still reaches the templates by this module's name. Nothing else may
+# import the walk from the other module directly -- the point of the split is one entry
+# point, not two -- and each name below is one thin call that forwards every argument
+# and returns the walk's answer unchanged, so no caller sees the import and each keeps
+# the name the tests and the callers already use.
+
+
+def walk_refusal(repo: Path, rel: str, *, creates: bool = False,
+                 asks_last_as_directory: bool = False):
+    """The one walk, by way of :mod:`noni._session_walk` (see there)."""
+    return _walk().walk_refusal(repo, rel, creates=creates,
+                                asks_last_as_directory=asks_last_as_directory)
+
+
+def outside_root_refusal(repo: Path, rel: str):
+    """The position question, by way of :mod:`noni._session_walk` (see there)."""
+    return _walk().outside_root_refusal(repo, rel)
+
+
+def write_refusal(repo: Path, rel: str):
+    """The commit primitive's call, by way of :mod:`noni._session_walk` (see there)."""
+    return _walk().write_refusal(repo, rel)
+
+
+def session_file_refusal(repo: Path, rel: str, *, creates: bool = False,
+                         directory_only: bool = False):
+    """The writers' call, by way of :mod:`noni._session_walk` (see there)."""
+    return _walk().session_file_refusal(repo, rel, creates=creates,
+                                        directory_only=directory_only)
 
 

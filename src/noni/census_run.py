@@ -176,6 +176,9 @@ def _check_intent(
     uses. The group reads one file and one record of its own; ``commit_subject``
     is the run's one history view asked for the subject of the last commit that
     touched the file, which is what keeps the whole run to a single ``git log``.
+    ``ledger_state`` is the same probe's state word for the ledger directory, so the
+    intent group refuses a cited record standing under a linked ``decisions/`` on the
+    answer the run already took instead of re-deriving the path state for itself.
     """
     census = _census()
     _intent.check_intent(
@@ -183,7 +186,8 @@ def _check_intent(
         row=census._row, rel_to_root=census._rel_to_root,
         file_kind=census._file_kind, fault_text=_text.fault_text,
         load_json_strict=_census_json.load_json_strict,
-        commit_subject=census._intent_commit_subject)
+        commit_subject=census._intent_commit_subject,
+        ledger_state=lambda path: census._ledger_probe(path).state)
 
 
 def _intent_present(intent: Path) -> bool:

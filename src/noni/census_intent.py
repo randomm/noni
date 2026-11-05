@@ -21,7 +21,17 @@ One class, one read of the file, plus the history answer the run already holds:
   already built (``Git.commit_subject``) plus the ledger listing the run already
   took: no second ``git log``, no second readdir.
 - a symlink, a directory, a device, an unreadable file or non-UTF-8 bytes earn
-  one ``cannot-tell`` row and never a crash, never a clean.
+  one ``cannot-tell`` row and never a crash, never a clean. The same is true of
+  the decision record the citation names, and of the ledger directory that holds
+  it: a cited record reached through a link is a ``cannot-tell``, never an
+  ``uncited`` verdict built from bytes read through the link. The refusal lives
+  at the open (``census_intent_readers.read_record``, ``O_NOFOLLOW``,
+  ``O_NONBLOCK`` and an ``fstat``), so no
+  interval between classifying and reading is the thing that keeps a link closed.
+  A hardlink is the stated limit: ``lstat`` cannot tell one from an ordinary file,
+  so a record hardlinked to bytes outside the tree still yields an ``uncited``
+  verdict, beside the ``ledger-edited`` failure that compares the tree to the
+  committed blob.
 
 Nothing here prints or exits: every answer is appended to the caller's
 ``findings`` list through the ``row`` factory the census supplies.
@@ -35,6 +45,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import intentschema
+from .census_intent_readers import read_record as _read_record
 
 # A ledger record id is what decide.py writes: <YYYY-MM-DD>-<slug> of lowercase
 # letters, digits and dashes. The census's own copy of the same shape the writer
@@ -58,6 +69,20 @@ INTENT_LEDGER_REL = "noni/decisions"
 # unreadable record: a hand-edited status must not decide an intent's citation.
 RECORD_STATUSES = ("decided", "open", "superseded")
 STATUS_SUPERSEDED = "superseded"
+
+# The words for the two ways the ledger itself can be a path this run must not
+# read through: a link at the ledger or at the directory above it, and a ledger
+# that is there but is no directory. Wording the census owns, so the row quotes
+# no classifier text a fault may have filled with a host path.
+LEDGER_LINKED = "the ledger directory is reached through a symlink"
+LEDGER_NOT_A_DIR = "the ledger directory is not a directory"
+
+# The one ledger-probe state that forbids a read: ``census_ledger.probe_ledger``
+# answers "symlink" for the ledger or for ``noni/``, the same fact this class must
+# refuse above the cited record. Named here and compared with ``==``, so the class
+# speaks the ledger module's own vocabulary and any answer it does not name falls
+# through to the classifier rather than being read as permission to open.
+LEDGER_STATE_LINKED = "symlink"
 
 # The four subjects of this class. Like hygiene's `hygiene scan` / `deny-list`
 # subjects they are the machine-readable discriminator: a consumer branches on
@@ -110,6 +135,7 @@ def check_intent(
     fault_text: Callable[[BaseException], str],
     load_json_strict: Callable[[bytes], object],
     commit_subject: Callable[[str], str | None],
+    ledger_state: Callable[[Path], str] | None = None,
 ) -> None:
     """Check the standing intent file; append its findings to ``findings``.
 
@@ -125,7 +151,12 @@ def check_intent(
     The row factory, the root-relative identifier, the path classifier and the
     fault wording are the census's own and arrive as arguments rather than being
     imported, so the row shape, the machine-local-path rule and the bounded-text
-    rule keep their single owner in ``census.py``.
+    rule keep their single owner in ``census.py``. ``ledger_state`` is the run's
+    ledger probe answering for the ledger directory: the state word
+    ``census_ledger.probe_ledger`` derived from the classifier at both levels above
+    the record, and the run's own prior knowledge of a link it must not read
+    through. When the caller has no probe the classifier is asked for those two
+    levels instead, so the refusal never depends on the run having probed.
     """
     def add(subject: str, message: str, *, whole_artifact: bool = False) -> None:
         findings.append(row("intent", strict, subject, rel, message, root,
@@ -197,6 +228,43 @@ def check_intent(
             f"commit subject '{INTENT_SUBJECT_PREFIX}<decision-id>')")
         return
 
+    # The two levels above the cited path are refused before a path under them is
+    # composed or opened. The run's own ledger probe is asked first (it classifies
+    # ``noni/decisions`` and ``noni/`` and answers "symlink" for a link at either,
+    # the state the ledger group already refuses to list); with no probe to read, the
+    # same two levels are classified here. A link at ``noni/decisions`` (or at
+    # ``noni/``) puts every record beneath it outside the audited tree, and a
+    # leaf-level classification would call such a record an ordinary file and read it.
+    # Only the link is refused here: a ledger that is missing, or is there but no
+    # directory, is already blindness the read below reports with the kernel's own
+    # words, so the rows the other groups own (an absent ``noni/``, a ledger that is a
+    # plain file) stay exactly as they were.
+    outside = _ledger_why(ledger, file_kind, ledger_state)
+    if outside is not None:
+        add(SUBJECT_CANNOT_TELL,
+            f"cannot-tell: the record {cited} the intent cites was not read "
+            f"({outside}), so whether it stands could not be answered",
+            whole_artifact=True)
+        return
+
+    record = ledger / f"{cited}.json"
+    record_kind, record_problem = file_kind(record)
+    # The readable answer is named, not the two the gate tolerates: an inverse
+    # membership test would let a verdict word the classifier gains later fall into
+    # the read below instead of the refusal here. ``absent`` is answered explicitly
+    # by the branch under this one.
+    if record_kind != "regular" and record_kind != "absent":
+        # A symlink, a directory or a device at the cited path says nothing about
+        # whether the direction stands. The row names the cited id and one fixed
+        # sentence of this file's, never the classifier's fault text (which is
+        # ``OSError`` words and could quote a host path at any length) and never a
+        # bare ``None`` from a classifier that named no problem.
+        add(SUBJECT_CANNOT_TELL,
+            f"cannot-tell: the record {cited} the intent cites is not a readable "
+            f"regular file ({_classify_words(record_kind, record_problem)}), so "
+            "whether it stands could not be answered", whole_artifact=True)
+        return
+
     # One read of the cited record answers both halves of the question -- is it
     # there, and does it stand. Two faults are blindness and reported as
     # cannot-tell; the third is a verdict. A read that was stopped (ENOENT, or the
@@ -204,7 +272,7 @@ def check_intent(
     # direction's fault and reads uncited; a read the file system refused for some
     # other reason is this run's blindness, and a permission problem on somebody
     # else's file must never be quoted as a finding against the intent.
-    body, read_fault = _record_body(ledger, cited)
+    body, read_fault = _read_record(record)
     if read_fault is not None and not _absence(read_fault):
         add(SUBJECT_CANNOT_TELL,
             f"cannot-tell: the record {cited} the intent cites could not be read "
@@ -233,16 +301,76 @@ def _absence(fault: OSError) -> bool:
     return fault.errno in (errno.ENOENT, errno.ENOTDIR)
 
 
-def _record_body(ledger: Path, cited: str) -> tuple[bytes | None, OSError | None]:
-    """The bytes of the record ``cited`` names, or the fault that stopped the read.
+def _classify_words(kind: str, problem: str | None) -> str:
+    """Why the census will not open the cited path, in this file's own words.
 
-    Two answers, because "the record is wrong" and "this run could not read the
-    record" are different findings and only the first is a verdict on the intent.
+    The classifier's problem half is never quoted. For the two states that reach a
+    row it is a fixed sentence this module wrote, so the row carries no ``OSError``
+    text (which can name a host path and run to thousands of characters), no bare
+    ``None`` from a classifier that named no problem, and no verdict word the
+    classifier might gain later. A fault is folded into one honest answer rather
+    than quoted, because the finding is that this run could not say, not what the
+    filesystem said about it.
     """
-    try:
-        return (ledger / f"{cited}.json").read_bytes(), None
-    except OSError as exc:
-        return None, exc
+    if kind == "symlink":
+        return "path is a symlink; the census does not read through links"
+    if kind == "nonregular":
+        # The two answers that mean the same finding: the census looked and could
+        # not call it an ordinary file, whether it saw a device or had the stat
+        # declined. The classifier's own words stay out of the row either way.
+        return "path is not a regular file, or the census could not say what is there"
+    return _UNCLASSIFIED
+
+
+def _ledger_why(ledger: Path,
+                file_kind: Callable[..., tuple[str, str | None]],
+                ledger_state: Callable[[Path], str] | None = None) -> str | None:
+    """Why this run must not open anything under ``ledger``, or None.
+
+    The answer the run already holds is asked for first: ``ledger_state`` is the
+    census's own ledger probe, which classifies the ledger and ``noni/`` with this
+    module's own classifier and answers ``"symlink"`` for a link at either level —
+    the state the ledger group already refuses to list. Reusing it keeps the two
+    groups from classifying one directory twice and disagreeing about it. Any other
+    answer (``"ok"``, ``"empty"``, ``"absent"``, ``"not a directory"``, or a probe
+    that faulted) is no ground to refuse on here: a ledger that is missing or is not
+    a directory is answered by the read below with the kernel's own words, exactly
+    as before this gate existed.
+
+    With no probe to read (a caller that composed the class directly), or a probe
+    that itself faulted, the same two levels are classified here through the same
+    classifier the rest of the class uses. Either answer is this run's blindness and
+    never a verdict: a link means the records live outside the tree the census was
+    asked to audit, and a non-directory means no record can be there.
+
+    The probe's fault types are the ones every other reader of this class catches:
+    a probe that could not answer is blindness of the same kind as a probe that
+    raised, and the classifier half below still gets asked, so the answer never
+    depends on which of the two routes had the good sense to work.
+    """
+    if ledger_state is not None:
+        try:
+            state = ledger_state(ledger)
+        except (OSError, ValueError, RuntimeError):
+            # The probe is a read of the tree like any other, and its fault is not
+            # the finding this gate exists for: classify for ourselves below.
+            state = None
+        if state == LEDGER_STATE_LINKED:
+            return LEDGER_LINKED
+    for path in (ledger, ledger.parent):
+        kind, _problem = file_kind(path, kind="dir")
+        if kind == "symlink":
+            return LEDGER_LINKED
+        if kind == "nonregular":
+            return LEDGER_NOT_A_DIR
+    return None
+
+
+# Why the census cannot say what the classifier saw: a classifier that named a kind
+# and no problem answers ``(kind, None)``, and the tuple it returns carries no type
+# that rules the ``None`` half out. Interpolating that absence would put the bare
+# word ``None`` in a report, read as if it said something.
+_UNCLASSIFIED = "the census could not say what stands at the path"
 
 
 def _record_problem(raw: bytes,

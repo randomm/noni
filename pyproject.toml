@@ -9,6 +9,35 @@ description = "Attachable product-direction layer: steering ledger, backlog orde
 requires-python = ">=3.11"
 dependencies = []
 
+# License and provenance, so a reader of the wheel or of the index page knows
+# what they may do with the code and where it comes from. The SPDX form
+# (`license = "Apache-2.0"`) and `[project] license-files` are both rejected by
+# the build backend CI pins (setuptools 75.8.0: "must be valid exactly by one
+# definition", then "project must not contain {'license-files'}"), so the
+# declaration is the `file =` table: it is the one form that puts the LICENSE
+# text into the wheel's dist-info as well as claiming a license in METADATA.
+# `license = {text = "Apache-2.0"}` builds, but ships no license text: the wheel
+# would assert a license nobody can read from the artifact. The OWNER in the
+# urls is the same placeholder the README's and the quickstart's clone lines
+# print, filled when the public repository exists.
+license = {file = "LICENSE"}
+readme = "README.md"
+authors = [{name = "noni contributors"}]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
+
+[project.urls]
+Homepage = "https://github.com/OWNER/noni"
+Repository = "https://github.com/OWNER/noni"
+Issues = "https://github.com/OWNER/noni/issues"
+
 # The versions are pinned exactly, and .github/workflows/ci.yml installs the
 # same pins: the gate a developer runs locally must be the gate CI runs.
 # tests/test_gate_wiring.py asserts the two lists stay identical.
@@ -24,6 +53,13 @@ dev = [
 # project's own noni/ state directory (which is data, never code). Only the
 # package ships: skills/, scripts/, tests/ and integrations/ stay out of the
 # wheel, pinned by tests/test_wheel_contents.py.
+# The LICENSE travels with the wheel rather than sitting next to it in the
+# checkout: the backend's own `license-files` key is the one that copies the file
+# into `<dist>.dist-info/LICENSE`. It lives under [tool.setuptools] because
+# `[project] license-files` is not accepted by the pinned backend at all.
+[tool.setuptools]
+license-files = ["LICENSE"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

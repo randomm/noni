@@ -36,6 +36,10 @@ What is asserted, and why each one matters:
   CI gate and a different thing from a reader's install, so it stays in this file
   with the pins it must match rather than following the reader to the quickstart
   (issue #75).
+- the public-repo hygiene scrub step exists, sits after the editable install, and
+  its own shell is *executed* against each exit code the gate can return: 0 and 2
+  pass, 1 and the gate's own could-not-run code (3) fail. The step is a shell
+  expression, so only running it says which codes it accepts.
 
 The total the gate reports today is not asserted here: it moves with the test
 suite, so pinning it would fail on unrelated changes. `coverage report` fails
@@ -344,6 +348,114 @@ def test_contributing_keeps_the_developer_install_after_the_page_set_sweep():
         assert token in contributing, (
             f"CONTRIBUTING.md's install line does not carry {token!r}, which CI runs: "
             f"{line}")
+
+
+def _scrub_step_run() -> str:
+    """The one-line ``run:`` body of the public-repo hygiene scrub step.
+
+    Read out of the workflow rather than quoted as a literal, so the shell below
+    is the command CI runs and not a copy of it: a step that was deleted, or
+    renamed away from the name the tests name, fails here instead of leaving an
+    assertion about a step nobody runs.
+    """
+    body = CI_WORKFLOW.read_text(encoding="utf-8")
+    runs = re.findall(r"- name: Public-repo hygiene scrub\n\s+run: (.+)", body)
+    assert len(runs) == 1, (
+        "the test job must carry exactly one `Public-repo hygiene scrub` step "
+        f"with a one-line run:, found {len(runs)}: {runs}"
+    )
+    command = runs[0].strip()
+    assert command.startswith(".venv/bin/python scripts/public_safety.py"), (
+        f"the scrub step does not run the gate AGENTS.md names, under the venv "
+        f"interpreter the suite runs on: {command!r}"
+    )
+    return command
+
+
+def _scrub_shell(run: str) -> str:
+    """The shell left after the gate command is taken out of the step's run.
+
+    The exit-code policy is the half of the step a test can actually run (see
+    :func:`test_ci_scrub_step_accepts_only_exit_0_and_2`), so it is split from
+    the command it governs rather than re-typed here. ``true`` stands in for the
+    gate itself, so the ``||`` clause is still a syntactically complete command.
+    """
+    gate = ".venv/bin/python scripts/public_safety.py"
+    assert gate in run, f"the scrub step does not run the gate: {run!r}"
+    return run.replace(gate, "true", 1).strip()
+
+
+def test_ci_runs_the_public_safety_scrub_after_the_editable_install():
+    """CI runs the scrub AGENTS.md names, after the package is importable.
+
+    Two halves, both of which a silent gap could take: the step exists in the
+    *test* job (the wheel job's green says nothing about the gate), and it sits
+    after the editable install, because ``scripts/public_safety.py`` imports
+    ``noni.public_safety`` and exits 3 with an import failure before it has
+    scanned a single tracked file -- a step ordered ahead of the install would
+    report a code the step does not accept, for the wrong reason.
+    """
+    body = CI_WORKFLOW.read_text(encoding="utf-8")
+    # The workflow is one file, so the position test is done on the test job's
+    # own span: everything up to the wheel job, which is the only other job.
+    wheel_at = body.index("\n  wheel:")
+    test_job = body[:wheel_at]
+    assert re.search(r"- name: Public-repo hygiene scrub\b", test_job), (
+        "the test job never runs scripts/public_safety.py: AGENTS.md names it as "
+        "a gate and no job ran it"
+    )
+    installed_at = test_job.index('-e ".[dev]"')
+    assert test_job.index("Public-repo hygiene scrub") > installed_at, (
+        "the scrub step runs before the editable install, so the package the "
+        "scrub imports is not importable yet"
+    )
+
+
+def test_ci_scrub_step_accepts_only_exit_0_and_2():
+    """The step's own shell passes on 0 and on 2, and on nothing else.
+
+    The step is executed, not pattern-matched: the gate command is replaced by a
+    stub that exits with each code in turn and the ``bash -c`` verdict is the
+    assertion. Exit 2 is the state of a public runner (the deny-list is
+    gitignored, so the class is absent and the gate refuses to report clean);
+    the number is :data:`tests.quickstart_gate.GATE_DENYLIST_INACTIVE_EXIT`,
+    imported rather than written again here. Exit 1 is a violation, exit
+    :data:`tests.quickstart_gate.GATE_COULD_NOT_RUN_EXIT` is the gate failing to
+    run at all (an unimportable package, so nothing was scanned), and exit 4 is
+    an arbitrary other failure: all three must redden the job. A step written
+    ``... || true``, or one that accepted 3 alongside 2, would keep the tree's
+    hygiene unenforced while CI stayed green -- which is the whole reason 3 is a
+    code of its own rather than a second use of 2.
+    """
+    import subprocess
+
+    from quickstart_gate import GATE_COULD_NOT_RUN_EXIT, GATE_DENYLIST_INACTIVE_EXIT
+
+    assert GATE_DENYLIST_INACTIVE_EXIT == 2, (
+        f"the CI step below hard-codes the exit the docs pin as {GATE_DENYLIST_INACTIVE_EXIT}"
+    )
+    assert GATE_COULD_NOT_RUN_EXIT == 3, (
+        f"the CI step below must fail on the gate's could-not-run exit, which is "
+        f"pinned as {GATE_COULD_NOT_RUN_EXIT}"
+    )
+    shell = _scrub_shell(_scrub_step_run())
+    assert shell == 'true || [ "$?" -eq 2 ]', (
+        f"the scrub step's exit-code policy is not the one-line form the tests "
+        f"below exercise: {shell!r}"
+    )
+    # The gate's own exit is planted where the command stood, so the verdict
+    # below is the step's policy and nobody else's.
+    for code, expected_pass in ((0, True), (GATE_DENYLIST_INACTIVE_EXIT, True),
+                                (1, False), (GATE_COULD_NOT_RUN_EXIT, False),
+                                (4, False)):
+        planted = shell.replace("true ||", f"(exit {code}) ||", 1)
+        proc = subprocess.run(["bash", "-c", planted],
+                              capture_output=True, text=True, timeout=60)
+        assert (proc.returncode == 0) is expected_pass, (
+            f"the CI scrub step's shell {shell!r} "
+            f"{'passed' if proc.returncode == 0 else 'failed'} on exit {code}; "
+            f"expected {'pass' if expected_pass else 'fail'}"
+        )
 
 
 def test_ci_runs_ruff_and_the_coverage_gate():

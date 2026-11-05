@@ -31,7 +31,10 @@ history. History violations are **reported** (below) and never rewritten here.
 
    The CLI exits with status 2 (not 0) when the deny-list class was not
    active — absent, unreadable, or present-but-empty (zero usable entries) —
-   so it will not report a false "clean" in any of those states.
+   so it will not report a false "clean" in any of those states. It exits 3
+   when the gate could not run at all (the ``noni`` package was not
+   importable), which is a different state from 2: 2 is a scan that ran with
+   half its vocabulary missing, 3 is a scan that never started.
 
    `scripts/public_safety.py` is a wrapper: the checks it runs live in
    `src/noni/public_safety.py`, and the wrapper adds only the tree to audit

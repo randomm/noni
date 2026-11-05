@@ -168,9 +168,11 @@ jq -n 1 >/dev/null 2>&1 || { echo "census.sh: jq not found on $(hostname 2>/dev/
 # listing, so the (42:ledger-empty) branch can never be the answer a census
 # gives when it holds no program to apply to a record. Without the program there
 # is no schema, and a census that read the directory and reported nothing would
-# be reporting a clean it never established.
+# be reporting a clean it never established. A program that exists but cannot be
+# read is the same refusal: a mode-000 sibling is a file jq cannot open, so the
+# probe asks readable as well as present rather than trusting -f alone.
 SCHEMA_JQ_FILE="$SCRIPT_DIR/census-schema.jq"
-if [ ! -f "$SCHEMA_JQ_FILE" ]; then
+if [ ! -f "$SCHEMA_JQ_FILE" ] || [ ! -r "$SCHEMA_JQ_FILE" ]; then
   echo "census.sh: $SCHEMA_JQ_FILE not found (3:schema-program-missing)" >&2
   exit 3
 fi

@@ -11,14 +11,18 @@ Split out of ``tests/test_census_unified.py``; the builders are in
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
 from _harness import REPO, _commit_file, _init_repo, subprocess_env
 from census_fixtures import _ndjson_rows, _session_body, _valid_record
 from census_probe_doubles import _UnreadableGit
+from census_refusal_assertions import assert_no_report_and_no_warn_row
 from census_run import _run_census
+from census_schema_program_fixtures import copy_shim_to, run_copied_shim
 from ledger_schema_fixtures import SCHEMA_JQ, _run_py, _run_sh
 
 CENSUS_SH = REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"
@@ -216,27 +220,44 @@ class TestSchemaProgramMissingPrecedesTheLedgerEmptyWarn:
     def test_a_recordless_ledger_without_the_schema_program_exits_3(self, tmp_path):
         """No schema program, no records: 3, and no 42 line printed at all."""
         scripts = tmp_path / "scripts"
-        scripts.mkdir()
-        (scripts / "census.sh").write_text(CENSUS_SH.read_text(encoding="utf-8"),
-                                           encoding="utf-8")
+        copy_shim_to(scripts)
         assert not (scripts / "census-schema.jq").exists(), (
             "the fixture copied the schema program, so it proves nothing")
         assert SCHEMA_JQ.is_file(), f"{SCHEMA_JQ} is not shipped beside the real shim"
         ledger = tmp_path / "orphan-recordless" / "noni" / "decisions"
         ledger.mkdir(parents=True)
-        proc = subprocess.run(["bash", str(scripts / "census.sh"), str(ledger)],
-                              capture_output=True, text=True,
-                              env=subprocess_env(), timeout=120)
+        proc = run_copied_shim(scripts, ledger)
         assert proc.returncode == 3, (
             f"a census holding no schema program has no verdict to give: "
             f"rc={proc.returncode}\nout: {proc.stdout}\nerr: {proc.stderr}")
         assert "3:schema-program-missing" in proc.stderr, proc.stderr
         assert "42:ledger-empty" not in proc.stderr, (
             f"the recordless warn was reached with no schema program: {proc.stderr}")
-        assert "42:" not in proc.stdout + proc.stderr, (
-            f"a warn verdict escaped a refused census: {proc.stdout}{proc.stderr}")
-        assert proc.stdout.strip() == "", (
-            f"a census that could not apply a schema printed a report: {proc.stdout}")
+        assert_no_report_and_no_warn_row(proc, "schema program absent")
+
+    def test_a_recordless_ledger_with_an_unreadable_schema_program_exits_3(self, tmp_path):
+        """A schema program that exists but cannot be read is no program.
+
+        ``-f`` is satisfied by a mode-000 file, so a recordless ledger over an
+        unreadable sibling reported the (42:ledger-empty) warn at exit 0 — the
+        census named a program it could not open and called the tree clean.
+        Root ignores the permission bits, so on a root run this state cannot be
+        produced and the case is skipped rather than passed."""
+        if os.geteuid() == 0:
+            pytest.skip("root reads a mode-000 file, so the state cannot be produced")
+        scripts = tmp_path / "scripts-unreadable"
+        copy_shim_to(scripts)
+        schema = scripts / "census-schema.jq"
+        schema.write_text(SCHEMA_JQ.read_text(encoding="utf-8"), encoding="utf-8")
+        schema.chmod(0o000)
+        ledger = tmp_path / "unreadable-recordless" / "noni" / "decisions"
+        ledger.mkdir(parents=True)
+        proc = run_copied_shim(scripts, ledger)
+        assert proc.returncode == 3, (
+            f"a schema program this machine cannot read is no schema: "
+            f"rc={proc.returncode}\nout: {proc.stdout}\nerr: {proc.stderr}")
+        assert "3:" in proc.stderr, proc.stderr
+        assert_no_report_and_no_warn_row(proc, "schema program unreadable")
 
 
 class TestLedgerEmpty:

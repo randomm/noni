@@ -80,6 +80,55 @@ def test_the_field_never_adds_a_row_kind(tmp_path):
         "pass vacuously: pin the ordering note's tree")
 
 
+def test_a_note_container_that_is_not_a_tuple_is_refused_at_the_renderer():
+    """The container is part of the contract, not only its elements.
+
+    The element guard alone let a bare ``str`` through: ``for note in "abc"``
+    yields ``"a"``, ``"b"``, ``"c"``, each of them a ``str``, so a caller that
+    handed the renderer one sentence instead of a tuple of them got three
+    ``note: <one letter>`` lines in human mode and a three-letter list in
+    ``--json``. A ``list`` of sentences prints the right bytes today, so an
+    element-only check would certify it, and the next producer to pass a
+    one-element ``str`` would arrive through the same door. ``census_run`` builds
+    a ``tuple``, so refusing every other container costs nothing at the call site
+    and closes the split-a-string shape outright.
+    """
+    import pytest
+
+    from noni.census_report import _render
+
+    for bad in (NOTE, [NOTE], {NOTE}, {"note": NOTE}, 7, None):
+        for json_out in (True, False):
+            with pytest.raises(TypeError, match="must be a tuple"):
+                _render([], {}, True, 0, json_out, bad)
+
+
+def test_no_fix_hint_repeats_the_not_evaluated_note():
+    """The comment beside the ``ordering-closed`` hint forbids quoting the note;
+    the hint used to state that rule and then paraphrase it.
+
+    ``ORDERING_CLOSED_NOT_EVALUATED`` is one sentence with three doc scrapers, and
+    the comment above the class's fix hint says a hint must not carry it, because
+    the hint of the class that *did* run would then read as a row of the class that
+    did not. The hint is derived into ``CLASS_FIX`` and printed on every
+    ``ordering-closed`` row, so the paraphrase was a second home for the sentence
+    -- one that no scraper watched. This asserts the rule the comment claims, over
+    every class, so the comment and the table cannot drift apart again.
+    """
+    from noni.census_report import CLASS_FIX, ORDERING_CLOSED_NOT_EVALUATED
+
+    assert CLASS_FIX, "the derived view of the class table is empty"
+    quoted = [check for check, hint in CLASS_FIX.items()
+              if ORDERING_CLOSED_NOT_EVALUATED in hint]
+    assert not quoted, (
+        f"these fix hints quote the note verbatim: {quoted}")
+    # The paraphrase this class used to carry: neither half of the sentence may
+    # reappear in a hint under other words.
+    for check, hint in CLASS_FIX.items():
+        assert "was not evaluated" not in hint, (
+            f"{check}: the hint restates the not-evaluated note: {hint}")
+
+
 def test_a_note_that_is_not_a_sentence_is_refused_at_the_renderer(tmp_path):
     """``not_evaluated`` is a ``list[str]`` by contract, not by accident.
 
@@ -101,5 +150,6 @@ def test_a_note_that_is_not_a_sentence_is_refused_at_the_renderer(tmp_path):
         with pytest.raises(TypeError, match="must be a sentence"):
             _render([], {}, True, 0, False, (bad,))
 
-    # The shape the contract does allow, in both modes: one string per note.
+    # The shape the contract does allow, in both modes: strings inside a tuple.
     _render([], {}, True, 0, True, (NOTE,))
+    _render([], {}, True, 0, False, (NOTE,))

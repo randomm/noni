@@ -11,13 +11,117 @@ Split out of ``tests/test_census_unified.py``; the builders are in
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
-from _harness import _commit_file, _init_repo
+from _harness import REPO, _commit_file, _init_repo, subprocess_env
 from census_fixtures import _ndjson_rows, _session_body, _valid_record
 from census_probe_doubles import _UnreadableGit
 from census_run import _run_census
 from ledger_schema_fixtures import _run_py, _run_sh
+
+CENSUS_SH = REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"
+
+# Every external command census.sh reaches for on a run that does read records,
+# and the interpreter the run itself is started with. No ``jq``: that absence is
+# the state under test, and the list is closed so a shim that quietly grew a new
+# external dependency fails here rather than inheriting the host's PATH.
+CENSUS_SH_TOOLS = ("bash", "sh", "dirname", "find", "grep", "sort", "awk",
+                   "sed", "cat", "head", "cut", "sha1sum", "mktemp", "rm",
+                   "hostname", "git")
+
+
+def _path_without_jq(tmp_path: Path) -> Path:
+    """A private bin dir holding the census's own tools and no ``jq``.
+
+    Symlinks, not copies: a PATH of links is cheap to build per test and a
+    broken link resolves to nothing, which is what an absent tool is. ``jq`` is
+    named nowhere in the list, so the directory cannot hold it even on a host
+    where every other tool resolves.
+    """
+    bin_dir = tmp_path / "path-without-jq"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    for tool in CENSUS_SH_TOOLS:
+        source = shutil.which(tool)
+        link = bin_dir / tool
+        if source is not None and not link.exists():
+            link.symlink_to(source)
+    return bin_dir
+
+
+def _run_sh_without_jq(tmp_path: Path, ledger: Path) -> subprocess.CompletedProcess[str]:
+    """census.sh over ``ledger`` with a PATH that holds no ``jq``.
+
+    The env is built from scratch rather than subtracted from the host's: an
+    inherited PATH element could still carry a ``jq`` the test did not remove.
+    """
+    env = subprocess_env({"PATH": str(_path_without_jq(tmp_path)),
+                          "HOME": str(tmp_path)})
+    return subprocess.run(["bash", str(CENSUS_SH), str(ledger)],
+                          capture_output=True, text=True, env=env, timeout=120)
+
+
+class TestLedgerEmptyWithoutJq:
+    """A ledger this machine cannot read is not a clean ledger (issue #97).
+
+    The shim's (42:ledger-empty) branch was reached before its ``jq`` probe, so
+    on a machine with no jq a recordless ``decisions/`` directory — and nothing
+    else — exited 0, and the report header went to stdout beside it. The census
+    had read no record and applied no schema, and called the ledger clean for
+    it. The probe answers 3 for a missing jq whatever the ledger holds, so these
+    two runs pin that the recordless tree is refused on the same terms as a
+    ledger full of records."""
+
+    def test_a_recordless_ledger_without_jq_exits_3_not_0(self, tmp_path):
+        """The branch this PR changed: no records, so no schema question was
+        asked, and the old order called that a clean tree at exit 0."""
+        ledger = tmp_path / "fresh" / "noni" / "decisions"
+        ledger.mkdir(parents=True)
+        proc = _run_sh_without_jq(tmp_path, ledger)
+        assert proc.returncode == 3, (
+            f"a census that cannot read a record has no verdict to give: "
+            f"rc={proc.returncode}\nout: {proc.stdout}\nerr: {proc.stderr}")
+        assert "jq not found" in proc.stderr, proc.stderr
+        assert "42:ledger-empty" not in proc.stderr, (
+            f"the recordless warn was reached with jq absent: {proc.stderr}")
+        assert proc.stdout.strip() == "", (
+            f"a census that read nothing printed a report: {proc.stdout}")
+
+    def test_a_ledger_holding_a_record_without_jq_exits_3(self, tmp_path):
+        """The control: the state the probe always owned. Both ledgers must
+        answer 3, or the recordless case is a special favour rather than one
+        rule."""
+        ledger = tmp_path / "held" / "noni" / "decisions"
+        ledger.mkdir(parents=True)
+        (ledger / "2026-10-01-alpha.json").write_text(
+            json.dumps(_valid_record(), indent=2) + "\n", encoding="utf-8")
+        proc = _run_sh_without_jq(tmp_path, ledger)
+        assert proc.returncode == 3, (
+            f"expected 3 with a record present too: rc={proc.returncode}\n"
+            f"out: {proc.stdout}\nerr: {proc.stderr}")
+        assert "jq not found" in proc.stderr, proc.stderr
+        assert proc.stdout.strip() == "", (
+            f"a census that read nothing printed a report: {proc.stdout}")
+
+    def test_the_ledger_itself_is_left_alone(self, tmp_path):
+        """A refused census is read-only: the records it could not read are
+        still the bytes the caller had, both ledgers, in one run."""
+        ledgers = []
+        for name in ("ro-empty", "ro-held"):
+            ledger = tmp_path / name / "noni" / "decisions"
+            ledger.mkdir(parents=True)
+            if name == "ro-held":
+                (ledger / "2026-10-01-alpha.json").write_text(
+                    json.dumps(_valid_record(), indent=2) + "\n", encoding="utf-8")
+            ledgers.append(ledger)
+        before = [{p.name: p.read_bytes() for p in ledger.iterdir()}
+                  for ledger in ledgers]
+        for ledger in ledgers:
+            assert _run_sh_without_jq(tmp_path, ledger).returncode == 3
+        after = [{p.name: p.read_bytes() for p in ledger.iterdir()}
+                 for ledger in ledgers]
+        assert after == before, "a refused census wrote to the ledger"
 
 
 class TestLedgerEmpty:

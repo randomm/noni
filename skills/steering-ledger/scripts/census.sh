@@ -150,6 +150,12 @@ if [ -z "$LEDGER_DIR" ]; then
   usage_error "no ledger directory given"
 fi
 
+# The jq probe is the FIRST verdict this script reaches, ahead of the ledger
+# directory check and ahead of every report branch below, including the
+# (42:ledger-empty) one: without jq there is no schema to apply, so no state of
+# the tree has earned a verdict, not even "there is nothing to report". A run
+# that reached the recordless branch first would call an unreadable ledger clean
+# on the very machine that cannot read a record.
 command -v jq >/dev/null 2>&1 || { echo "census.sh: jq not found on $(hostname 2>/dev/null || echo unknown)" >&2; exit 3; }
 
 # Refuse every non-directory here rather than at the (10:empty-ledger) branch

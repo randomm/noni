@@ -169,15 +169,19 @@ CHECKS: dict[str, tuple[int, str, str]] = {
     ),
     "ordering-closed": (
         46, "warn",
-        # The note itself is the constant above this table, not prose here: the
-        # human ``note:`` line and the summary row's not_evaluated field carry one
-        # sentence, three doc tests scrape it, and a fix hint that quoted it would
-        # put that sentence in a row of the very class that did run.
+        # The note itself is the constant above this table, not prose here, and
+        # its sentence is not restated below either: the human ``note:`` line and
+        # the summary row's not_evaluated field carry one wording, three doc
+        # tests scrape it from the constant, and tests/test_census_report_mode.py
+        # refuses any fix hint containing it. A hint that spoke the note's words
+        # would put "not evaluated" into a row of the class that did run, where
+        # the class was evaluated and found nothing closed; the note belongs to
+        # the note, the fix belongs to the fix.
         "remove the closed issue from the order (order.py remove ISSUE), or reopen it; the "
         "order is what to work on next, so an issue the tracker has closed does not "
-        "belong in it. When --issue-state was not given the class is not evaluated at "
-        "all, and the run says so in words rather than leaving a rowless class to read "
-        "as every ordered issue being open",
+        "belong in it. When --issue-state was not given the class adds no row at "
+        "all, and the run prints its own note rather than leaving a rowless class "
+        "to read as every ordered issue being open",
     ),
 }
 
@@ -257,13 +261,20 @@ def _render(
     nothing to say, so a run that evaluated everything keeps the byte stream it
     had before the field existed.
 
-    ``list[str]`` is the field's contract, not a description of what happens to
-    be passed today: one sentence per element, the class named first. A note that
-    arrived as a dict or a pair would print as a ``note: {...}`` line in one mode
-    and an object inside a list in the other, which is the per-mode-diverging
-    shape this field exists to prevent, so a producer is refused here rather than
-    a consumer surprised later.
+    ``census notes must be a tuple`` is the field's contract, and ``tuple`` is
+    part of it, not just the elements: the producer in ``census_run`` hands over
+    a tuple, and a one-note caller that passed a bare ``str`` would otherwise
+    sail through the element check and then have its sentence split character by
+    character into ``note: o``, ``note: r``, ... lines (and a string spread into
+    ``not_evaluated``), which is the per-mode-diverging shape this field exists
+    to prevent. A dict or a pair would print as a ``note: {...}`` line in one
+    mode and an object inside a list in the other, so a producer is refused here
+    rather than a consumer surprised later.
     """
+    if not isinstance(notes, tuple):
+        raise TypeError(
+            f"census notes must be a tuple of sentences, "
+            f"got {type(notes).__name__}: {notes!r}")
     for note in notes:
         if not isinstance(note, str):
             raise TypeError(

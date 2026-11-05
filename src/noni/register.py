@@ -35,7 +35,9 @@ Exit codes:
        the session file it would write, or any directory from the state root down
        to it (its noni/sessions directory and the noni above it), is not a plain
        path this writer may follow (a symlink is never followed, and a refusal
-       creates nothing), or it could not be written, or the marked file carries no
+       creates nothing), or the name this run allocated is held by another file
+       after every re-mint (named, never replaced; nothing is created before the
+       refusal), or it could not be written, or the marked file carries no
        readable status (never continued, never overwritten)
     3  git could not commit what this run wrote, or a --push failed after 3
        fetch-rebase-push attempts (also a fetch failure, a detached HEAD, or an
@@ -52,11 +54,14 @@ only for this run's allocation, or for the marked name on the route that reuses 
 foreign path is exit 2.
 
 The session id is minted once per run and names the file written, the pathspec, the
-marker, the commit subject and the printed line. The marker's text is an input, not a
-fact: text that is not a valid session id is not a marker for a session, so the run says
-so, treats the working copy as unmarked, and allocates afresh -- it builds no path from
-it. The marked file is read once, strictly: a file whose bytes cannot be decoded, or whose
-``- status:`` line has no readable value, is refused with exit 2 rather than continued.
+marker, the commit subject and the printed line. Six hex characters over one UTC day
+make a repeated id rare, not impossible, so the allocating route checks the name it
+minted with ``lstat`` and mints again while that name is held, up to a bound
+(:data:`ALLOCATION_RETRIES`); a run that finds no free name refuses at exit 2 and
+creates nothing. The marker's text is an input, not a fact: text that is not a valid
+session id is no marker, so the run says so and allocates afresh. The marked file is
+read once, strictly: bytes that cannot be decoded, or a ``- status:`` line with no
+readable value, are refused with exit 2 rather than continued.
 
 --no-commit writes through the same validation chain and runs no git at all, then prints
 exactly ``register.py: <path> left uncommitted``, where ``<path>`` is the file's real
@@ -88,6 +93,10 @@ from . import _session_fields as _fields
 # the suites would silently exercise the real allocator.
 _make_session_id = _session_body_module.make_session_id
 _now_utc = _session_body_module.now_utc
+
+# How many names the allocating route mints before it refuses (the first allocation
+# plus this many re-mints): see :func:`noni._session_guard.allocate`.
+ALLOCATION_RETRIES = _session_body_module.ALLOCATION_RETRIES
 
 # Where session files live, relative to the state root. The one spelling is the
 # primitive's, and a writer's file is always ``_session_git.writer_name(sid)``: the write
@@ -314,20 +323,22 @@ def main(argv: list[str] | None = None) -> int:
                      "committed to push)",
                      "drop one of the two")
 
-    # The session id this run owns, minted ONCE here and threaded through every use of it
-    # (the name written, the pathspec, the marker's contents, the commit subject, the
-    # printed line): two mints would let the printed id and the committed id disagree.
-    # The id is the allocator's own, so the guard below is a backstop that keeps the
-    # derivation single. It sits ahead of every write because a refusal may never leave a
-    # file and a marker behind (the #57 contract).
-    session_id = _make_session_id()
-    # The ONE name this run may write, and the directory the guard and the mkdir below
-    # are both built from: they are then the same directory by construction.
-    # ``writer_name`` is the committed form (it re-asks the name questions a minted id
-    # cannot answer for itself) and the empty string is the allocator's own refusal,
-    # answered just below on register's argument code -- ahead of the path guard, which
-    # speaks EXIT_USAGE and would blame --repo for a name the writer derived itself.
-    rel = _session_git.writer_name(session_id)
+    # The session id and the ONE name this run may write: minted and judged in one
+    # call, ahead of every write, marker and commit (the #57 contract -- a refusal
+    # creates nothing). :func:`noni._session_guard.allocate` asks the path question
+    # first, then the taken-name question, and re-mints on a name that is held. An id
+    # the name guard will not accept is refused just below, on the argument code.
+    allocated = _session_guard.allocate(_fail, EXIT_USAGE, _make_session_id,
+                                        _session_git.writer_name, repo,
+                                        ALLOCATION_RETRIES)
+    if isinstance(allocated, int):
+        return allocated
+    session_id, rel = allocated
+    if not rel:
+        headline, hint = _session_git.name_refusal(
+            f"{SESSIONS_REL}/{session_id}{_session_git.SESSION_SUFFIX}",
+            arg="--identity")
+        return _fail(EXIT_BAD_ARGS, headline, hint)
     sessions_dir = repo / SESSIONS_REL
     # The sessions tree this run is about to create, refused before the mkdir and before
     # any other write: the tree is asked about by NAME, not by the allocation, because an
@@ -339,15 +350,6 @@ def main(argv: list[str] | None = None) -> int:
                                                creates=True,
                                                directory_only=True)):
         return refused
-    if not rel:
-        # The allocator's own answer is not a name it can commit: register's argument
-        # code, because the fault is in a bad argument rather than in git (EXIT_GIT would
-        # blame --repo or a symlink for a name the writer derived itself), and the hint
-        # names --identity, the argument that decides the session this run allocates.
-        headline, hint = _session_git.name_refusal(
-            f"{SESSIONS_REL}/{session_id}{_session_git.SESSION_SUFFIX}",
-            arg="--identity")
-        return _fail(EXIT_BAD_ARGS, headline, hint)
     if not sessions_dir.exists():
         # Created on first registration: a fresh repo has no noni/ state yet. An
         # empty directory is no protocol violation: the first writer's file.

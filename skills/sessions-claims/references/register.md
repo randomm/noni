@@ -6,9 +6,12 @@ One committed Markdown file per session under `noni/sessions/`, named
 ## The session-id
 
 The session-id is **random per working copy**: `YYYY-MM-DD-<6 hex chars>`,
-allocated once when a session registers (by `scripts/register.py`). Ids are
-collision-free by construction (16^6 ≈ 16.7M slots per day), so each register
-file has exactly one writer. The id is stable across pulls, pushes, and
+allocated when a session registers (by `scripts/register.py`). Six hex characters
+over one UTC day are about 16.7M slots, which makes a repeated id rare but not
+impossible, so the writer does not trust the mint: it checks the name it allocated
+with `lstat` and allocates again while that name is held, up to a bound, and refuses
+(exit 2, nothing created) if every name it produced was already spoken. Each register
+file therefore has exactly one writer. The id is stable across pulls, pushes, and
 clones: once committed, the file's name and the session-id it encodes do not
 change.
 
@@ -59,9 +62,10 @@ is clean (exit 0).
 
 ## The one-writer invariant
 
-The session-id is allocated by the register writer and is collision-free by
-construction. The writer allocates the path and then refuses to write any
-path it did not allocate:
+The session-id is allocated by the register writer, and the writer never replaces a
+file it did not allocate: an allocated name that `lstat` finds occupied is re-minted,
+and if every name the run produced is occupied the run is refused. It then also
+refuses to write any path it did not allocate:
 
 - `register.py --file <path>` where `<path>` is neither the path this run
   allocated nor the marked session's file → exit 2 (refused). One rule, both
@@ -76,6 +80,13 @@ path it did not allocate:
   belonging to some other session is refused, not written.
 - A file that already exists with a different identity → exit 1 (refused).
 - A file that already exists with the same identity → exit 0 (idempotent no-op).
+- An allocated name that is already held by any file after every re-mint → exit 2
+  (refused). The minted id is 6 hex characters over one UTC day — about 16.7M slots —
+  so a repeat is rare, not impossible; the writer checks the name it minted with
+  `lstat` rather than trusting it, mints again while the name is held, and refuses
+  when the bound runs out. The refusal names the last file it could not use and
+  replaces nothing: it runs before the `mkdir`, before the write and before the
+  marker, so the tree it refused to touch is left exactly as it was.
 - A session file that is a symlink, or a directory on the way to it — `noni/sessions/`
   or the `noni/` above it — that is not a directory (a link, a plain file, a
   socket or a device) → exit 2 (refused). `is_file()` follows a link, so a
@@ -91,8 +102,10 @@ path it did not allocate:
   session file and the paths beneath the state root are examined.
 
 Two sessions that register concurrently get distinct session-ids and distinct
-files. The protocol does not mediate writes to one shared path; it allocates
-separate paths by construction.
+files: the ids are random, and the writer confirms the one it got is free before it
+writes. The protocol does not mediate writes to one shared path; it allocates a
+separate path per session and refuses an allocation that landed on a name somebody
+else holds.
 
 ## The working-copy marker
 

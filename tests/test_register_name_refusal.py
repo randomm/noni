@@ -7,6 +7,14 @@ ordering the #57 contract requires -- refuse, then write -- on the two trees a
 refusal must leave alone: no session file, no ``noni/``, and no working-copy
 marker. Each is reached a different way, because register guards its path from
 three directions: the state root, the ``--file`` argument, and its own allocation.
+
+The allocation is guarded twice, and the two guards answer different faults. The
+path kind is answered by ``_session_guard.session_write`` (a link, a directory or a
+device at the name is refused in the words that name the kind actually found); the
+question issue #103 added -- whether a position those guards pass belongs to somebody
+else -- is the subject of ``test_register_taken_name_refusal.py``. The two must not be
+collapsed into one existence check: a refusal that reads "already exists" about a
+symlink sends the operator to delete a file that is a link.
 """
 
 from __future__ import annotations
@@ -190,6 +198,9 @@ def test_register_mints_one_session_id_for_every_use_of_it(tmp_path):
     path can then name two different sessions, and a working copy can end up
     marked for a file git never received. The allocator is pinned to a counter so
     a second call is observable rather than merely a different-looking id.
+
+    The taken-name re-mint issue #103 adds must not be paid for here: a free name is
+    free on the first mint, so the retry loop is invisible on the ordinary route.
     """
     root = _git_repo(tmp_path)
     driver = _counting_allocation_driver(tmp_path)

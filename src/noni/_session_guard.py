@@ -16,6 +16,11 @@ hint``, then the code back -- so printing through the caller's own printer keeps
 prefix, the shape and any side effect that printer has (counting, capturing) with the
 command the operator ran. Only the wording of the two lines is
 :mod:`noni._session_paths`'s.
+
+:func:`allocate` and :func:`taken_refusal` are the one question only ``register``
+asks: an allocated name that is already spoken. They print through the same printer
+and take the same code, so a name collision reads in register's own voice and on the
+code it already uses for a wrong path.
 """
 
 from __future__ import annotations
@@ -63,6 +68,56 @@ def session_write(printer: Printer, code: int, repo: Path | None,
         return None
     return _report(printer, code, _session_paths.session_file_refusal(
         repo, rel, creates=creates, directory_only=directory_only))
+
+
+def taken_refusal(repo: Path, rel: str) -> tuple[str, str] | None:
+    """The ``(headline, hint)`` pair for the allocated name ``rel``, or None if free.
+
+    The question without the printing, for a caller that wants to ask it in a loop
+    and decide what to do about a yes itself (:func:`allocate` does exactly that).
+
+    Like every guard in this family it answers, never raises: the name is joined
+    through :func:`noni._session_paths.taken_name_refusal`, which decodes a bytes
+    name and stringifies an odd one the way the walk does, so a shape no writer
+    passes still gets a sentence rather than a traceback.
+    """
+    if not _session_paths.name_taken(_session_paths.allocation_target(repo, rel)):
+        return None
+    return _session_paths.taken_name_refusal(repo, rel)
+
+
+def allocate(printer: Printer, code: int, name: Callable[[], str],
+             to_rel: Callable[[str], str], repo: Path, retries: int) -> tuple[str, str] | int:
+    """``(id, rel)`` for one allocation, or the exit code of the refusal that stopped it.
+
+    The retry loop ``register``'s allocating route needs, in the module that owns the
+    questions it asks: mint an id, derive the name, ask the path question then the
+    taken-name question, and mint again on a name that is spoken -- at most
+    ``retries`` times. A name the *name* guard refuses (see the writer's own
+    ``writer_name``) is not retried: a bad id is not made better by another mint, so
+    it comes back as the refusal its caller prints on the code for a bad argument.
+    Only a name the filesystem has taken is re-minted, which is why a happy-path run
+    costs exactly one call to ``name``.
+
+    ``retries`` is floored at zero: a bound below that would never enter the loop and
+    so would report a refusal about a name it never minted. A run that mints no name
+    has no taken name to report, so it asks once.
+    """
+    for _ in range(max(0, retries) + 1):
+        session_id = name()
+        rel = to_rel(session_id)
+        if not rel:
+            # Not a name at all: the caller refuses it as an argument, so return the
+            # id and the empty name rather than deciding that code here.
+            return session_id, rel
+        if (refused := session_write(printer, code, repo, rel, creates=True)):
+            return refused
+        if (refused := taken_refusal(repo, rel)):
+            # Spoken: another mint, until the bound runs out.
+            continue
+        return session_id, rel
+    return _report(printer, code, _session_paths.all_taken_refusal(repo, rel,
+                                                                    max(0, retries)))
 
 
 def _report(printer: Printer, code: int,

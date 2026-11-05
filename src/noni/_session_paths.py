@@ -32,18 +32,24 @@ The refusal stops at the state root. :func:`noni._session_git.linked_state_root`
 owns that refusal and looks at only the ``--repo`` component itself, because a
 project *reached through* a link is the layout the quickstart sells and must stay a
 normal run. Every path here is derived from that root and sits under it, so nothing
-resolves an ancestor of the root. That boundary is now structural rather than a
-loop condition: :func:`walk_refusal` walks the ``relative_to`` parts of the name it
-was given, so there is no walk upward at all and no ancestor can be examined
-however the root was spelled. The name is refused before it is walked, and the two
-refusals are separate sentences with separate fixes: a name that is empty, blank
-after ``strip()``, carries a control character, is ``.``, absolute, or one that
-walks out of the root with a ``..`` is not a file inside the root in the first
-place, so :data:`OUTSIDE_REFUSAL` answers it and never reaches the ``lstat``
-questions that produced the "through a link" wording for decades of shapes it was
-never about. That first question is asked of the text the entry point derived
-(:func:`_normalise_name`): bytes decoded by :func:`os.fsdecode`, so the guard and
-the walk are given one name and not two readings of it.
+resolves an ancestor of the root.
+
+The walk that enforces that boundary -- and the two name questions asked before it
+(``_normalise_name``, ``outside_root_refusal``) -- lives in :mod:`noni._session_walk`,
+re-exported from the bottom of this module so callers keep one import. The seam is the
+one this docstring has always drawn: the two ``lstat`` questions and every refusal
+sentence are here, and the traversal that asks them, the only loop in the pair, is
+there. The boundary is structural rather than a loop condition: ``walk_refusal`` walks
+the ``relative_to`` parts of the name it was given, so there is no walk upward at all
+and no ancestor can be examined however the root was spelled. The name is refused
+before it is walked, and the two refusals are separate sentences with separate fixes: a
+name that is empty, blank after ``strip()``, carries a control character, is ``.``,
+absolute, or one that walks out of the root with a ``..`` is not a file inside the root
+in the first place, so :data:`OUTSIDE_REFUSAL` answers it and never reaches the
+``lstat`` questions that produced the "through a link" wording for decades of shapes it
+was never about. That first question is asked of the text the entry point derives:
+bytes decoded by :func:`os.fsdecode`, so the guard and the walk are given one name and
+not two readings of it.
 """
 
 from __future__ import annotations
@@ -53,7 +59,7 @@ import stat
 from pathlib import Path
 
 from . import _path_kind
-from ._safe_text import is_control_char, safe_path
+from ._safe_text import safe_path
 
 # A one-way import pair: ``_session_git`` imports this module for the refusal in
 # :func:`stage_and_commit`, so nothing here may import it at module scope -- hence
@@ -108,63 +114,34 @@ DIR_REFUSAL_HINT = ("replace {path} with a real directory, or remove it and let 
 DIR_REFUSAL_HINT_NO_CREATE = ("replace {path} with a real directory, or remove it; "
                               "this writer never creates that directory")
 
+# The one wording pair for an allocated session name that something already holds.
+# ``register`` is the writer that mints its own name, and a minted id can land on a
+# path that is occupied -- by a committed session file whose id a second allocator
+# happened to repeat, or by anything else a tree put under ``noni/sessions``. The
+# sentence names the occupied path and the one action that clears it; the fix is the
+# one that is true of both cases, because a run that allocates its own name cannot be
+# told to "pick another id" -- the operator chose no id. A refusal here is register's
+# usage code (2): the write simply does not happen, which is the same verdict the
+# neighbouring path refusals give, and never the git code.
+TAKEN_REFUSAL = ("{path} already exists: the session writers never replace a file "
+                 "they did not allocate, so this run writes nothing")
+TAKEN_REFUSAL_HINT = ("re-run the writer, which mints another session id under "
+                      "{directory}, or remove {path} if nothing owns it any more")
+
+# The wording for the rarer verdict: the allocating route re-minted up to its bound and
+# every name it produced was spoken. ``{path}`` is the last name it tried (the earlier
+# ones are gone, each having sent the run back to the allocator), and the fix says what
+# is actually true at that point -- the day's name space is being competed for, so the
+# operator reruns the writer or clears the names that hold them.
+ALL_TAKEN_REFUSAL = ("every session name this run allocated already exists: the last "
+                     "was {path}, and {tries} names found no free one, so this run "
+                     "writes nothing")
+ALL_TAKEN_REFUSAL_HINT = ("re-run the writer, which mints again, or remove the "
+                          "session files under {directory} that nothing owns any more")
+
 # The two errno values that mean "nothing of mine exists at that path" live with
 # the file half of the question, in :data:`noni._path_kind.ABSENT_ERRNOS`, so the
 # directory and the file answer the declined-``lstat`` case the same way.
-
-
-def _outside_refusal(name: object) -> tuple[str, str]:
-    """The refusal pair for a name that is no file inside the root, from the one pair.
-
-    The name goes in as the caller spelled it and comes out rendered exactly once,
-    by :func:`_answer`. Every name refusal this module makes goes through here.
-    """
-    return _answer(Path(str(name)), "", OUTSIDE_REFUSAL, OUTSIDE_REFUSAL_HINT)
-
-
-def _refused_text(rel: object) -> str:
-    """``rel`` as text, with bytes decoded once at the entry point.
-
-    :func:`os.fsdecode` rather than ``str``: a bytes name is a perfectly good path
-    on every POSIX system, and ``str(b"x")`` reads it as the four characters
-    ``b'x'``, so the guard would have inspected a path nobody named and pronounced
-    the real one free.
-    """
-    return os.fsdecode(rel) if isinstance(rel, bytes) else str(rel)
-
-
-def _normalise_name(rel: object) -> tuple[str, tuple[str, str] | None]:
-    """The entry point's one normalisation: ``(text, refusal)``, and never a raise.
-
-    The public entry points call this once, at :func:`walk_refusal`, before any
-    ``lstat``, so the normalisation sits at the single point every walk passes
-    through and a name cannot be judged one way by the name question and another
-    way by the walk. Text arrives via :func:`_refused_text`, so the two questions
-    cannot read one name in two decodings.
-
-    A name that is empty after ``strip()``, or that carries any control character
-    (:func:`noni._safe_text.is_control_char`), is refused rather than walked. The
-    renderer drops control bytes from the sentence it prints and ``str.strip()``
-    leaves them in, so ``"\x01"`` used to reach the walk, answer "absent" at every
-    component and be admitted as the ordinary file a writer may replace; a name of
-    spaces used to reach it as one odd filename. Neither is a session file, and a
-    name no argv element can carry is no session file either.
-
-    The refusal is the ``OUTSIDE_REFUSAL`` pair: neither shape is a link or a
-    non-directory, so neither gets a path-kind sentence and neither is lstat'ed.
-    The answer is always a ``(headline, hint)`` tuple -- never ``None``, never a
-    raise -- whatever the caller passed in.
-    """
-    text = _refused_text(rel)
-    if not text.strip():
-        # The one sentence for "no name at all", which covers the empty string, the
-        # root spelled ``.``, a run of whitespace and anything that becomes one.
-        return text, _outside_refusal(rel)
-    if any(is_control_char(ch) for ch in text):
-        # This sentence enumerates what it refuses, so the name it quotes must name
-        # the category-C character rather than print nothing where it stood.
-        return text, _outside_refusal(f"{text!r}")
-    return text, None
 
 
 def _directory_kind(path: Path) -> str | None:
@@ -269,126 +246,108 @@ def directory_refusal(path: Path, *, creates: bool = False) -> tuple[str, str] |
     return _answer(path, kind, DIR_REFUSAL, hint)
 
 
-def walk_refusal(repo: Path, rel: str, *, creates: bool = False,
-                 asks_last_as_directory: bool = False) -> tuple[str, str] | None:
-    """The refusal for the session file ``rel`` and the tree above it, or None.
+def _allocation_rel(repo: Path, rel: object) -> str:
+    """``rel`` as ONE path under ``repo``, never a path that escapes it.
 
-    The ONE walk, and the only loop in this module. It takes the state root as
-    given, asks the directory question of every directory STRICTLY below that root
-    and down to the target (``noni/sessions``, the ``noni`` above it, anything
-    deeper), and then the file question of the file itself -- never an ancestor of
-    the root, because :func:`noni._session_git.linked_state_root` owns that
-    question and a project reached *through* a link must stay a normal run.
-
-    The bound is structural rather than a loop condition: the name is normalised on
-    both sides with ``os.path.normpath``, made relative to the root, and the walk
-    iterates over the parts of that answer. There is no ``while`` and no parent step,
-    so no shape of ``rel`` -- ``.``, ``..``, an absolute path, a deep one, a root
-    spelled with a trailing slash -- can make it run past the root or past the file.
-
-    A name that is not a file under the root is refused BEFORE the walk, by name and
-    not by ``lstat``: :data:`OUTSIDE_REFUSAL` in words that describe a name, because
-    a ``..`` is neither a symlink nor a non-directory and the link wording would
-    blame the wrong thing.
-
-    ``creates`` goes to :func:`directory_refusal` (see there): True only for
-    ``register``, which mkdirs the sessions directory.
-
-    ``asks_last_as_directory`` is the one knob, and it exists for one caller:
-    ``register`` asks the question of the sessions DIRECTORY it is about to create,
-    so its last component is a directory question and not a file question. A
-    directory name handed to the file question would be refused as "not a regular
-    file", which is both the wrong verdict and the wrong advice.
-
-    The name is normalised first, at this one entry point
-    (:func:`_normalise_name`): bytes decoded, a name that is blank or carries a
-    control character refused as a name, so neither question below is ever asked of
-    a string no argv element could carry. A refusal renders its path once, in
-    :func:`_answer`, and the templates are composed with plain :func:`safe_path`
-    rather than a second pass over the finished line: see the backslash case in
-    ``tests/test_session_symlink_docs.py``.
+    The join the taken-name questions share. Two things are normalised here rather
+    than left to the caller: bytes are decoded by :func:`os.fsdecode`, the same
+    decoding the walk uses for a name (``str(b"x")`` would inspect the four
+    characters of its repr instead of the file somebody named), and the answer is
+    re-based on the root by PARTS, so an absolute name or one that walks out with
+    ``..`` names a position under ``repo`` instead of outside it. A guard that
+    reported an outside position as "your allocated name is taken" would send the
+    operator to delete a file this writer never allocates; the position checked here
+    and the position written (:func:`noni._session_git.atomic_write` joins the same
+    name to the same root) are then always the same position.
     """
-    text, refused = _normalise_name(rel)
-    if refused is not None:
-        return refused
-    refused = outside_root_refusal(repo, text)
-    if refused is not None:
-        return refused
+    text = os.fsdecode(rel) if isinstance(rel, bytes) else str(rel)
     normalised = os.path.normpath(str(repo))
-    parts = Path(os.path.normpath(os.path.join(
-        normalised, *Path(os.path.normpath(str(text))).parts))).relative_to(
-        normalised).parts
-    path = Path(normalised)
-    steps = parts if asks_last_as_directory else parts[:-1]
-    for part in steps:
-        path = path / part
-        refused = directory_refusal(path, creates=creates)
-        if refused is not None:
-            return refused
-    if asks_last_as_directory:
-        return None
-    return file_refusal(path / parts[-1] if parts else path)
-
-
-def outside_root_refusal(repo: Path, rel: str) -> tuple[str, str] | None:
-    """The refusal for a ``rel`` that names no file inside ``repo``, or None.
-
-    The question the walk cannot answer, asked first: an empty name, ``.``, an
-    absolute path, a home reference, or one that lands outside the state root has no
-    chain of directories under the root to inspect, so the walk would have nothing
-    honest to say about it. Both sides are normalised and compared by PARTS: the
-    name's own components are taken BEFORE normalisation, so any ``..`` is refused
-    rather than folded away, and they are taken from the text :func:`_refused_text`
-    produced -- the one decoding the walk inspects, so the two questions cannot
-    disagree about what the name was. A name may answer "a file under the root" after
-    normalisation and still make the walk lstat a directory the operator never named
-    (``noni/sessions/../../outside.md`` reads as ``outside.md``, two levels up, once
-    the ``..`` is resolved), and the walk then reports "no problem" about a path
-    outside the tree. Refusing the component, not the resolved answer, is what keeps
-    the position the guard inspected and the position the writer writes the same
-    position. ``.`` components are not refused: they name no move, and the walk's
-    path is built by JOINING the parts of the normalised answer, so the check and
-    the walk cannot read one component two different ways.
-
-    The name has already been normalised by :func:`_normalise_name`, which owns the
-    bytes, whitespace-only and control-character cases; this is the position question.
-    """
-    normalised = os.path.normpath(str(repo))
-    parts = Path(_refused_text(rel)).parts
-    if not rel or _refused_text(rel) == "." or os.path.isabs(rel) or not parts \
-            or ".." in parts or parts[0].startswith("~"):
-        return _outside_refusal(rel)
-    joined = os.path.normpath(os.path.join(normalised, *parts))
+    joined = os.path.normpath(os.path.join(normalised, *text.split(os.sep)))
     try:
-        Path(joined).relative_to(normalised)
+        return str(Path(joined).relative_to(normalised))
     except ValueError:
-        return _outside_refusal(rel)
-    return None
+        return os.path.join(*Path(joined).parts[1:])
 
 
-def write_refusal(repo: Path, rel: str) -> tuple[str, str] | None:
-    """The one call the commit primitive makes; see :func:`walk_refusal`.
+def allocation_target(repo: Path, rel: object) -> Path:
+    """``repo`` joined to the name ``rel``, in the ONE decoding this module uses.
 
-    The primitive never creates a directory, so the hint it gets for a refused
-    directory is the one that does not promise a ``mkdir``.
+    The path the taken-name questions ``lstat``: the root and the name rebased under
+    it by :func:`_allocation_rel`, which is the same join the writer makes from the
+    name its allocation produced.
     """
-    return walk_refusal(repo, rel)
+    return Path(os.path.normpath(str(repo))) / _allocation_rel(repo, rel)
 
 
-def session_file_refusal(repo: Path, rel: str, *, creates: bool = False,
-                         directory_only: bool = False) -> tuple[str, str] | None:
-    """The one call the writers make: the same walk, in the writer's own terms.
+def name_taken(path: Path) -> bool:
+    """Whether anything at all sits at ``path``, without following a link.
 
-    The writers derive ``rel`` themselves (:func:`noni._session_git.writer_name`,
-    or ``register``'s ``noni/sessions/<sid>.md``), so a name that is not one inside
-    the root has already been refused by the writer's own name guard. Asking again
-    here costs one normalisation and keeps the walk in one place: a writer whose
-    guard was skipped cannot drive a link, or a name outside the root, through the
-    same helper the primitive uses.
+    The question an allocating writer asks of its own minted name, and it is NOT the
+    file question the path guards ask. :func:`noni._path_kind.inspected_file_kind`
+    answers None for BOTH an absent path and a regular file, because those are the two
+    states a writer writes; for this question a regular file that is already there is
+    the one answer that matters -- it is the victim the atomic ``os.replace`` would
+    overwrite -- so the verdict is ``lstat``'s, not that helper's: does anything sit
+    here.
 
-    ``directory_only`` says the name is a DIRECTORY the writer is about to create
-    (``register``, before its ``mkdir``): every component down to and including the
-    last is then asked as a directory, and the file question is not asked at all.
+    ``os.lstat``, never ``is_file()``: a dangling symlink is not a free name, because
+    ``os.replace`` lands on the link's target and leaves the link where it was (the
+    fault ``decide.py`` fixed by asking ``lexists`` of its allocated record path, in
+    :func:`noni.decide._path_is_taken`). A declined ``lstat`` answers True: "I could
+    not look" is not evidence that the position is free, and the writer that treats it
+    as such composes a file over one it never saw.
     """
-    return walk_refusal(repo, rel, creates=creates,
-                        asks_last_as_directory=directory_only)
+    try:
+        os.lstat(path)
+    except OSError as exc:
+        return exc.errno not in _path_kind.ABSENT_ERRNOS
+    except ValueError:
+        # ``os.lstat`` raises ValueError, not OSError, for a name carrying a NUL.
+        return True
+    return True
+
+
+def taken_name_refusal(repo: Path, rel: object) -> tuple[str, str]:
+    """The ``(headline, hint)`` pair for an allocated name something already holds.
+
+    One call, one rendering of the path, in :func:`_answer`, beside the two path-kind
+    refusals: an allocating writer must not compose its own sentence about an occupied
+    name any more than it composes one about a linked path. The caller passes the
+    root and the name it was handed, not a joined ``Path``: :func:`allocation_target`
+    is the only place this module joins them, so the position the guard inspects and
+    the position the writer writes cannot come apart on an odd name.
+    """
+    return _answer(allocation_target(repo, rel), "", TAKEN_REFUSAL,
+                   TAKEN_REFUSAL_HINT)
+
+
+def all_taken_refusal(repo: Path, rel: object, tries: int) -> tuple[str, str]:
+    """The ``(headline, hint)`` pair for an allocation whose every name was spoken.
+
+    ``rel`` is the last name the run tried and ``tries`` the bound it ran out of, so
+    the sentence says how hard the run looked rather than only what it found. The
+    path and the directory are filled in by :func:`_answer`, exactly as the two
+    path-kind refusals do, so this wording holds no caller text of its own either --
+    which is why ``{tries}`` is filled in first, from a number this module owns, and
+    the finished sentence is what :func:`_answer` then renders.
+    """
+    return _answer(allocation_target(repo, rel), "",
+                   ALL_TAKEN_REFUSAL.replace("{tries}", str(tries)),
+                   ALL_TAKEN_REFUSAL_HINT)
+
+
+# The walk lives in :mod:`noni._session_walk`, re-exported here so every caller keeps
+# one import for the whole guard: ``_session_git`` asks for ``write_refusal`` and the
+# four writers for ``session_file_refusal``, and a test that pins the wording still
+# reaches the templates by this module's name. Nothing else may import it from the
+# other module directly -- the point of the split is one entry point, not two. The
+# re-export is the only use these names have in THIS file, hence the F401 exception
+# with its reason on the line.
+from ._session_walk import (  # noqa: E402,F401  (re-export: one entry point for the guard)
+    outside_root_refusal,
+    session_file_refusal,
+    walk_refusal,
+    write_refusal,
+)
+
+

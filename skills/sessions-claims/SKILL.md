@@ -26,8 +26,10 @@ not a promise.
 
 One Markdown file per session under `noni/sessions/`, named
 `<session-id>.md`. The session-id is random per working copy
-(`YYYY-MM-DD-<6 hex>`), allocated once at registration. Ids are collision-free
-by construction, so each file has exactly one writer.
+(`YYYY-MM-DD-<6 hex>`), allocated at registration. Six hex characters over one
+UTC day are about 16.7M slots — a repeat is rare, not impossible — so the writer
+checks the name it minted with `lstat` and mints again while that name is held:
+each file has exactly one writer.
 
 Each register file records five fields:
 
@@ -105,7 +107,9 @@ a marked file that cannot be read or carries no readable `- status:` value, or
 session file this run would write, or any directory from the state root down to it
 (its `noni/sessions/` directory and the `noni/` above it), not being a plain path
 this writer may follow (a symlink is never followed, and nothing is
-created before the refusal); `3` git
+created before the refusal), or the name this run allocated being held by another
+file after every re-mint (the file is named, never replaced, and nothing is created
+before the refusal); `3` git
 could not commit; `4` a `--identity`/`--status` that is not one token, the
 session name this run allocated is not one file under `noni/sessions/` (a name
 the writer derived itself, so the hint names `--identity` and does not blame
@@ -308,8 +312,10 @@ One golden fixture per code lives under `tests/fixtures/sessions-exit-<code>.jso
 
 ## Rules
 
-- **One writer per file.** The session-id is allocated by the register writer
-  and is collision-free by construction. A session that tries to write to a
+- **One writer per file.** The session-id is allocated by the register writer,
+  which checks the name it minted with `lstat`, mints again while that name is
+  held, and refuses (exit 2) when every name it produced is already held. A session
+  that tries to write to a
   file it did not allocate is refused (exit 2). Each of the four writers commits
   exactly its own session file: a change somebody else had staged is neither
   swept into that commit nor unstaged by it.

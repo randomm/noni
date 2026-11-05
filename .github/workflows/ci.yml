@@ -98,13 +98,14 @@ jobs:
 
       # The acceptance criterion, stated against the artifact rather than the
       # source tree: the installed console script (not `python -m noni.cli`) is
-      # on PATH and dispatches all five subcommands. The equivalence module runs
+      # on PATH and dispatches every subcommand in noni.cli.TOOLS. The
+      # equivalence module runs
       # the console module's dispatch; this proves the entry point registered by
       # the wheel's metadata actually resolves.
       - name: The noni command is on PATH
         run: |
           .venv-wheel/bin/noni --help
-          for tool in census register claim decide order; do
+          for tool in census register claim close release decide order intent; do
             .venv-wheel/bin/noni "$tool" --help >/dev/null
             echo "noni $tool --help: ok"
           done

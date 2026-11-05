@@ -40,7 +40,10 @@ jobs:
       # The public-repo hygiene scrub AGENTS.md names. Exit 1 is a violation and
       # fails the job; exit 2 means the untracked deny-list class did not run
       # (tests/quickstart_gate.py pins the number), which is the state of a
-      # public runner, so the step passes on 0 or 2 and on nothing else.
+      # public runner, so the step passes on 0 or 2 and on nothing else. Exit 3
+      # is the gate itself failing to run (the package was not importable): it
+      # must never share 2's number, or a scan that never started would pass the
+      # step that exists to fail on an unscanned tree.
       - name: Public-repo hygiene scrub
         run: .venv/bin/python scripts/public_safety.py || [ "$?" -eq 2 ]
 

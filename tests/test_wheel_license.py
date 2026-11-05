@@ -31,11 +31,17 @@ import pytest
 from _harness import REPO
 from test_wheel_contents import _build_wheel
 
-# The license file has to reach the build's own input tree. `_build_wheel`
-# copies a named set into the throwaway tree it builds in, and a file the copy
-# left out cannot ship: without this the assertion below would fail for the
+# What the licensed build needs beyond the helper's default copy list. The
+# license has to reach the build's own input tree: `_build_wheel` copies a named
+# set into the throwaway tree it builds in, and a file the copy left out cannot
+# ship -- without asking for it the entry assertion below would fail for the
 # wrong reason (a missing input, not a bad config).
-_BUILD_INPUTS = ("src", "pyproject.toml", "LICENSE")
+LICENSE_INPUT = "LICENSE"
+
+# A source tree that carries no license at all, built for the counter-case: a
+# root with the package and the declaration but no file to ship, so only the
+# config is left to account for a license entry in the artifact.
+UNLICENSED_SOURCE_FILES = ("src", "pyproject.toml")
 
 # The METADATA headers the [project] table is expected to produce, and the value
 # each must carry. Read from the built artifact rather than from pyproject.toml:
@@ -57,57 +63,46 @@ EXPECTED_CLASSIFIERS = (
 )
 
 
-def _build_tree(tmp_path: Path) -> Path:
-    """The tree :func:`test_wheel_contents._build_wheel` copies its inputs into.
-
-    The helper names it after the output directory it was given, so the caller
-    can reach the copy without guessing at it -- which is what lets this module
-    add the license input the helper does not copy, and take it away again.
-    """
-    return tmp_path / "build-tree"
-
-
-def _stage_license(source_root: Path, tmp_path: Path) -> Path:
-    """Copy LICENSE into the build tree, ready for the build that ships it."""
-    tree = _build_tree(tmp_path)
-    tree.mkdir(parents=True, exist_ok=True)  # the helper mkdir()s it too; this only needs to survive that
-    shutil.copy2(source_root / "LICENSE", tree / "LICENSE")
-    return tree
-
-
 def build_licensed_wheel(source_root: Path, tmp_path: Path) -> Path:
-    """The wheel from ``source_root``, LICENSE staged into its build tree.
+    """The wheel from ``source_root``, with LICENSE among the build's inputs.
 
-    :func:`test_wheel_contents._build_wheel` copies only ``src`` and
-    ``pyproject.toml`` into the throwaway tree it builds in, and a file the copy
-    left out cannot ship: without this the entry assertion below would fail for
-    the wrong reason (an input the fixture never handed over, not a build config
-    that dropped the file).
+    One call, one input list: the helper copies ``src`` and ``pyproject.toml``
+    plus whatever the caller names, and a file the copy left out cannot ship --
+    so the license is asked for by name rather than staged into the helper's
+    private tree behind its back.
     """
-    _stage_license(source_root, tmp_path)
-    return _build_wheel(source_root, tmp_path)
+    return _build_wheel(source_root, tmp_path, extra_inputs=(LICENSE_INPUT,))
 
 
-def build_wheel_without_license(source_root: Path, tmp_path: Path) -> Path:
-    """The wheel from ``source_root`` with LICENSE taken back out of the build tree.
+def build_unlicensed_wheel(source_root: Path, tmp_path: Path) -> Path:
+    """A wheel built from a copy of ``source_root`` that holds no license file.
 
-    The counter-case, built over the same staging step: with the file removed
-    and the build re-run, only the declaration is left to account for the entry.
+    The counter-case is a tree without the input, not a build tree with the file
+    deleted after the copy: the helper's copy list is the one list of inputs the
+    build sees, so building from a source root that carries the package and the
+    declaration but no ``LICENSE`` is what leaves only the declaration to
+    account for an entry.
     """
-    tree = _stage_license(source_root, tmp_path)
-    tree.joinpath("LICENSE").unlink()
-    return _build_wheel(source_root, tmp_path / "unlicensed")
+    root = tmp_path / "source"
+    root.mkdir(parents=True)
+    for name in UNLICENSED_SOURCE_FILES:
+        source = source_root / name
+        if source.is_dir():
+            shutil.copytree(source, root / name)
+        else:
+            shutil.copy2(source, root / name)
+    return _build_wheel(root, tmp_path / "build")
 
 
 @pytest.fixture(scope="module")
 def licensed_wheel(tmp_path_factory) -> Path:
-    """The wheel from this tree, LICENSE included in the build's input copy.
+    """The wheel from this tree, LICENSE among the build's input copy.
 
     A fixture of its own rather than the shared ``wheel`` one, so the entry-list
     whitelist tests keep measuring the plain build and this module measures the
     one carrying the license: the two trees differ only in that input.
     """
-    for name in _BUILD_INPUTS:
+    for name in (LICENSE_INPUT, *UNLICENSED_SOURCE_FILES):
         assert (REPO / name).exists(), f"the wheel build needs {name!r}, which is missing"
     return build_licensed_wheel(REPO, tmp_path_factory.mktemp("licensed-wheel"))
 
@@ -230,20 +225,21 @@ def test_wheel_metadata_carries_the_classifiers_and_the_readme(
     assert message.get("Summary"), "the wheel carries no Summary, so [project] lost its description"
 
 
-def test_a_build_tree_with_no_license_file_ships_no_license(tmp_path: Path) -> None:
+def test_a_source_tree_with_no_license_file_ships_no_license(tmp_path: Path) -> None:
     """The license declaration is honoured by the build, not silently ignored.
 
-    The counter-case the staging step above would otherwise hide: if the backend
+    The counter-case the input copy above would otherwise hide: if the backend
     took ``license-files`` to mean nothing, a tree with no license to ship would
     build exactly as well and the entry asserted above would prove nothing about
-    the config. The pinned backend warns by name and ships no entry in that
-    case, so both halves are asserted: the warning is what makes the omission
-    visible, and the absent entry is what makes the shipped file the evidence of
-    the declaration rather than a copy the build happened to find.
+    the config. The counter-case is built from a source root that holds ``src``
+    and ``pyproject.toml`` and no ``LICENSE``, so the declaration is the only
+    thing left to account for an entry. The pinned backend warns by name and
+    ships no entry in that case, so both halves are asserted: the warning is
+    what makes the omission visible, and the absent entry is what makes the
+    shipped file the evidence of the declaration rather than a copy the build
+    happened to find.
     """
-    tree = tmp_path / "no-license"
-    tree.mkdir()
-    wheel = build_wheel_without_license(REPO, tree)
+    wheel = build_unlicensed_wheel(REPO, tmp_path / "no-license")
     entries = zipfile.ZipFile(wheel).namelist()
     assert not [n for n in entries if n.split("/")[-1] == "LICENSE"], (
         f"the wheel shipped a license the tree never had, so the entry asserted "

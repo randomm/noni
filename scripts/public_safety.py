@@ -4,9 +4,13 @@
 The product lives in the ``noni`` package as ``noni.public_safety``, which is
 what the census's hygiene class imports in-process. This file is the gate
 AGENTS.md names: the CLI contract stays here, with the honest exit codes the
-publishing checklist depends on — exit 1 on a violation, exit 2 when the
-deny-list class was not active, exit 0 (with a ``clean`` line) only when both
-halves ran.
+publishing checklist depends on: exit 0 (with a ``clean`` line) only when both
+halves ran, exit 1 on a violation, exit 2 when the deny-list class was not
+active, and exit 3 when the gate could not run at all — the package it imports
+was not importable, so no file was scanned. The last two must never share a
+number: the CI step tolerates exit 2 (a public runner has no deny-list), and a
+gate that never ran is not the same verdict as a gate that ran and found
+nothing to refuse.
 
 The tree to audit is this repository: it is named from this script's own
 location, never from the package's, because the package may be installed from a
@@ -25,7 +29,12 @@ try:
 except ImportError as exc:  # pragma: no cover - the import-failure branch
     print(f"public-safety: the noni package is not importable ({exc}); "
           'install it or put its src/ on PYTHONPATH', file=sys.stderr)
-    raise SystemExit(2) from exc
+    # Exit 3, not 2: 2 is the state a public CI runner passes on, and an
+    # unimportable package means the scan never happened. Exercised by
+    # tests/test_public_safety.py, which runs this script as a child under
+    # ``-S -I`` so no install can satisfy the import; the branch is therefore
+    # never taken in-process and stays excluded from the coverage report.
+    raise SystemExit(3) from exc
 
 
 def main() -> int:

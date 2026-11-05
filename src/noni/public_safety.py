@@ -37,9 +37,12 @@ imported as ``noni.public_safety`` — by the census's hygiene class in-process,
 and by every test that reads its tables. Nothing puts a directory on
 ``sys.path`` to reach it. ``scripts/public_safety.py`` is the repository script
 form of the same check: a thin wrapper over this module that keeps the gate's
-CLI contract (``python scripts/public_safety.py``, exit 1 on violations, exit 2
-when the deny-list class is inactive), and it is reached as a subprocess, never
-imported.
+CLI contract (``python scripts/public_safety.py``: exit 0 clean, exit 1 on
+violations, exit 2 when the deny-list class is inactive, and exit 3 when the
+gate could not run because this package was not importable), and it is reached
+as a subprocess, never imported. Exit 3 is kept distinct from exit 2 because
+CI passes on 2: a scan that never ran must not read as the verdict of a scan
+that ran and had nothing to refuse.
 
 The tree to audit and the deny-list location are parameters of the scan, never
 read from this file's own location: the module ships inside a wheel, so its
@@ -205,7 +208,8 @@ class DenylistResult:
 
     The CLI treats "ok" with zero entries, "corrupt" and "absent" identically:
     a run whose deny-list class is not active with a non-empty list refuses to
-    report clean (exit 2).
+    report clean (exit 2). A wrapper whose ``import noni`` failed never reaches
+    this: it exits 3, the code reserved for a gate that could not run.
     """
 
     entries: list[str]

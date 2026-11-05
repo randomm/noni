@@ -11,12 +11,16 @@ The two assertions are deliberately different in kind. The first reads the page
 reads the artifact the word names: a ``LICENSE`` whose text is the Apache-2.0
 body, which is the only thing that makes "Apache-2.0" a promise a reader can
 act on rather than a label.
+
+The page is read through ``readme_support`` (its reader and its line cap), not
+through a path and a number typed here: the cap is one claim with one owner, and
+a second copy of it would be free to disagree with the gate that enforces it.
 """
 
 from __future__ import annotations
 
 from _harness import REPO
-from readme_support import README, _section
+from readme_support import README_LINE_LIMIT, _readme_text, _section
 
 # The sentences' load-bearing words, kept apart so neither can be satisfied by
 # the other: a page that said "Apache" alone, or named the file without naming
@@ -38,7 +42,7 @@ def test_readme_names_the_license_in_the_contributing_section() -> None:
     word planted anywhere else on the page would satisfy a whole-text search
     while the section a reader reaches for the licence had none.
     """
-    section = _section(README.read_text(encoding="utf-8"), "Contributing")
+    section = _section(_readme_text(), "Contributing")
     assert SPDX in section, (
         "the Contributing section no longer names the licence, so the page's only "
         f"licence claim ({SPDX!r}) has disappeared"
@@ -58,9 +62,11 @@ def test_readme_still_names_the_license_after_the_cap_and_the_order_hold() -> No
     would break the documented order, and one that added a line would break the
     cap, so the pair is checked here beside the claim itself.
     """
-    text = README.read_text(encoding="utf-8")
+    text = _readme_text()
     lines = text.count("\n")
-    assert lines <= 150, f"README.md is {lines} lines; the page's cap is 150"
+    assert lines <= README_LINE_LIMIT, (
+        f"README.md is {lines} lines; the page's cap is {README_LINE_LIMIT}"
+    )
     assert "## License" not in text and "## Licence" not in text, (
         "a licence section was added to the page: the claim is one sentence in "
         "the Contributing section, and a new heading breaks the section order "

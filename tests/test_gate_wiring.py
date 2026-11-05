@@ -36,6 +36,10 @@ What is asserted, and why each one matters:
   CI gate and a different thing from a reader's install, so it stays in this file
   with the pins it must match rather than following the reader to the quickstart
   (issue #75).
+- the public-repo hygiene scrub step exists, sits after the editable install, and
+  its own shell is *executed* against each exit code the gate can return: 0 and 2
+  pass, 1 and the gate's own could-not-run code (3) fail. The step is a shell
+  expression, so only running it says which codes it accepts.
 
 The total the gate reports today is not asserted here: it moves with the test
 suite, so pinning it would fail on unrelated changes. `coverage report` fails
@@ -387,9 +391,9 @@ def test_ci_runs_the_public_safety_scrub_after_the_editable_install():
     Two halves, both of which a silent gap could take: the step exists in the
     *test* job (the wheel job's green says nothing about the gate), and it sits
     after the editable install, because ``scripts/public_safety.py`` imports
-    ``noni.public_safety`` and exits 2 with an import failure before it has
+    ``noni.public_safety`` and exits 3 with an import failure before it has
     scanned a single tracked file -- a step ordered ahead of the install would
-    report the same exit code for the wrong reason and pass.
+    report a code the step does not accept, for the wrong reason.
     """
     body = CI_WORKFLOW.read_text(encoding="utf-8")
     # The workflow is one file, so the position test is done on the test job's
@@ -415,17 +419,24 @@ def test_ci_scrub_step_accepts_only_exit_0_and_2():
     assertion. Exit 2 is the state of a public runner (the deny-list is
     gitignored, so the class is absent and the gate refuses to report clean);
     the number is :data:`tests.quickstart_gate.GATE_DENYLIST_INACTIVE_EXIT`,
-    imported rather than written again here. Exit 1 is a violation and exit 4
-    is an arbitrary other failure, both of which must redden the job: a step
-    written ``... || true`` would keep the tree's hygiene unenforced while CI
-    stayed green.
+    imported rather than written again here. Exit 1 is a violation, exit
+    :data:`tests.quickstart_gate.GATE_COULD_NOT_RUN_EXIT` is the gate failing to
+    run at all (an unimportable package, so nothing was scanned), and exit 4 is
+    an arbitrary other failure: all three must redden the job. A step written
+    ``... || true``, or one that accepted 3 alongside 2, would keep the tree's
+    hygiene unenforced while CI stayed green -- which is the whole reason 3 is a
+    code of its own rather than a second use of 2.
     """
     import subprocess
 
-    from quickstart_gate import GATE_DENYLIST_INACTIVE_EXIT
+    from quickstart_gate import GATE_COULD_NOT_RUN_EXIT, GATE_DENYLIST_INACTIVE_EXIT
 
     assert GATE_DENYLIST_INACTIVE_EXIT == 2, (
         f"the CI step below hard-codes the exit the docs pin as {GATE_DENYLIST_INACTIVE_EXIT}"
+    )
+    assert GATE_COULD_NOT_RUN_EXIT == 3, (
+        f"the CI step below must fail on the gate's could-not-run exit, which is "
+        f"pinned as {GATE_COULD_NOT_RUN_EXIT}"
     )
     shell = _scrub_shell(_scrub_step_run())
     assert shell == 'true || [ "$?" -eq 2 ]', (
@@ -435,7 +446,8 @@ def test_ci_scrub_step_accepts_only_exit_0_and_2():
     # The gate's own exit is planted where the command stood, so the verdict
     # below is the step's policy and nobody else's.
     for code, expected_pass in ((0, True), (GATE_DENYLIST_INACTIVE_EXIT, True),
-                                (1, False), (4, False)):
+                                (1, False), (GATE_COULD_NOT_RUN_EXIT, False),
+                                (4, False)):
         planted = shell.replace("true ||", f"(exit {code}) ||", 1)
         proc = subprocess.run(["bash", "-c", planted],
                               capture_output=True, text=True, timeout=60)

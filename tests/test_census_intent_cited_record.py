@@ -453,3 +453,26 @@ def test_a_record_swapped_for_a_link_after_classification_is_not_read(tmp_path):
     row_text = json.dumps(intent_rows[0])
     assert "superseded" not in row_text
     assert "swapped-target" not in row_text
+
+
+def test_a_fifo_at_the_cited_record_path_is_cannot_tell(tmp_path):
+    """A fifo passes the leaf classifier and is refused by the descriptor check.
+
+    A pipe is a regular-looking target for a classifier that follows links: it
+    exists, it is not a symlink, and a read of it would block rather than answer.
+    The only thing that stops it is ``fstat`` of the descriptor the reader actually
+    opened, so this is the state the structural half of the refusal exists for, and
+    the row must be the class's ``cannot-tell`` and never the ``uncited`` an absence
+    errno would have produced.
+    """
+    import os
+
+    repo = _planted_record_link(tmp_path, "fifo")
+    record_path = repo / "noni" / "decisions" / f"{RECORD_ID}.json"
+    record_path.unlink()
+    os.mkfifo(record_path)
+    code, rows, _, _ = _run(repo)
+    intent_rows = _intent_rows(rows)
+    assert subjects(intent_rows) == ["cannot-tell"], intent_rows
+    assert intent_rows[0]["severity"] == "warn"
+    assert code == 0

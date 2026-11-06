@@ -21,7 +21,6 @@ import os
 import subprocess
 
 import pytest
-
 from order_fixtures import (
     BASELINE_ID,
     NOW,

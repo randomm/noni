@@ -110,9 +110,14 @@ def test_the_state_re_rooting_is_applied_to_the_commands_that_name_the_clone(
     assert [argv[:2] for argv in unrooted] == [["git", "clone"]], unrooted
     # The ignore-rule payload names the directory inside a token (``/.noni-state/``),
     # so it is not one of the commands above; it is checked by append_ignore_rule.
+    # Two echo lines carry such a token: the project's rule for the clone, and the
+    # clone's own rule for its deny-list. Both write a path *inside* a tree rather
+    # than naming that tree as an anchor value, and neither is moved -- each is
+    # resolved against the tree its own line names, in append_ignore_rule.
     payload = [argv for label in GOLDEN for argv in GOLDEN[label]
                if argv[0] == "echo" and STATE_DIR in " ".join(argv)]
-    assert len(payload) == 1, payload
+    assert [argv[-1] for argv in payload] == [".gitignore",
+                                              f"{STATE_DIR}/.gitignore"], payload
     # The placeholders are the page's literal tokens, and the launcher's own
     # substitution fills every one of them: both values come off the running tree
     # (see ``World.collect_record_id`` / ``World.collect_session_id``), so the world

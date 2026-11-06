@@ -61,6 +61,15 @@ CLONE_URL = "github.com/OWNER/noni"
 # placeholder for the reader's tree, the harness supplies the real directory.
 READER_DIR = "your-project"
 
+# The branch the fixture's trees start on, when a test does not name one. Named
+# here rather than left to git: the suite's sandboxed HOME carries no gitconfig, so
+# an unadorned ``init`` falls back to git's own default and a writer's commit lands
+# on a branch the origin never had. One owner for the default, because the Route B
+# tests read this branch back (``origin/main`` as the upstream, ``main`` on the
+# origin) and a test that wants a different one passes ``branch=`` to
+# :func:`fresh_scratch` instead of editing this.
+DEFAULT_BRANCH = "main"
+
 _GIT_IDENTITY = ("-c", "user.name=Replay", "-c", "user.email=replay@fixture.invalid",
                  "-c", "commit.gpgsign=false")
 
@@ -98,6 +107,10 @@ class World:
         # that wants a date other than the host's sets it here. It hangs off the
         # world rather than a fixture because the writers run as subprocesses.
         self.decide_date: str | None = None
+        # The branch the project, the origin and (by clone) the state tree are on.
+        # Read from, never decided here: :func:`fresh_scratch` sets it, and the
+        # Route B assertions read it where they used to spell ``main``.
+        self.branch: str = DEFAULT_BRANCH
 
     def mark_sessions(self) -> None:
         """Record the session files on disk, just before the register line runs."""
@@ -206,7 +219,8 @@ def git(repo: Path, *args: str, env: dict[str, str],
                           text=True, env=env, timeout=120)
 
 
-def init_repo(path: Path, env: dict[str, str], *, branch: str = "main") -> None:
+def init_repo(path: Path, env: dict[str, str], *,
+              branch: str = DEFAULT_BRANCH) -> None:
     """``git init -b <branch>`` in a tree that does not exist yet.
 
     ``git -C`` refuses to enter a missing directory, so the tree is made first. The
@@ -232,7 +246,8 @@ def init_bare(path: Path, env: dict[str, str], branch: str) -> None:
             f"git init --bare {path.name}")
 
 
-def seed_origin(origin: Path, env: dict[str, str], branch: str = "main") -> None:
+def seed_origin(origin: Path, env: dict[str, str],
+                branch: str = DEFAULT_BRANCH) -> None:
     """A bare origin holding one empty commit on ``branch``, as the forge would.
 
     This is the harness standing in for the forge: the page tells the reader to
@@ -310,16 +325,24 @@ def build_installed_world(root: Path) -> InstalledWorld:
     return installed
 
 
-def fresh_scratch(installed: InstalledWorld, scratch: Path) -> World:
+def fresh_scratch(installed: InstalledWorld, scratch: Path,
+                  *, branch: str = DEFAULT_BRANCH) -> World:
     """A per-test set of the mutable trees, over the module's install.
 
     The project, its state clone and the forge's bare origin are built here, in a
     directory the caller owns and removes: two route runs against one project would
     otherwise see each other's ledger, and the page's own writers are what put it
     there. The venv and the clone are the shared, read-only half.
+
+    ``branch`` is the branch both the project and the forge's repository start on,
+    and it is named on every ``init`` rather than left to ``init.defaultbranch``.
+    A test that wants the page's first push exercised on a branch other than
+    ``main`` -- which is what the page's ``HEAD`` is for -- passes one; the default
+    keeps every other walk on the tree the page's prose reads as unremarkable.
     """
     scratch.mkdir(parents=True, exist_ok=True)
     world = World(scratch, installed.venv, installed.clone)
-    init_repo(world.project, world.env)
-    seed_origin(world.origin, world.env)
+    world.branch = branch
+    init_repo(world.project, world.env, branch=branch)
+    seed_origin(world.origin, world.env, branch=branch)
     return world

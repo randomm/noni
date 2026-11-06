@@ -305,6 +305,35 @@ def test_the_page_is_within_its_own_size_cap() -> None:
         f"docs/ONBOARDING.md is {lines} lines; the cap is {ONBOARDING_LINE_LIMIT}")
 
 
+def test_the_sessions_steps_are_marked_conditional() -> None:
+    """The three sessions-claims rows are stated as taken only by teams that use them.
+
+    The quickstart's coexistence section says a team whose driver already keeps
+    claim state must not create ``noni/sessions/`` at all (its own test pins that
+    promise in ``tests/test_quickstart_promises.py``), and the pilot's second team
+    read this page's five rows as five commands and registered a session they were
+    told elsewhere never to write. So the condition is product surface here: the
+    page has to name the three rows as conditional on the team using noni's
+    sessions and claims, keep the other two unconditional, and route the skip
+    decision to the section that owns it. Located in the flowed text around the
+    table, not on the rows themselves -- the rows are pinned by
+    :func:`test_the_page_states_each_protocol_step_and_its_owning_skill`, and this
+    is the sentence that qualifies them.
+    """
+    flowed = flowed_text(page_text())
+    assert "sessions and claims" in flowed, (
+        "the page no longer names what the three conditional rows depend on")
+    assert "if your team uses" in flowed, (
+        "the sessions and claims steps are no longer stated as conditional on the "
+        "team using them, which is how the pilot read them as five mandatory steps")
+    assert "every team" in flowed, (
+        "the page no longer says which steps stay unconditional, so a team that "
+        "skips claims cannot tell whether the direction and ledger steps go too")
+    assert "coexistence" in flowed and "QUICKSTART.md" in page_text(), (
+        "the page invites a team to skip the claim steps without routing them to "
+        "the section that decides when skipping is right")
+
+
 def test_the_page_names_the_coexistence_section_without_restating_it() -> None:
     """The page routes the driver question to the section that owns it.
 

@@ -109,12 +109,13 @@ def test_route_b_runs_on_the_host_clock_with_no_date_pinned(world: World) -> Non
 def _committed_record_names(world: World) -> list[str]:
     """The record names the state branch's own history carries.
 
-    Read from the clone's ``main`` with the launch env, the same way the route's
-    other git assertions read it: the page's decide line commits the record it
-    wrote, so a collected id that only exists in the working tree is not the
-    promise the page makes.
+    Read from the clone's own checked-out branch (``world.branch``, the tree the
+    fixture seeded) with the launch env, the same way the route's other git
+    assertions read it: the page's decide line commits the record it wrote, so a
+    collected id that only exists in the working tree is not the promise the page
+    makes.
     """
-    listed = git(world.state, "ls-tree", "-r", "--name-only", "main", "--",
+    listed = git(world.state, "ls-tree", "-r", "--name-only", world.branch, "--",
                  "noni/decisions", env=world.env)
     assert listed.returncode == 0, (
         f"git ls-tree on the state clone failed: {listed.returncode} "
@@ -138,7 +139,7 @@ def test_the_date_argument_is_added_only_to_the_decide_line() -> None:
     for argv in (["noni", "order", "--repo", ".noni-state", "add", "12",
                   "--decision", "<record-id>"],
                  ["noni", "census", "--repo", ".noni-state"],
-                 ["git", "-C", ".noni-state", "push", "-u", "origin", "main"]):
+                 ["git", "-C", ".noni-state", "push", "-u", "origin", "HEAD"]):
         assert date_arg(world, argv) == argv, f"a non-decide line gained --date: {argv}"
     world.decide_date = None
     assert date_arg(world, decide) == decide, "a world with no date set passed --date"

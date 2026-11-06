@@ -100,7 +100,22 @@ GOLDEN: dict[tuple[str, ...], list[list[str]]] = {
         ["noni", "register", "--repo", ".noni-state", "--identity", "developer"],
         ["noni", "claim", "--repo", ".noni-state", "--session-id", "<session-id>",
          "--task", "#12"],
-        ["git", "-C", ".noni-state", "push", "-u", "origin", "main"],
+        # The state clone's own scrub deny-list, and the rule that keeps it
+        # untracked, both printed before the first push: the file the deny-list
+        # section documents lives at the root of the audited tree, and on this
+        # route that tree is the clone, so the file and the rule belong to the
+        # clone's repository rather than the project's (see
+        # ``quickstart_page_steps``). The page's own prose puts the step after the
+        # writers have run and before the push that sends their commits.
+        ["echo", "/.noni-scrub-denylist", ">>", ".noni-state/.gitignore"],
+        # The ignore rule is a file of the state repository, so it is committed with
+        # it: an uncommitted rule leaves the deny-list untracked only until some
+        # later `git add -A`, which is exactly how the pilot's clone came back with
+        # the scanned names in its history.
+        ["git", "-C", ".noni-state", "add", ".gitignore"],
+        ["git", "-C", ".noni-state", "commit", "-q", "-m",
+         "chore: keep the scrub deny-list untracked"],
+        ["git", "-C", ".noni-state", "push", "-u", "origin", "HEAD"],
     ],
     # The CI section prints one census line per route and nothing else: the
     # install lines are linked, not reprinted, so the page carries one copy of
@@ -113,7 +128,7 @@ GOLDEN: dict[tuple[str, ...], list[list[str]]] = {
         ["python", "scripts/public_safety.py"],
     ],
     ISSUE_STATE: [
-        ["gh", "issue", "list", "--json", "number,state", "--jq",
+        ["gh", "issue", "list", "--state", "all", "--json", "number,state", "--jq",
          "map({key: (.number | tostring), value: (.state | ascii_downcase)})"
          " | from_entries",
          ">", "issue-state.json"],

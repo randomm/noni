@@ -32,8 +32,13 @@ Exit codes:
        when no question of the record has one option, or
        --supersedes with an unanswered question
     3  a git or identity problem: --repo is not a git work tree, git config
-       user.name is not set (git config user.name <name>), or a git probe timed
-       out or failed for a reason that answered nothing
+       user.name is not set (git config user.name <name>), a git probe timed
+       out or failed for a reason that answered nothing, or a noni/ or
+       noni/decisions directory -- every one from the state root down to the
+       ledger -- that is not a plain path this writer may read or write through
+       (a symlink, a plain file, a socket or a device, each asked of lstat
+       before the git probes, the first read or the mkdir, and an absent one
+       admitted because the first record creates it)
     4  a collision or a bad supersede target: the record path already exists as
        anything (file, directory or symlink), or the target is missing, already
        superseded, untracked, locally modified, not a regular file at its path
@@ -76,7 +81,7 @@ import re
 import sys
 from pathlib import Path
 
-from . import _decide_flags, _writer, gitwrite, labels
+from . import _decide_flags, _path_kind, _writer, gitwrite, labels, orderstate
 from . import ledger_schema as _schema
 from .ledger_schema import is_single_line
 
@@ -115,6 +120,16 @@ STATUS_DECIDED = "decided"
 STATUS_OPEN = "open"
 STATUS_SUPERSEDED = "superseded"
 STATUSES = (STATUS_DECIDED, STATUS_OPEN, STATUS_SUPERSEDED)
+
+# The directories this run reads or writes: ``noni`` itself first (a link there
+# hides the ledger beneath it from ``lstat``), then the ledger the record is written
+# into and the target of a supersede is read from. Spelled from
+# :data:`noni.orderstate.DECISIONS_DIR` rather than from the ``repo / "noni" /
+# "decisions"`` join below, so the guard and the ledger are one spelling. The guard
+# itself is :func:`noni._path_kind.direction_refusal`, asked in
+# :func:`_refuse_linked_state` because the call site has to stay two statements in a
+# file at the size limit.
+_GUARDED_DIRS: tuple[str, ...] = ("noni", orderstate.DECISIONS_DIR)
 
 # The field order both censuses document; json.dump keeps it. The three names
 # after ``source`` are optional and appended last, so a record that carries none
@@ -225,6 +240,21 @@ def _open_ledger(repo: Path, ledger: Path) -> int | None:
     """
     refusal = _writer.allocate_ledger(labels.DECIDE, repo, ledger)
     return None if refusal is None else _fail(EXIT_COMMIT_FAILED, *refusal)
+
+
+def _refuse_linked_state(repo: Path) -> int | None:
+    """The exit-3 refusal for a ``noni/`` this writer may not read or write, or None.
+
+    :func:`noni._path_kind.direction_refusal` asks the directory question of every
+    component of :data:`_GUARDED_DIRS`; this seam gives its refusal this writer's
+    exit code and voice, the same two-statement shape as :func:`_open_ledger` beside
+    it. It runs in ``main()`` BEFORE :func:`_identity`, so a linked tree is refused
+    by noni rather than read through by the git probes: exit 5 above stays the
+    verdict for a ledger that could not be created, and the wrong-path code here
+    stays the one docs/PRODUCT.md 7 gives ``decide``.
+    """
+    refused = _path_kind.direction_refusal(repo, _GUARDED_DIRS)
+    return None if refused is None else _fail(EXIT_GIT, *refused)
 
 
 def _identity(repo: Path) -> str | int:
@@ -428,6 +458,10 @@ def main(argv: list[str] | None = None) -> int:
 
     repo = Path(args.repo)
     ledger = repo / "noni" / "decisions"
+    # Before the identity probe and before anything is read or written.
+    linked = _refuse_linked_state(repo)
+    if linked is not None:
+        return linked
     checked = _validate_usage(args)
     if isinstance(checked, int):
         return checked

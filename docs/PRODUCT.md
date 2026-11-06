@@ -196,6 +196,17 @@ missing session. The symlinked session file, the symlinked `noni/sessions/` and 
 symlinked `noni/` are answered with the same codes as the state-root refusal above:
 2 for `register`, 4 for `claim`, `close` and `release`.
 
+The three writers of the direction layer (`order`, `intent`, `decide`) refuse the
+same shape at their own paths: every directory from the state root down to the one
+each reads or writes — `noni/`, and `noni/direction/` plus the `noni/decisions/`
+ledger it cites for the two direction writers, or `noni/decisions/` for `decide` —
+that is not a plain path this writer may read or write through (a symlink, a plain
+file, a socket or a device, none of them read or written through), asked of `lstat`
+before the first read, write or `mkdir`, with the offending path named and nothing
+written; an absent directory is no refusal, because the first run creates it, and an
+ancestor of the state root is never examined. The codes are the ones those tools
+already use for a wrong path: 2 for `intent` and `order`, 3 for `decide`.
+
 Results are recomputed on demand by the census (no `census/` directory). The
 census is read-only: running it leaves `git status --porcelain` empty. Trends,
 if ever wanted, are recomputed from git history (E5).

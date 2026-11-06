@@ -200,14 +200,18 @@ unchanged, and commits nothing.
 | code | meaning |
 |---|---|
 | `0` | the order was written (and committed unless `--no-commit`), or no byte of it needed changing |
-| `2` | invalid input: an argparse failure, a subcommand outside `add`/`move`/`remove`/`confirm`, an issue that is not a positive integer, a missing `--decision` on `add`, a `--to`/`--at` that is not a 1-based position of the resulting list, a flag passed to the verb that does not own it, a `--now` that is not a valid UTC timestamp, or a `--repo` that is not a directory |
+| `2` | invalid input: an argparse failure, a subcommand outside `add`/`move`/`remove`/`confirm`, an issue that is not a positive integer, a missing `--decision` on `add`, a `--to`/`--at` that is not a 1-based position of the resulting list, a flag passed to the verb that does not own it, a `--now` that is not a valid UTC timestamp, a `--repo` that is not a directory, or a `noni/`, `noni/direction/` or `noni/decisions/` that is not a directory this writer may read or write through (a symlink, a plain file, a socket or a device: every directory from the state root down to it is asked of `lstat` before any read, write or `mkdir`, so nothing is followed and nothing is written, and an absent directory is admitted because the first `add` creates it) |
 | `3` | a path this writer needs could not be read or written, or a git call failed or timed out: the order file is not a regular file at its path, a decision record it must read is unreadable, the artifact could not be written, or the commit step failed (the file is left written and named, never claimed as committed) |
 | `4` | what the order itself refuses: the issue is already listed (`add`), absent from the order (`move`, `remove`, `confirm`), no file under `noni/decisions/` carries the given `--decision` id, that record is superseded (the hint names its successor), or the existing file is not the artifact this writer writes |
 
 `intent.py` publishes the same four codes for its one verb: `2` for an argparse
 failure, a subcommand outside `set`, a missing `--from` or `--decision`, a
-`--from` that is not a readable regular file or is not UTF-8, or a `--repo` that
-is not a directory; `3` for an unreadable or unwritable path or a git call that
+`--from` that is not a readable regular file or is not UTF-8, a `--repo` that
+is not a directory, or a `noni/`, `noni/direction/` or `noni/decisions/` that
+is not a directory this writer may read or write through (the same `lstat`
+guard the order writer runs, refused before any read, write or `mkdir`, an
+absent directory admitted because the first `set` creates it); `3` for an
+unreadable or unwritable path or a git call that
 failed or timed out; `4` for a draft that is not an intent file (a section
 missing, repeated or out of order, the stamp line absent or repeated, the file
 past the line cap) or a `--decision` the ledger does not hold or has superseded.

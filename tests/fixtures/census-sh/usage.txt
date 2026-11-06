@@ -1,8 +1,28 @@
-census.sh <state-root>/noni/decisions        the decisions census (E1)
-census.sh --sessions <state-root>/noni/sessions   the sessions census (E2)
-eight top-level required
-fields (plus the optional source, decided_by, on_behalf_of and
-codes:   0 clean | 2 no ledger dir given | 3 jq missing or the
-schema program missing (3:schema-program-missing)
-| 20 supersede chain broken
-| 42 recordless ledger, reported as the ledger-empty warn
+The ledger shim: the steering ledger's own entry point.
+
+  census.sh <state-root>/noni/decisions
+
+It is a thin wrapper. It carries no rules and no exit-code table: it runs the
+unified noni census (``noni census``, ``skills/census/scripts/census.py``) over
+the ledger group alone — `ledger-record`, `ledger-edited` and `ledger-chain` —
+and exits with the census's own code. The census itself is the arbiter, and
+`skills/census/SKILL.md` is the single reference for its check classes and exit
+codes; read that page, not this one, when a run tells you something.
+
+The one argument is the ledger directory of the state root — the directory
+`--repo` names for the writers, with `noni/decisions` under it. There is no
+current-directory default: run with no argument, the run is a usage error (2)
+rather than a census of whatever `noni/` happened to sit next to the caller. Two
+directories are the same refusal — one run audits one ledger.
+
+Every census option is accepted and passed through to the census, so the run
+keeps the flags the unified census documents rather than a subset: `--json`,
+`--strict`, `--now`, `--only`, `--skip` and the rest. `--strict` promotes the
+warn classes the ledger group reports (`ledger-empty` among them), which is the
+flag this wrapper used to have no route to.
+
+Requires the `noni` package importable to the interpreter the wrapper runs
+(``NONI_PYTHON``, ``python3`` by default: a program name, resolved on ``PATH``).
+The wrapper names that fault on one plain line and exits 3 rather than letting a
+traceback stand as the diagnostic. The census is read-only: running it leaves
+`git status --porcelain` empty.

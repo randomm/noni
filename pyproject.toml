@@ -174,5 +174,6 @@ include = [
     "src/noni/public_safety_io.py",
     "src/noni/register.py",
     "src/noni/shim_help.py",
+    "src/noni/wrapper_bash.py",
     "src/noni/targetschema.py",
 ]

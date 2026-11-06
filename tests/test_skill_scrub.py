@@ -130,8 +130,9 @@ def test_package_files_present():
         "census.py", "census_hygiene.py", "census_intent.py",
         "census_intent_readers.py", "census_json.py",
         "census_ledger.py",
-        "census_ordering.py", "census_ordering_readers.py", "census_sessions.py",
-        "census_sessions_probe.py", "census_text.py",
+        "census_ordering.py", "census_ordering_readers.py",
+        "census_sessions_checks.py", "census_sessions_probe.py",
+        "census_text.py", "census_wrapper.py",
         "claim.py", "cli.py",
         "decide.py", "gitenv.py", "gitwrite.py", "intent.py", "intentschema.py",
         "labels.py", "order.py",
@@ -186,25 +187,28 @@ def test_census_script_is_executable():
         assert script.stat().st_mode & 0o111, f"{name} is not executable"
 
 
-def test_the_schema_program_is_a_tracked_sibling_of_the_shim():
-    """``census-schema.jq`` is tracked in git and sits beside ``census.sh``.
+def test_the_schema_program_is_gone_and_the_shim_is_a_tracked_wrapper():
+    """``census.sh`` is tracked beside its ``.py``, and the schema program is gone.
 
-    census.sh reads the program by path and exits 3 (``3:schema-program-missing``)
-    when it is absent, so a skill pack that carried the shim but not the program is
-    a census that fails on every run. Tracked-ness is the property that survives
-    packaging here: the wheel ships the package and not the skill directory (see
-    ``tests/test_wheel_contents.py``), so the skill's own inventory is what keeps
-    the pair together.
+    The pair this test used to pin was ``census.sh`` plus ``census-schema.jq``: a
+    skill pack carrying the shim but not the program was a census that failed on
+    every run, so tracked-ness was the property that kept them together. The
+    second arbiter is retired (issue #99), and what keeps the pair together now is
+    that the wrapper and the ``.py`` it execs ship as one directory: a wrapper
+    whose sibling is missing exits 3 having read nothing, the same failure in the
+    same words. The deleted program is asserted absent, not merely unlisted -- the
+    one file whose survival would mean the arbiter was bypassed and not removed.
     """
     scripts = REPO / "skills" / "steering-ledger" / "scripts"
-    assert (scripts / "census-schema.jq").is_file(), "the schema program is not in the tree"
+    assert not (scripts / "census-schema.jq").exists(), (
+        "the schema program is still in the tree beside the wrapper")
     tracked = subprocess.run(["git", "-C", str(REPO), "ls-files",
                               "skills/steering-ledger/scripts"],
                              capture_output=True, text=True, timeout=60)
     assert tracked.returncode == 0, tracked.stderr
     names = {line.split("/")[-1] for line in tracked.stdout.split()}
-    assert "census-schema.jq" in names, f"the schema program is untracked: {sorted(names)}"
-    assert {"census.sh", "decide.py"} <= names, sorted(names)
+    assert {"census.sh", "census.py", "decide.py"} <= names, sorted(names)
+    assert "census-schema.jq" not in names, f"the schema program is tracked: {sorted(names)}"
 
 
 # The four sessions writers, each documented in SKILL.md as

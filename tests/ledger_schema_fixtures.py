@@ -1,12 +1,20 @@
 """The shared drivers for the ledger schema's cross-entry-point tests.
 
-Three entry points read one schema: ``decide.py``'s flag checks, census.py's
-record pass, and census.sh's jq program (``skills/steering-ledger/scripts/
-census-schema.jq``). The tests that pin them are split by subject -- the closed
-key set in ``tests/test_ledger_closed_key_set.py``, the name and marker rules
-through every entry point in ``tests/test_ledger_name_and_marker_rules.py`` --
-and all of them drive the same two censuses over the same one-record ledger, so
-the launchers and the two assertions every one of them makes live here.
+Two entry points read one schema — ``decide.py``'s flag checks and the unified
+census's record pass — and the shell ledger shim is the census run over the
+ledger group, so a test that drives the shim and a test that drives the census
+ask the same arbiter the long way round and the short way round. The tests that
+pin them are split by subject -- the closed key set in
+``tests/test_ledger_closed_key_set.py``, the name and marker rules through every
+entry point in ``tests/test_ledger_name_and_marker_rules.py`` -- and all of them
+drive the same censuses over the same one-record ledger, so the launchers and the
+assertions every one of them makes live here.
+
+There used to be a third reader: a jq program beside ``census.sh`` that
+re-implemented these rules in a second language. It is gone, and so is the
+parity suite that compared its literals against ``ledger_schema`` — one arbiter
+has nothing to be parallel to. What remains of that suite is behavioural: the
+fixtures each entry point must refuse, and the words each refusal must name.
 
 A helper module, never named ``test_*``: pytest must not collect it as tests.
 Its shape follows the other fixture modules in ``tests/`` (``decide_fixtures``,
@@ -31,7 +39,6 @@ from _harness import REPO, subprocess_env
 FIXTURES = REPO / "tests" / "fixtures"
 CENSUS_SH = REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"
 CENSUS_PY = REPO / "skills" / "census" / "scripts" / "census.py"
-SCHEMA_JQ = REPO / "skills" / "steering-ledger" / "scripts" / "census-schema.jq"
 
 # Every --now in these modules is pinned: the ledger-empty class reads the clock,
 # so a fixture run must not depend on the host's date.
@@ -39,8 +46,9 @@ NOW = "2026-10-04T12:00:00Z"
 
 # fixture name -> the junk keys that fixture carries, in the order they appear.
 # The counts are the point: 9, 10, 11 and 12 keys, each carrying a key the schema
-# does not declare. The count rule census.sh used accepted 10, 11 and 12 outright,
-# and accepted a junk key at 9 beside a real optional field.
+# does not declare. The count rule the deleted jq program used accepted 10, 11
+# and 12 keys outright, and accepted a junk key at 9 beside a real optional
+# field; the set test that replaced it refuses all four.
 JUNK_FIXTURES: dict[str, list[str]] = {
     "decision-invalid-unknown-keys-nine.json": ["junk"],
     "decision-invalid-unknown-keys-ten.json": ["junk"],
@@ -82,6 +90,11 @@ def _ledger(tmp_path: Path, record: dict) -> Path:
 
 
 def _run_sh(ledger: Path) -> tuple[int, str]:
+    """The shell ledger shim over ``ledger``: the census, through the wrapper.
+
+    The wrapper passes every option through, so the run below and ``_run_py``
+    differ only in how they reach the census, not in what they ask it.
+    """
     proc = subprocess.run(["bash", str(CENSUS_SH), str(ledger)],
                           capture_output=True, text=True,
                           env=subprocess_env(), timeout=120)
@@ -104,7 +117,7 @@ def _run_py(ledger: Path) -> tuple[int, str]:
 
 def _census_verdicts(tmp_path: Path, record: dict,
                      subdir: str = "ledger") -> dict[str, tuple[int, str]]:
-    """Each census's (code, output) over a ledger holding ``record``.
+    """Each entry point's (code, output) over a ledger holding ``record``.
 
     One directory per call, named by ``subdir``, so a loop over shapes does not
     read the previous shape's record.
@@ -117,7 +130,7 @@ def _census_verdicts(tmp_path: Path, record: dict,
 
 def _assert_both_refuse(tmp_path: Path, record: dict, phrase: str, label: str,
                         *, subdir: str = "refuse") -> dict[str, tuple[int, str]]:
-    """Both censuses answer 10 on ``record``, and name ``phrase``.
+    """Both entry points answer 10 on ``record``, and name ``phrase``.
 
     The phrase is asserted as well as the code: an exit 10 raised for some other
     fault in the same record would otherwise certify the rule that is under test
@@ -132,7 +145,7 @@ def _assert_both_refuse(tmp_path: Path, record: dict, phrase: str, label: str,
 
 def _assert_both_clean(tmp_path: Path, record: dict, label: str,
                        *, subdir: str = "clean") -> dict[str, tuple[int, str]]:
-    """Both censuses answer 0 on ``record``.
+    """Both entry points answer 0 on ``record``.
 
     The control side of every refusal asserted beside it: without a positive case
     a schema tightened until nothing passed would keep the refusals green while
@@ -142,24 +155,3 @@ def _assert_both_clean(tmp_path: Path, record: dict, label: str,
     for name, (code, out) in verdicts.items():
         assert code == 0, f"{label} via {name}: expected 0, got {code}\n{out}"
     return verdicts
-
-
-def _assert_sh_names_the_schema_fault(tmp_path: Path, record: dict, reason: str,
-                                      label: str, *, subdir: str = "schema") -> None:
-    """The shim's own ``10:schema`` line carries ``reason`` after the colon.
-
-    census.sh folds each jq rule into one diagnostic line and discards jq's
-    stderr, so a rule that faults instead of answering leaves the line reading
-    ``schema violation:  (10:schema)`` -- the exit code right and the reason named
-    by nothing. Asserting the exit code alone certifies that shape, which is the
-    reading failure the census must never answer with, so this asserts the reason
-    is present (alone or joined to the other rules that fired), that the sub-class
-    is the schema one, and that the colon is followed by something.
-    """
-    code, out = _run_sh(_ledger(tmp_path / subdir, record))
-    assert code == 10, f"{label}: expected 10, got {code}\n{out}"
-    assert f"schema violation: {reason}" in out or f"; {reason}" in out, (
-        f"{label}: the shim's line does not name the fault: {out}")
-    assert "(10:schema)" in out, f"{label}: wrong sub-class: {out}"
-    assert "schema violation:  (" not in out, (
-        f"{label}: the diagnostic is blank: {out}")

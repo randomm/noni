@@ -344,8 +344,9 @@ substitute for running `scripts/public_safety.py` before publishing.
   and `skills/sessions-claims/scripts/census-sessions.sh`) are thin wrappers: each
   takes the one directory its caller names, accepts every census option and
   passes it through, and runs this census restricted to its group — the ledger
-  shim to `ledger-record`, `ledger-edited` and `ledger-chain`, the sessions shim
-  to the session group. Neither carries a schema, a rule or an exit-code table of
+  shim (`census.sh`) to `ledger-record`, `ledger-edited` and `ledger-chain`, the
+  sessions shim (`census-sessions.sh`) to the session group. Neither carries a
+  schema, a rule or an exit-code table of
   its own, so neither can disagree with this one, and `jq` is not a prerequisite
   of either. They are reached through `bash` or their own executable bit, never
   under `python3`: the interpreter a wrapper needs is the one it execs itself

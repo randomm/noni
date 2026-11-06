@@ -18,7 +18,7 @@ import sys
 
 from .census_report import EXIT_CLEAN
 
-CENSUS_SH_HELP = """The ledger census: the steering ledger's own entry point.
+CENSUS_SH_HELP = """The ledger shim: the steering ledger's own entry point.
 
   census.sh <state-root>/noni/decisions
 
@@ -41,8 +41,9 @@ keeps the flags the unified census documents rather than a subset: `--json`,
 warn classes the ledger group reports (`ledger-empty` among them), which is the
 flag this wrapper used to have no route to.
 
-Requires the `noni` package importable to the interpreter the wrapper runs: the
-wrapper names that fault on one plain line and exits 3 rather than letting a
+Requires the `noni` package importable to the interpreter the wrapper runs
+(``NONI_PYTHON``, ``python3`` by default: a program name, resolved on ``PATH``).
+The wrapper names that fault on one plain line and exits 3 rather than letting a
 traceback stand as the diagnostic. The census is read-only: running it leaves
 `git status --porcelain` empty."""
 
@@ -77,8 +78,9 @@ the unified census documents rather than a subset: `--json` for the NDJSON rows,
 `--strict` to promote the warn classes, `--now` for a fixed timestamp, and the
 `--only` / `--skip` filters.
 
-Requires the `noni` package importable to the interpreter the wrapper runs: the
-wrapper names that fault on one plain line and exits 3 rather than letting a
+Requires the `noni` package importable to the interpreter the wrapper runs
+(``NONI_PYTHON``, ``python3`` by default: a program name, resolved on ``PATH``).
+The wrapper names that fault on one plain line and exits 3 rather than letting a
 traceback stand as the diagnostic. The census is read-only: running it leaves
 `git status --porcelain` empty."""
 

@@ -1,2 +1,36 @@
-census-sessions.sh <state-root>/noni/sessions
-five required fields each
+The sessions census: the session register's own entry point.
+
+  census-sessions.sh <state-root>/noni/sessions
+
+It is a thin wrapper. It carries no rules and no exit-code table: it runs the
+unified noni census (``noni census``, ``skills/census/scripts/census.py``) over
+the session group alone — `session-double`, `session-claim`, `session-malformed`
+and the register's warn classes — and exits with the census's own code. The
+census itself is the arbiter, and `skills/census/SKILL.md` is the single
+reference for its check classes and exit codes; read that page, not this one,
+when a run tells you something.
+
+The census is the deterministic arbiter for the claim protocol. Two active
+claims on the same task from different identities are a double-claim: git
+delays the second claimant, it does not lock them out, so the census is the
+check that catches it at read time. A claim committed without a register file
+is reported but the session's work is not blocked — the census is report-only.
+
+The one argument is the sessions directory of the state root — the directory
+`--repo` names for the writers, with `noni/sessions` under it. Pass the sessions
+directory of the clone you want to audit. There is no current-directory
+default: a run with no argument is a usage error (2), because a relative default
+would census whatever `noni/sessions` happened to sit next to the caller and
+report a clean the caller never pointed at. Two directories are the same
+refusal — one run audits one register.
+
+Every census option is accepted and passed through, so the run keeps the flags
+the unified census documents rather than a subset: `--json` for the NDJSON rows,
+`--strict` to promote the warn classes, `--now` for a fixed timestamp, and the
+`--only` / `--skip` filters.
+
+Requires the `noni` package importable to the interpreter the wrapper runs
+(``NONI_PYTHON``, ``python3`` by default: a program name, resolved on ``PATH``).
+The wrapper names that fault on one plain line and exits 3 rather than letting a
+traceback stand as the diagnostic. The census is read-only: running it leaves
+`git status --porcelain` empty.

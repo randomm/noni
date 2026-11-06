@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 from _harness import _git
 from env_isolation_support import (
@@ -31,21 +32,49 @@ from env_isolation_support import (
 )
 
 
+def _ledger_rows(out: str) -> set[str]:
+    """Every record id the census named in a finding row, plus its own report text.
+
+    The unified census prints rows for findings only, so "the census read this
+    ledger" cannot be asserted by looking for a clean record's id in the report --
+    a clean record is not a finding and earns no row. These three tests ask the
+    census for its machine rows and for its exit code instead, and pair them with
+    a planted fault: the fault is what proves which tree was read.
+    """
+    ids = set()
+    for line in out.splitlines():
+        if line.strip().startswith("{"):
+            row = json.loads(line)
+            ids.add(str(row.get("subject")))
+            ids.add(str(row.get("message")))
+    return ids | {out}
+
+
+def _broken_ledger_copy(ledger: Path, marker: str) -> None:
+    """Add one unparseable record to ``ledger``, named for ``marker``.
+
+    The fault is what makes an isolation claim testable: a census that read the
+    wrong tree reports the other tree's fault, and the ids distinguish them.
+    """
+    (ledger / f"2026-10-09-{marker}-broken.json").write_text(
+        "{ not json\n", encoding="utf-8")
+
+
 def test_census_does_not_read_decoy_ledger_from_hostile_home(tmp_path, monkeypatch, run_census):
     """A hostile HOME with a decoy ledger must not be read by the census when
     the census is pointed at a different (clean) ledger dir.
 
     The conftest fixture redirects HOME to a sandbox. This test sets up a
-    hostile HOME with a decoy ledger, but points the census at a clean ledger
-    dir. The census must report the clean ledger, not the decoy.
+    hostile HOME with a decoy ledger whose one record is broken, and points the
+    census at a clean ledger dir. The clean tree's verdict -- exit 0, no rows --
+    is the answer that can only come from reading the right directory: the
+    decoy's broken record would have answered 10 and named itself.
     """
-    # Build a hostile HOME with a decoy ledger
-    # Build a hostile HOME with a decoy ledger (the decoy is the leak source;
-    # the variable is intentionally not referenced — the test asserts the
-    # clean ledger is reported, not the decoy).
+    # Build a hostile HOME with a decoy ledger (the decoy is the leak source).
     hostile_home = tmp_path / "hostile-home"
     hostile_home.mkdir()
-    _decoy_ledger(hostile_home, "leaked")
+    decoy_ledger = _decoy_ledger(hostile_home, "leaked")
+    _broken_ledger_copy(decoy_ledger, "leaked")
 
     # Build a clean ledger in a separate git repo
     clean_repo = tmp_path / "clean-repo"
@@ -72,9 +101,11 @@ def test_census_does_not_read_decoy_ledger_from_hostile_home(tmp_path, monkeypat
     monkeypatch.setenv("USERPROFILE", str(hostile_home))
 
     code, out, err = run_census(clean_ledger)
-    # The census should report the clean record, not the decoy
-    assert "2026-10-01-clean" in out, f"expected the clean record in the census output, got: {out}"
-    assert "2026-10-01-leaked" not in out, f"the decoy ledger leaked into the census: {out}"
+    assert code == 0, (
+        f"a clean ledger must census clean; the decoy's broken record was read: "
+        f"{code}\n{out}\n{err}")
+    assert "leaked" not in "\n".join(_ledger_rows(out)), (
+        f"the decoy ledger leaked into the census: {out}")
 
 
 def test_census_does_not_read_decoy_when_git_dir_is_set(tmp_path, monkeypatch, run_census):
@@ -91,6 +122,7 @@ def test_census_does_not_read_decoy_when_git_dir_is_set(tmp_path, monkeypatch, r
     # reported, not the decoy.
     _decoy_ledger(tmp_path, "gitdir-leak")
     hostile_repo = tmp_path / "decoy-gitdir-leak"
+    _broken_ledger_copy(hostile_repo / "noni" / "decisions", "gitdir-leak")
 
     # Build a clean repo with a clean ledger
     clean_repo = tmp_path / "clean-repo"
@@ -116,10 +148,14 @@ def test_census_does_not_read_decoy_when_git_dir_is_set(tmp_path, monkeypatch, r
     hostile_git_dir = hostile_repo / ".git"
     monkeypatch.setenv("GIT_DIR", str(hostile_git_dir))
 
+    # The census reads the clean tree: exit 0, and the hostile tree's fault is
+    # nowhere in its rows.
     code, out, err = run_census(clean_ledger)
-    # The census should report the clean record, not the decoy
-    assert "2026-10-01-clean2" in out, f"expected the clean record in the census output, got: {out}"
-    assert "2026-10-01-gitdir-leak" not in out, f"the decoy ledger leaked via GIT_DIR: {out}"
+    assert code == 0, (
+        f"a clean ledger must census clean; the GIT_DIR decoy's broken record was "
+        f"read: {code}\n{out}\n{err}")
+    assert "gitdir-leak" not in "\n".join(_ledger_rows(out)), (
+        f"the decoy ledger leaked via GIT_DIR: {out}")
 
 
 def test_without_the_fixture_the_hostile_env_is_visible(tmp_path, monkeypatch, run_census):
@@ -130,11 +166,17 @@ def test_without_the_fixture_the_hostile_env_is_visible(tmp_path, monkeypatch, r
     decoy IS read. If a future change made the census immune to the environment
     by accident, this test fails and the suite's isolation claims stop being
     self-certifying.
+
+    "read" here means an answer that can only come from that tree: the decoy's
+    one record is broken, so pointing the census at it must exit 10 and name it.
+    A census that could not reach the hostile HOME would exit 0 with no rows, and
+    the two runs above would be proving nothing.
     """
-    # Build a hostile HOME with a decoy ledger
+    # Build a hostile HOME with a decoy ledger whose record will not parse.
     hostile_home = tmp_path / "hostile-home"
     hostile_home.mkdir()
     decoy_ledger = _decoy_ledger(hostile_home, "control")
+    _broken_ledger_copy(decoy_ledger, "control")
 
     # Point the census at the decoy ledger directly (simulating what happens
     # when the fixture is absent and the census's default LEDGER_DIR resolves
@@ -144,9 +186,10 @@ def test_without_the_fixture_the_hostile_env_is_visible(tmp_path, monkeypatch, r
     # Run the census on the decoy ledger — it SHOULD read it (this is the
     # negative control: the hostile env IS visible when the fixture is undone)
     code, out, err = run_census(decoy_ledger)
-    assert "2026-10-01-control" in out, (
+    assert code == 10 and "control" in "\n".join(_ledger_rows(out)), (
         "the decoy ledger is not readable when pointed at directly — either the "
-        "census changed or the negative control stopped working"
+        f"census changed or the negative control stopped working: rc={code}\n"
+        f"{out}\n{err}"
     )
 
 

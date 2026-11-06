@@ -1,112 +1,150 @@
-"""The ledger-empty class: the states where no decision record can be read.
+"""The empty-state contract both ledger entry points owe an attached project.
 
-One row per run in each state (absent, empty, not a directory, symlink, ok), the
-state words as a closed vocabulary owned by one table, and a whole committed
-``decisions/`` directory that no longer exists.
+The issue (noni #97): a project can be attached with a real ``noni/`` skeleton
+and no records yet, or a previous run can have staged a record that was then
+lost. ``census.py`` answers both with the lowest code that tells the truth --
+``42`` for a recordless ``decisions/`` (a warn, so ``--strict`` is what turns it
+red) and ``10`` for a directory that cannot be read at all. What the issue added
+is the *agreement*: the ledger shim used to answer these states with its own
+codes, read through its ``jq`` program, and the two tools handed back different
+verdicts for one tree -- a team's CI chose its verdict by which script it called.
 
-Split out of ``tests/test_census_unified.py``; the builders are in
-``tests/census_fixtures.py`` and the runners in ``tests/census_run.py``.
+The shim is now a thin wrapper over the unified census (issue #99), so the
+agreement is structural rather than two implementations kept in step, and these
+tests are the witness for that. ``TestLedgerEmptyWithoutJq`` and
+``TestJqMustActuallyRun`` pinned the shim's probes for ``jq``: with the schema
+program, and the dependency on ``jq``, deleted, the probe and its exit-3
+sub-class are gone with them. What survives is the wrapper's own refusal -- no
+importable package is exit 3 and prints nothing -- and the rule that the census
+alone refuses for a missing tool.
+
+``census.sh`` is driven directly here: these are its exit codes, asserted
+byte-for-byte against the census the skill documents. ``tests/conftest.py``
+routes the shared ``run_census`` fixture through the same script so the whole
+ledger suite reads through the entry point the skill advertises; the unified
+census is driven separately wherever a test needs to compare the two.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
-import pytest
-from _harness import REPO, _commit_file, _init_repo, subprocess_env
-from census_fixtures import _ndjson_rows, _session_body, _valid_record
-from census_probe_doubles import _UnreadableGit
-from census_refusal_assertions import assert_no_report_and_no_warn_row
-from census_run import _run_census
-from census_schema_program_fixtures import copy_shim_to, run_copied_shim
-from ledger_schema_fixtures import SCHEMA_JQ, _run_py, _run_sh
+from _harness import REPO, subprocess_env
+from census_fixtures import _valid_record
 
 CENSUS_SH = REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"
 
-# Every external command census.sh reaches for on a run that does read records,
-# and the interpreter the run itself is started with. No ``jq``: that absence is
-# the state under test, and the list is closed so a shim that quietly grew a new
-# external dependency fails here rather than inheriting the host's PATH.
-CENSUS_SH_TOOLS = ("bash", "sh", "dirname", "find", "grep", "sort", "awk",
-                   "sed", "cat", "head", "cut", "sha1sum", "mktemp", "rm",
-                   "hostname", "git")
+
+def _empty_ledger(tmp_path: Path) -> Path:
+    ledger = tmp_path / "noni" / "decisions"
+    ledger.mkdir(parents=True)
+    return ledger
 
 
-def _path_without_jq(tmp_path: Path) -> Path:
-    """A private bin dir holding the census's own tools and no ``jq``.
+def _run_sh(ledger: Path) -> tuple[int, str]:
+    """census.sh over ``ledger``; returns (exit code, stdout+stderr).
 
-    Symlinks, not copies: a PATH of links is cheap to build per test and a
-    broken link resolves to nothing, which is what an absent tool is. ``jq`` is
-    named nowhere in the list, so the directory cannot hold it even on a host
-    where every other tool resolves.
+    The streams are merged because the contract under test is what the caller
+    sees, not which fd carried it: a row on stderr and an exit code on the
+    process have to agree, and a test that reads only one of them cannot see a
+    refusal that says "no schema applied" on one stream while exiting clean on
+    the other.
     """
-    bin_dir = tmp_path / "path-without-jq"
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    for tool in CENSUS_SH_TOOLS:
-        source = shutil.which(tool)
-        link = bin_dir / tool
-        if source is not None and not link.exists():
-            link.symlink_to(source)
-    return bin_dir
+    proc = subprocess.run(["bash", str(CENSUS_SH), str(ledger)],
+                          capture_output=True, text=True,
+                          env=subprocess_env(), timeout=120)
+    return proc.returncode, proc.stdout + proc.stderr
 
 
-def _run_sh_without_jq(tmp_path: Path, ledger: Path) -> subprocess.CompletedProcess[str]:
-    """census.sh over ``ledger`` with a PATH that holds no ``jq``.
+def _empty_package_env(tmp_path: Path, name: str) -> dict:
+    """An env for a machine whose interpreter cannot import ``noni``.
 
-    The env is built from scratch rather than subtracted from the host's: an
-    inherited PATH element could still carry a ``jq`` the test did not remove.
+    The wrapper resolves its interpreter with ``command -v``, so PATH must keep a
+    real program. The package is reached by a ``.pth`` in the venv's
+    ``site-packages``, which PYTHONPATH cannot hide, so the interpreter the caller
+    names is a *script* that starts the real one ``-S -I`` (no ``site``, hence no
+    ``.pth``) with an empty scratch ``PYTHONPATH``: a process with neither route
+    to the package, which is the half-installed machine the wrapper must refuse
+    rather than trace. The guard proves the premise, so the exit-3 assertions
+    cannot pass by accident on a host where the package hides somewhere else.
     """
-    env = subprocess_env({"PATH": str(_path_without_jq(tmp_path)),
-                          "HOME": str(tmp_path)})
+    python = Path(sys.executable)
+    empty_site = tmp_path / name / "empty-site"
+    empty_site.mkdir(parents=True, exist_ok=True)
+    fake_bin = tmp_path / name / "isolated-bin"
+    fake_bin.mkdir(parents=True, exist_ok=True)
+    stub = fake_bin / "isolated-python"
+    stub.write_text("#!/bin/sh\nexec " + str(python) + " -S -I \"$@\"\n",
+                    encoding="utf-8")
+    stub.chmod(0o755)
+    env = subprocess_env({
+        "HOME": str(tmp_path),
+        "NONI_PYTHON": str(stub),
+        "PYTHONPATH": str(empty_site),
+    })
+    probe = subprocess.run([str(stub), "-c", "import noni.census_wrapper"],
+                           capture_output=True, text=True, env=env, timeout=60)
+    assert probe.returncode != 0, (
+        "the fixture did not make the package unimportable, so the exit-3 "
+        f"assertions below prove nothing: {probe.stdout}{probe.stderr}")
+    return env
+
+
+def _run_sh_with_empty_package(tmp_path: Path, ledger: Path,
+                               name: str) -> subprocess.CompletedProcess[str]:
+    """census.sh over ``ledger`` in an environment that cannot load the census.
+
+    The state the wrapper refuses on its own: the census is not importable, so
+    there is nothing to run, and a traceback or an exit 0 would both be a false
+    green.
+    """
+    env = _empty_package_env(tmp_path, name)
     return subprocess.run(["bash", str(CENSUS_SH), str(ledger)],
                           capture_output=True, text=True, env=env, timeout=120)
 
 
-class TestLedgerEmptyWithoutJq:
-    """A ledger this machine cannot read is not a clean ledger (issue #97).
+class TestWrapperRefusesWithoutItsPackage:
+    """A ledger the wrapper cannot read is not a clean ledger (issue #97, #99).
 
-    The shim's (42:ledger-empty) branch was reached before its ``jq`` probe, so
-    on a machine with no jq a recordless ``decisions/`` directory — and nothing
-    else — exited 0, and the report header went to stdout beside it. The census
-    had read no record and applied no schema, and called the ledger clean for
-    it. The probe answers 3 for a missing jq whatever the ledger holds, so these
-    two runs pin that the recordless tree is refused on the same terms as a
-    ledger full of records."""
+    The wrapper's one refusal of its own. It used to be a probe for ``jq`` and a
+    sub-class ``3:schema-program-missing``; the schema program is gone, so the
+    only thing that can stop this wrapper from running is its interpreter or its
+    package. The rule that did not change is the one this class exists for: a
+    census that read no record has no verdict to give, and printing a header row
+    beside exit 0 is a false green.
+    """
 
-    def test_a_recordless_ledger_without_jq_exits_3_not_0(self, tmp_path):
-        """The branch this PR changed: no records, so no schema question was
-        asked, and the old order called that a clean tree at exit 0."""
+    def test_a_recordless_ledger_without_the_package_exits_3_not_0(self, tmp_path):
+        """No records, so no schema question was asked, and an exit 0 here would
+        have called a tree the tool could not read clean."""
         ledger = tmp_path / "fresh" / "noni" / "decisions"
         ledger.mkdir(parents=True)
-        proc = _run_sh_without_jq(tmp_path, ledger)
+        proc = _run_sh_with_empty_package(tmp_path, ledger, "no-pkg-empty")
         assert proc.returncode == 3, (
             f"a census that cannot read a record has no verdict to give: "
             f"rc={proc.returncode}\nout: {proc.stdout}\nerr: {proc.stderr}")
-        assert "jq not found" in proc.stderr, proc.stderr
+        assert "not importable" in proc.stderr, proc.stderr
         assert "42:ledger-empty" not in proc.stderr, (
-            f"the recordless warn was reached with jq absent: {proc.stderr}")
+            f"the recordless warn was reached with the census absent: {proc.stderr}")
         assert proc.stdout.strip() == "", (
             f"a census that read nothing printed a report: {proc.stdout}")
 
-    def test_a_ledger_holding_a_record_without_jq_exits_3(self, tmp_path):
-        """The control: the state the probe always owned. Both ledgers must
-        answer 3, or the recordless case is a special favour rather than one
-        rule."""
+    def test_a_ledger_holding_a_record_without_the_package_exits_3(self, tmp_path):
+        """The control: both ledgers must answer 3, or the recordless case is a
+        special favour rather than one rule."""
         ledger = tmp_path / "held" / "noni" / "decisions"
         ledger.mkdir(parents=True)
         (ledger / "2026-10-01-alpha.json").write_text(
             json.dumps(_valid_record(), indent=2) + "\n", encoding="utf-8")
-        proc = _run_sh_without_jq(tmp_path, ledger)
+        proc = _run_sh_with_empty_package(tmp_path, ledger, "no-pkg-held")
         assert proc.returncode == 3, (
             f"expected 3 with a record present too: rc={proc.returncode}\n"
             f"out: {proc.stdout}\nerr: {proc.stderr}")
-        assert "jq not found" in proc.stderr, proc.stderr
-        assert proc.stdout.strip() == "", (
-            f"a census that read nothing printed a report: {proc.stdout}")
+        assert "not importable" in proc.stderr, proc.stderr
 
     def test_the_ledger_itself_is_left_alone(self, tmp_path):
         """A refused census is read-only: the records it could not read are
@@ -122,372 +160,159 @@ class TestLedgerEmptyWithoutJq:
         before = [{p.name: p.read_bytes() for p in ledger.iterdir()}
                   for ledger in ledgers]
         for ledger in ledgers:
-            assert _run_sh_without_jq(tmp_path, ledger).returncode == 3
+            assert _run_sh_with_empty_package(tmp_path, ledger, "ro").returncode == 3
         after = [{p.name: p.read_bytes() for p in ledger.iterdir()}
                  for ledger in ledgers]
         assert after == before, "a refused census wrote to the ledger"
 
 
-def _stub_jq_that_exits_127(tmp_path: Path) -> Path:
-    """A private bin dir holding the census's own tools and a ``jq`` that is a stub.
+class TestWrapperCarriesNoArbiterOfItsOwn:
+    """The census alone owns the ledger verdicts; the wrapper owns none.
 
-    The stub prints nothing and exits 127 — the status a shell reports for a
-    program it cannot execute — so it stands for the broken ``jq`` of a machine
-    where the package install was half-done: the name resolves on PATH, and no
-    invocation of it evaluates anything. Every other tool is the host binary,
-    symlinked, so the only thing this PATH breaks is ``jq``.
+    The shim once declared its own exit-code table, its own schema program and
+    its own probes for ``jq``, and the two arbiters disagreed (issue #97). The
+    schema program is deleted and the table is documented in exactly one place
+    (``skills/census/SKILL.md``), so what is left to pin is the *absence*: the
+    census's code names appear in the census's own help and reference and nowhere
+    in the wrapper, and the wrapper's own 3 says only that it could not load.
     """
-    bin_dir = tmp_path / "path-with-broken-jq"
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    for tool in CENSUS_SH_TOOLS:
-        source = shutil.which(tool)
-        link = bin_dir / tool
-        if source is not None and not link.exists():
-            link.symlink_to(source)
-    stub = bin_dir / "jq"
-    stub.write_text("#!/bin/sh\nexit 127\n", encoding="utf-8")
-    stub.chmod(0o755)
-    return bin_dir
 
+    #: The codes and row names the unified census owns. A wrapper that names one
+    #: of these in its own text has started carrying an arbiter again.
+    CENSUS_CODES = ("10:schema", "42:ledger-empty", "ledger-empty")
 
-def _run_sh_with_broken_jq(tmp_path: Path, ledger: Path,
-                          name: str) -> subprocess.CompletedProcess[str]:
-    """census.sh over ``ledger`` with a ``jq`` on PATH that always exits 127.
+    def test_the_shim_names_no_census_code_of_its_own(self):
+        """No 10/42 sub-class and no tool-missing marker in the wrapper's text.
 
-    ``name`` names the bin dir so two runs in one test do not share it. The env
-    is built from scratch, as in ``_run_sh_without_jq``: an inherited PATH
-    element could carry the working host ``jq`` ahead of the stub.
-    """
-    env = subprocess_env({"PATH": str(_stub_jq_that_exits_127(tmp_path / name)),
-                          "HOME": str(tmp_path)})
-    return subprocess.run(["bash", str(CENSUS_SH), str(ledger)],
-                          capture_output=True, text=True, env=env, timeout=120)
+        The wrapper's whole surface is its comments plus its usage line: the
+        census's codes belong in the census's help and in the reference that
+        collects them, and a copy in the wrapper would be the drift these tests
+        exist to stop.
+        """
+        text = CENSUS_SH.read_text(encoding="utf-8")
+        for marker in self.CENSUS_CODES:
+            assert marker not in text, (
+                f"census.sh carries the census's own {marker}; the code table is "
+                "documented once, in skills/census/SKILL.md")
 
+    def test_the_wrapper_has_no_schema_program_beside_it(self):
+        """The second arbiter's program is gone, so nothing can be read by it.
 
-class TestJqMustActuallyRun:
-    """A ``jq`` that cannot run is as unreadable a ledger as no ``jq`` at all.
+        This is the guarantee the AC asks for in its plainest form: a file that
+        declared the rules in a second language is not on disk, so there is no
+        path by which the wrapper could apply rules the census does not.
+        """
+        scripts = CENSUS_SH.parent
+        assert not (scripts / "census-schema.jq").exists(), (
+            "census-schema.jq is still beside the wrapper: the second arbiter "
+            "was retired, not merely bypassed")
+        assert not any(p.suffix == ".jq" for p in scripts.iterdir()), (
+            f"a jq program is still in the ledger scripts dir: "
+            f"{sorted(p.name for p in scripts.iterdir())}")
 
-    The shim's probe was ``command -v jq``, which is satisfied by any file that
-    resolves on PATH — including a stub that exits 127 without evaluating a
-    program. Over a recordless directory the run then reached the
-    (42:ledger-empty) branch and exited 0: the census had applied no schema, read
-    no record, and called the tree clean. The probe now runs ``jq`` itself, so a
-    broken one is refused with the same exit 3 and the same wording as an absent
-    one, on both ledgers."""
+    def test_the_wrapper_needs_no_jq(self, tmp_path):
+        """A machine with no ``jq`` on PATH runs the wrapper like any other.
 
-    def test_a_recordless_ledger_with_a_broken_jq_exits_3_not_0(self, tmp_path):
-        """The state the old probe let through: name resolves, jq runs nowhere.
-
-        The recordless tree is the one the (42) branch owned, so this is the run
-        that distinguishes the fix from the pre-fix script — where it exited 0."""
-        ledger = tmp_path / "stub-fresh" / "noni" / "decisions"
-        ledger.mkdir(parents=True)
-        proc = _run_sh_with_broken_jq(tmp_path, ledger, "stub-fresh")
-        assert proc.returncode == 3, (
-            f"a jq that exits 127 read no record, so the census has no verdict: "
-            f"rc={proc.returncode}\nout: {proc.stdout}\nerr: {proc.stderr}")
-        assert "jq not found" in proc.stderr, proc.stderr
-        assert "42:ledger-empty" not in proc.stderr, (
-            f"the recordless warn was reached with a jq that cannot run: {proc.stderr}")
-        assert proc.stdout.strip() == "", (
-            f"a census that read nothing printed a report: {proc.stdout}")
-
-    def test_a_ledger_holding_a_record_with_a_broken_jq_exits_3(self, tmp_path):
-        """The control: both ledgers answer 3, or the recordless case is a
-        special favour rather than one rule about whether jq can run."""
-        ledger = tmp_path / "stub-held" / "noni" / "decisions"
+        The dependency this issue removes was a hard one: with ``jq`` absent the
+        old shim exited 3 and refused to read. The census is Python and stdlib
+        json, so ``jq`` is simply not part of the reading machine any more, and a
+        PATH that holds none must not change the verdict.
+        """
+        ledger = tmp_path / "nojq" / "noni" / "decisions"
         ledger.mkdir(parents=True)
         (ledger / "2026-10-01-alpha.json").write_text(
             json.dumps(_valid_record(), indent=2) + "\n", encoding="utf-8")
-        proc = _run_sh_with_broken_jq(tmp_path, ledger, "stub-held")
-        assert proc.returncode == 3, (
-            f"expected 3 with a record present too: rc={proc.returncode}\n"
+        # A PATH holding the tools a census run reaches for and no ``jq`` at all:
+        # the old shim's own probe list, less the one program whose absence used
+        # to decide the verdict. The census is Python and stdlib json, so the
+        # dependency is simply not part of the reading machine any more.
+        bin_dir = tmp_path / "path-without-jq"
+        bin_dir.mkdir()
+        for tool in ("bash", "sh", "dirname", "find", "grep", "sort", "awk",
+                     "sed", "cat", "head", "cut", "mktemp", "rm", "hostname",
+                     "git", "python3"):
+            source = shutil.which(tool)
+            if source is not None:
+                (bin_dir / tool).symlink_to(source)
+        assert not (bin_dir / "jq").exists(), "the fixture PATH holds jq"
+        env = subprocess_env({"HOME": str(tmp_path), "PATH": str(bin_dir),
+                              "NONI_PYTHON": sys.executable})
+        proc = subprocess.run(["bash", str(CENSUS_SH), str(ledger)],
+                              capture_output=True, text=True, env=env, timeout=120)
+        assert proc.returncode == 0, (
+            f"the wrapper still depends on jq: rc={proc.returncode}\n"
             f"out: {proc.stdout}\nerr: {proc.stderr}")
-        assert "jq not found" in proc.stderr, proc.stderr
-        assert proc.stdout.strip() == "", (
-            f"a census that read nothing printed a report: {proc.stdout}")
+        assert "jq" not in proc.stderr, proc.stderr
 
 
-class TestSchemaProgramMissingPrecedesTheLedgerEmptyWarn:
-    """The schema-program check is a read probe, so it runs before any verdict.
+class TestToolMissingIsTheCensusNotTheWrapper:
+    """The census owns the missing-tool refusal; the wrapper owns none.
 
-    The file test for ``census-schema.jq`` sat below the recordless branch, so a
-    recordless ledger with no schema program printed the (42:ledger-empty) warn
-    and exited 0 while the same script over a ledger holding a record exited 3.
-    One tree, two verdicts, and the difference was whether there was anything to
-    read — which is exactly the question a census with no schema cannot answer."""
+    A missing or broken tool is exit 3 under the census's own table (its git
+    probe, which the census suite pins in ``test_census_probe_honesty.py``). The
+    wrapper used to reach 3 by probing ``jq`` itself and printing a sub-class of
+    its own; now the only exit-3 it can produce is its own load failure, which is
+    a different fact and says so in plain words. Both halves are pinned: the census
+    still refuses by naming the tool it wanted, and the wrapper never invents one.
+    """
 
-    def test_a_recordless_ledger_without_the_schema_program_exits_3(self, tmp_path):
-        """No schema program, no records: 3, and no 42 line printed at all."""
-        scripts = tmp_path / "scripts"
-        copy_shim_to(scripts)
-        assert not (scripts / "census-schema.jq").exists(), (
-            "the fixture copied the schema program, so it proves nothing")
-        assert SCHEMA_JQ.is_file(), f"{SCHEMA_JQ} is not shipped beside the real shim"
-        ledger = tmp_path / "orphan-recordless" / "noni" / "decisions"
-        ledger.mkdir(parents=True)
-        proc = run_copied_shim(scripts, ledger)
-        assert proc.returncode == 3, (
-            f"a census holding no schema program has no verdict to give: "
-            f"rc={proc.returncode}\nout: {proc.stdout}\nerr: {proc.stderr}")
-        assert "3:schema-program-missing" in proc.stderr, proc.stderr
-        assert "42:ledger-empty" not in proc.stderr, (
-            f"the recordless warn was reached with no schema program: {proc.stderr}")
-        assert_no_report_and_no_warn_row(proc, "schema program absent")
+    def test_the_census_still_refuses_a_missing_tool_with_3(self, tmp_path, monkeypatch):
+        """The census's own probe, unchanged by this PR: a tool it needs that is
+        absent answers 3 and names the tool it wanted, on a ledger that
+        would otherwise read clean.
 
-    def test_a_recordless_ledger_with_an_unreadable_schema_program_exits_3(self, tmp_path):
-        """A schema program that exists but cannot be read is no program.
-
-        ``-f`` is satisfied by a mode-000 file, so a recordless ledger over an
-        unreadable sibling reported the (42:ledger-empty) warn at exit 0 — the
-        census named a program it could not open and called the tree clean.
-        Root ignores the permission bits, so on a root run this state cannot be
-        produced and the case is skipped rather than passed."""
-        if os.geteuid() == 0:
-            pytest.skip("root reads a mode-000 file, so the state cannot be produced")
-        scripts = tmp_path / "scripts-unreadable"
-        copy_shim_to(scripts)
-        schema = scripts / "census-schema.jq"
-        schema.write_text(SCHEMA_JQ.read_text(encoding="utf-8"), encoding="utf-8")
-        schema.chmod(0o000)
-        ledger = tmp_path / "unreadable-recordless" / "noni" / "decisions"
-        ledger.mkdir(parents=True)
-        proc = run_copied_shim(scripts, ledger)
-        assert proc.returncode == 3, (
-            f"a schema program this machine cannot read is no schema: "
-            f"rc={proc.returncode}\nout: {proc.stdout}\nerr: {proc.stderr}")
-        assert "3:" in proc.stderr, proc.stderr
-        assert_no_report_and_no_warn_row(proc, "schema program unreadable")
-
-
-class TestLedgerEmpty:
-    """The ledger-empty class (warn 42): one row per run in the states where
-    no decision record can be read, each state carrying its own message word,
-    exit 0 without --strict and 42 with it. The class only ADDS rows — it never
-    softens a malformed-record ledger-record failure. Symlinks are reported,
-    never followed."""
-
-    def _assert_one_row(self, repo: Path, state_word: str) -> None:
-        rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
-        assert rc == 0, f"ledger-empty is warn: expected exit 0, got {rc}\nstderr: {err}"
-        rows = [r for r in _ndjson_rows(out) if r.get("kind") == "finding"]
-        assert len(rows) == 1, f"expected exactly one row for state {state_word}: {rows}"
-        row = rows[0]
-        assert row["check"] == "ledger-empty", f"expected ledger-empty: {row}"
-        assert row["code"] == 42
-        assert row["severity"] == "warn"
-        assert state_word in row["message"], (
-            f"expected the state word {state_word!r} in: {row['message']}"
-        )
-        assert row["fix"], "the fix hint must be present in --json rows too"
-
-        rc_strict, _out, err = _run_census(repo, "--only", "ledger-empty", "--strict",
-                                            skip_hygiene=True)
-        assert rc_strict == 42, f"expected 42 under --strict, got {rc_strict}\nstderr: {err}"
-
-    def test_no_noni_dir_reports_absent(self, tmp_path):
-        """No noni/ at all: exactly one ledger-empty row saying 'absent'."""
-        repo = _init_repo(tmp_path / "repo")
-        _commit_file(repo, "README.md", "# repo\n")
-        self._assert_one_row(repo, "absent")
-
-    def test_noni_present_without_decisions_reports_empty(self, tmp_path):
-        """noni/ committed with no decisions/ directory: the row says 'empty'.
-
-        'empty' names a tree with no record to arbitrate, so this tree and the
-        recordless decisions/ directory of
-        TestClean.test_recordless_ledger_dir_is_a_ledger_empty_warn carry the
-        same state word. The register side is clean, so the ledger-empty row is
-        the run's only finding.
+        This is the half that is easy to lose: the wrapper's probe for ``jq`` being
+        removed must not take the census's probe for ``git`` with it, or a broken
+        reading machine becomes a silent pass on both paths. The seam is the
+        ``shutil.which`` of the module that asks the question, the same one
+        ``test_census_probe_honesty.py`` uses.
         """
-        repo = _init_repo(tmp_path / "repo")
-        _commit_file(repo, "noni/README.md", "noni lives here\n")
-        self._assert_one_row(repo, "empty")
+        from census_run import _census_main
 
-    def test_recordless_ledger_dir_reports_ledger_empty(self, tmp_path):
-        """Operator decision (issue #33): a decisions/ directory that exists and
-        holds no *.json record is the ledger-empty 'empty' warn, not a
-        ledger-record failure — a freshly attached project must census clean.
+        import noni.census_run as census_run
 
-        The row is the run's only finding, carries the root-relative ledger
-        path (never an absolute path) and the wording of the 'empty' state, and
-        no ledger-record row is produced."""
-        repo = _init_repo(tmp_path / "repo")
-        _commit_file(repo, "noni/decisions/.gitkeep", "")
-        rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
-        assert rc == 0, f"a recordless ledger is a warn: expected 0, got {rc}\nstderr: {err}"
-        rows = [r for r in _ndjson_rows(out) if r.get("kind") == "finding"]
-        assert [r["check"] for r in rows] == ["ledger-empty"], (
-            f"expected only the ledger-empty row: {rows}"
-        )
-        row = rows[0]
-        assert row["code"] == 42 and row["severity"] == "warn", f"row: {row}"
-        assert "(empty)" in row["message"], f"expected the state word: {row['message']}"
-        assert "no *.json record" in row["message"], (
-            f"the row must name the missing record: {row['message']}"
-        )
-        assert row["subject"] == row["artifact"] == "noni/decisions", (
-            f"the row names the ledger path relative to the repo root: {row}"
-        )
-        assert not row["subject"].startswith("/"), f"absolute path in row: {row}"
+        monkeypatch.setattr(census_run.shutil, "which", lambda name: None)
+        ledger = _empty_ledger(tmp_path)
+        (ledger / "2026-10-01-alpha.json").write_text(
+            json.dumps(_valid_record(), indent=2) + "\n", encoding="utf-8")
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
 
-        rc_strict, _out, err = _run_census(repo, "--only", "ledger-empty", "--strict",
-                                            skip_hygiene=True)
-        assert rc_strict == 42, f"expected 42 under --strict, got {rc_strict}\nstderr: {err}"
 
-    def test_recordless_ledger_without_git_answers_says_the_deletion_check_could_not_run(
-        self, tmp_path, monkeypatch
-    ):
-        """Probe honesty (issue #33 review): a recordless decisions/ directory
-        whose git history the census could not read must not read as a plain
-        "empty" warn.
+        out_buf, err_buf = io.StringIO(), io.StringIO()
+        with redirect_stdout(out_buf), redirect_stderr(err_buf):
+            rc = _census_main(["--repo", str(tmp_path), "--ledger", str(ledger)])
+        combined = out_buf.getvalue() + err_buf.getvalue()
+        assert rc == 3, f"a missing tool must exit 3, got {rc}\n{combined}"
+        assert "git" in combined and "not found" in combined, (
+            f"the refusal must name the tool it wanted: {combined}")
 
-        With this PR the deletion check is the ONLY signal that committed
-        records were deleted, so when it cannot run the run must say so: the
-        ledger-empty row plus a ledger-edited cannot-tell row, warn by default
-        (exit 0) and promoted to exit 12 under --strict, like every other
-        cannot-tell row."""
-        import census
+    def test_the_wrapper_never_invents_a_tool_refusal(self, tmp_path):
+        """The wrapper never reports a missing tool it did not need.
 
-        repo = _init_repo(tmp_path / "repo")
-        _commit_file(repo, "noni/decisions/.gitkeep", "")
-        monkeypatch.setattr(census, "Git", lambda top: _UnreadableGit())
-        rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
-        assert rc == 0, (
-            f"the cannot-tell row is a warn: expected exit 0, got {rc}\nstderr: {err}\n{out}"
-        )
-        rows = [r for r in _ndjson_rows(out) if r.get("kind") == "finding"]
-        assert [r["check"] for r in rows] == ["ledger-edited", "ledger-empty"], (
-            f"expected the ledger-empty row plus the cannot-tell row: {rows}"
-        )
-        empty = [r for r in rows if r["check"] == "ledger-empty"][0]
-        assert empty["severity"] == "warn" and empty["code"] == 42
-        assert "(empty)" in empty["message"], f"state word kept: {empty['message']}"
-        row = [r for r in rows if r["check"] == "ledger-edited"][0]
-        assert row["subject"] == "cannot-tell", f"row: {row}"
-        assert row["code"] == 12, f"stays in the ledger-edited class: {row}"
-        assert row["severity"] == "warn", f"cannot-tell is a warn: {row}"
-        assert "could not run" in row["message"], (
-            f"the row must say the deletion check could not run: {row['message']}"
-        )
-
-        rc_strict, out_strict, err = _run_census(repo, "--strict", skip_hygiene=True)
-        assert rc_strict == 12, (
-            f"--strict escalates the cannot-tell to ledger-edited's code, got {rc_strict}"
-            f"\nstderr: {err}\n{out_strict}"
-        )
-
-    def test_recordless_ledger_in_a_plain_directory_reports_the_cannot_tell_too(
-        self, tmp_path
-    ):
-        """The same finding in a genuinely non-git directory: there is no
-        history anywhere, so the deletion question is just as unanswered and
-        the row must still appear (the other no-git trees of this class carry
-        states the probe itself answers, not 'empty' with a directory present)."""
-        plain = tmp_path / "plain"
-        (plain / "noni" / "decisions").mkdir(parents=True)
-        rc, out, err = _run_census(plain, json_out=True, skip_hygiene=True)
-        assert rc == 0, f"expected exit 0, got {rc}\nstderr: {err}\n{out}"
-        checks = [r["check"] for r in _ndjson_rows(out) if r.get("kind") == "finding"]
-        assert sorted(checks) == ["ledger-edited", "ledger-empty"], f"rows: {checks}"
-
-    def test_recordless_ledger_in_a_git_repo_with_no_record_history_is_just_the_warn(
-        self, tmp_path
-    ):
-        """The counterpart: where git did answer, a recordless decisions/
-        directory that history never held a record for is exactly the
-        ledger-empty warn — no cannot-tell row, since the deletion question was
-        answered (nothing was ever added, so nothing was deleted)."""
-        repo = _init_repo(tmp_path / "repo")
-        _commit_file(repo, "README.md", "# repo\n")
-        _commit_file(repo, "noni/decisions/.gitkeep", "")
-        rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
-        assert rc == 0, f"expected exit 0, got {rc}\nstderr: {err}\n{out}"
-        rows = [r for r in _ndjson_rows(out) if r.get("kind") == "finding"]
-        assert [r["check"] for r in rows] == ["ledger-empty"], (
-            f"expected only the ledger-empty row: {rows}"
-        )
-        assert "(empty)" in rows[0]["message"], f"state word: {rows[0]['message']}"
-
-    def test_noni_not_a_directory_reports_not_a_directory(self, tmp_path):
-        """noni/ committed as a plain file: the ledger path is 'not a directory'."""
-        repo = _init_repo(tmp_path / "repo")
-        _commit_file(repo, "README.md", "# repo\n")
-        _commit_file(repo, "noni", "i am a file, not a directory\n")
-        self._assert_one_row(repo, "not a directory")
-    def test_noni_symlink_is_reported_never_followed(self, tmp_path):
-        """noni/ as a symlink is its own state: reported as 'symlink' and never
-        read through (the probe-honesty rule)."""
-        repo = _init_repo(tmp_path / "repo")
-        _commit_file(repo, "README.md", "# repo\n")
-        real = repo / "elsewhere"
-        real.mkdir()
-        # Seed the target with a record: if the census followed the link it
-        # would find one and report no ledger-empty row at all.
-        (real / "decisions").mkdir()
-        (real / "decisions" / "2026-10-01-alpha.json").write_text(
-            json.dumps(_valid_record(), indent=2), encoding="utf-8"
-        )
-        (repo / "noni").symlink_to(real)
-        self._assert_one_row(repo, "symlink")
-
-    def test_sessions_present_without_ledger_is_still_ledger_empty(self, tmp_path):
-        """The two layers stay independent: sessions/ present and decisions/
-        absent is one ledger-empty row and no ledger-record failure."""
-        repo = _init_repo(tmp_path / "repo")
-        _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md", _session_body("developer"))
-        rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
-        assert rc == 0, f"expected 0, got {rc}\nstderr: {err}"
-        rows = [r for r in _ndjson_rows(out) if r.get("kind") == "finding"]
-        assert [r["check"] for r in rows] == ["ledger-empty"], f"unexpected rows: {rows}"
-
-    def test_ledger_with_a_record_is_silent(self, tmp_path):
-        """A ledger that holds a valid record emits no ledger-empty row."""
-        repo = _init_repo(tmp_path / "repo")
-        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
-                      json.dumps(_valid_record(), indent=2))
-        rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
-        assert rc == 0, f"expected 0, got {rc}\nstderr: {err}"
-        rows = [r for r in _ndjson_rows(out) if r.get("kind") == "finding"]
-        assert rows == [], f"expected no findings: {rows}"
-
-    def test_both_censuses_agree_on_a_freshly_attached_tree(self, tmp_path):
-        """A freshly attached tree is a committed ``noni/decisions/`` holding no
-        record, and the two entry points must hand back one verdict (issue #97).
-
-        Before the fix ``census.sh`` exited 10 there while the unified census
-        exited 0 with the ``ledger-empty`` warn, so the same project read as
-        permanently red to one tool and clean to the other, and a team's CI chose
-        its verdict by which script it happened to call. The shim converged on the
-        unified census, not the reverse: the warn stays a warn (42 under
-        ``--strict``, which the shim has no flag for), and the states the shim's
-        read never reached -- a directory it could not enumerate -- stay 10.
-
-        Both censuses are driven over the one ledger directory, so the only thing
-        that differs between the two verdicts is the tool.
+        The old wrapper reached 3 by running ``command -v jq`` itself and printing
+        a sub-class of its own; that is the conflation this class pins out, and the
+        load failure is pinned here too -- an interpreter that cannot resolve is 3
+        on a plain line, not a traceback and not a false clean.
         """
-        ledger = tmp_path / "fresh" / "noni" / "decisions"
+        ledger = tmp_path / "wrapper-tool" / "noni" / "decisions"
         ledger.mkdir(parents=True)
-
-        sh_code, sh_out = _run_sh(ledger)
-        assert sh_code == 0, f"census.sh must exit 0 on a recordless ledger:\n{sh_out}"
-        assert "42:ledger-empty" in sh_out, (
-            f"the shim must name the state it reported, not fail silently: {sh_out}")
-        assert "10:empty-ledger" not in sh_out, (
-            f"the shim still calls a recordless ledger an unusable one: {sh_out}")
-
-        py_code, py_out = _run_py(ledger)
-        assert py_code == 0, f"the unified census must exit 0 on a recordless ledger:\n{py_out}"
-        assert sh_code == py_code, (
-            f"the two censuses disagree on a freshly attached tree: sh={sh_code} "
-            f"py={py_code}\nsh: {sh_out}\npy: {py_out}")
-        # ``_run_py`` merges both streams, so the rows are read from a second run
-        # through this file's own runner: the census prints the NDJSON stream on
-        # stdout and the exit-code note on stderr, and the verdict under test is
-        # the row set.
-        rc, out, err = _run_census(ledger.parent.parent, "--ledger", str(ledger),
-                                   "--json", "--only", "ledger-empty",
-                                   "--only", "ledger-record")
-        assert rc == 0 and sh_code == rc, f"sh={sh_code} py={rc}\n{err}"
-        rows = [r for r in _ndjson_rows(out) if r.get("kind") == "finding"]
-        assert [r["check"] for r in rows] == ["ledger-empty"], out
+        (ledger / "2026-10-01-alpha.json").write_text(
+            json.dumps(_valid_record(), indent=2) + "\n", encoding="utf-8")
+        rc, out = _run_sh(ledger)
+        assert rc == 0, f"expected the census to run and exit 0: {rc}\n{out}"
+        assert "not found" not in out, (
+            f"the wrapper reported a tool it did not need: {out}")
+        missing = tmp_path / "no-such-interpreter"
+        proc = subprocess.run(["bash", str(CENSUS_SH), str(ledger)],
+                              capture_output=True, text=True,
+                              env=subprocess_env({"NONI_PYTHON": str(missing)}),
+                              timeout=120)
+        assert proc.returncode == 3, (
+            f"a wrapper with no interpreter has no verdict to give: "
+            f"rc={proc.returncode}\nout: {proc.stdout}\nerr: {proc.stderr}")
+        combined = proc.stdout + proc.stderr
+        assert "Traceback" not in combined, (
+            f"a traceback is not a diagnostic: {combined}")
+        assert str(missing) in combined, (
+            f"the refusal must name the interpreter it could not resolve: {combined}")

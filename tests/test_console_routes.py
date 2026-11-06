@@ -351,8 +351,14 @@ def test_intent_missing_verb_agrees_on_all_three_routes(tmp_path):
 
 
 def test_census_sessions_wrapper_matches_the_package(tmp_path):
-    """The sessions census has no subcommand of its own (the shim's --sessions
-    dispatch owns it), so its wrapper is compared against the package module."""
+    """The sessions census has no subcommand of its own, so its wrapper is
+    compared against the package function the wrapper itself calls.
+
+    The route this replaced ran ``noni.census_sessions``, the standalone sessions
+    parser the second arbiter kept; that module is deleted (issue #99) and the
+    wrapper reaches the unified census through ``noni.census_wrapper``, so the
+    package route compared here is that function under the same interpreter.
+    """
     sessions = tmp_path / "noni" / "sessions"
     sessions.mkdir(parents=True)
     body = ("- identity: dev-a\n- host/worktree: ws\n- started: 2026-10-01T10:00:00Z\n"
@@ -363,11 +369,11 @@ def test_census_sessions_wrapper_matches_the_package(tmp_path):
     left = run_wrapper(CENSUS_SESSIONS_PY, str(sessions))
     right = run_noni("census-sessions-module", str(sessions))
     # The module has no console subcommand, so the console route above is not a
-    # route: run the module the way the package's own entry point does.
+    # route: run the package function the way the wrapper's own entry point does.
     direct = subprocess.run(
         [sys.executable, "-c",
-         "import sys; from noni import census_sessions; "
-         "raise SystemExit(census_sessions.main(sys.argv[1:]))", str(sessions)],
+         "import sys; from noni import census_wrapper; "
+         "raise SystemExit(census_wrapper.run_sessions(sys.argv[1:]))", str(sessions)],
         capture_output=True, text=True, env=subprocess_env(), timeout=120,
     )
     assert right.returncode == 2, "noni must not grow a census-sessions subcommand"
@@ -375,8 +381,15 @@ def test_census_sessions_wrapper_matches_the_package(tmp_path):
     assert left.returncode == 30, left.stdout
 
 
-def test_sessions_shim_and_census_shim_agree_on_sessions(tmp_path):
-    """`census.sh --sessions` and the direct shim reach the same arbiter."""
+def test_sessions_shim_and_wrapper_agree_on_sessions(tmp_path):
+    """The two forms of the sessions entry point -- the bash wrapper and the
+    in-place ``.py`` it execs -- reach one arbiter and print one verdict.
+
+    This used to compare ``census.sh --sessions`` with the direct script, the
+    ledger shim's sessions dispatch being how the older pages reached the session
+    group. That dispatch is gone: ``census.sh`` runs the ledger group alone, and
+    the sessions route is ``census-sessions.sh`` over its own directory.
+    """
     sessions = tmp_path / "noni" / "sessions"
     sessions.mkdir(parents=True)
     body = ("- identity: dev-a\n- host/worktree: ws\n- started: 2026-10-01T10:00:00Z\n"
@@ -387,8 +400,32 @@ def test_sessions_shim_and_census_shim_agree_on_sessions(tmp_path):
     direct = subprocess.run(["bash", str(REPO / "skills" / "sessions-claims" / "scripts"
                                            / "census-sessions.sh"), str(sessions)],
                             capture_output=True, text=True, env=subprocess_env(), timeout=60)
-    dispatch = subprocess.run(["bash", str(REPO / "skills" / "steering-ledger" / "scripts"
-                                           / "census.sh"), "--sessions", str(sessions)],
-                              capture_output=True, text=True, env=subprocess_env(), timeout=60)
-    assert_same(direct, dispatch, "sessions census via both shims")
+    dispatch = run_wrapper(CENSUS_SESSIONS_PY, str(sessions))
+    assert_same(direct, dispatch, "sessions census via both forms")
     assert direct.returncode == 30, direct.stdout
+
+
+def test_the_ledger_wrapper_refuses_a_sessions_dispatch(tmp_path):
+    """``census.sh --sessions <dir>`` is not a route any more, and says so.
+
+    The ledger shim once carried a ``--sessions`` flag that dispatched to a second
+    parser of its own. The flag is gone with the parser, and the census gets it as
+    an unknown option: a caller who types the old form gets the census's refusal
+    and the census's usage code, not a silent census of the wrong group.
+    """
+    sessions = tmp_path / "noni" / "sessions"
+    sessions.mkdir(parents=True)
+    ledger = tmp_path / "noni" / "decisions"
+    ledger.mkdir()
+    direct = subprocess.run(["bash", str(REPO / "skills" / "steering-ledger" / "scripts"
+                                           / "census.sh"), "--sessions", str(sessions)],
+                            capture_output=True, text=True, env=subprocess_env(), timeout=60)
+    assert direct.returncode == 2, (
+        f"the retired dispatch must be a refusal, not a census: rc={direct.returncode}\n"
+        f"out: {direct.stdout}\nerr: {direct.stderr}")
+    combined = direct.stdout + direct.stderr
+    assert "--sessions" in combined, (
+        f"the refusal must name the option it refused: {combined}")
+    assert "summary:" not in combined, (
+        f"a refused run printed a report: {combined}")
+    assert ledger.is_dir()

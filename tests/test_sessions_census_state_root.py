@@ -45,8 +45,8 @@ def test_the_state_root_named_by_the_caller_is_the_only_one_read(tmp_path):
         f"the state root is clean, so the decoy must not have been read: "
         f"{proc.returncode}\n{proc.stdout}\n{proc.stderr}"
     )
-    assert proc.stdout.strip() == "", f"a clean run reports nothing: {proc.stdout}"
-    assert "#999" not in proc.stdout, "the decoy's double-claim reached the output"
+    assert "#999" not in proc.stdout + proc.stderr, (
+        f"the decoy's double-claim reached the output: {proc.stdout}")
     assert not (cwd / "noni").exists(), "the census is read-only: it wrote under the cwd"
 
 
@@ -76,12 +76,14 @@ def test_the_state_roots_own_double_claim_fires_from_a_foreign_cwd(tmp_path):
         },
     })
 
-    proc = run_from(cwd, entry, str(root), identity=False)
+    proc = run_from(cwd, entry, str(root), "--json", identity=False)
     assert proc.returncode == 30, (
         f"the state root's own double-claim must fire: {proc.returncode}\n"
         f"{proc.stdout}\n{proc.stderr}"
     )
-    rows = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
-    assert any(r.get("type") == "double-claim" and r["task"] == "#77" for r in rows), rows
+    rows = [json.loads(line) for line in proc.stdout.splitlines()
+            if line.strip().startswith("{")]
+    assert any(r.get("check") == "session-double" and r["subject"] == "#77"
+               for r in rows), rows
     assert "#999" not in proc.stdout
     assert decoy.is_dir(), "the decoy register must still be there to have been ignored"

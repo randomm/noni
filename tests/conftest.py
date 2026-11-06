@@ -178,17 +178,23 @@ def git_repo(tmp_path):
 
 @pytest.fixture
 def run_census():
-    """Run census.sh against a ledger dir, returning (exit_code, stdout, stderr).
+    """Run the ledger wrapper over a ledger dir, returning (exit, stdout, stderr).
 
     Shared by every test module so the subprocess invocation logic lives in one
-    place. Pass a custom env dict to override PATH or other variables.
+    place. The wrapper is a thin route to the unified census, so this is the
+    entry point that answers for both: the census's own flags are accepted and
+    reach the census unchanged, and the exit code is the census's. Pass a custom
+    env dict to override PATH or other variables, and ``extra`` for census flags
+    (``--json`` for the machine rows, ``--strict`` to promote the warns).
     """
-    def _run(ledger_dir: Path, *, env: dict | None = None) -> tuple[int, str, str]:
+    def _run(ledger_dir: Path, *, env: dict | None = None,
+             extra: tuple[str, ...] = ()) -> tuple[int, str, str]:
         full_env = subprocess_env()
         if env:
             full_env.update(env)
         proc = subprocess.run(
-            ["bash", str(REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"), str(ledger_dir)],
+            ["bash", str(REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"),
+             str(ledger_dir), *extra],
             capture_output=True,
             text=True,
             env=full_env,
@@ -203,14 +209,18 @@ def run_sessions_census():
     """Run the sessions census against a sessions dir.
 
     Returns (exit_code, stdout, stderr). Pass a custom env dict to override
-    PATH or other variables.
+    PATH or other variables, and ``extra`` for census flags the run should
+    carry (``--json`` for the NDJSON rows, ``--strict`` to promote the warns):
+    the wrapper passes every option through to the census, and a test that wants
+    the machine-facing stream asks the census for it.
     """
-    def _run(sessions_dir: Path, *, env: dict | None = None) -> tuple[int, str, str]:
+    def _run(sessions_dir: Path, *, env: dict | None = None,
+             extra: tuple[str, ...] = ()) -> tuple[int, str, str]:
         full_env = subprocess_env()
         if env:
             full_env.update(env)
         proc = subprocess.run(
-            ["bash", str(CENSUS_SESSIONS), str(sessions_dir)],
+            ["bash", str(CENSUS_SESSIONS), str(sessions_dir), *extra],
             capture_output=True,
             text=True,
             env=full_env,

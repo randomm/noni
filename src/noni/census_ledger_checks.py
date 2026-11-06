@@ -348,7 +348,19 @@ def check_ledger_records(ledger: Path, root: Path, findings: list[dict],
             continue
         try:
             obj = json.loads(body)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, ValueError, RecursionError):
+            # The wording is fixed and quotes nothing from the file, which is
+            # untrusted content. The three named exceptions are the three ways
+            # this decoder can refuse a record: ``json.JSONDecodeError`` for
+            # malformed text; ``ValueError`` for the integer literal beyond the
+            # interpreter's 4300-digit conversion limit, which raises it and is
+            # no kind of decode error; and ``RecursionError``, which is no kind
+            # of ValueError either, from a nesting past the interpreter's own
+            # stack. On 3.11 that ceiling sits just under the recursion limit
+            # (measured just under the default 1000, later builds reach far
+            # more), so the arm is reachable, not decorative. Without it one
+            # pathological record ended the whole run with a traceback, and a
+            # report that never prints answers nothing.
             add("ledger-record", record_name, record_name, "record is not valid JSON")
             unparseable.append((record_name, path))
             continue

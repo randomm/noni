@@ -22,8 +22,8 @@ census does not check and does not claim to (see
 ## Usage
 
 ```
-bash scripts/census.sh <state-root>/noni/decisions   the decisions census (E1)
-bash scripts/census.sh --sessions <state-root>/noni/sessions  the sessions census (E2)
+bash scripts/census.sh <state-root>/noni/decisions   the decisions census
+bash scripts/census.sh --sessions <state-root>/noni/sessions  the sessions census
 bash scripts/census.sh --help         the usage and exit-code table
 ```
 
@@ -53,7 +53,7 @@ A `decisions/` directory that exists and can be read but holds no `*.json`
 record is not a failure: the shim names it `(42:ledger-empty)` on stderr and
 exits `0`, which is what the unified census's `ledger-empty` warn means (the
 unified census promotes that warn to 42 under `--strict`, which this shim has no
-flag for), so the two agree on a freshly attached tree (issue #97). A directory
+flag for), so the two agree on a freshly attached tree. A directory
 it could not enumerate is still `10:empty-ledger` — a read that happened nowhere
 is not an empty ledger.
 
@@ -64,8 +64,8 @@ shim. `noni census` is the entry point that enforces. The unified census
 for the states where there is no decision record to arbitrate, carrying one of
 the state words `absent`, `not a directory`, `symlink`, or `empty` (`noni/`
 present with no `decisions/` directory, or a `decisions/` directory that holds
-no `*.json` record — operator decision on issue #33, so a freshly attached
-project censuses clean at exit 0). That class only adds rows: a record that is
+no `*.json` record — a recordless ledger is a state, not a fault, so a freshly
+attached project censuses clean at exit 0). That class only adds rows: a record that is
 bad JSON or violates the schema stays the `ledger-record` exit 10 in both
 censuses, so the code-10 row of this table still covers the malformed and
 unreadable records. The

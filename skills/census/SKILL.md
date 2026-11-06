@@ -65,9 +65,10 @@ states where no decision record can be read — no `noni/`, `noni/` not a
 directory, a symlink, `noni/` present without a `decisions/` directory, or a
 `decisions/` directory holding no `*.json` record. It never weakens a
 malformed-record failure: a record that is bad JSON or violates the schema
-keeps its `ledger-record` exit 10. A freshly attached project whose
-`noni/decisions/` has no records yet therefore censuses clean at exit 0
-(operator decision on issue #33). The shim agrees with that verdict on that
+keeps its `ledger-record` exit 10. A recordless ledger is a state, not a fault:
+a freshly attached project whose `noni/decisions/` has no records yet censuses
+clean at exit 0, because nothing has been steered yet and there is nothing to
+contradict. The shim agrees with that verdict on that
 directory (see the Rules below), so a freshly attached tree reads the same way to
 either entry point.
 
@@ -339,7 +340,7 @@ substitute for running `scripts/public_safety.py` before publishing.
 - **Read-only.** The census never writes, mutates, or creates any file.
   Running it leaves `git status --porcelain` empty.
 - **One entry point.** `noni census` (``census.py``) is the canonical entry point
-  and the one that enforces. The older per-epic
+  and the one that enforces. The older single-artifact
   scripts (`census.sh`, `census-sessions.sh`) remain as compatibility
   shims with a subset of the same exit codes (see the steering-ledger
   SKILL.md). `census.sh` is the ledger shim (with its `--sessions` dispatch to

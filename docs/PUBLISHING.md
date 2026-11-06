@@ -64,47 +64,66 @@ history. History violations are **reported** (below) and never rewritten here.
    built-in patterns and the local deny-list (the manual audit below names
    every body known to contain a violation), then file the cleaned text as a
    fresh issue. Do not copy issue bodies verbatim.
-5. **Recreate the labels and epic map** (`epic` label, E1–E5 → issues #1–#5)
-   so the product document's epic map keeps working.
+5. **Recreate the labels** the open issues carry (``epic`` and any label an
+   open issue has), so a recreated issue keeps the label it was worked under.
 
 ## History-only violation audit (input to the fresh-repo publish)
 
 This repo's history **cannot** be scrubbed here (a rewrite would destroy the
-single-clean-commit strategy), so the following is the audit list the
-fresh-repo publish must absorb by **not carrying it forward**. Nothing in this
-section is a defect in the current tree; every item below lives only in
-commit metadata or GitHub issue/PR bodies.
+single-clean-commit strategy), so the following is the audit the fresh-repo
+publish must absorb by **not carrying it forward**. Nothing in this section is a
+defect in the current tree; every class of item lives only in commit metadata or
+GitHub issue/PR bodies. **Generate the list at publish time** rather than
+maintaining it here: a hardcoded count or hash list is stale the moment another
+commit lands, which is the state this page used to be in.
 
-### Commit author identities (git history, all 6 commits)
+### Commit author identities
 
 Identities are referenced **generically on purpose**: quoting them here would
-re-introduce exactly the PII this rule removes, so the values live only in
-this repo's untracked deny-list (which is itself the audit input) — never in
-this document.
+re-introduce exactly the PII this rule removes, so the values live only in this
+repo's untracked deny-list (which is itself the audit input) — never in this
+document.
 
-- **The operator's personal identity** (personal name + personal email) —
-  author of commits `86c3539`, `a2c35d9`, `a3a2428`, `f7787a3`, `6c03672`
-  (and of the hygiene commit of this PR, so this list grows by at least one
-  authorship at merge). The fresh repo's single commit uses a neutral
-  identity instead.
-- **A separate agent identity** (agent name + host-local email) — author of
-  commit `a48dd46`. Likewise replaced by the neutral identity.
+Enumerate every identity the history carries, and match each against the
+deny-list:
+
+```sh
+git log --format='%an <%ae> %cn <%ce>' | sort -u
+```
+
+Expect at least two classes of offender: the operator's personal identity
+(personal name + personal email), and a separate agent identity (agent name +
+host-local email). Neither may author the new repository's single commit, which
+the neutral identity from step 2 writes instead. Read the list fresh: new
+commits add authorships, so any count in this document would already be wrong.
 
 ### Commit messages containing paths or names
 
-- `a48dd46` "Split: noni is now the product-direction repo ... moved out with
-  full history to <an-external-repo>." — names an external repository.
-- `a2c35d9` "Merge pull request #6 from <an-external-repo>/chore/agents-md" —
-  names an external repository in the branch name.
+Enumerate the messages, and match each against the built-in patterns and the
+deny-list:
+
+```sh
+git log --format='%H %s'
+```
+
+Expect commits that name an external repository — a split commit whose body says
+history was moved out to another repository, and merge commits that carry a
+foreign repository name in the branch. Each is reported here as a class and
+never quoted: quoting the subject would reproduce the violation.
 
 ### GitHub issue / PR bodies (manual audit; recreate scrubbed)
 
-- **Issue #8 (this ticket)** — its body names external tools/repos and
-  machine-local paths in the investigation sections; scrub when recreating.
-- Issues #1–#5 (the epic set) and any issue/PR that references the operator's
-  other repositories or the paths above. When recreating, scrub each body
-  with the same built-in patterns + local deny-list, and file the cleaned
-  text as a fresh issue in the new repository.
+Enumerate the open issues and pull requests, and audit each body:
+
+```sh
+gh issue list --state all --json number,title
+```
+
+The bodies known to need scrubbing are the ones carrying investigation
+sections — those name external tools and repositories, and machine-local paths —
+and any body that references the operator's other repositories or the paths
+above. Scrub each with the same built-in patterns + local deny-list, and file
+the cleaned text as a fresh issue in the new repository.
 
 ## After publishing
 

@@ -70,6 +70,7 @@ PRODUCT_MODULES = (
     "src/noni/decide.py",
     "src/noni/gitenv.py",
     "src/noni/gitwrite.py",
+    "src/noni/record_read.py",
     "src/noni/intent.py",
     "src/noni/intentschema.py",
     "src/noni/labels.py",

@@ -1,10 +1,5 @@
 # noni — product document
 
-Status: v0 positioning · 2026-10-22 · owner-approved epic map below
-Evidence base: three verified research runs + a lead-run prototype; see
-§8 for the brief summaries and the local working-tree decision log
-(authoritative working record, held outside the repo).
-
 ## 1. What noni is
 
 noni is an **attachable product-direction layer** for agentic coding work: a
@@ -19,8 +14,8 @@ It owns four artifacts:
    or by free chat that an agent distills into a candidate record the operator
    confirms. Every steering act survives the session that produced it and is
    replayable by any later session or clone.
-2. **Backlog & ordering** — the Now-state: what is in the next release train,
-   what order it ships in, and a "why this order" provenance field per row.
+2. **Backlog & ordering** — the Now-state: what the operator wants worked next,
+   in what order, and a "why this order" provenance field per row.
    GitHub issues remain the work carrier; noni owns the direction layer above them.
 3. **Session register + claims** — concurrent agent sessions on one project
    register themselves as one committed file each, and claim tasks by commit.
@@ -32,11 +27,11 @@ It owns four artifacts:
 ## 2. What noni is not
 
 Not an agent, not a task tracker, not a CI system, not a coordination daemon,
-not a database. No fleet manager, backlog UI or framework from the surveyed
-class is adopted wholesale; the surveyed mechanisms are either borrowed as
-conventions (a surveyed project's claim discipline, the primary integration's
-answer-legitimacy parsing) or
-left at the door (Dolt/Postgres truth stores, daemons, worktree-isolation-as-claiming).
+not a database. No fleet manager, backlog UI or coordination framework is
+adopted wholesale. The mechanisms noni takes from elsewhere are taken as
+conventions — a claim discipline, answer-legitimacy parsing — and the ones it
+leaves at the door are the external truth stores, the daemons, and treating a
+worktree's isolation as a claim.
 
 ## 3. Doctrine (owner-set; compensate for, never re-litigate)
 
@@ -52,39 +47,41 @@ left at the door (Dolt/Postgres truth stores, daemons, worktree-isolation-as-cla
   clearly-marked adapters (one directory per project, e.g.
   `integrations/github-issues/`). The core must be viable with no adapter
   installed.
-- **The primary integration is a specific driver/tracker ecosystem, and a
-  reference driver is the integration model** —
-  overlap with the primary integration is allowed where the generic product
-  needs it, and the adapters map onto its source mechanisms (question-render /
-  answer legitimacy parsing, cycle lock liveness, label-event authorization)
-  rather than reinventing them.
+- **Adapters mirror the tools a team already runs.** Where a generic product
+  need overlaps with a mechanism a mature tracker or work driver already has
+  (question-render / answer legitimacy parsing, cycle lock liveness,
+  label-event authorization), the adapter under `integrations/` maps onto that
+  mechanism rather than reinventing it.
 - **A ping is a hint; the commit is the truth.** Any live transport
   (MCP-elicitation prompt, future A2A) is a notification cache over
   git-committed state, never the state itself. A2A: ignore now, dated re-check.
 
 ## 4. The steer, concretely
 
-Two input modes, one record shape, per the verified prior art (AG2, LangGraph,
-Claude AskUserQuestion, the primary integration all converge):
+Two input modes, one record shape, on the bounds the question-answer loops in
+this field have converged on:
 
-- **Multiple-choice**: agent asks 1–4 questions × 2–4 options (production-verified
-  bounds), free-text escape hatch always offered. Answer must name the question
+- **Multiple-choice**: agent asks 1–4 questions × 2–4 options (the bounds the
+  writer enforces and both censuses check), free-text escape hatch always
+  offered. Answer must name the question
   it answers (id pairing). Never auto-answer for the operator (anti-fabrication).
 - **Free chat**: agent distills the conversation into a candidate record;
   the operator confirms; the confirmation is committed.
-- **Record shape** (ADR skeleton + the primary integration's fields): `{id, date, asked_by, question,
+- **Record shape** (an ADR skeleton plus the fields a steer needs): `{id, date, asked_by, question,
   options[], answer, by, scope, status, supersedes}` under the repo's ledger
   path. `status` adopts one/many/stranger semantics with the git-attribution
   caveat: `by` is a commit author, forgeable locally — default posture is
   signed commits; stranger-detection is advisory until forge-verified pushes.
 
-## 5. Claims — the prototype verdict
+## 5. Claims — why the census decides
 
-Two-clone experiments (2026-10-22, scratch tree kept outside the repo) showed:
-push-rejection works as compare-and-swap; shared-file claim edits conflict at
-merge but conflict-firing is file-layout luck; per-session claim files always
-auto-merge, so both claims land and the **census must detect double-claims at
-read time**. Therefore: per-session files (single writer each), claim-as-signal
+The claim protocol follows from three properties of git: a rejected push works
+as compare-and-swap; edits to one shared claim file conflict at merge, but
+whether a conflict fires at all is a matter of file layout; and per-session
+claim files, each holding a different path, land both claims without
+conflicting. So the **census must detect
+double-claims at read time**. Therefore: per-session files (single writer each),
+claim-as-signal
 committed to the repo, **census double-claim check as the deterministic
 arbiter**, merge conflict as a bonus net. "No-steal" is an aspiration, not a
 promise: git delays the second claimant, it does not lock them out.
@@ -209,47 +206,21 @@ already use for a wrong path: 2 for `intent` and `order`, 3 for `decide`.
 
 Results are recomputed on demand by the census (no `census/` directory). The
 census is read-only: running it leaves `git status --porcelain` empty. Trends,
-if ever wanted, are recomputed from git history (E5).
+if ever wanted, are recomputed from git history.
 
 Metrics are derived, never self-reported: the census reads git history and
-these files. The primary integration's adapter additionally joins its local
-run analytics to noni artifacts by issue number for outcome questions ("do
-steered runs park less, rework less, merge faster?").
+these files. An adapter may additionally join its own run analytics to noni
+artifacts by issue number for outcome questions ("do steered runs park less,
+rework less, merge faster?").
 
-## 8. Epic map (filed via a plan driver as the issue set)
+## 8. Adapters
 
-- **E1 steering-ledger** (#1) — record format + both steer modes + anti-fabrication +
-  attribution posture. Evidence: Run 3 T1/T3.
-- **E2 sessions+claims** (#2) — register layout, claim protocol per §5, don't-touch
-  signalling. Evidence: Run 3 T4 + the prototype.
-- **E3 census** (#3) — arbiter checks (double-claim, stale session, provenance
-  completeness), `report` mode NDJSON, heartbeat multi-store honesty.
-- **E4 adapters** (#4) — the primary integration adapter (question-render /
-  answer mapping, cycle-lock reading, label-event authorization, run-analytics
-  join) and `integrations/github-issues/` (generic). Core viable with neither.
-  A driver-claims adapter — one that mirrors a work driver's own claim state
-  into the session register instead of the team keeping a second register by
-  hand — is the follow-up; its coexistence position is documented in
-  `docs/QUICKSTART.md` (*Using noni alongside a driver that keeps its own
-  claims*), and no commitment is made here on the adapter's shape.
-- **E5 measurement/eval** (#5) — baseline capture, scenario eval on an
-  existing benchmark harness (two concurrent sessions, planted double-claim),
-  optional noni arm on the harness's pinned suite.
-
-Evidence briefs (run 1: autonomous-agent landscape — adjacent context, demoted
-class; run 2: backlog/direction competitors — adopt-nothing-wholesale verdict,
-borrow a surveyed project's claim discipline and another's release-train
-vocabulary; run 3: skill-first & coordination) live in a local working tree
-held outside the repo and are summarized here so the repo stays self-
-contained. The epic issue set is filed as issues #1–#5 on this repo via the
-plan driver (label `epic`).
-
-## 9. First dogfood
-
-noni on noni's own project: E1–E5 are filed as GitHub issues (the work carrier),
-noni's own `noni/` state lives in a private state repository that holds the
-direction layer (the direction), and the plan/work driver sessions are the
-first agent sessions to register, claim and get censused. This public
-repository holds none of that state: it documents the layout (§7) and ships
-the skills, the writers and the census. Run its tools with `--repo` naming the
-state repository, and this checkout is never the state root.
+Adapters live under `integrations/`, one clearly-marked directory per tool, and
+the core is viable with none of them installed. The generic tracker adapter maps
+noni's artifacts onto a public tracker: it renders a question, reads an answer,
+and joins run analytics to noni artifacts by issue number. The follow-up is a
+driver-claims adapter: one that mirrors a work driver's own claim state into the
+session register instead of the team keeping a second register by hand. Its
+coexistence position — which layers a team with a driver of their own still runs
+— is documented in `docs/QUICKSTART.md` (*Using noni alongside a driver that
+keeps its own claims*); no commitment is made here on the adapter's shape.

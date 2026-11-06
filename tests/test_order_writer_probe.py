@@ -39,7 +39,6 @@ from order_fixtures import (
     _order_path,
     _porcelain,
     _repo,
-    _rival_commit,
     _seed,
 )
 from order_probe_shared import _no_commit_repo
@@ -48,7 +47,6 @@ from order_race_fixtures import (
     REFUSAL,
     RIVAL_STAMP,
     _head,
-    interrupt_read,
 )
 
 # --- the probe's own answers --------------------------------------------------

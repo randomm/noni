@@ -1,10 +1,11 @@
-"""The git helper and the atomic writer ``order.py`` builds its commit with.
+"""The git helper, the committed-bytes probe and the atomic writer of ``order.py``.
 
 Mechanics, not the writer's contract: a git call that cannot hang, sign itself,
-run a repository's own hooks or reach an external transport; and a write that
-lands whole or not at all. Both live here rather than beside the verbs because
-neither answers a question about the ordering -- they are the two ways this
-writer could damage a tree, and each has exactly one implementation.
+run a repository's own hooks or reach an external transport; a read of the bytes
+HEAD holds for one path that refuses to guess when git could not answer; and a
+write that lands whole or not at all. All three live here rather than beside the
+verbs because none answers a question about the ordering -- they are the three
+ways this writer could damage a tree, and each has exactly one implementation.
 """
 
 from __future__ import annotations
@@ -20,6 +21,13 @@ from . import gitenv
 GIT_TIMEOUT = 60
 # What a killed git call reports. No caller may read a git answer from it.
 GIT_TIMEOUT_RC = 124
+
+# What ``git show HEAD:<path>`` says, alongside code 128, when the path is simply
+# not in that tree (and when HEAD itself does not exist yet). Both are honest
+# negative answers rather than a repository git could not read, and matching them
+# is what keeps a genuine "no such object" out of the environment fault
+# ``committed_bytes`` reports for every other non-zero answer.
+SHOW_NOT_IN_HEAD = ("does not exist in 'HEAD'", "but not in 'HEAD'")
 
 
 def git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -55,6 +63,44 @@ def git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
             cmd, returncode=GIT_TIMEOUT_RC, stdout="",
             stderr=f"git {args[0] if args else '?'} timed out after {GIT_TIMEOUT}s",
         )
+
+
+def committed_bytes(repo: Path, rel: str) -> bytes | None | int:
+    """What HEAD holds at ``rel``, or ``None`` when nothing is committed there.
+
+    The freshness read of the writer: before a run writes, it compares what HEAD
+    holds at the artifact's path against the bytes it read at the start of the
+    run, and refuses when they moved (issue #116). One ``git()`` call, so the
+    probe carries the same hardening, the same bound and the same test seam as
+    the commit itself, and no second git runner exists to drift from it.
+
+    The three answers git can give are kept apart, because a run that read them
+    alike would write on top of an order it never saw:
+
+      0            -- the committed bytes, returned verbatim. No decode and no
+                       newline translation: what is compared is the byte sequence
+                       this writer would itself have written.
+      128 + phrase -- an honest "that path is not in that tree" (git's own wording,
+                       including the case where HEAD itself does not exist yet).
+                       ``None``: there are no committed bytes, which is the state
+                       the first ``add`` writes into, not a change.
+      anything else -- a call that answered nothing, returned as
+                       ``GIT_TIMEOUT_RC`` for a hang or the call's own return code.
+                       A corrupt object store, a bad HEAD or a hung git is an
+                       environment fault (the caller's exit 3) and must never be
+                       read as "committed bytes, unchanged" or as "nothing there".
+    """
+    shown = git(repo, "show", f"HEAD:{rel}")
+    if shown.returncode == 0:
+        return shown.stdout.encode("utf-8")
+    if shown.returncode == GIT_TIMEOUT_RC:
+        return GIT_TIMEOUT_RC
+    # git's two honest negative answers for this verb, matched on what git said
+    # rather than on its code alone: 128 for any other reason answered nothing.
+    if shown.returncode == 128 and any(phrase in (shown.stderr or "")
+                                       for phrase in SHOW_NOT_IN_HEAD):
+        return None
+    return shown.returncode
 
 
 def written(exc: OSError, what: str) -> str:

@@ -195,14 +195,28 @@ committed nor unstaged. A run that changes no byte -- confirming an entry alread
 stamped at the time it was given -- prints the order it read, says the file is
 unchanged, and commits nothing.
 
+**A concurrent writer is refused, not overwritten.** Before the committed route
+writes, `order.py` re-reads the committed bytes of `noni/direction/order.json`
+with one `git show HEAD:<path>` and compares them with the bytes it planned
+against. If they differ -- a second writer committed between this run's read and
+its write -- the run refuses with exit 4 and
+`the order changed since it was read; re-run`, and the order is not printed as if
+committed. A re-run of the same command is the fix: it re-reads, so it plans
+against what the other writer committed (an `add --at N` is resolved against the
+entries of the run that succeeds, not the refused one), and the surviving order
+keeps both entries. Nothing is written, staged or committed by the refused run,
+and HEAD does not move. A probe whose `git show` hangs or fails for a reason that
+told us nothing is exit 3 -- an environment fault, never read as "unchanged" --
+and `--no-commit` runs no git at all, so it is exempt (see the flag above).
+
 ## The exit codes
 
 | code | meaning |
 |---|---|
 | `0` | the order was written (and committed unless `--no-commit`), or no byte of it needed changing |
 | `2` | invalid input: an argparse failure, a subcommand outside `add`/`move`/`remove`/`confirm`, an issue that is not a positive integer, a missing `--decision` on `add`, a `--to`/`--at` that is not a 1-based position of the resulting list, a flag passed to the verb that does not own it, a `--now` that is not a valid UTC timestamp, or a `--repo` that is not a directory |
-| `3` | a path this writer needs could not be read or written, or a git call failed or timed out: the order file is not a regular file at its path, a decision record it must read is unreadable, the artifact could not be written, or the commit step failed (the file is left written and named, never claimed as committed) |
-| `4` | what the order itself refuses: the issue is already listed (`add`), absent from the order (`move`, `remove`, `confirm`), no file under `noni/decisions/` carries the given `--decision` id, that record is superseded (the hint names its successor), or the existing file is not the artifact this writer writes |
+| `3` | a path this writer needs could not be read or written, or a git call failed or timed out: the order file is not a regular file at its path, a decision record it must read is unreadable, the artifact could not be written, the commit step failed (the file is left written and named, never claimed as committed), or the freshness probe could not answer (a `git show` of the committed bytes that timed out or failed for a reason that told us nothing) |
+| `4` | what the order itself refuses: the issue is already listed (`add`), absent from the order (`move`, `remove`, `confirm`), no file under `noni/decisions/` carries the given `--decision` id, that record is superseded (the hint names its successor), the existing file is not the artifact this writer writes, or the committed order bytes changed since this run read them (`the order changed since it was read; re-run` -- re-run the same command, which re-plans against what the other writer committed) |
 
 `intent.py` publishes the same four codes for its one verb: `2` for an argparse
 failure, a subcommand outside `set`, a missing `--from` or `--decision`, a
@@ -213,7 +227,10 @@ missing, repeated or out of order, the stamp line absent or repeated, the file
 past the line cap) or a `--decision` the ledger does not hold or has superseded.
 
 Every refusal (2, 3 or 4) leaves the tracked files byte-identical: reads and
-checks happen before any write, the write goes to a temp file in its own
+checks happen before any write -- the re-read of the committed bytes that refuses
+a concurrent writer (`the order changed since it was read; re-run`) is one of
+those checks, so the refused run writes, stages and commits nothing -- the write
+goes to a temp file in its own
 directory and moves into place with `os.replace`, so a crash mid-write leaves
 the old bytes and never a truncated file.
 
@@ -309,3 +326,15 @@ the old bytes and never a truncated file.
 - **The writer is not the arbiter.** It validates what it writes; it does not
   decide whether the ledger, the session register or the order are sound. Run
   the census for that.
+- **A concurrent writer refuses; it is never merged.** The committed-bytes
+  re-read before the write is what turns the second writer's silent overwrite
+  (its entry list, built from bytes read before the rival committed, landing in
+  HEAD with exit 0) into an exit-4 refusal: `the order changed since it was read;
+  re-run`. There is no lock, no flock, no daemon and no retry loop, and no merge
+  or union of the two writers' entries -- a silent merge would decide an ordering
+  nobody decided. The remedy is a re-run, which re-reads and re-plans; that is
+  also why `--at N` of the refused run never lands at a stale position. A refused
+  run is not a census class: the order that survives is well-formed, so the
+  census still reports the three ordering classes clean. A `git show` of the
+  probe that hangs or fails for a reason that told us nothing is exit 3, because
+  a git that cannot answer is an environment fault and not a concurrent writer.

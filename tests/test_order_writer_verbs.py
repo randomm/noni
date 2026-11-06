@@ -24,11 +24,11 @@ from order_fixtures import (
     _porcelain,
     _read,
     _repo,
-    _rival_commit,
     _seed,
     _spied_git,
 )
 from order_race_fixtures import REFUSAL, RIVAL_STAMP
+from order_rival_commit import _rival_commit
 
 
 def test_move_replaces_the_entry_and_restamps_it(tmp_path):

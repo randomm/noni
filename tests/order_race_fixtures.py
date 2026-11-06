@@ -14,19 +14,17 @@ import contextlib
 import json
 from pathlib import Path
 
-from _harness import _git, _git_e2
+from _harness import _git_e2
 from order_fixtures import (
     BASELINE_ID,
     ORDER_REL,
     RIVAL_DATE,
     SEED_STAMP,
-    _canonical,
     _committed_order,
     _entry,
-    _order_path,
     _read,
-    _rival_commit,
 )
+from order_rival_commit import _rival_commit
 
 REFUSAL = "the order changed since it was read; re-run"
 
@@ -44,6 +42,7 @@ IO_FAULT = "environment fault"
 # a second time so the two can never drift -- a rival that carried NOW's stamp would
 # leave every race verb a no-change run that never reaches the guard.
 RIVAL_STAMP = RIVAL_DATE
+
 
 
 @contextlib.contextmanager

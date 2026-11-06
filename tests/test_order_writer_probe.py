@@ -22,7 +22,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from _harness import _git
+from _harness import _git, _git_e2
 from order_fixtures import (
     BASELINE_ID,
     NOW,
@@ -147,21 +147,25 @@ def test_a_regular_file_that_fails_to_read_is_a_fault_and_never_absence(tmp_path
     assert real_read_bytes is type(target).read_bytes
 
 
-def test_the_guard_reads_no_index_under_a_head_that_names_no_object(tmp_path,
-                                                                   monkeypatch):
-    """No commit yet means no index comparison, because that commit cannot be made.
+def test_the_guard_reads_the_index_under_an_unborn_head_only_to_refuse_a_conflict(
+        tmp_path, monkeypatch):
+    """Under a HEAD that names no object the index is consulted for ONE question.
 
-    ``git commit --only -- <path>`` records a commit whose parent is HEAD, and with no
-    HEAD git refuses a path-restricted commit for anything the index does not already
-    hold -- so the state the index arm exists for is unconstructible here, and a guard
-    that asked the question anyway would refuse every run of a repository whose next
-    commit git also refuses. Absence of HEAD is read as "no committed order to lose",
-    and asked as a return code rather than as a sentence: git swaps the wording it uses
-    for absence the moment a file of that name sits in the tree, and that swap is what
-    the phrase-matching probe got wrong.
+    The HEAD comparison and the staged-copy arm stay skipped: there is no committed
+    order to lose, and ``git commit --only -- <path>`` records no first commit for a
+    path the index does not already hold, so a guard that compared the staged bytes
+    here would refuse every run of a repository whose next commit git also refuses.
+    The one index question that IS owed is the conflicted index: the index DOES hold
+    the path, in three stages, and no blob answers what the commit would write. So a
+    normal run under an unborn HEAD still lands, and the index is asked exactly once
+    and only for that unmerged-stage check.
+
+    The pinned case is the one the phrase-matching probe got wrong: with the artifact
+    already sitting in the index and nothing committed, git changes the wording it
+    uses for absence, so absence is read as a return code and never as a sentence.
     """
     helper = _gitwrite_module()
-    repo = _no_commit_repo(tmp_path, "no-head-no-index-read")
+    repo = _no_commit_repo(tmp_path, "unborn-index-asked-once")
     target = _order_path(repo)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(_canonical([_entry(99, BASELINE_ID, RIVAL_STAMP)]),
@@ -170,7 +174,9 @@ def test_the_guard_reads_no_index_under_a_head_that_names_no_object(tmp_path,
     target.unlink()
 
     # The state itself, asserted from git and not from the guard's own answer: HEAD
-    # names nothing, and the index does hold bytes this run cannot have read.
+    # names nothing, and the index DOES hold a blob -- a staged copy that is neither
+    # HEAD's (there is none) nor this run's plan, which is exactly the state the live
+    # HEAD case refuses. Under an unborn HEAD it must not: no commit is at stake.
     assert helper.committed_bytes(repo, ORDER_REL).data is None
     assert helper.index_blob_id(repo, ORDER_REL)[0] is not None
 
@@ -185,8 +191,9 @@ def test_the_guard_reads_no_index_under_a_head_that_names_no_object(tmp_path,
     code, out, err = _order_inprocess(repo, "add", "7", "--decision", BASELINE_ID,
                                       "--now", NOW)
     assert code == 0, (code, out + err)
-    assert not [args for args in calls if args[0] == "ls-files"], (
-        f"the index was asked under a HEAD that names no object: {calls}")
+    asked = [args for args in calls if args[0] == "ls-files"]
+    assert len(asked) == 1, f"the index was asked {len(asked)} times: {calls}"
+    assert asked[0] == ("ls-files", "-s", "--", ORDER_REL), calls
     # The artifact's own path enters the history as the WRITER wrote it: what the index
     # held before the run is the operator's file, not this run's entry, so asserting the
     # committed bytes against the writer's render is the claim that survives.
@@ -331,37 +338,58 @@ def test_a_probe_that_failed_for_a_reason_that_told_us_nothing_is_exit_three(
     assert 7 not in _issues(repo), "the unwritten order must not have been written"
 
 
+def _head_blob(repo, rel=ORDER_REL):
+    """The id HEAD holds at ``rel``, asked of git directly and not of the writer.
+
+    The probe is being pinned against its own answers, so the expected blob id has to
+    come from outside it: here it is what git answers for the same rev through the
+    harness's own git runner, and that is the id the probe must then read back.
+    """
+    asked = _git_e2(repo, "rev-parse", "--verify", "--quiet", f"HEAD:{rel}")
+    assert asked.returncode == 0, asked.stderr
+    return asked.stdout.strip()
+
+
 def test_the_probe_is_one_hardened_git_call_of_the_writer_s_own_helper(tmp_path,
                                                                        monkeypatch):
-    """The probe reuses the writer's own ``git()``: one git runner, hardened, bounded.
+    """The probe reuses the writer's own git helper: one runner, hardened, bounded.
 
     The argv is what carries the hardening (no signing, no hooks, no external
     transports, no fsmonitor) and the scoped path, so the assertion is on the command
-    line the probe built -- one ``show`` of the artifact's path, and no second runner
-    of its own to drift from the first.
+    lines the probe built. It asks two of them: existence first, as
+    ``rev-parse --verify --quiet HEAD:<rel>``, which answers a return code rather than
+    a sentence; then the bytes, as ``show <blob>``, of the very id the first call
+    printed. The second call deliberately does not name the path again -- re-resolving
+    the rev would let a second lookup decide what "unchanged" means -- and no other
+    read asks about anything else. Both go through the writer's own helper, so there
+    is no second runner of its own to drift from the first.
     """
     helper = _gitwrite_module()
-    real_git = helper.git_bytes
+    real_git_bytes = helper.git_bytes
     seen: list[tuple] = []
 
     def git_bytes(repo, *args, input_text=None):
         seen.append(args)
-        return real_git(repo, *args, input_text=input_text)
+        return real_git_bytes(repo, *args, input_text=input_text)
 
     # The repository is built first and the spy installed only for the run under
-    # test: the spy answers every ``git show``, the fixture's own included, and the
+    # test: the spy answers every git call, the fixture's own included, and the
     # harness commits through helpers that read HEAD as well, so a spy in place while
     # the tree is built makes the fixture die on a fault that belongs to nothing in
     # the scenario.
     repo = _repo(tmp_path)
     _seed(repo, _entry(11, BASELINE_ID))
+    blob = _head_blob(repo, ORDER_REL)
     monkeypatch.setattr(helper, "git_bytes", git_bytes)
     code, _out, err = _order_inprocess(repo, "add", "7", "--decision", BASELINE_ID,
                                        "--now", NOW)
     assert code == 0, err
-    assert ("show", f"HEAD:{ORDER_REL}") in seen, seen
-    shows = [args for args in seen if args[0] == "show"]
-    assert len(shows) == 1, f"the probe ran {len(shows)} git calls: {shows}"
+    assert ("rev-parse", "--verify", "--quiet", f"HEAD:{ORDER_REL}") in seen, seen
+    assert ("show", blob) in seen, seen
+    # The only git reads of the probe are the HEAD existence check, the type of HEAD
+    # itself, and the one blob read above; none of them names a path that is not the
+    # artifact's own.
+    assert not [args for args in seen if args[0] == "show" and args[1] != blob], seen
 
 def test_a_file_that_cannot_be_read_is_a_fault_naming_the_reason(tmp_path):
     """The read arm that is neither absence nor a readable file: an unreadable file.

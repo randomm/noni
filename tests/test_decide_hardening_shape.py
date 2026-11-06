@@ -2,7 +2,19 @@
 
 Extracted from the decide writer suite (the E1-E5 hardening round): the
 decisions about *what* is written and *which record* it points at, including the
-path-shaped refusals and the guard probes."""
+path-shaped refusals and the guard probes.
+
+The two families of bad target are split by *who* refuses them. A target this
+file drives decodes: the refusal belongs to a field or canonical-form rule, so
+the run reached the writer's own checks and can name the field it disliked. The
+shapes the decoder will not answer for at all (a nesting past the interpreter's
+stack, a literal past its digit-conversion limit, and the walk that inspects
+what the decoder did build) are driven in
+``tests/test_decide_hardening_deep_target.py``, where the only answer the run
+may give is the reader's own "not a readable JSON object". The line matters
+because a deep target routed into this file's fixtures would be refused for a
+schema reason and still look green.
+"""
 
 import json
 

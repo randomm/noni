@@ -10,8 +10,6 @@ for is made; an unset seam variable is inert.
 
 from __future__ import annotations
 
-import json
-import math
 import os
 import stat
 import subprocess
@@ -19,7 +17,7 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-from . import _path_kind, gitenv, targetschema
+from . import _path_kind, gitenv, record_read, targetschema
 
 # The target's field types live beside this file in the package and are an
 # ordinary package import: inside an installed wheel there is no sibling file to
@@ -140,50 +138,14 @@ def write_atomic(path: Path, text: str) -> None:
 
 
 def record_object(raw: bytes) -> dict | None:
-    """The record object ``raw`` holds, or None when it is not one. Decoding
-    happens here, not in json.loads' reader, so a non-UTF-8 record answers "not a
-    record" instead of a traceback, and its bytes are never echoed.
+    """The record object ``raw`` holds, or None when it is not one.
 
-    Two refusals, one fact: a record holding a number this writer cannot name is
-    not a record whatever field carries it. ``parse_constant`` refuses the three
-    bare tokens json reads by default (``NaN``, ``Infinity``, ``-Infinity``), which
-    are not JSON at all; ``_holds_non_finite`` then walks the parsed structure for
-    the legal literal that overflows to the same value with no token to stop.
-    Reading either into a float would put a value no writer can emit back on disk.
+    The rule is :func:`noni.record_read.record_object`, which owns the decode,
+    the refused token, the non-finite walk and the arms that turn a decoder's
+    refusal into a None rather than a traceback; this is the name the writer's
+    probes call. A None is their existing "not a readable JSON object" refusal.
     """
-    try:
-        record = json.loads(raw.decode("utf-8"), parse_constant=_refuse_constant)
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
-        return None
-    if not isinstance(record, dict) or _holds_non_finite(record):
-        return None
-    return record
-
-
-def _holds_non_finite(value: object) -> bool:
-    """Whether ``value`` holds a float json read in that is not finite.
-
-    ``math.isfinite`` is what catches the overflowed literal (json hands back
-    ``inf`` for ``1e400``). A bool is a bool, never a number, so a record every
-    writer emits still parses.
-    """
-    if isinstance(value, float):
-        return not math.isfinite(value)
-    if isinstance(value, dict):
-        return any(_holds_non_finite(item) for item in value.values())
-    if isinstance(value, (list, tuple)):
-        return any(_holds_non_finite(item) for item in value)
-    return False
-
-
-def _refuse_constant(token: str) -> float:
-    """The reader's answer to ``NaN``/``Infinity``/``-Infinity``: refuse the token.
-
-    ``parse_constant`` is asked to return the value; raising is how it refuses, and
-    the ``ValueError`` travels the same except arm as a malformed document, so no
-    token is named back to the operator.
-    """
-    raise ValueError(f"not a JSON number: {token}")
+    return record_read.record_object(raw)
 
 
 def path_kind(path: Path) -> str | None:

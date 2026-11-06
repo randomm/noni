@@ -343,8 +343,9 @@ substitute for running `scripts/public_safety.py` before publishing.
   enforces, and the page you are reading is the only exit-code reference. The
   two per-artifact shell entry points (`skills/steering-ledger/scripts/census.sh`
   and `skills/sessions-claims/scripts/census-sessions.sh`) are thin wrappers: each
-  takes the one directory its caller names, accepts every census option and
-  passes it through, and runs this census restricted to its group — the ledger
+  takes the one directory its caller names, accepts `--json`, `--strict` and
+  `--now` and refuses every other option without running the census, and runs
+  this census restricted to its group — the ledger
   shim (`census.sh`) to `ledger-record`, `ledger-edited` and `ledger-chain`, the
   sessions shim (`census-sessions.sh`) to the session group. Neither carries a
   schema, a rule or an exit-code table of

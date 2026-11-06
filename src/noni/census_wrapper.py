@@ -26,17 +26,32 @@ the census is called. All three belong to the wrapper because the census cannot
 see them: the unified census takes its state paths as flags and audits the tree
 ``--repo`` names, so an unnamed directory, a second directory, or a path that is
 not a directory at all is invisible to a run over the tree that contains it --
-and a census that reads nothing has no verdict to give. Everything every other
-argument is passed through untouched, so ``--json``, ``--strict``, ``--now`` and
-the rest stay the census's flags with the census's refusals -- this module
-re-implements none of them.
+and a census that reads nothing has no verdict to give.
 
-The state-path flags are the wrapper's own, not pass-throughs: ``--repo``,
-``--ledger`` and ``--sessions`` are what ``argv_for`` fills in, and a caller who
-types one of them -- by name or by an unambiguous prefix -- would have argparse's
-last occurrence win and census a directory this module never validated, exiting
-"clean" where the plain run fails. Any such option is refused here, whatever the
-entry point.
+The options a caller may type are an allowlist, not a walk: one directory,
+``--json``, ``--strict``, and ``--now`` in either ``--now VALUE`` or
+``--now=VALUE`` form (see :data:`_ALLOWED_SWITCHES` and :data:`_VALUE_FLAG`),
+plus ``--help``/``-h`` as the whole command line.
+Everything else is refused here with the census's usage code and never reaches
+the census -- any other option, any prefix of one, a bare ``--``, a single-dash
+token, and any second directory.
+
+That the list is short is the point, and it is why the wrappers no longer ask
+the census's parser what a token means. Each round of review of the old
+pass-through found one more token the hand-written walk had misread -- a state
+path typed as ``--led=/x``, a ``--help`` in the middle of a line, a single-dash
+token, a filter whose value was stranded by the token before it -- and every one
+of them ended as a census run the caller had not asked for, usually an exit 0
+where the plain run fails. A wrapper that recognises four spellings and refuses
+the rest cannot misread a token: the refused set is whatever is not on the list,
+so it includes every flag the census gains later, and no token has to be
+classified to be answered.
+
+Filters are the deliberate casualty. ``--only`` and ``--skip`` belong to
+``noni census``, which takes them, resolves them against the check contract, and
+refuses a class it does not define; a wrapper that forwarded one would be a
+second route to a filtered verdict, filtered by a list this module does not own,
+over one group. The caller who wants a filter runs the census itself.
 
 Nothing here opens a path, evaluates a class, or invents an exit code. Every
 refusal below returns the census's usage code and names what it refused, in the
@@ -45,47 +60,15 @@ census's own style.
 
 from __future__ import annotations
 
-import importlib
 import sys
 from pathlib import Path
 
 from .census import LEDGER_CHECKS, SESSION_CHECKS, main
 from .census_report import CLASS_CODE, EXIT_USAGE
 
-
-def _build_parser():
-    """The census's own argument parser, resolved through ``census`` at the call.
-
-    The flag surface is ``census_cli``'s and this wrapper re-implements none of it,
-    so every question about a token -- is it a flag, does it take a value, is the
-    prefix rule on -- is asked of that parser. It is reached through the census
-    module rather than bound at import because the census is the module the
-    wrappers' tests put their seams on (the same rule ``census_run`` follows for
-    every census name it uses): a parser a census test replaces, or a census that
-    fails to load at all, is seen here the way it is seen by ``census.main``,
-    instead of against a copy bound when this module was imported.
-    """
-    return importlib.import_module("noni.census")._build_parser()
-
-# Whether the census's parser resolves an option by prefix for this process. Read
-# from that parser at call time -- never captured at import: the flag surface is
-# ``census_cli``'s, the prefix rule is part of it, and a value read once at import
-# is a copy that can disagree with the parser the census is about to build.
-_ABBREVIATIONS_ATTR = "allow_abbrev"
-
-
-def _abbreviations() -> bool:
-    """The census's own prefix setting, asked of the census's parser now.
-
-    argparse consults ``allow_abbrev`` at the moment it matches a token, so the
-    wrapper asks the same parser the census will use, at the moment it asks about
-    a token: a token is never called a bare flag here when the census is about to
-    read it as one, and never called a flag when the census is about to refuse it.
-    """
-    return bool(getattr(_build_parser(), _ABBREVIATIONS_ATTR, True))
-
-# The noun each entry point's directory is called, in the usage line and in its
-# refusals: the word a reader has to match against the tree they are standing in.
+# Whether the wrapper's help, its refusals and its usage line are spelled with
+# the entry point's own name: the word a reader has to match against the
+# terminal they typed into.
 _ENTRY_POINTS: dict[str, tuple[str, frozenset[str]]] = {
     "census.sh": ("decisions", LEDGER_CHECKS),
     "census-sessions.sh": ("sessions", SESSION_CHECKS),
@@ -98,187 +81,23 @@ _GROUP_FLAG: dict[frozenset[str], str] = {
     SESSION_CHECKS: "sessions",
 }
 
-# Every flag that decides which paths a census reads. The wrapper sets all three
-# itself, so a caller's own spelling of any one of them is refused whichever entry
-# point it was typed at (see :func:`_refuse_state_path_option`).
-_STATE_PATH_FLAGS = frozenset({"--repo", "--ledger", "--sessions"})
+# The options a caller may type at an entry point. Everything outside these two
+# sets is refused (see the module docstring for why the rule is an allowlist and
+# not a translation), so both sets are compared to a token exactly as typed.
+#
+# The switches take no value. ``--now`` is the only value-taking entry, because
+# it is the one a reproducible run has to be able to pin; both its forms are
+# spelled here rather than derived, so the list a reviewer reads is the list the
+# walk compares against.
+_ALLOWED_SWITCHES = frozenset({"--json", "--strict"})
+_VALUE_FLAG = "--now"
+_VALUE_FLAG_PREFIX = "--now="
 
-
-def _resolves_to(option: str, flags: frozenset[str]) -> str | None:
-    """The flag in ``flags`` that the census's parser reads ``option`` as, or ``None``.
-
-    Resolved the way the census resolves it, because a refusal that matched only
-    the exact spelling would let ``--sess`` or ``--re`` through while the parser
-    handed the census a state path (see :func:`_abbreviations`). So an unambiguous
-    prefix is resolved with the parser's own matcher, and a token the parser reads
-    as a flag keeps its ``=value`` half: ``--ledger=/etc`` is still that flag.
-
-    No match is ``None``, and so is an ambiguous prefix -- both are the census's to
-    refuse in its own ``unrecognized arguments`` / ambiguity words, and this module
-    does not guess between two flags.
-    """
-    name = option.partition("=")[0]
-    if name in flags:
-        return name
-    if not name.startswith("--") or "=" in option:
-        return None
-    matches = {action for action, *rest in _build_parser()._get_option_tuples(name)}
-    wanted = {action for action in matches
-              for spelling in action.option_strings
-              if spelling in flags}
-    return next(iter(wanted)).option_strings[0] if len(wanted) == 1 else None
-
-
-def _takes_a_separate_value(option: str, group: frozenset[str] | None = None) -> bool:
-    """Whether the census's own parser reads a following token as ``option``'s value.
-
-    Asked of the parser the census builds -- never of a list kept here: the flag
-    surface is ``census_cli``'s and this module re-implements none of it. The
-    wrapper must know which tokens are values and not candidate directories, and
-    the parser is the only authority on that. argparse's own arity spelling is
-    read, not a copy of it: ``None`` is one value, ``0`` is none (`--strict`,
-    `--json`), and an explicit number or `*`/`+`/`?` takes at least one.
-
-    ``group`` is the entry point's own class set, and it decides what a
-    **retired** flag does to the token after it. A flag that names the *other*
-    register (`--sessions` at the ledger entry point, `--ledger` at the sessions
-    one) is the old cross-group dispatch issue #99 removed: the census still
-    defines the flag, so it parses, and if its value were consumed here the
-    caller would be refused for a missing directory instead of for the option
-    they typed. It is therefore answered ``False`` -- the value stays a
-    positional, the run proceeds, and the census refuses it (see
-    :func:`_refuse_retired_group_option`). Only the entry point's own group flags
-    (`--ledger` for the ledger census) keep their value.
-
-    A name argparse resolves to several flags, or to none, is not answered here at
-    all: it is left for the census to refuse in its own words, with the token after
-    it judged on its own.
-    """
-    if "=" in option:
-        # `--opt=value` names its own value, so no token after it belongs to it.
-        # Answered without the parser: a token carrying `=` is never matched by
-        # prefix, whether or not the census defines the flag -- an unknown
-        # `--nope=x` is refused by the census and its `=value` half is not the
-        # wrapper's to call a directory.
-        return False
-    if group is not None and _is_a_retired_group_option(option, group):
-        return False
-    return _value_arity(option) is True
-
-
-def _positionals(argv: list[str], group: frozenset[str] | None = None) -> list[str]:
-    """The bare tokens of one command line: the arguments the census parses as
-    positionals, which for a census run is at most the state directory.
-
-    ``not a.startswith("-")`` is not that set: the value of a value-taking
-    option (`--only ledger-record`, `--skip hygiene`, `--now 2026-01-01T00:00:00`)
-    is a bare token the census never sees as an argument, and counting it is a
-    wrapper that refuses the options the docs promise. A flag that consumes the
-    next token is skipped with it; `--opt=value` carries its own value, so it
-    swallows nothing. ``group`` makes the walk entry-point aware, so a retired
-    cross-group flag leaves its value standing (see
-    :func:`_takes_a_separate_value`).
-    """
-    positional: list[str] = []
-    skip_next = False
-    for arg in argv:
-        if skip_next:
-            skip_next = False
-            continue
-        if not arg.startswith("-"):
-            positional.append(arg)
-        elif arg != "-" and _takes_a_separate_value(arg, group):
-            skip_next = True
-    return positional
-
-
-def _census_options(argv: list[str], group: frozenset[str] | None = None) -> list[str]:
-    """The caller's own options, each value kept glued to the flag that takes it.
-
-    ``_positionals`` already knows which bare tokens belong to a value-taking
-    option; the same walk has to build the tail, because a filter on
-    ``startswith("-")`` hands the census a value with its flag missing -- the
-    census's ``--only`` is repeatable, so a stray class name is accepted there and
-    quietly changes which rows print, and a state-path flag whose value was left
-    behind reads to the census like a directory the caller never typed.
-
-    A token is a flag when the census's parser matches it as one: an exact option,
-    or a prefix of one while the parser is resolving prefixes. Everything else --
-    `--nope`, an ambiguous prefix once prefix matching is off -- is the caller's
-    token, passed unchanged with the token after it so the census refuses it in its
-    own ``unrecognized arguments`` words. A value-taking flag left standing last by
-    an interrupted command line keeps its flag alone, where the census answers its
-    own missing-argument error.
-    """
-    options: list[str] = []
-    index = 0
-    while index < len(argv):
-        arg = argv[index]
-        if arg != "-" and _is_a_known_option(arg):
-            options.append(arg)
-            if _takes_a_separate_value(arg, group) and index + 1 < len(argv):
-                options.append(argv[index + 1])
-                index += 1
-        elif arg.startswith("-") and arg != "-":
-            # Not a flag the census defines: an unknown token, and the token after
-            # it is the caller's to have refused, not the wrapper's to swallow.
-            options.append(arg)
-        index += 1
-    return options
-
-
-def _is_a_known_option(option: str) -> bool:
-    """Whether ``option`` is a flag the census defines, spelled as the caller typed
-    it: an exact option string, or `--name=value` for one of those.
-
-    Used where an unknown token must keep the token after it (see
-    :func:`_census_options`). A `--name=value` whose name is not a census flag is
-    unknown as a whole -- the name before the `=` is what the parser knows -- so it
-    is not answered by :func:`_is_an_option`, which lets a token carrying `=`
-    through as the caller's own so an unknown one is refused whole, flag and value.
-    """
-    name = option.partition("=")[0]
-    return name in _build_parser()._option_string_actions
-
-
-def _is_an_option(option: str) -> bool:
-    """Whether the census's parser matches ``option`` as one of its own flags.
-
-    The parser answers, in the state the census will use it: exact names always,
-    and prefixes only while the census has prefix matching on. An ambiguous prefix
-    is a flag the census will itself refuse as ambiguous, so it counts as one here
-    and its value is kept with it, reaching the census as the pair the caller
-    typed.
-    """
-    parser = _build_parser()
-    if option in parser._option_string_actions:
-        return True
-    # Only a token the parser can read as a flag is put to it: argparse raises on
-    # a bare word handed to its matcher, and a bare word is not a flag anyway.
-    return option.startswith("--") and "=" not in option \
-        and bool(parser._get_option_tuples(option))
-
-
-def _value_arity(option: str):
-    """``True``/``False`` for a flag that does/does not consume the next token, or
-    ``None`` when the parser cannot say: no match, or an ambiguous prefix.
-
-    Asked of the census's parser as it stands, so a flag the census's parser does
-    not define is ``None`` -- no answer -- and the census is the one that refuses
-    it.
-    """
-    parser = _build_parser()
-    if not option.startswith("--"):
-        # Not something the parser can match; argparse raises on a bare word put
-        # to its matcher, and this module is not the place that answer is made.
-        return None
-    matches = parser._get_option_tuples(option)
-    if not matches and not _abbreviations():
-        action = parser._option_string_actions.get(option)
-        return action is not None and action.nargs != 0
-    if len(matches) != 1:
-        return None
-    return matches[0][0].nargs != 0
+# The whole command line that asks for the entry point's help text instead of a
+# census. ``--help`` beside a directory is not that: the caller wanted a census
+# and mistyped something, and guessing which half they meant is not this
+# module's call.
+_HELP_TOKENS = frozenset({"--help", "-h"})
 
 
 def _only(checks: frozenset[str]) -> list[str]:
@@ -300,87 +119,36 @@ def argv_for(target: str, options: list[str], checks: frozenset[str]) -> list[st
     ``target`` reaches ``--ledger`` / ``--sessions`` exactly as the caller
     spelled it — including the empty string, which the census names in its own
     refusal — while ``--repo`` is built from the resolved path, the only form
-    whose parent reliably means the directory above it.
+    whose parent reliably means the directory above it. ``options`` is the
+    allowlisted tail :func:`_allowed_options` returned, in the order typed.
     """
     resolved = Path(target).resolve()
     return ["--repo", str(resolved.parent), "--" + _GROUP_FLAG[checks], target,
             *_only(checks), *options]
 
 
-def _is_a_retired_group_option(option: str, group: frozenset[str]) -> bool:
-    """Whether ``option`` names a register this entry point does not census.
+def _positionals(argv: list[str]) -> list[str]:
+    """The bare tokens of one permitted command line: the directories the caller named.
 
-    The census owns one flag per register (`--ledger`, `--sessions`) and each entry
-    point names its own directory with its own. A caller who types the *other*
-    one's flag at an entry point is typing the form the retired dispatch had: the
-    census parses it, so the wrapper must not spend the token after it on a value
-    it is about to refuse. `--name=value` carries its own value and is never one.
-
-    The other register is resolved by prefix, the way the census resolves it, so
-    the token after `--sess` is left standing too rather than spent on a value.
-
-    The register flag is taken from :data:`_GROUP_FLAG` by identity, never by
-    literal, so this stays true when a register is added or renamed.
+    ``--now`` consumes the token after it here as well as in the option check, and
+    both walks must agree or the timestamp a caller typed for ``--now`` arrives
+    here as a second directory and the run is refused for a path nobody named.
+    The rule is the same one the check applies -- an exact ``--now`` swallows the
+    token after it, ``--now=<stamp>`` swallows nothing -- so there is one meaning
+    for a token in this module, not one per walk.
     """
-    if "=" in option:
-        # `--name=value` carries its own value, so it never strands a token after it.
-        return False
-    own = _GROUP_FLAG.get(group)
-    if own is None:
-        return False
-    # The register flags are spelled with their `--`, as the parser knows them.
-    other = {"--" + flag for flag in _GROUP_FLAG.values()} - {"--" + own}
-    return _resolves_to(option, other) is not None
-
-
-def _refuse_retired_group_option(label: str, noun: str, argv: list[str],
-                                group: frozenset[str]) -> int | None:
-    """The refusal of a retired cross-group dispatch, or ``None`` for a clean line.
-
-    The census defines both register flags, so an old `census.sh --sessions DIR`
-    would otherwise be answered as a census of the sessions tree through the
-    ledger entry point -- the silent wrong-group census issue #99 was written
-    against. Refused here, in the entry point's own words, naming the option the
-    caller typed and pointing at the entry point that does run that group. It runs
-    before the directory checks so the option, not a missing path, is what the
-    caller is told about.
-    """
-    for arg in argv:
-        name = arg.partition("=")[0]
-        if arg != "-" and _is_a_retired_group_option(name, group):
-            other = _sibling_entry_point(group)
-            return _refuse(label, noun, f"{name} is not a {label} option "
-                                        f"(run {other} over the register that "
-                                        f"{name} names)")
-    return None
-
-
-def _refuse_state_path_option(label: str, noun: str, argv: list[str]) -> int | None:
-    """The refusal of a caller's own state-path flag, or ``None`` for a clean line.
-
-    ``--repo``, ``--ledger`` and ``--sessions`` are the wrapper's to set: it derives
-    them from the one directory the caller named (see :func:`argv_for`). Forwarded
-    unchanged, argparse's last occurrence wins, so `census.sh DIR --ledger /etc`
-    censused a directory this module never checked and exited 0 "clean" where
-    `census.sh DIR` exits 10 -- the verdict a scripted caller reads as its own.
-    Refused in either position, in either ``--opt value`` or ``--opt=value`` form,
-    and by any unambiguous prefix, naming the option as the caller typed it.
-    """
-    for arg in argv:
-        flag = _resolves_to(arg, _STATE_PATH_FLAGS)
-        if flag is not None:
-            return _refuse(label, noun, f"{arg} is not allowed here: the "
-                                        f"{label} entry point sets {flag} itself "
-                                        f"from the {noun} directory it is given")
-    return None
-
-
-def _sibling_entry_point(group: frozenset[str]) -> str:
-    """The other entry point's name, for the refusal that points a caller at it."""
-    for label, (_noun, checks) in _ENTRY_POINTS.items():
-        if checks != group:
-            return label
-    return "the entry point for that register"
+    positional: list[str] = []
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token == _VALUE_FLAG:
+            index += 2
+        elif not token.startswith("-"):
+            positional.append(token)
+            index += 1
+        else:
+            index += 1
+    return positional
 
 
 def _refuse(label: str, noun: str, detail: str) -> int:
@@ -390,34 +158,81 @@ def _refuse(label: str, noun: str, detail: str) -> int:
     named -- the three things a reader needs to fix a command line -- and the code
     is ``EXIT_USAGE``, the code the census's own argparse refusals carry.
     """
-    print(f"{label}: error: {detail} (usage: {label} [--help] [census options] "
-          f"<state-root>/noni/{noun})", file=sys.stderr)
+    print(f"{label}: error: {detail} (usage: {label} [--help] "
+          f"[--json | --strict | --now <ISO-8601>] <state-root>/noni/{noun})",
+          file=sys.stderr)
     return EXIT_USAGE
+
+
+def _first_refused_option(argv: list[str]) -> str | None:
+    """The first token an entry point may not accept, or ``None`` for a clean line.
+
+    The walk is the whole classifier: a token is accepted when it is exactly one
+    of the allowlisted names, when it is ``--now=VALUE`` (any value -- the census
+    decides what a timestamp is), when it is the value standing after a
+    recognised ``--now``, or when it is a bare token at all -- a bare token is the
+    directory, which is the argument the entry point exists to take, and its
+    shape (none, one, two) is the directory checks' business, not this walk's.
+    Nothing else is recognised, so nothing else can be
+    misread as a flag or a value: an option that does not exist
+    yet, a prefix of one, a bare ``--``, and a single-dash token are all refused
+    on the same plain rule.
+
+    The value of ``--now`` is consumed by position and never re-examined, so a
+    stamp beginning with a dash stays the census's timestamp to refuse rather
+    than becoming an option here.
+    """
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token in _ALLOWED_SWITCHES or token.startswith(_VALUE_FLAG_PREFIX):
+            index += 1
+        elif token == _VALUE_FLAG:
+            index += 2
+        elif not token.startswith("-"):
+            index += 1
+        else:
+            return token
+    return None
+
+
+def _refuse_unlisted_option(label: str, noun: str, argv: list[str]) -> int | None:
+    """The refusal of anything off the allowlist, or ``None`` for a permitted line.
+
+    One line naming the token as the caller typed it and pointing at the tool
+    that does take the option, so the caller is not left guessing which flags a
+    wrapper happens to know. The census is never reached by this path: a wrapper
+    that forwarded what it could not classify was the false clean the allowlist
+    exists to close.
+    """
+    token = _first_refused_option(argv)
+    if token is None:
+        return None
+    return _refuse(label, noun, f"{token} is not a {label} option: run "
+                                f"`noni census` for filters and other options")
 
 
 def run(label: str, noun: str, argv: list[str] | None,
         checks: frozenset[str]) -> int:
     """One entry point's whole run: check the shape, then hand the census its argv.
 
-    ``--help`` is the package's own text (see ``shim_help``). Anything else has to
-    be exactly one directory that exists and is a directory, plus whatever census
-    options the caller named. Each refusal is the census's usage code and names the
-    path the caller gave: a census of nothing -- or of one of two registers --
-    would print a verdict the caller never pointed at, and whoever scripts the run
-    reads an exit 0 as a clean census.
+    ``--help`` as the whole command line is the package's own text (see
+    ``shim_help``). Anything else has to be exactly one directory that exists and
+    is a directory, plus whatever options the allowlist admits. Each refusal is
+    the census's usage code and names the path or token the caller gave: a census
+    of nothing -- or of a tree the caller pointed at through a flag the wrapper
+    does not take -- would print a verdict nobody asked for, and whoever scripts
+    the run reads an exit 0 as a clean census.
     """
     argv = list(sys.argv[1:] if argv is None else argv)
-    if len(argv) == 1 and argv[0] in ("--help", "-h"):
+    if len(argv) == 1 and argv[0] in _HELP_TOKENS:
         from . import shim_help
 
         return shim_help.print_help(label)
-    state_path = _refuse_state_path_option(label, noun, argv)
-    if state_path is not None:
-        return state_path
-    retired = _refuse_retired_group_option(label, noun, argv, checks)
-    if retired is not None:
-        return retired
-    positional = _positionals(argv, checks)
+    unlisted = _refuse_unlisted_option(label, noun, argv)
+    if unlisted is not None:
+        return unlisted
+    positional = _positionals(argv)
     # An empty argument is a positional argparse would hand on, and ``Path("")``
     # is the cwd: a caller who left the directory empty in a script would have its
     # census run over whatever `noni/decisions` sat beside, and read the verdict as
@@ -438,7 +253,30 @@ def run(label: str, noun: str, argv: list[str] | None,
     if not target.is_dir():
         reason = "is not a directory" if target.exists() else "does not exist"
         return _refuse(label, noun, f"the {noun} path {positional[0]} {reason}")
-    return main(argv_for(positional[0], _census_options(argv, checks), checks))
+    return main(argv_for(positional[0], _allowed_options(argv), checks))
+
+
+def _allowed_options(argv: list[str]) -> list[str]:
+    """The caller's permitted options, in the order they were typed.
+
+    Every token here has already been admitted by :func:`_first_refused_option`,
+    which is what makes this a filter rather than a second classifier: it keeps
+    what the check accepted and adds nothing, so the census sees the bytes the
+    caller typed and no token the wrapper invented.
+    """
+    kept: list[str] = []
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token in _ALLOWED_SWITCHES or token.startswith(_VALUE_FLAG_PREFIX):
+            kept.append(token)
+            index += 1
+        elif token == _VALUE_FLAG:
+            kept += [token, argv[index + 1]]
+            index += 2
+        else:
+            index += 1
+    return kept
 
 
 def run_entry(label: str, argv: list[str] | None = None) -> int:

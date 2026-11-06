@@ -181,11 +181,12 @@ scripts/census.sh <dir>` or, since it carries its executable bit and its bash
 shebang, as `scripts/census.sh <dir>`. Why no interpreter may stand in front of
 it is in `references/census.md`. Its one argument is the ledger directory of the
 state root (`--repo` plus `noni/decisions`): there is no current-directory
-default, so a run with no argument is the usage error `2`. Every census option is
-accepted and passed through, so `--json`, `--strict`, `--now` and the `--only` /
-`--skip` filters work here exactly as they do on `noni census` — `--strict` is
-the route that promotes the ledger group's warn classes, `ledger-empty` among
-them.
+default, so a run with no argument is the usage error `2`. Beyond the directory
+it takes `--json`, `--strict` and `--now` (the `--now VALUE` and `--now=VALUE`
+forms) and nothing else — `--strict` is the route that promotes the ledger
+group's warn classes, `ledger-empty` among them. Every other option is refused
+with `2` without running the census, so filters and anything else need
+`noni census`.
 
 A `decisions/` directory that holds no `*.json` record is not a failure: the
 census reports it as the `ledger-empty` warn at exit 0 and promotes it to 42

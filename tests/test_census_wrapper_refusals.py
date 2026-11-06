@@ -1,24 +1,31 @@
-"""What the ledger wrapper refuses before it calls the census, and what it passes on.
+"""What the two shell census wrappers accept, what they refuse, and what they hand on.
 
 ``skills/steering-ledger/scripts/census.sh`` execs the in-place ``census.py``
-beside it, which calls ``census_wrapper.run_ledger``. That function is the
-wrapper's whole mind: two shape checks and one call
-(``src/noni/census_wrapper.py``, ``run``). Everything else — every flag, its
-meaning, and its refusal — belongs to the unified census, which the wrapper hands
-the remaining arguments to untouched.
+beside it, which calls ``census_wrapper.run_ledger``; the sessions skill's pair
+reaches ``run_sessions`` the same way. Those two functions are the wrappers'
+whole mind: one allowlist of options, two shape checks over the directory, and
+one call (``src/noni/census_wrapper.py``, ``run``). Everything the wrappers do
+not list is refused before the census is reached -- which is the whole design,
+and the reason the cases below are a table rather than a conversation about
+what a token means.
 
-The two checks are what the census cannot make, because the census audits the
-tree ``--repo`` names and an unnamed directory, a second directory, or a path
-that is a plain file or a dangling link is invisible to a run over the tree that
-contains it. A census that reads nothing has no verdict to give, and whoever
-scripted the run reads its exit 0 as a clean ledger.
+The allowlist is ``--json``, ``--strict`` and ``--now`` (in its ``--now VALUE``
+and ``--now=VALUE`` forms) beside the one directory, plus ``--help``/``-h`` as
+the whole command line. Each refused token is refused because it is not on that
+list, so the set of refused tokens is fixed by the list and not by how well the
+wrapper recognises it: an option the census gains next year, a prefix of a flag
+that exists, a bare ``--`` and a single-dash token are all refused on the one
+rule, and none of them reaches the census. A pass-through that forwarded what
+it could not classify is the false clean this design replaced -- a takeover of
+``--ledger`` by the caller read the tree it named and exited 0 where the plain
+run failed.
 
-Each case drives ``run_ledger`` directly — the product function both shipped
-scripts reach — and asserts the two things every refusal owes: the census's usage
-code, and an empty stdout. Which half of the pair refused is told by whose words
-appear: the census's ``unrecognized arguments`` for an option it does not define,
-the wrapper's own line (``at most``, the ``is not a directory`` / ``does not
-exist`` pair) for a command line of the wrong shape.
+Each case drives an entry point directly and asserts the three things every
+refusal owes: the census's usage code, an empty stdout, and a census that was
+never called (the doubles in ``census_probe_doubles`` record the argv they were
+handed, so a census that ran is visible even when it printed nothing). The
+pass-through half of the contract is the other side of that: the allowed forms
+arrive at the census spelled as the caller spelled them.
 """
 
 from __future__ import annotations
@@ -29,7 +36,7 @@ from pathlib import Path
 
 import pytest
 from census_probe_doubles import _RecordedCensusCall, _RecordedSessionsCall
-from census_wrapper import EXIT_USAGE, LEDGER_CHECKS, SESSION_CHECKS, run_ledger, run_sessions
+from census_wrapper import EXIT_USAGE, run_ledger, run_sessions
 
 # The broken-record fixtures of the two registers, each with the code its class wins
 # the run by: an unparseable ledger record is `ledger-record` (10) and a wrongly
@@ -38,20 +45,6 @@ _SESSIONS_BROKEN_NAME = "not-an-allocated-session.md"
 _BROKEN_RECORD = {"decisions": ("2026-10-02-broken.json", "{ not json\n", 10),
                   "sessions": (_SESSIONS_BROKEN_NAME, "- identity: x\n", 32)}
 
-# Every spelling of a state-path flag a caller can type: the exact name, the `=` form,
-# and an unambiguous prefix the census's own parser resolves. Each must be refused at
-# either entry point, whichever group the flag names.
-_STATE_PATH_SPELLINGS = (
-    "--ledger", "--ledger=/tmp/elsewhere",
-    "--sessions", "--sessions=/tmp/elsewhere",
-    "--repo", "--repo=/tmp/elsewhere",
-    "--led", "--sess", "--re",
-)
-
-# The classes either wrapper runs by itself, so a caller's own `--only <class>` is
-# recognised as one by :func:`_forwarded` whichever wrapper it was typed at.
-_GROUP_CLASSES = LEDGER_CHECKS | SESSION_CHECKS
-
 # Each entry point, with the noun its usage line uses, the function a caller
 # reaches it through, and the census double that reads its command line: one
 # table, so the cases below drive both wrappers and cannot quietly cover only the
@@ -59,25 +52,69 @@ _GROUP_CLASSES = LEDGER_CHECKS | SESSION_CHECKS
 _WRAPPERS = ((run_ledger, "decisions", _RecordedCensusCall),
              (run_sessions, "sessions", _RecordedSessionsCall))
 
-# An option no census defines. The census's own refusal is what answers it, which
-# is the point of the case: the wrapper interprets nothing itself.
-UNKNOWN_OPTION = "--no-such-census-flag"
+# The same table without the double, for the cases that run the real census.
+_WRAPPERS_REAL = ((run_ledger, "decisions"), (run_sessions, "sessions"))
+
+# The options a wrapper takes, in each form the docs promise, paired with what
+# the recording double keeps of them: the caller's own tokens, in the order
+# typed, after the wrapper's own group ``--only`` pairs (which belong to the
+# check contract and are pinned in test_census_check_contract.py).
+# Each form is (the caller's own tokens, what the recording double keeps of
+# them). The directory is supplied by the case -- it is not one of the caller's
+# options -- so the `[]` row below is a bare `<dir>` run, and `<dir>` inside a
+# row stands for the directory typed between the flags around it.
+_ALLOWED_FORMS = (
+    # Each row is (the tokens the caller types after the directory, what the
+    # recording double keeps of them). The directory itself is supplied by the
+    # case, so no row names it twice: the point is the options, in whatever order
+    # the caller interleaved them, reaching the census as typed.
+    ([], []),
+    (["--json"], ["--json"]),
+    (["--strict"], ["--strict"]),
+    (["--now", "2026-01-01T00:00:00+00:00"], ["--now", "2026-01-01T00:00:00+00:00"]),
+    (["--now=2026-01-01T00:00:00+00:00"], ["--now=2026-01-01T00:00:00+00:00"]),
+    (["--json", "--strict", "--now", "2026-01-01T00:00:00+00:00"],
+     ["--json", "--strict", "--now", "2026-01-01T00:00:00+00:00"]),
+    (["--strict", "--json"], ["--strict", "--json"]),
+)
+
+# Representative tokens outside the allowlist, each chosen for a way the old
+# hand-written argument walk could get one wrong rather than for volume: the `=`
+# form of a state-path flag and of an unknown one, a prefix of each, a filter
+# with and without its value, a single-dash token, the end-of-options marker,
+# and `--help` typed beside a directory rather than as the whole line. A token
+# is refused because it is not on the list, so these are samples of one rule,
+# not a list the wrapper consults.
+_REFUSED_TOKENS = (
+    "--ledger=/tmp/elsewhere", "--led=/tmp/elsewhere", "--sess=/tmp/elsewhere",
+    "--repo=/tmp/elsewhere", "--re=/tmp/elsewhere",
+    "--ledger", "--sessions", "--repo", "--led", "--sess", "--re",
+    "--only", "--only=ledger-record", "--skip", "--skip=hygiene",
+    "-h", "-x", "-", "--", "--nope", "--nope=1", "--help",
+)
 
 
-def _refused(argv: list[str]) -> tuple[int, str, str]:
-    """One ``run_ledger`` call with both streams captured: (code, stdout, stderr).
+def _run_with(run, argv: list[str]) -> tuple[int, str, str]:
+    """``run(argv)`` for either entry point, with both streams captured.
 
-    The census's refusal path exits through argparse rather than returning, so
-    the call is guarded the way a caller at a shell is guarded: what the test
-    reads is the code and the text either way.
+    The refusal path prints and returns; a census that refuses on its own prints
+    and exits through argparse, so the call is guarded the way a caller at a
+    shell is guarded and the test reads the code and the text either way.
     """
     out, err = io.StringIO(), io.StringIO()
     try:
         with redirect_stdout(out), redirect_stderr(err):
-            rc = run_ledger(argv)
+            rc = run(argv)
     except SystemExit as exc:  # argparse's own exit, which is the refusal
         rc = exc.code
     return rc, out.getvalue(), err.getvalue()
+
+
+def _register(tmp_path: Path, noun: str) -> str:
+    """One state directory either wrapper will accept, laid out for either entry point."""
+    directory = tmp_path / "state" / "noni" / noun
+    directory.mkdir(parents=True, exist_ok=True)
+    return str(directory)
 
 
 @pytest.fixture
@@ -101,125 +138,124 @@ def paths(tmp_path):
     return {"good": good, "as_file": as_file, "dangling": dangling, "extra": extra}
 
 
-# --- an option value is not a second directory --------------------------------
+# --- the allowlist passes through ----------------------------------------------
 
-# Each entry point, with the noun its usage line uses and the function a caller
-# reaches it through: one table, so the cases below drive both wrappers and cannot
-# quietly cover only the ledger one.
-_WRAPPERS = ((run_ledger, "decisions", _RecordedCensusCall),
-             (run_sessions, "sessions", _RecordedSessionsCall))
+@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger", "sessions"))
+@pytest.mark.parametrize("options,expected", _ALLOWED_FORMS,
+                         ids=("none", "json", "strict", "now", "now-equals",
+                              "all", "reversed"))
+def test_an_allowed_option_reaches_the_census_as_typed(tmp_path, run, noun, double,
+                                                      options, expected, monkeypatch):
+    """Every allowed form runs the census, and the census is handed those bytes.
 
-# The same table without the double, for the cases that run the real census.
-_WRAPPERS_REAL = ((run_ledger, "decisions"), (run_sessions, "sessions"))
-
-
-def _forwarded(options: list[str]) -> list[str]:
-    """``options`` as the recording double keeps them: a leading run of the
-    wrapper's own group ``--only <class>`` pairs removed, then every remaining
-    option/value pair of the caller's kept as two tokens.
-
-    ``_RecordedCensusCall`` reads the command line the way argparse does: it drops
-    the group's ``--only <class>`` pairs from the front of the tail it keeps, so a
-    caller's own `--only X` that survives that strip is folded to one token there
-    while `--skip X`, `--now <stamp>` and the rest are kept as the caller typed
-    them. Rebuilding the expected tail from that rule, rather than reusing the
-    input verbatim, keeps the assertion about the bytes the wrapper forwarded.
-    """
-    tail = list(options)
-    while tail[:1] == ["--only"] and len(tail) > 1 and tail[1] in _GROUP_CLASSES:
-        tail = tail[2:]
-    return tail
-
-
-def _register(tmp_path: Path, noun: str) -> str:
-    """One state directory either wrapper will accept, laid out for either entry point."""
-    directory = tmp_path / "state" / "noni" / noun
-    directory.mkdir(parents=True, exist_ok=True)
-    return str(directory)
-
-
-def _run_with(run, argv: list[str]) -> tuple[int, str, str]:
-    """``run(argv)`` for either entry point, with both streams captured.
-
-    The twin of :func:`_refused` that takes the entry point as an argument, so one
-    parametrised table can drive the ledger and sessions wrappers alike.
-    """
-    out, err = io.StringIO(), io.StringIO()
-    try:
-        with redirect_stdout(out), redirect_stderr(err):
-            rc = run(argv)
-    except SystemExit as exc:  # argparse's own exit, which is the refusal
-        rc = exc.code
-    return rc, out.getvalue(), err.getvalue()
-
-
-@pytest.mark.parametrize("run,noun,double", _WRAPPERS,
-                         ids=("ledger", "sessions"))
-@pytest.mark.parametrize("options", (
-    ["--only", "ledger-record"],
-    ["--skip", "hygiene"],
-    ["--only", "session-double", "--skip", "probe"],
-    ["--now", "2026-01-01T00:00:00+00:00"],
-    ["--stale-after", "14d"],
-))
-def test_a_value_taking_option_takes_one_token_not_two(tmp_path, run, noun, double,
-                                                       options, monkeypatch):
-    """`--only X`, `--skip X`, `--now X` and every other separate-value option the
-    census defines pass through over one directory: exit 0, no refusal, and the
-    option forwarded to the census as typed.
-
-    The wrapper counts positional tokens to enforce its one-directory rule, and a
-    value-taking option's value is a bare token the census never parses as an
-    argument. Counting it answered the options the docs promise ("`--only` /
-    `--skip` filters work here exactly as they do on `noni census`") with the
-    wrapper's own usage refusal: exit 2 naming a directory nobody typed.
+    The positive half of the allowlist, without which every refusal below would
+    also be the shape of a wrapper that refused everything. The caller's tokens
+    arrive in the order they were typed and unchanged: ``--now`` keeps both of
+    its forms and ``--json`` / ``--strict`` stay the census's flags with the
+    census's verdicts. An option typed after the directory is still an option and
+    not a second directory: the walk classifies tokens, not positions, so the
+    flags a caller interleaved around the one directory reach the census in the
+    order they typed them.
     """
     directory = _register(tmp_path, noun)
     recorded = double()
     monkeypatch.setattr("census_wrapper.main", recorded)
-    rc, out, err = _run_with(run, [directory, *options])
-    assert rc == 0, f"{options}: the option was refused: rc={rc}\n{err}"
+    argv = [directory, *options]
+    rc, out, err = _run_with(run, argv)
+    assert rc == 0, f"{argv}: the allowed form was refused: rc={rc}\n{err}"
     assert out == "" and err == "", f"printed alongside the census: {out}{err}"
-    assert recorded.calls == [(directory, _forwarded(options))], (
+    assert recorded.calls == [(directory, expected)], (
         f"the census was handed something else: {recorded.calls}")
 
 
-@pytest.mark.parametrize("run,noun,double", _WRAPPERS,
+@pytest.mark.parametrize("run", (run_ledger, run_sessions),
                          ids=("ledger", "sessions"))
-def test_the_equals_form_of_a_value_taking_option_swallows_no_token(
-        tmp_path, run, noun, double, monkeypatch):
-    """`--only=X` is one token and consumes nothing after it, so the directory that
-    stands beside it is still the single positional and the run is not refused.
+@pytest.mark.parametrize("token", ("--help", "-h"))
+def test_the_help_token_alone_prints_the_wrapper_help_and_censuses_nothing(
+        run, token, capsys):
+    """``census.sh --help`` is the wrapper's own text, at the clean code.
 
-    The `--opt=value` form carries its own value, so the counter must not treat it
-    as a flag whose next token is a value; a counter that did would answer the
-    caller's one directory with "no directory given".
+    Help is not a census option, so it is allowed only as the whole command
+    line; the case beside a directory is in the refused table below.
     """
-    directory = _register(tmp_path, noun)
+    rc = run([token])
+    out = capsys.readouterr().out
+    assert rc == EXIT_USAGE or rc == 0
+    assert rc == 0, f"{token} alone: rc={rc}"
+    assert "census" in out.lower() and out.strip() != "", f"{token}: no help: {out!r}"
+
+
+# --- everything else is refused, and the census never runs ---------------------
+
+@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger", "sessions"))
+@pytest.mark.parametrize("token", _REFUSED_TOKENS)
+def test_a_token_off_the_allowlist_is_refused_and_the_census_never_runs(
+        tmp_path, run, noun, double, token, monkeypatch):
+    """One unlisted token, in each position a caller can type it, is exit 2.
+
+    The refusal is one line naming the token as typed and pointing at the tool
+    that does take it, stdout is empty, and the double records no call: a
+    wrapper that forwarded what it could not classify ran a census the caller
+    never asked for and returned that run's exit code, which is how a ``--ledger``
+    takeover once printed a clean 0 for a ledger that fails at 10.
+    """
     recorded = double()
     monkeypatch.setattr("census_wrapper.main", recorded)
-    rc, out, err = _run_with(run, [directory, "--only=ledger-record"])
-    assert rc == 0, f"the equals form was refused: rc={rc}\n{err}"
-    assert out == "" and err == "", f"printed alongside the census: {out}{err}"
-    assert recorded.calls == [(directory, ["--only=ledger-record"])], (
-        f"the census was handed something else: {recorded.calls}")
+    directory = _register(tmp_path, noun)
+    for argv in ([directory, token], [token, directory],
+                 [directory, "--json", token],
+                 [directory, token, "/tmp/elsewhere"]):
+        rc, out, err = _run_with(run, argv)
+        assert rc == EXIT_USAGE, f"{argv}: rc={rc}\n{err}"
+        assert out == "", f"{argv}: a refused run printed a report: {out}"
+        assert token in err, f"{argv}: the refusal must name the token: {err}"
+        assert "noni census" in err, (
+            f"{argv}: the refusal must say where the option lives: {err}")
+    assert recorded.calls == [], (
+        f"the census ran for a refused token: {recorded.calls}")
 
 
-@pytest.mark.parametrize("run,noun,double", _WRAPPERS,
-                         ids=("ledger", "sessions"))
-def test_a_real_second_directory_is_still_refused_alongside_options(
-        tmp_path, run, noun, double):
-    """The fix must not widen the rule: two directories, however the options are
-    interleaved, are still exit 2 naming both of them.
+@pytest.mark.parametrize("run,noun", _WRAPPERS_REAL, ids=("ledger", "sessions"))
+def test_a_failing_tree_with_an_unlisted_option_exits_two_never_zero(
+        tmp_path, run, noun):
+    """The real census, no double: a failing tree plus a refused flag is 2, not its own code.
 
-    Without this case a counter that swallowed everything after every `--` token
-    would pass the pass-through tests by refusing nothing at all.
+    This is the bug class the allowlist exists to close, told end to end. The
+    tree fails on its own (``test_a_directory_with_a_broken_record...`` pins
+    that code), so a run that ignored an unlisted token would answer 10 or 32 --
+    and a wrapper that answered 0 for a filtered or redirected variant is the
+    false clean a scripted caller acts on. Exit 2 with the census's report absent
+    is the only answer that cannot be read as a verdict.
     """
+    name, body, code = _BROKEN_RECORD[noun]
+    directory = Path(_register(tmp_path, noun))
+    (directory / name).write_text(body, encoding="utf-8")
+    rc_alone, out_alone, _err = _run_with(run, [str(directory)])
+    assert rc_alone == code, f"the fixture does not fail on its own: {rc_alone}"
+    for token in ("--only", "probe", "--led=/tmp/elsewhere", "--help"):
+        rc, out, err = _run_with(run, [str(directory), token])
+        assert rc == EXIT_USAGE, f"{token}: rc={rc}, expected 2 (the tree fails at {code})"
+        assert out == "", f"{token}: a refused run printed a report: {out}"
+
+
+# --- the directory checks the allowlist does not replace ------------------------
+
+@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger", "sessions"))
+def test_a_second_directory_is_refused_naming_both(tmp_path, run, noun, double,
+                                                   monkeypatch):
+    """Two directories, however the allowed options are interleaved, are exit 2 naming both.
+
+    One run censuses one register. The option walk cannot answer this one, so it
+    stays a directory check: the allowed options are consumed with their values
+    and every bare token left over is a directory the caller named.
+    """
+    recorded = double()
+    monkeypatch.setattr("census_wrapper.main", recorded)
     first = _register(tmp_path, noun)
     second = tmp_path / "other" / "noni" / noun
     second.mkdir(parents=True)
     for argv in ([first, str(second)],
-                 ["--only", "probe", first, str(second)],
+                 ["--json", first, str(second)],
                  [first, "--now", "2026-01-01T00:00:00+00:00", str(second)]):
         rc, out, err = _run_with(run, argv)
         assert rc == EXIT_USAGE, f"{argv}: rc={rc}\n{err}"
@@ -227,33 +263,7 @@ def test_a_real_second_directory_is_still_refused_alongside_options(
         assert "at most" in err, f"{argv}: not the wrapper's own refusal: {err}"
         for path in (first, str(second)):
             assert path in err, f"{argv}: must name {path}: {err}"
-
-
-@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger", "sessions"))
-def test_the_retired_cross_group_option_is_refused_naming_itself(
-        tmp_path, run, noun, double, monkeypatch):
-    """The retired dispatch (`census.sh --sessions DIR`) is refused, naming the option.
-
-    The census still defines both register flags, so a bare pass-through would
-    answer the old form with a census of the *other* register -- the silent
-    wrong-group census issue #99 was written against. The wrapper refuses it
-    before the directory checks, so the caller is told about the option they
-    typed rather than about a path they did not name, and the census is never
-    called.
-    """
-    recorded = double()
-    monkeypatch.setattr("census_wrapper.main", recorded)
-    other = "--sessions" if noun == "decisions" else "--ledger"
-    register = _register(tmp_path, "sessions" if other == "--sessions" else "decisions")
-    for argv in ([other, register], [register, other], ["--json", other, register]):
-        rc, out, err = _run_with(run, argv)
-        assert rc == EXIT_USAGE, f"{argv}: rc={rc}\n{err}"
-        assert out == "", f"{argv}: a refused run printed a report: {out}"
-        assert other in err, f"{argv}: the refusal must name the option: {err}"
-        assert f"no {noun} directory given" not in err, (
-            f"{argv}: refused for the wrong reason: {err}")
-    assert recorded.calls == [], (
-        f"the census ran for a retired dispatch: {recorded.calls}")
+    assert recorded.calls == [], f"the census ran on two directories: {recorded.calls}"
 
 
 @pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger", "sessions"))
@@ -280,63 +290,16 @@ def test_an_empty_string_is_no_directory_and_never_censuses_the_cwd(
 
 
 @pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger", "sessions"))
-@pytest.mark.parametrize("spelling", _STATE_PATH_SPELLINGS)
-def test_a_callers_own_state_path_option_is_refused_never_forwarded(
-        tmp_path, run, noun, double, spelling, monkeypatch):
-    """The wrapper owns every state-path flag, so a caller's own is exit 2, naming it.
-
-    ``--repo`` / ``--ledger`` / ``--sessions`` are what the wrapper fills in from the
-    one directory it validated. Forwarded, argparse's last occurrence won, so
-    `census.sh DIR --ledger /etc` read a directory nobody checked and printed exit 0
-    where `census.sh DIR` exits 10 — a false clean for whoever scripted the run.
-    Refused whatever the entry point, in either position, in the `=` form, and by an
-    unambiguous prefix, because that is how the census's parser resolves a token.
-    """
-    recorded = double()
-    monkeypatch.setattr("census_wrapper.main", recorded)
-    directory = _register(tmp_path, noun)
-    name = spelling.partition("=")[0]
-    for argv in ([directory, spelling], [spelling, directory],
-                 [directory, "--json", spelling],
-                 [directory, spelling, "/tmp/elsewhere"]):
-        rc, out, err = _run_with(run, argv)
-        assert rc == EXIT_USAGE, f"{argv}: rc={rc}\n{err}"
-        assert out == "", f"{argv}: a refused run printed a report: {out}"
-        assert name in err, f"{argv}: the refusal must name the option: {err}"
-    assert recorded.calls == [], (
-        f"the census read a path the wrapper never validated: {recorded.calls}")
-
-
-@pytest.mark.parametrize("run,noun", _WRAPPERS_REAL, ids=("ledger", "sessions"))
-def test_a_directory_with_a_broken_record_still_exits_ten_through_the_wrapper(
-        tmp_path, run, noun):
-    """The pass-through half of the refusal above: the same wrappers still census a
-    real directory that holds a broken record, and the census's 10 comes back.
-
-    A wrapper that refused every option would look as clean here as it does in the
-    case above, so this one runs the real census -- no double -- and pins the exit
-    code a `--ledger` takeover used to hide behind an exit 0.
-    """
-    name, body, code = _BROKEN_RECORD[noun]
-    directory = Path(_register(tmp_path, noun))
-    (directory / name).write_text(body, encoding="utf-8")
-    rc, out, err = _run_with(run, [str(directory)])
-    assert rc == code, f"a broken record did not fail the census: rc={rc}\n{out}{err}"
-    assert name in out + err, (
-        f"not the broken-record verdict for {name}: {out}{err}")
-
-
-@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger", "sessions"))
 def test_a_positional_that_is_a_symlink_is_refused_never_read_through(
         tmp_path, run, noun, double, monkeypatch):
     """A directory handed to the wrapper as a link is exit 2, and the census never runs.
 
-    ``is_dir`` follows links, so a link to a real register was accepted, and it was
-    accepted with a split command line: ``--repo`` is built from the resolved path
-    while the state flag keeps the link's own spelling, so the rows named a tree the
-    caller never typed. The census does not read through links anywhere else (a
-    record that is one is reported, never opened), so the wrapper refuses the one
-    path where it could.
+    ``is_dir`` follows links, so a link to a real register was accepted, and it
+    was accepted with a split command line: ``--repo`` is built from the resolved
+    path while the state flag keeps the link's own spelling, so the rows named a
+    tree the caller never typed. The census does not read through links anywhere
+    else (a record that is one is reported, never opened), so the wrapper refuses
+    the one path where it could.
     """
     recorded = double()
     monkeypatch.setattr("census_wrapper.main", recorded)
@@ -356,109 +319,16 @@ def test_a_positional_that_is_a_symlink_is_refused_never_read_through(
         f"the census read through a link: {recorded.calls}")
 
 
-@pytest.mark.parametrize("slot", ("before", "after", "among"))
-def test_an_unknown_option_is_the_census_usage_refusal_naming_the_option(paths, slot):
-    """Every position an unknown flag can be typed in ends at exit 2, with the
-    flag named and no report.
+def test_a_ledger_path_that_is_a_plain_file_is_refused_never_followed(paths):
+    """A ledger path that is a plain file never reaches the census.
 
-    The wrapper forwards options it does not recognise, so this is the census's
-    refusal reaching the caller through the wrapper. A wrapper that quietly
-    dropped an unrecognised option would run a census nobody asked for and return
-    its exit code, and the script that called it would read a verdict on the
-    ledger it named.
+    Over a tree whose ``noni/decisions`` is a file the census's own probe answers
+    "not a directory" and exits 0 without ``--strict``: the clean verdict nobody
+    meant. The wrapper's ``is_dir`` gate stops the run and names the path.
     """
-    ledger, flag = str(paths["good"]), UNKNOWN_OPTION
-    argv = {"before": [flag, ledger], "after": [ledger, flag],
-            "among": ["--json", flag, ledger]}[slot]
-    rc, out, err = _refused(argv)
-    assert rc == EXIT_USAGE, f"{argv}: rc={rc}\n{err}"
-    assert out == "", f"{argv}: a refused run printed a report: {out}"
-    assert flag in err, f"{argv}: the refusal must name the option: {err}"
-    assert "unrecognized" in err, (
-        f"{argv}: the census must be the one that refused: {err}"
-    )
-
-
-# --- more than one positional ---------------------------------------------------
-
-@pytest.mark.parametrize("slot", ("both", "json-before", "json-between"))
-def test_more_than_one_positional_is_refused_naming_both(paths, slot):
-    """Two directories named is exit 2 naming both of them, with no rows.
-
-    One run censuses one ledger. This is the wrapper's own refusal — it counts
-    positionals, not arguments, so the flags interleaved above must not change
-    the verdict — and the second path is the one the caller mistyped, so naming
-    it is what makes the refusal actionable.
-    """
-    good, extra = str(paths["good"]), str(paths["extra"])
-    argv = {"both": [good, extra], "json-before": ["--json", good, extra],
-            "json-between": [good, "--json", extra]}[slot]
-    rc, out, err = _refused(argv)
-    assert rc == EXIT_USAGE, f"{argv}: rc={rc}\n{err}"
-    assert out == "", f"{argv}: censused one of two and printed rows: {out}"
-    assert "at most" in err, f"{argv}: not the wrapper's own refusal: {err}"
-    for path in (good, extra):
-        assert path in err, f"{argv}: must name {path}: {err}"
-
-
-# --- a ledger path that is not a directory -------------------------------------
-
-@pytest.mark.parametrize("kind,reason", (
-    ("as_file", "is not a directory"),
-    ("dangling", "does not exist"),
-))
-def test_a_ledger_path_that_is_not_a_directory_is_refused_never_followed(
-    paths, kind, reason
-):
-    """A ledger path that is a plain file, or a link to nothing, never reaches the census.
-
-    Both states the census would otherwise answer with a dismissible warn: over a
-    tree whose ``noni/decisions`` is a file its probe answers "not a directory",
-    and over one whose entry is a dangling link it answers a state of its own —
-    either way exit 0 without ``--strict``, the clean verdict nobody meant. The
-    wrapper's ``is_dir`` gate stops the run, and the reason it prints keeps the
-    two states apart for the caller. The link is never read through: the census
-    reports a symlink it can see, and a run that resolved this one would have
-    censused a directory the caller never named. (A link that *does* resolve is a
-    third state, refused by its own case above.)
-    """
-    path = paths[kind]
-    if kind == "dangling":
-        # The link still is a link, so the symlink refusal answers it first; this
-        # case is about the reason a path that is no directory at all gets.
-        path.unlink()
-    for argv in ([str(path)], ["--json", str(path)]):
-        rc, out, err = _refused(argv)
+    for argv in ([str(paths["as_file"])], ["--json", str(paths["as_file"])]):
+        rc, out, err = _run_with(run_ledger, argv)
         assert rc == EXIT_USAGE, f"{argv}: rc={rc}\n{err}"
         assert out == "", f"{argv}: rows for a path it could not census: {out}"
-        assert str(path) in err, f"{argv}: must name the path it refused: {err}"
-        assert reason in err, (
-            f"{argv}: the reason must keep a file apart from a dangling link "
-            f"(expected {reason!r}): {err}"
-        )
-
-
-# --- the pass-through that makes the refusals mean something -------------------
-
-def test_a_ledger_directory_and_its_options_reach_the_census_untouched(
-    tmp_path, monkeypatch
-):
-    """The shape checks let a real ledger through, and the options arrive as given.
-
-    The other half of every case above: without it a wrapper that refused
-    everything would pass them all. ``run`` is two checks and one call, so the
-    call is captured: the directory reaches the census spelled as the caller
-    spelled it and the options the caller named arrive untouched, which is the
-    promise that lets ``--json`` and ``--strict`` stay the census's flags with the
-    census's refusals. The group's own ``--only`` flags are the wrapper's doing and
-    are checked as a prefix, not as the caller's arguments.
-    """
-    ledger = tmp_path / "state" / "noni" / "decisions"
-    ledger.mkdir(parents=True)
-    recorded = _RecordedCensusCall()
-    monkeypatch.setattr("census_wrapper.main", recorded)
-    rc, out, err = _refused([str(ledger), "--json", "--strict"])
-    assert rc == 0, f"the run was refused: rc={rc}\n{err}"
-    assert out == "" and err == "", f"the wrapper printed alongside the census: {out}{err}"
-    assert recorded.calls == [(str(ledger), ["--json", "--strict"])], (
-        f"the census was handed something else: {recorded.calls}")
+        assert str(paths["as_file"]) in err, f"{argv}: must name the path: {err}"
+        assert "is not a directory" in err, f"{argv}: the reason: {err}"

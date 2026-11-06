@@ -33,11 +33,13 @@ current-directory default: run with no argument, the run is a usage error (2)
 rather than a census of whatever `noni/` happened to sit next to the caller. Two
 directories are the same refusal — one run audits one ledger.
 
-Every census option is accepted and passed through to the census, so the run
-keeps the flags the unified census documents rather than a subset: `--json`,
-`--strict`, `--now`, `--only`, `--skip` and the rest. `--strict` promotes the
-warn classes the ledger group reports (`ledger-empty` among them), which is the
-flag this wrapper used to have no route to.
+Beyond the one directory this entry point takes `--json`, `--strict` and
+`--now` (in the `--now VALUE` or `--now=VALUE` form) and nothing else.
+`--strict` promotes the warn classes the ledger group reports (`ledger-empty`
+among them), which is the flag this wrapper used to have no route to. Every
+other option, prefix or stray token is refused with the usage error (2) and the
+census is not run: `noni census` is the tool that takes `--only` / `--skip`,
+the state-path flags and the rest.
 
 Requires the `noni` package importable to the interpreter the wrapper runs
 (``NONI_PYTHON``, ``python3`` by default: a program name, resolved on ``PATH``).
@@ -71,10 +73,12 @@ would census whatever `noni/sessions` happened to sit next to the caller and
 report a clean the caller never pointed at. Two directories are the same
 refusal — one run audits one register.
 
-Every census option is accepted and passed through, so the run keeps the flags
-the unified census documents rather than a subset: `--json` for the NDJSON rows,
-`--strict` to promote the warn classes, `--now` for a fixed timestamp, and the
-`--only` / `--skip` filters.
+Beyond the one directory this entry point takes `--json` for the NDJSON rows,
+`--strict` to promote the warn classes, and `--now` for a fixed timestamp (in
+the `--now VALUE` or `--now=VALUE` form) and nothing else. Every other option,
+prefix or stray token is refused with the usage error (2) and the census is not
+run: `noni census` is the tool that takes `--only` / `--skip`, the state-path
+flags and the rest.
 
 Requires the `noni` package importable to the interpreter the wrapper runs
 (``NONI_PYTHON``, ``python3`` by default: a program name, resolved on ``PATH``).

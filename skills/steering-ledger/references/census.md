@@ -43,15 +43,14 @@ The one argument is the ledger directory of the state root — the directory
 census a tree other than the one you are in; run with no argument, the run is a
 usage error (2) rather than a census of whatever `noni/` happened to sit next to
 the caller, and a second directory is the same refusal. A directory handed over
-as a symlink is that refusal too: the census does not read through links. The
-state-path flags `--repo`, `--ledger` and `--sessions` are this entry point's to
-set from that directory, so typing one of them (or a prefix of one) is the same
-refusal too: the census would otherwise read the path you named and call it
-clean. Every other argument is
-passed to the census untouched, so its options are this entry point's options:
-`--json` for the NDJSON rows, `--strict` to promote the warn classes, `--now`
-for a fixed timestamp, `--only` / `--skip` to filter rows. A flag is never
-silently swallowed: the census refuses it.
+as a symlink is that refusal too: the census does not read through links.
+
+Beyond the directory this entry point takes `--json` for the NDJSON rows,
+`--strict` to promote the warn classes, and `--now` for a fixed timestamp, in
+either `--now VALUE` or `--now=VALUE` form. Those are the whole allowlist: every
+other option, prefix or stray token is refused with `2` and the census is not
+run. Filters and everything else need `noni census`, which takes `--only` /
+`--skip`, the state-path flags and the rest, and refuses what it does not define.
 
 The sessions register is not this entry point's subject. It has its own wrapper,
 `skills/sessions-claims/scripts/census-sessions.sh`, over the same census.

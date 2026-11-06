@@ -37,15 +37,15 @@ directory of the clone you want to audit. There is no current-directory default:
 a run with no argument is a usage error (`2`), so the census never reads whatever
 `noni/sessions` happened to sit next to the caller. One run audits one register,
 so a second directory is that error too, and so is a directory handed over as a
-symlink: the census does not read through links. The state-path flags — `--repo`,
-`--ledger`, `--sessions` — are this entry point's to set from the directory it is
-given, so typing one of them (or a prefix of one) is the same refusal too: the
-census would otherwise read the path you named and call it clean.
+symlink: the census does not read through links.
 
-Every other argument goes to the census untouched, so its options are this entry
-point's options: `--json` for the machine-readable rows, `--strict` to promote
-the warn classes to failures at their own codes, `--now` for a fixed timestamp
-(reproducible output), `--only` / `--skip` to filter rows.
+Beyond the directory this entry point takes `--json` for the machine-readable
+rows, `--strict` to promote the warn classes to failures at their own codes, and
+`--now` for a fixed timestamp (reproducible output), in either `--now VALUE` or
+`--now=VALUE` form. Those are the whole allowlist: every other option, prefix or
+stray token is refused with `2` and the census is not run. Filters and everything
+else need `noni census`, which takes `--only` / `--skip`, the state-path flags
+and the rest, and refuses what it does not define.
 
 ## What the census reports
 

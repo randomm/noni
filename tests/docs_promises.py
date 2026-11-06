@@ -66,6 +66,29 @@ SKILL_PAGES: tuple[Path, ...] = tuple(sorted((REPO / "skills").rglob("*.md")))
 # The state directory the quickstart's second route clones into the project.
 STATE_DIR = ".noni-state"
 
+# The first push Route B prints. Held here, beside the state directory it acts on,
+# because three readers need the same string: the prose test below, the golden list
+# in ``quickstart_golden`` (which is what makes the page's line the reviewed line),
+# and ``tests/test_quickstart.py``, which runs it and reads the upstream back.
+# ``HEAD`` rather than a branch name: a fresh ``git init`` need not default to
+# ``main``, and the page cannot know the reader's branch (pilot point 4).
+FIRST_PUSH_COMMAND = f"git -C {STATE_DIR} push -u origin HEAD"
+
+# The state-repository rule, as the facts a page must state (pilot point 5). The
+# census's hygiene class reads every tracked file of the tree ``--repo`` names, so a
+# state repository that also holds other work reports that work as direction. Both
+# pages that sell the route -- the quickstart's Route B and ``docs/PRODUCT.md`` 7 --
+# owe every fact, which is why they are one tuple rather than two prose searches.
+STATE_REPO_LAYOUT_ONLY: tuple[str, ...] = (
+    "a new, empty, private repository",
+    "hygiene",
+    "every tracked file",
+    # The sentence's own words, in the order the sentence has them: a qualifier
+    # dropped from either page leaves the bare name of the layout standing, which
+    # is what a reader needs and what a looser phrase would let a page lose.
+    "layout and nothing else",
+)
+
 # The three words the census renders for a deny-list class that did not run
 # (``census_hygiene._denylist_state``), derived from the two product sources that
 # write them rather than typed out again: the public_safety status names and the

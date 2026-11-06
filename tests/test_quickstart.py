@@ -211,7 +211,7 @@ def test_route_b_commands_all_exit_zero(world: World) -> None:
         f"the state clone is visible to the project's git, so the ignore rule "
         f"is not doing its job: {status.stdout!r}"
     )
-    _checked(git(world.origin, "rev-parse", "--verify", "main", env=world.env),
+    _checked(git(world.origin, "rev-parse", "--verify", world.branch, env=world.env),
              "the state branch on the origin")
     # The page promises the first push makes every later push and pull work
     # "without naming the remote again", and `-u` is the whole of that promise.
@@ -221,10 +221,10 @@ def test_route_b_commands_all_exit_zero(world: World) -> None:
     upstream = git(world.state, "rev-parse", "--abbrev-ref", "--symbolic-full-name",
                    "@{u}", env=world.env)
     _checked(upstream, "the state clone's upstream after the page's first push")
-    assert upstream.stdout.strip() == "origin/main", (
-        f"the page's first push did not set the branch's upstream to origin/main, "
-        f"so the later --push runs have no remote-tracking branch: "
-        f"{upstream.stdout!r} {upstream.stderr!r}")
+    assert upstream.stdout.strip() == f"origin/{world.branch}", (
+        f"the page's first push did not set the branch's upstream to "
+        f"origin/{world.branch}, so the later --push runs have no remote-tracking "
+        f"branch: {upstream.stdout!r} {upstream.stderr!r}")
     assert [a for a in route_commands(("Route B",))
             if a[:2] == ["noni", "census"]], "the Route B block never runs the census"
 
@@ -237,8 +237,8 @@ def test_the_state_route_leaves_the_origin_holding_the_writers_commits(world: Wo
     would pass the exit-code assertions above.
     """
     run_route_b(world)
-    pushed = git(world.origin, "ls-tree", "--name-only", "main", env=world.env)
-    _checked(pushed, "origin main tree")
+    pushed = git(world.origin, "ls-tree", "--name-only", world.branch, env=world.env)
+    _checked(pushed, f"origin {world.branch} tree")
     assert "noni" in pushed.stdout.split(), (
         f"the state branch holds no noni/ directory: {pushed.stdout!r}"
     )
@@ -256,14 +256,14 @@ def test_the_state_route_leaves_the_origin_holding_the_writers_commits(world: Wo
         "a pushurl would redirect the page's first push away from the origin these "
         f"tests read: rc={pushurl.returncode} stdout={pushurl.stdout!r} "
         f"stderr={pushurl.stderr!r}")
-    origin_main = git(world.origin, "rev-parse", "main", env=world.env)
-    state_main = git(world.state, "rev-parse", "main", env=world.env)
-    _checked(origin_main, "the origin's main")
-    _checked(state_main, "the state clone's main")
+    origin_main = git(world.origin, "rev-parse", world.branch, env=world.env)
+    state_main = git(world.state, "rev-parse", world.branch, env=world.env)
+    _checked(origin_main, f"the origin's {world.branch}")
+    _checked(state_main, f"the state clone's {world.branch}")
     assert origin_main.stdout.strip() == state_main.stdout.strip(), (
-        "the clone's main is not the commit the origin holds, so the writers' "
-        f"commits are not on the origin: origin {origin_main.stdout.strip()!r} "
-        f"clone {state_main.stdout.strip()!r}")
+        f"the clone's {world.branch} is not the commit the origin holds, so the "
+        f"writers' commits are not on the origin: origin "
+        f"{origin_main.stdout.strip()!r} clone {state_main.stdout.strip()!r}")
 
 
 def test_the_ordering_note_appears_in_human_mode_and_not_in_json(world: World) -> None:

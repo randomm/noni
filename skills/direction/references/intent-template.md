@@ -16,8 +16,8 @@ Keep this file small. It is the first thing an agent session reads, so it holds
 what never changes without a decision, not the running commentary of the project:
 the ordering artifact holds the queue, the ledger holds the dated calls, the
 session register holds who is doing what. Everything the four headings below say
-must survive a whole release train; anything that can change inside one belongs in
-one of those three.
+must survive a long run of ordinary work; anything that can change inside one
+belongs in one of those three.
 
 The rules the writer enforces, and the census (`intent`, code 51) reports:
 

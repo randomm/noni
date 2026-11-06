@@ -1,24 +1,25 @@
 # noni
 
-noni is an attachable direction layer for a Git project that several agents or
-people work on at once. It keeps the standing intent, the decisions, the agreed
-order of work, the session register and the claims as plain files committed to
-the repository, and one read-only script reports where the work has drifted from
-that direction, with no service to run and no database to keep in step.
+noni makes sure two agents working on one project never take the same task, and
+that a decision outlives the session that made it. It is an attachable direction
+layer for a Git project: standing intent, decisions, the agreed order of work,
+the session register and the claims are plain files committed to the repo, and
+one read-only script reports where the work has drifted. No service, no database.
 
 ## The problem
 
 - Decisions get made in a session and die with it. The next session reopens the
   same question, or quietly contradicts the answer.
-- Two workers take the same task. Neither knows, because nothing in the
-  repository says who means to do what.
+- Two workers take the same task. Neither knows: nothing says who means what.
 - Nobody can say whether the work still matches the direction. The order was set
   weeks ago, several issues in it are closed, and nothing reports that.
 - What the project is for, and what it will not do, live in someone's head.
 
 ## What you get
 
-Five artifacts, all committed files under `noni/`, all read by the census:
+Five artifacts, all committed files under `noni/`, all read by the census. The
+order is of issues your tracker holds, by their positive numbers: noni is no
+backlog and no notes tool, so unfiled work has nowhere to go.
 
 | artifact | what it holds | who writes it |
 |---|---|---|
@@ -36,15 +37,15 @@ census is what flags one that has drifted from its shape or its citation.
 Every path above resolves from `--repo`, the one flag that names the state root:
 by default the repository you run in, so the state sits at `<project>/noni/`, or
 a separate directory holding the same `noni/` layout to keep the direction in a
-private state repository. A `--repo` that is missing or is not a directory stops
-the command with a clear message.
+private state repository, which holds the `noni/` layout and nothing else; a
+missing or non-directory `--repo` stops the command with a clear message.
 
 ## Try it in five minutes
 
 The full first run, including a separate private state repository, is in
 [docs/QUICKSTART.md](docs/QUICKSTART.md). The short version: clone noni next to
-your project, go to the root of your own repository, and run its scripts with
-`--repo .` naming that repository. Nothing is copied into your project, and the
+your project, run its scripts from the root of your own repository with
+`--repo .` naming it. Nothing is copied into your project, and the
 census's hygiene checker stays present beside the scripts it runs:
 
 ```bash
@@ -63,10 +64,11 @@ python3 ../noni/skills/steering-ledger/scripts/decide.py --repo . \
 python3 ../noni/skills/census/scripts/census.py --repo .
 ```
 
-Run these from a release of noni you trust: they execute its scripts.
+Run these from a commit of noni you trust: no release or tag exists yet, so pin
+a commit, and remember they run noni's scripts.
 
 Installing is the other route, and the same code either way. There is no PyPI
-package: `pip install noni` buys a different project's wheel. Install it from the
+package: `pip install noni` buys a different project's wheel. Install from the
 clone you just made with `uv tool install`, or inside a clean virtual environment:
 the commands are the *Install noni* section of
 [docs/QUICKSTART.md](docs/QUICKSTART.md), and neither runs `pip` against a system
@@ -74,10 +76,8 @@ Python, which current distributions refuse outright. One `noni` command then
 replaces a path per tool (`noni census`, `decide`, `register`, `claim`, `release`,
 `close`, `order`, `intent`), printing the same bytes as the scripts above.
 
-The census is read-only: it never writes, so `git status --porcelain` is empty
-after either run.
-
-Read the result. A run with nothing to complain about ends with the line
+The census is read-only: it never writes, so `git status --porcelain` is empty.
+Read the result. A clean run ends with the line
 
 ```
 summary: clean; N finding(s); verdict ok
@@ -86,12 +86,12 @@ summary: clean; N finding(s); verdict ok
 where `N` names the rows above it. Warnings (a missing deny-list, a ledger with
 nothing to arbitrate) are counted there and do not change the verdict.
 
+## How it works
+
 Read `noni/skills/<skill>/SKILL.md` for what each writer accepts and refuses;
 the steering-ledger and sessions-claims skills keep record-shape detail in their
 `references/` directories. `noni --help` names the eight subcommands and
 `noni <tool> --help` the flags of one.
-
-## How it works
 
 Everything noni keeps in your repository lives in one directory:
 
@@ -107,15 +107,15 @@ Nothing else is state. The writers above are the only things that create those
 files, and each commits what it writes in one atomic step. The try-it run above
 creates the ledger record only: `intent.md` appears when you first run
 `intent.py`, `order.json` when you first run `order.py`, and a session file when
-you first run `register.py`. Both direction files are optional: a project that
-has written neither censuses clean. The census also reads input it does
-not own: the `--issue-state` map an adapter or the operator supplies, whose
-absence it reports as an unevaluated check. It recomputes everything it reports
-from git history plus those files on every run: metrics are derived, never
-self-reported. The skills are the unit of product: an agent loads
-`skills/<skill>/SKILL.md`, which names the script to run, its flags and its exit
-codes. How to put the four core skills in front of your agents, and what an agent
-does from session start to close: [docs/ONBOARDING.md](docs/ONBOARDING.md).
+you first run `register.py`. All four are optional, and a project that has
+written none of them censuses clean. The census also reads input it does not own:
+the `--issue-state` map an adapter or the operator supplies, whose absence it
+reports as an unevaluated check. It recomputes everything from git history plus
+those files on every run: metrics are derived, never self-reported. The skills
+are the unit of product: an agent loads `skills/<skill>/SKILL.md`, which names
+the script to run, its flags and its exit codes. How to put the four core skills
+in front of your agents, and what an agent does from session start to close:
+[docs/ONBOARDING.md](docs/ONBOARDING.md).
 
 ## Status
 
@@ -126,9 +126,9 @@ unified census with its honest exit codes, and the `noni` package that carries
 them (installed from a clone or a git URL, then `noni <tool>`: there is no
 PyPI package).
 
-Not yet: release trains, and the adapters that fill the tracker-side inputs the
-census reads. `docs/PRODUCT.md` is the product document and the deep reference for
-record shapes, the claim protocol and the census exit codes.
+Not yet: the adapters that fill the tracker-side inputs the census reads.
+`docs/PRODUCT.md` is the product document and the deep reference for record
+shapes, the claim protocol and the census exit codes.
 
 noni's own direction lives in a private state repository, so `git ls-files noni`
 here is empty: pass `--repo` at the tree that holds the `noni/` layout.

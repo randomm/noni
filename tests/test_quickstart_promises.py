@@ -44,9 +44,10 @@ from docs_promises import (
 )
 from quickstart_page import (
     COEXISTENCE_HEADING,
+    PRODUCT_ADAPTERS_HEADING,
     flowed_section,
     page_text,
-    product_section_8,
+    product_adapters_section,
 )
 from quickstart_page import ROUTE_CHOICE_CLOSE as _ROUTE_CHOICE_CLOSE
 from quickstart_page import ROUTE_CHOICE_START as _ROUTE_CHOICE_START
@@ -285,23 +286,25 @@ def test_the_coexistence_section_names_the_two_direction_artifacts() -> None:
         "skills/direction/SKILL.md) and this section does not need")
 
 
-def test_product_md_epic_map_points_at_the_coexistence_position() -> None:
-    """docs/PRODUCT.md 8's E4 entry names the driver-claims adapter as the follow-up.
+def test_product_md_names_the_driver_claims_adapter_as_the_follow_up() -> None:
+    """docs/PRODUCT.md's adapters section names the driver-claims adapter as the follow-up.
 
     The binding page and the reader's page split the work: the quickstart states
-    the position, and the epic map tells the reader which epic owes the adapter
-    that would mirror a driver's claims instead. Read from §8 rather than from the
-    whole page, so a sentence about an adapter under a different heading is not
-    this claim, and read the quickstart link as a path that has to resolve.
+    the position, and the product page names the adapter that would mirror a
+    driver's claims instead, as work not yet done. Read from that one section
+    rather than from the whole page, so a sentence about an adapter under a
+    different heading is not this claim, and read the quickstart link as a path
+    that has to resolve.
     """
-    section = flowed_section("8. Epic map", product_section_8())
+    section = flowed_section(PRODUCT_ADAPTERS_HEADING, product_adapters_section())
     assert "driver-claims adapter" in section, (
-        f"docs/PRODUCT.md 8 no longer names the driver-claims adapter as the "
+        f"docs/PRODUCT.md no longer names the driver-claims adapter as the "
         f"follow-up: {section!r}")
-    assert "follow-up" in section, "the E4 entry dropped its follow-up framing"
+    assert "follow-up" in section, "the adapters section dropped its follow-up framing"
     assert "docs/QUICKSTART.md" in section, (
-        "the E4 entry does not point at the page that carries the position")
-    assert QUICKSTART.is_file(), "docs/QUICKSTART.md is missing while §8 links it"
+        "the adapters section does not point at the page that carries the position")
+    assert QUICKSTART.is_file(), (
+        "docs/QUICKSTART.md is missing while the adapters section links it")
     assert COEXISTENCE_HEADING in read(QUICKSTART), (
-        "the E4 entry links the quickstart, which no longer carries the section "
-        f"named {COEXISTENCE_HEADING!r}")
+        "the adapters section links the quickstart, which no longer carries the "
+        f"section named {COEXISTENCE_HEADING!r}")

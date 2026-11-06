@@ -21,8 +21,8 @@ from docs_commands import read
 from docs_promises import QUICKSTART
 
 __all__ = ["COEXISTENCE_HEADING", "ROUTE_CHOICE_CLOSE", "ROUTE_CHOICE_START",
-           "flowed_section", "flowed_text", "page_text", "product_section_7",
-           "product_section_8"]
+           "flowed_section", "flowed_text", "page_text", "product_adapters_section",
+           "product_section_7"]
 
 # The heading the driver-coexistence section publishes under, and the one locator
 # its assertions scope to. Named here because two modules read that section --
@@ -87,18 +87,28 @@ def product_section_7() -> str:
     return flowed_section("7. State layout", read(PRODUCT))
 
 
-def product_section_8() -> str:
-    """``docs/PRODUCT.md`` section 8 (the epic map), as the page prints it.
+# The heading of the section of ``docs/PRODUCT.md`` that carries the adapters
+# position. A constant rather than a literal at each call site: two modules read
+# that section -- the quickstart's promises and the docs-page neutrality gate --
+# and a heading renamed in one of the two would leave the other asserting over
+# a span the page no longer has.
+PRODUCT_ADAPTERS_HEADING = "8. Adapters"
 
-    Not whitespace-collapsed: this section's unit is the bullet, and the reader of
-    it that the CI-neutrality gate reuses counts markdown lines inside one bullet.
+
+def product_adapters_section() -> str:
+    """``docs/PRODUCT.md`` section 8 (adapters), as the page prints it.
+
+    The section that used to be an internal epic map now carries the adapters
+    position, whose follow-up framing the page's promises pin. The heading is
+    located by prefix like every other locator here, and collapsed by the caller
+    that reads words rather than bullets, since the page wraps at its own column.
     """
     from docs_promises import PRODUCT, section_body
 
-    body = section_body(read(PRODUCT), "8. Epic map")
+    body = section_body(read(PRODUCT), PRODUCT_ADAPTERS_HEADING)
     assert body.lstrip().startswith("## 8."), (
-        "docs/PRODUCT.md no longer opens its epic map with a `## 8.` heading, so "
-        f"this locator is reading the wrong span: {body[:40]!r}")
+        "docs/PRODUCT.md no longer opens its adapters section with a `## 8.` "
+        f"heading, so this locator is reading the wrong span: {body[:40]!r}")
     return body
 
 

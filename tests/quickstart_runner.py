@@ -48,6 +48,8 @@ from docs_promises import STATE_DIR
 from quickstart_golden import GOLDEN, INSTALL
 from quickstart_page_steps import (
     append_ignore_rule,
+    denylist_file,
+    plant_denylist,
     state_clone,
     write_intent_draft,
 )
@@ -61,6 +63,8 @@ from quickstart_topology import (
     run_env,
 )
 
+from noni import public_safety
+
 __all__ = [
     "ORDERING_NOW",
     "World",
@@ -68,6 +72,8 @@ __all__ = [
     "build_installed_world",
     "checked",
     "date_arg",
+    "denylist_file",
+    "plant_denylist",
     "fresh_scratch",
     "git",
     "golden",
@@ -283,12 +289,24 @@ def run_route_b(world: World) -> list[list[str]]:
     _checked_identity(world)
     commands = route_commands(("Route B",))
     for argv in commands:
+        if public_safety.DENYLIST_FILENAME in " ".join(argv):
+            # The page's step is prose at this point -- the reader writes the file by
+            # hand from the example the deny-list section shows -- so the harness
+            # plants it where ``load_denylist`` reads it. The Route B test reads the
+            # file back: planted, active, and untracked by the clone.
+            plant_denylist(world)
         if argv[:2] == ["noni", "register"]:
             world.mark_sessions()
         if argv[:2] == ["noni", "decide"]:
             world.mark_decisions()
         proc = launch(world, argv, world.project)
         checked(proc, f"Route B command {argv}")
+        # The page's own add/commit pair for the clone's .gitignore is a real git
+        # commit, and the writers' identities come from the page's config lines a
+        # few commands earlier -- but git refuses a commit whose author identity is
+        # missing, so the exit code below is the reader's answer, not a formality.
+        if argv[:3] == ["git", "-C", STATE_DIR, "commit"]:
+            checked(proc, "Route B commit of the clone's own ignore rule")
         if argv[:2] == ["noni", "register"]:
             world.collect_session_id()
         if argv[:2] == ["noni", "decide"]:
@@ -387,6 +405,15 @@ def launch(world: World, argv: list[str],
     argv = reroot(substitute(date_arg(world, argv), world.placeholders),
                   world.state)
     program = str(world.noni) if argv[0] == "noni" else argv[0]
+    if argv[:2] == ["git", "-C"] and argv[3:4] == ["add"]:
+        # The page's commit of the clone's own ignore rule. The -C anchor has just
+        # moved to the real clone, which is right, but `git add` also resolves its
+        # pathspec against the process cwd -- the scratch project, where no
+        # .gitignore of the clone's exists, so a reader's own
+        # `git -C .noni-state add .gitignore` would fail there too. Running the
+        # command from the clone is what the page's -C means; the argv the reader
+        # typed is untouched, and reroot's own preconditions still ran on it.
+        cwd = world.state
     return _exec(program, argv, cwd, world.env)
 
 

@@ -17,6 +17,11 @@ from pathlib import Path
 from _harness import _git
 from harness_git import _git_env_with_identity
 from intent_fixtures import INTENT_REL, NOW, RECORD_ID, repo_with_record
+from parent_link_fixtures import (
+    assert_outside_untouched,
+    plant_parent_link,
+    write_outside_decoy,
+)
 
 
 def _intent_module() -> object:
@@ -217,13 +222,60 @@ def test_an_unreadable_installed_file_is_exit_3_not_a_refusal(tmp_path, monkeypa
     assert "could not be read" in err, err
 
 
-def test_the_direction_directory_being_a_file_is_exit_3(tmp_path, monkeypatch):
+def test_the_direction_directory_being_a_file_is_refused_on_the_wrong_path_code(tmp_path,
+                                                                                monkeypatch):
+    """Something that is not a directory where the intent file belongs (issue #104).
+
+    The old route reached this shape with ``exists()``/``is_dir()`` and answered the
+    environment-fault code 3; docs/PRODUCT.md 7 now gives every wrong path each
+    writer's own code, so this row pins BOTH halves of the move: the code is the
+    writer's 2, and the sentence still says "is not a directory" rather than
+    inventing a link that is not there. The sibling tests in
+    ``test_intent_writer_set.py`` are the linked-parent half, where the sentence
+    says "is a symlink".
+    """
     _identity(monkeypatch)
     repo = repo_with_record(tmp_path)
     (repo / "noni" / "direction").write_text("not a directory\n", encoding="utf-8")
     code, out, err = _set(repo)
-    assert code == 3, err
+    assert code == 2, err
     assert "is not a directory" in err, err
+    assert "noni/direction" in err, err
+    assert "symlink" not in err.lower(), err
+
+
+def test_a_symlinked_parent_is_refused_before_the_writer_reaches_git(tmp_path, monkeypatch):
+    """The guard runs ahead of every git call this layer owns (issue #104).
+
+    Driven in-process, where the spy can see the commands: a linked parent used to
+    reach ``git add`` and come back with "beyond a symbolic link" at exit 3, after
+    the bytes had already been written outside the tree. Now the run returns the
+    writer's wrong-path 2 with no git call of any kind, which is what "before its
+    first read, probe or mkdir" has to mean for this writer.
+    """
+    _identity(monkeypatch)
+    module = _intent_module()
+    real = module.gitwrite.git
+    seen: list[tuple[str, ...]] = []
+
+    def spy(repo_arg, *args):
+        seen.append(tuple(args))
+        return real(repo_arg, *args)
+
+    monkeypatch.setattr(module.gitwrite, "git", spy)
+    repo = repo_with_record(tmp_path)
+    outside = tmp_path / "outside"
+    plant_parent_link(repo, outside, "noni/direction")
+    write_outside_decoy(outside, "noni/direction", "intent.md")
+
+    code, out, err = _set(repo)
+
+    assert code == 2, err
+    assert "symlink" in err.lower(), err
+    assert "noni/direction" in err, err
+    assert seen == [], f"a refused run still reached git: {seen}"
+    assert (repo / "noni" / "direction").is_symlink(), "the run unmade the planted link"
+    assert_outside_untouched(outside, "noni/direction", "intent.md")
 
 
 def test_the_committed_subject_is_the_citation_the_census_reads(tmp_path, monkeypatch):

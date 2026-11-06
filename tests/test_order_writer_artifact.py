@@ -18,6 +18,11 @@ from order_fixtures import (
 from ordering_shapes import (
     MALFORMED_SHAPES,
 )
+from parent_link_fixtures import (
+    assert_outside_untouched,
+    plant_parent_link,
+    write_outside_decoy,
+)
 
 
 def test_a_file_that_is_not_json_is_refused_and_left_untouched(tmp_path):
@@ -126,3 +131,60 @@ def test_an_unreadable_decision_record_is_an_environment_fault(tmp_path):
         import pytest
         pytest.skip("the reading user can read a 000-mode file")
     assert "could not be read" in proc.stderr, proc.stderr
+
+
+# --- The DIRECTORY above the artifact (issue #104) ---------------------------
+#
+# Every case above plants a link at the FILE the writer reads or replaces. These
+# plant the directory above it, which no file classification can see: the writer
+# asked its parent with ``exists()``/``is_dir()`` and then created it with
+# ``mkdir(parents=True)``, and all three of those follow links. A committed
+# ``noni/direction`` that is a link to a directory outside the state repository
+# therefore answered "already there", the mkdir was a no-op, and the artifact
+# landed outside -- exit 0. The guard now asks every component under ``--repo``
+# of ``lstat`` before the first read, so the same shape is refused on the writer's
+# own wrong-path code (2, the code docs/PRODUCT.md 7 gives ``order``) rather than
+# the 3 the old ``is_dir()`` branch answered.
+
+
+def test_a_symlink_where_the_direction_directory_was_is_refused_never_written_through(tmp_path):
+    """``order.json`` written through a linked parent is the bug this pins.
+
+    The outside tree holds the decoy at the very name the writer would have used,
+    so "nothing was written outside" is a statement about that file: the run that
+    used to exit 0 here replaced it.
+    """
+    repo = _repo(tmp_path)
+    outside = tmp_path / "outside"
+    plant_parent_link(repo, outside, "noni/direction")
+    write_outside_decoy(outside, "noni/direction", "order.json")
+
+    proc = _order(repo, "add", "7", "--decision", BASELINE_ID, "--now", NOW)
+
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "symlink" in proc.stderr.lower(), proc.stderr
+    assert "noni/direction" in proc.stderr, proc.stderr
+    assert (repo / "noni" / "direction").is_symlink(), "the run unmade the planted link"
+    assert_outside_untouched(outside, "noni/direction", "order.json")
+
+
+def test_a_symlinked_noni_directory_hides_the_direction_directory_and_is_refused(tmp_path):
+    """A link at ``noni`` is refused even though the directory beneath it is real.
+
+    ``lstat`` resolves every intermediate component, so a leaf-only question hears
+    "directory" for ``noni/direction`` and writes the artifact into the outside
+    tree. This is the case the guard walks every component for, and the one the
+    old ``exists()`` + ``mkdir`` route could not see at all.
+    """
+    repo = _repo(tmp_path)
+    outside = tmp_path / "outside"
+    plant_parent_link(repo, outside, "noni")
+    write_outside_decoy(outside, "noni", "order.json")
+
+    proc = _order(repo, "add", "7", "--decision", BASELINE_ID, "--now", NOW)
+
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "symlink" in proc.stderr.lower(), proc.stderr
+    assert "noni" in proc.stderr, proc.stderr
+    assert (repo / "noni").is_symlink(), "the run unmade the planted link"
+    assert_outside_untouched(outside, "noni", "order.json")

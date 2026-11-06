@@ -39,6 +39,11 @@ from ordering_shapes import (
     commit_artifact,
     writer_text,
 )
+from parent_link_fixtures import (
+    assert_outside_untouched,
+    plant_parent_link,
+    write_outside_decoy,
+)
 
 # ``json.loads`` walks nesting on the interpreter's own stack, so a document past
 # the recursion budget raises RecursionError -- not a ValueError, and so not
@@ -360,3 +365,64 @@ def test_the_closed_class_says_so_when_no_state_file_is_given(tmp_path):
     # The same run in --json mode: no notice line in the NDJSON stream.
     code, rows, _ = _census_ordering(repo)
     assert code == 0 and rows == [], (code, rows)
+
+
+# --- A linked ledger above the citation read (issue #104) --------------------
+#
+# ``--decision`` is answered by reading ``noni/decisions/<id>.json``, and the
+# parent of that ledger was the one path the writer never inspected: ``is_dir()``
+# and ``mkdir(parents=True)`` both follow links, so a committed ``noni`` that is a
+# link to a directory outside the state repository let the read reach bytes nobody
+# committed here, and the committed route then heard git object to a path "beyond a
+# symbolic link". The two tests below are the read and the run: the reader's own
+# verdict, and the writer refusing the shape before it opens anything.
+
+
+def test_a_ledger_reached_through_a_linked_parent_is_read_by_the_writer(tmp_path):
+    """The leak, pinned: the reader follows the link and answers from outside bytes.
+
+    This is not a refusal test -- ``orderstate.read_record`` takes one path and the
+    guard above it asks the directory question, not the file question. It is here
+    because it says what the guard is holding back: a record whose committed bytes
+    stand outside the state repository still reads as a decided record, so a writer
+    that asked only its leaf would cite a decision nobody made here.
+    """
+    state = _orderstate_module()
+    repo = _repo(tmp_path / "reader")
+    outside = tmp_path / "outside-reader"
+    plant_parent_link(repo, outside, "noni")
+    linked = repo / "noni" / "decisions" / f"{BASELINE_ID}.json"
+    assert linked.is_file(), "the fixture moved the committed record out of the tree"
+
+    found, refusal = state.read_record(linked, 3, 4)
+
+    assert refusal is None, refusal
+    assert found is not None and found["status"] == "decided"
+    assert not str(linked).startswith(str(outside)), (
+        "the fixture's link must be the thing that resolves, not the path the test wrote")
+
+
+def test_a_run_citing_a_record_behind_a_linked_ledger_is_refused_before_the_read(tmp_path):
+    """The same tree, run through the writer: exit 2 naming ``noni``, nothing read.
+
+    The outside tree holds the decoy at the record's own name and at the artifact's,
+    so both halves of the old fault -- the read that reached outside bytes and the
+    write that landed there -- are checked against bytes the fixture wrote. The
+    committed route is the one under test (no ``--no-commit``): it is where git used
+    to answer with its pathspec error, after the bytes had already gone out.
+    """
+    repo = _repo(tmp_path)
+    _seed(repo, _entry(1, BASELINE_ID))
+    outside = tmp_path / "outside"
+    plant_parent_link(repo, outside, "noni")
+    write_outside_decoy(outside, "noni", "order.json")
+
+    proc = _order(repo, "add", "7", "--decision", BASELINE_ID, "--now", NOW)
+
+    text = proc.stdout + proc.stderr
+    assert proc.returncode == 2, text
+    assert "symlink" in text.lower(), text
+    assert "noni" in text, text
+    assert "pathspec" not in text.lower() and "fatal:" not in text.lower(), text
+    assert (repo / "noni").is_symlink(), "the run unmade the planted link"
+    assert_outside_untouched(outside, "noni", "order.json")

@@ -106,7 +106,25 @@ def _clause(text: str, origin: str, *, delimiter: str = ";",
         f"{origin} states the walked position ({CLAUSE_START!r}) but not the promise "
         f"({CLAUSE_CLOSE!r}): the clause is incomplete")
     first, second = sorted((at, stop))
-    left = flat.rfind(delimiter, 0, first) + 1
+    # The window is the delimited unit that SURROUNDS the clause. Its left bound is
+    # the delimiter that opens that unit, which differs between the two callers.
+    #
+    # A markdown row (``code_before_only``) states its code in the cell to the LEFT
+    # of the clause, and both clause halves sit in the cell to the RIGHT. Bounding at
+    # a delimiter just before either half lands inside the clause -- for a row whose
+    # leftmost pipe is the row's own opening pipe it would land left of the code too,
+    # and the row's own code would be reported missing. A row's left bound is
+    # therefore the FIRST delimiter of the row text handed to this helper. That text
+    # is one markdown line, whose leftmost pipe is its opening pipe and whose
+    # rightmost is its closing pipe, so the window spans the whole row and the code
+    # is read from the leading cell below. The leading pipe is re-added by
+    # :func:`_table_row` precisely so this bound has a left boundary to find.
+    #
+    # Prose callers leave the flag unset and bound at the delimiter before the
+    # earlier half: their unit is the ``;``-bounded sentence that carries both halves,
+    # so no cell boundary is involved and the earlier bound is the sentence's start.
+    left = flat.find(delimiter) + 1 if code_before_only \
+        else flat.rfind(delimiter, 0, first) + 1
     # The window must reach past the LAST delimiter the clause itself carries: a
     # clause that quotes ``lstat`` in backticks or lists its kinds with commas can
     # hold the delimiter inside it, and cutting at the first one would cut the window
@@ -229,16 +247,18 @@ def _table_row(text: str, code_cell: str, origin: str) -> str:
     credited. Rows are matched on BOTH clause halves so a table that dropped one of
     them fails here rather than silently handing the caller the wrong row.
     """
-    rows = ["|" + row.strip() for row in text.splitlines()
+    rows = [row.strip() for row in text.splitlines()
             if row.strip().startswith(f"| {code_cell} |")
             and CLAUSE_START in _flat(row) and CLAUSE_CLOSE in _flat(row)]
     assert len(rows) == 1, (
         f"{origin} should carry the clause in exactly one {code_cell} row, found "
         f"{len(rows)}")
-    # A leading pipe is added so the row has a left boundary: a markdown row's own
-    # opening pipe is what ``_clause`` cuts the code's cell at, and without a pipe
-    # before it there is no delimiter left of the row's code, so the code's cell
-    # would have no bounds and the assertion could reach past the row entirely.
+    # The row is returned verbatim. Its own opening pipe is the left boundary
+    # ``_clause`` cuts the code's cell at; prefixing a second pipe (as an earlier
+    # revision did) shifted every pipe index by one and pushed the row's own code
+    # outside its own cell, so a page that states the code correctly was reported as
+    # dropping it. The verbatim row IS the ``| code | meaning |`` unit the contract
+    # speaks of, and it already carries both of its boundary pipes.
     return rows[0]
 
 

@@ -83,6 +83,77 @@ def test_the_helper_refuses_through_the_callers_printer_and_code():
     assert calls == []
 
 
+def _call_arguments(source: str, qualified: str) -> str:
+    """The argument text of the call to ``qualified`` that is not a definition.
+
+    ``qualified`` is spelled as the source spells it (``parse_date(`` inside the
+    helper, where the rule is called unqualified). A rule's own signature is a
+    ``def`` line and is skipped: a signature names its parameters, it does not pass
+    a printer. The balanced-paren scan starts at the paren that follows the name, so
+    a keyword argument that is itself a call does not end the read early -- the
+    property a plain ``[^)]*`` regex could not give for the assembly call, which
+    forwards several call expressions as values.
+    """
+    at = 0
+    while (found := source.find(qualified, at)) != -1:
+        at = found + 1
+        if source[max(0, found - 20):found].rstrip().endswith("def"):
+            continue
+        open_at = found + len(qualified) - 1
+        depth, index = 0, open_at
+        while index < len(source):
+            char = source[index]
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            index += 1
+        return source[open_at + 1:index]
+    return ""
+
+
+def _helper_calls(source: str) -> list[tuple[str, str]]:
+    """Every ``_decide_flags.<rule>(...)`` call in ``source``, with its argument text.
+
+    Balanced-paren scanner rather than a ``[^)]*`` regex: the assembly call forwards
+    keyword arguments whose values are themselves calls, and a regex stops at the
+    first closing paren and reports a call whose arguments were never seen. The
+    scanner reads from each call's opening paren to the paren that closes it, so the
+    argument text it hands back is what the caller actually passed.
+    """
+    needle = "_decide_flags."
+    found: list[tuple[str, str]] = []
+    at = 0
+    while (start := source.find(needle, at)) != -1:
+        at = start + len(needle)
+        open_at = source.find("(", at)
+        if open_at == -1:
+            break
+        head = source[at:open_at].strip()
+        if "(" in head or "\n" in head or "." in head or not head.isidentifier():
+            # A mention, not a call: a docstring that cites the rule by name (with
+            # or without the cross-reference markup) or a bare attribute handed to
+            # another helper. Neither passes a printer, so neither is one, and the
+            # search resumes just after the needle so a real call further along is
+            # still found.
+            continue
+        depth, index = 0, open_at
+        while index < len(source):
+            char = source[index]
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            index += 1
+        found.append((head, source[open_at + 1:index]))
+        at = index
+    return found
+
+
 def test_the_helper_takes_every_rule_from_its_arguments_and_keeps_none():
     """The usage contract is split across the two files, so one gate owns the seam.
 
@@ -116,11 +187,33 @@ def test_the_helper_takes_every_rule_from_its_arguments_and_keeps_none():
     # that started refusing through a printer of the helper's own, or with a
     # number of its own, is the drift the rest of this module guards.
     source = (REPO / "src" / "noni" / "decide.py").read_text(encoding="utf-8")
-    calls = re.findall(r"_decide_flags\.(\w+)\(([^)]*)\)", source, re.S)
-    assert len(calls) >= 3, calls
+    helper_source = (REPO / "src" / "noni" / "_decide_flags.py").read_text(encoding="utf-8")
+    # Both sides of the seam are read, each by its own rule. The CALLER's calls carry
+    # the literals: a rule that stopped being handed the writer's printer would
+    # otherwise vanish from this file entirely, count included. The calls the
+    # ASSEMBLY makes on the caller's behalf carry the forwarded bindings, which are
+    # the same two arguments one frame deeper -- asserting the literal there would
+    # assert the caller's spelling rather than the property, so those three are
+    # checked for both names simply being passed on. A rule the assembly refused to
+    # forward would read as an empty argument string and fail here.
+    calls = (_helper_calls(source)
+             + [("parse_date", _call_arguments(helper_source, "parse_date(")),
+                ("parse_questions", _call_arguments(helper_source, "parse_questions(")),
+                ("check_supersede", _call_arguments(helper_source, "check_supersede("))])
+    # The four single-rule calls, plus the assembly that makes them. The assembly
+    # lives in the helper too, so the count is what says the caller did not quietly
+    # re-implement one of the four beside it -- and every one of them crosses with
+    # the caller's own printer and code.
+    assert len(calls) >= 4, calls
     for name, arguments in calls:
         assert name in {"parse_date", "parse_questions", "check_supersede",
-                       "refuse_name"}, name
+                        "refuse_name", "build_record_flags"}, name
+        assert "fail=" in arguments, f"{name} is called without the caller's printer"
+        assert "exit_usage=" in arguments, \
+            f"{name} is called without the caller's usage code"
+    # ...and for the calls the caller makes itself, the values handed over are
+    # literally the writer's own printer and its own usage constant.
+    for name, arguments in _helper_calls(source):
         assert "fail=_fail" in arguments, f"{name} is called without the caller's printer"
         assert "exit_usage=EXIT_USAGE" in arguments, \
             f"{name} is called without the caller's usage code"
@@ -200,7 +293,13 @@ def test_the_supersede_rule_takes_its_two_flags_as_arguments():
                                 "fail", "exit_usage"], list(parameters)
     annotations = {name: str(p.annotation) for name, p in parameters.items()}
     assert "Namespace" not in " ".join(annotations.values()), annotations
-    # The caller still refuses before the ledger is touched.
-    source = (REPO / "src" / "noni" / "decide.py").read_text(encoding="utf-8")
-    assert "check_supersede(args.supersedes, args.date" in source, \
-        "decide.py no longer passes the two flags it owns"
+    # The caller still refuses before the ledger is touched. The two values are
+    # passed as flags by whoever calls the rule -- decide.py today through
+    # :func:`build_record_flags`, which forwards its own ``args`` values -- so the
+    # assertion is about the pair crossing the seam as values and not about which
+    # frame makes the call.
+    helper_source = (REPO / "src" / "noni" / "_decide_flags.py").read_text(encoding="utf-8")
+    caller = (REPO / "src" / "noni" / "decide.py").read_text(encoding="utf-8")
+    passed = ("check_supersede(args.supersedes, args.date" in helper_source
+              or "check_supersede(args.supersedes, args.date" in caller)
+    assert passed, "the two flags the supersede rule owns are no longer passed as values"

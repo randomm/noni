@@ -390,9 +390,13 @@ def main(argv: list[str] | None = None) -> int:
               "commit")
         return EXIT_OK
     if order_path.parent.exists() and not order_path.parent.is_dir():
-        # The parent path is part of the artifact's identity: a file where the
-        # direction directory belongs is an environment fault, and mkdir would
-        # have failed here anyway with a worse message.
+        # The parent path is part of the artifact's identity, and this is the one
+        # shape about it the pre-read guard does NOT own: an ordinary FILE at
+        # noni/direction, under a real noni/, which the walk admits because nothing
+        # above it is a link. A symlink at that position never reaches here (it is
+        # refused with the rest of the tree at exit 2, before this read); a plain
+        # file is an environment fault, and mkdir would have failed anyway with a
+        # worse message.
         return _fail(EXIT_IO, f"{orderschema.ORDER_DIR} is not a directory",
                      f"remove {orderschema.ORDER_DIR} or move it aside, then re-run "
                      "order.py")

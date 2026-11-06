@@ -23,12 +23,13 @@ GIT_TIMEOUT = 60
 # What a killed git call reports. No caller may read a git answer from it.
 GIT_TIMEOUT_RC = 124
 
-# The git answer that means "this path is not in that tree". ``git cat-file -e``
-# and ``git rev-parse --verify`` agree on it and on nothing else: 1 means the
-# object is simply not there, which is an honest negative the writer reads as
-# absence, while any other non-zero code answered nothing about the path and is a
-# fault. The number is pinned here, at the one call that reads it, and
-# ``tests/test_order_writer_probe.py`` pins the codes beside it.
+# The git answer that means "this path is not in that tree", for the one call that
+# reads it. ``git rev-parse --verify --quiet`` prints nothing and exits 1 for a name
+# that resolves to no object, which is an honest negative the writer reads as absence,
+# while any other non-zero code answered nothing about the path and is a fault. The
+# number belongs to that call alone: ``git cat-file -e`` reports the same negative at
+# 128 and nothing here reads it, so the number must not be quoted as the two calls'
+# common agreement.
 NOT_IN_TREE_RC: int = 1
 
 # The code ``git hash-object`` answers for input it will not name an object for. An
@@ -36,6 +37,18 @@ NOT_IN_TREE_RC: int = 1
 # blob, which the caller reads as "no such object" and never as "the object store is
 # broken".
 NO_BLOB_RC: int = 128
+
+# The stage ``git ls-files -s`` prints for a path the index holds as ONE entry. Any
+# other stage (1, 2, 3) is an unmerged path: the index holds two or three blobs for
+# that name, and no single id answers "what the index holds at that path".
+MERGED_STAGE: int = 0
+
+# What :func:`index_blob_id` answers for a path the index holds in conflict. It is a
+# FAULT and not ``None``: ``None`` is what the caller reads as "the index does not hold
+# this path", which is the state the writer's own ``git add`` fills from the working
+# copy -- so answering that for a conflicted path would let the commit obey a stage
+# this run never read. No id can be the id of a path with three blobs under one name.
+UNMERGED = "unmerged"
 
 
 class Committed(NamedTuple):
@@ -70,7 +83,9 @@ def committed_bytes(repo: Path, rel: str) -> Committed:
     run, and refuses when they moved (issue #116). Two bounded calls, both run by
     :func:`git_bytes`, so the probe carries the same hardening, the same bound and
     the same test seam as the commit itself, and no second git runner exists to
-    drift from it.
+    drift from it. A third call checks that the negative below rests on a real
+    commit (:func:`head_is_commit`), because a repository whose HEAD names no object
+    is a fault and not an empty history.
 
     Absence is observed, never inferred from a missing answer -- the same rule
     ``orderstate.read_order`` follows by asking ``lstat`` before it believes a path
@@ -98,19 +113,52 @@ def committed_bytes(repo: Path, rel: str) -> Committed:
            This covers the unborn HEAD (a repository with no commit at all, which is
            what a freshly initialised private state repository is) and a path that
            no commit has ever held, and both read as nothing committed rather than as
-           a fault, or the first committed order would never land.
+           a fault, or the first committed order would never land. It is granted only
+           once :func:`head_is_commit` has said HEAD resolves to a commit object (or
+           names nothing at all): the path-level negative does not distinguish "no
+           such path in this tree" from "no tree to look in", so without that check a
+           corrupt object store whose HEAD does not resolve would read as an empty
+           history and the run would commit over an order it never saw.
       a call that answered nothing
         -- ``Committed(code=<n>)``: a hang (``GIT_TIMEOUT_RC``) or any non-zero code
            that is not the one honest negative above, with git's stderr in ``why``.
            A corrupt object store, a bad HEAD or a hung git is an environment fault
            and must never be read as "committed bytes, unchanged".
     """
+    reachable, fault = head_is_commit(repo)
+    if fault:
+        return _fault(NOT_IN_TREE_RC, fault)
+    if reachable is None:
+        # HEAD resolves to something that is not a commit (a detached tree or blob), so
+        # the path-level negative below cannot tell that state from an empty history and
+        # it is reported as the fault it is rather than trusted as absence.
+        return _fault(NOT_IN_TREE_RC, "HEAD does not name a commit object")
     blob, why = tree_blob_id(repo, f"HEAD:{rel}")
     if blob is None and why:
         return _fault(NOT_IN_TREE_RC, why)
     if blob is None:
         return Committed(data=None, code=None, why="")
-    shown = git_bytes(repo, "show", f"HEAD:{rel}")
+    # The bytes are read out of the id git named for them, and not out of the path again.
+    # ``git show HEAD:<path>`` re-resolves that rev, mode and path through the object
+    # store; ``rev-parse`` had already answered a different object for the same question,
+    # and nothing in this process pins HEAD between the two calls. Reading the named
+    # object instead means the bytes this run compares are the bytes HEAD holds BY
+    # CONSTRUCTION -- an identity rather than a hope -- and a run can no longer be told
+    # its committed order is unchanged because a second resolution happened to answer
+    # again. A name that no longer resolves is a fault (this writer cannot say what HEAD
+    # holds), which is never read as "committed bytes, unchanged".
+    # The bytes are read out of the id git named for them, and not by resolving the
+    # path a second time. ``git show HEAD:<path>`` re-resolves rev, mode and path
+    # through the object store, and ``rev-parse`` above had already answered a different
+    # object for that same question: nothing in this process pins HEAD between the two
+    # calls, so a run could be told its committed order is unchanged because a second
+    # resolution happened to answer again. Reading the named object instead makes the
+    # identity of this read a fact of construction rather than a hope, and it is asked
+    # of ``git show <blob>`` so the call stays the one bounded, allow-listed read the
+    # rest of the guard makes (a bare blob id is one name it accepts). A name that no
+    # longer resolves answers 128, which is a fault -- this writer cannot say what HEAD
+    # holds -- and is never read as "committed bytes, unchanged".
+    shown = git_bytes(repo, "show", blob)
     if shown.returncode == 0:
         return Committed(data=shown.stdout, code=None, why="")
     return _fault(shown.returncode, _stderr(shown.stderr))
@@ -142,6 +190,48 @@ def blob_id(repo: Path, data: bytes | None) -> tuple[str | None, str]:
             return None, ""
         return None, _stderr(hashed.stderr) or f"exit {hashed.returncode}"
     return hashed.stdout.decode("ascii", errors="replace").strip(), ""
+
+
+def head_is_commit(repo: Path) -> tuple[bool | None, str]:
+    """The ``(HEAD is a commit, fault)`` answer, asked without reading a sentence.
+
+    Three answers, three shapes, because the caller has to tell two of them apart:
+    ``True`` is a history this writer may commit onto; ``False`` is HEAD naming no
+    object at all -- the unborn HEAD, a repository with no commit yet, which is the
+    state the quickstart tells the operator to write into and never a fault; ``None``
+    is HEAD resolving to something that is not a commit (a detached tree or blob), a
+    shape no normal run is in and one whose honest next move is a refusal. ``fault`` is
+    set only for a call that answered nothing, which is never read as any of the three.
+
+    Two return codes decide it and no wording does. ``git rev-parse --verify --quiet
+    HEAD`` is the first: it prints nothing and exits 1 for a name that resolves to no
+    object, and that -- not ``cat-file``'s 128, which it shares with a corrupt store --
+    is git's honest negative for absence. Exit 0 means the name resolved, and then
+    ``git cat-file -t HEAD`` is asked what it resolved TO, because a name that resolves
+    to a blob is a HEAD the writer must not commit onto.
+
+    This exists for one reason: the path-level negative that
+    :func:`committed_bytes` reads does not distinguish "this tree holds no such path"
+    from "there is no tree", so the cheaper question "does HEAD resolve to a commit at
+    all?" has to be settled before that negative is trusted as an empty history.
+    """
+    named, fault = tree_blob_id(repo, "HEAD")
+    if fault:
+        return False, fault
+    if named is None:
+        return False, ""
+    typed = git_bytes(repo, "cat-file", "-t", "HEAD")
+    if typed.returncode == GIT_TIMEOUT_RC:
+        return False, _stderr(typed.stderr)
+    if typed.returncode == 0:
+        if (typed.stdout.decode("ascii", errors="replace").strip() == "commit"):
+            return True, ""
+        return None, ""
+    # The name resolved a moment ago, so a refusal to name its type is the object store
+    # declining (a loose object that cannot be opened, a bad alternates entry) and not
+    # git's own "no such object". Reading it as absence is how a repository the operator
+    # has to repair would be reported as an empty one.
+    return False, _stderr(typed.stderr) or f"exit {typed.returncode}"
 
 
 def tree_blob_id(repo: Path, rev: str) -> tuple[str | None, str]:
@@ -176,29 +266,52 @@ def index_blob_id(repo: Path, rel: str) -> tuple[str | None, str]:
     The third read of the guard, and the only one of the three that git's commit
     actually obeys: ``git commit --only -- <path>`` takes the path from the index,
     so whatever lands in HEAD is what the index held a moment before. ``git ls-files
-    -s -- <rel>`` answers ``<mode> <blob> <stage>\t<rel>`` for a staged path and
-    prints nothing with exit 0 for a path the index does not hold, which is the
-    whole contract this function reads -- exit 0 with no line is "the index holds
-    nothing at that path", not a fault.
+    -s -- <rel>`` answers ``<mode> <blob> <stage>\t<rel>`` per row and prints nothing
+    with exit 0 for a path the index does not hold, which is the whole contract this
+    function reads -- exit 0 with no row is "the index holds nothing at that path",
+    not a fault.
 
-    The two shapes that would NOT answer the question are pinned by the probe's
-    tests: ``ls-files --error-unmatch`` exits 1 for an unstaged path (a code this
-    module would read as "no such object", and which the guard cannot tell from a
-    genuine fault) and ``diff --cached --quiet`` exits 1 for any staged change at
-    all, including the one this writer itself is about to make.
+    EVERY row of the path is read, not the first one. A path the index holds in
+    conflict answers one row per stage -- the base and both sides -- so a reader that
+    took the first row would hand back one side of a merge conflict as "the id the
+    index holds", and the guard would compare a blob the coming commit does not obey.
+    A conflicted path answers ``(UNMERGED, "")``, which the guard reads as a refusal
+    (see :data:`UNMERGED`): it cannot name the bytes that would land in HEAD, and
+    "no id" is the answer for a path the index does not hold at all.
     """
     listed = git_bytes(repo, "ls-files", "-s", "--", rel)
     if listed.returncode == GIT_TIMEOUT_RC:
         return None, _stderr(listed.stderr)
     if listed.returncode != 0:
         return None, _stderr(listed.stderr) or f"exit {listed.returncode}"
-    line = listed.stdout.decode("utf-8", errors="replace").strip()
-    if not line:
+    rows = listed.stdout.decode("utf-8", errors="replace").splitlines()
+    ids: list[str] = []
+    for row in rows:
+        if not row.strip():
+            continue
+        fields = row.split()
+        if len(fields) < 2:
+            return None, "git ls-files answered with no blob id"
+        if _stage_of(fields[2] if len(fields) > 2 else "") != MERGED_STAGE:
+            return UNMERGED, ""
+        ids.append(fields[1])
+    if not ids:
         return None, ""
-    fields = line.split()
-    if len(fields) < 2:
-        return None, "git ls-files answered with no blob id"
-    return fields[1], ""
+    return ids[0], ""
+
+
+def _stage_of(field: str) -> int | None:
+    """The stage of one ``ls-files -s`` field, or None when it is not a stage.
+
+    A field that is not an integer is not evidence of a merged path: the shape of the
+    row is wrong and the caller must not read "stage 0" out of it. :func:`index_blob_id`
+    treats None as "not merged", so a row this function cannot read is refused rather
+    than passed.
+    """
+    try:
+        return int(field)
+    except ValueError:
+        return None
 
 
 def _stderr(stderr: bytes | None) -> str:

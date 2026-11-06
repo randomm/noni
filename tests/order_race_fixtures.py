@@ -14,14 +14,16 @@ import contextlib
 import json
 from pathlib import Path
 
-from _harness import _git_e2
+from _harness import _git, _git_e2
 from order_fixtures import (
     BASELINE_ID,
     ORDER_REL,
     RIVAL_DATE,
     SEED_STAMP,
+    _canonical,
     _committed_order,
     _entry,
+    _order_path,
     _read,
     _rival_commit,
 )
@@ -31,6 +33,11 @@ REFUSAL = "the order changed since it was read; re-run"
 # The other exit-4 cause the guard reports, pinned from the product's own constant by
 # the tests that assert the two arms stay distinguishable.
 FILE_CHANGED = "the file changed since it was read; restore it or discard the change"
+
+# What a probe call that answered nothing reports, as opposed to the exit-4 refusals:
+# an environment fault is never a concurrent writer, so a test that asserts one arm
+# asserts the absence of the other two codes and of this one by name.
+IO_FAULT = "environment fault"
 
 # The rival's entry stamp is ``order_fixtures.RIVAL_DATE`` under this module's own
 # name: one literal, one explanation (see that module), imported rather than spelled
@@ -59,7 +66,11 @@ def interrupt_read(order_module, name: str, replacement):
 
 
 def _head(repo: Path) -> str:
-    return _git_e2(repo, "rev-parse", "HEAD").stdout.strip()
+    out = _git_e2(repo, "rev-parse", "HEAD").stdout.strip()
+    # Under an unborn HEAD git echoes the literal ``HEAD`` on stdout while exiting 128,
+    # so the code is the answer and not the string: a fixture that asked only for the
+    # text would believe a commit existed in exactly the state it set out to build.
+    return out if _git_e2(repo, "rev-parse", "--verify", "--quiet", "HEAD").returncode == 0 else ""
 
 
 def _checkout_head(repo: Path) -> None:

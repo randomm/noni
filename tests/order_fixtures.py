@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import re
 import os
 import subprocess
 import sys
@@ -47,7 +48,8 @@ __all__ = [
     "_supersede_baseline", "_order", "_order_inprocess", "_census_ordering",
     "_assert_census_clean", "_head_paths", "_porcelain", "_canonical", "_seed",
     "_spied_git", "_writer_git_call", "_git_verb", "_entry", "_rival_commit",
-    "_committed_order", "_bare_repo", "_schema_case",
+    "_committed_order", "_bare_repo", "_schema_case", "git_input", "git_output",
+    "_read",
     "_doc_block", "_doc_usage_flags", "_docstring", "_module_exit_codes",
     "_order_ast", "_parser_flags", "_skill_section",
 ]
@@ -382,8 +384,10 @@ def _rival_commit(repo: Path, entries: list[dict],
     """
     target = _order_path(repo)
     parent_existed = target.parent.is_dir()
-    as_the_run_read_it = target.read_bytes() if target.is_file() else None
-    target.parent.mkdir(parents=True, exist_ok=True)
+    # The bytes HEAD is about to lose, captured BEFORE anything is written: the state the
+    # fixture restores afterwards is the state THIS run read, not whatever the rival's
+    # commit happened to put on disk.
+    was = target.read_bytes() if target.is_file() else None
     target.write_text(_canonical([dict(entry) for entry in entries]), encoding="utf-8")
     _git(repo, "add", ORDER_REL)
     git_pin_date(repo, RIVAL_DATE, "commit", "-q", "-m", message)
@@ -397,12 +401,62 @@ def _rival_commit(repo: Path, entries: list[dict],
     #            HEAD back and erase the very thing the guard is meant to notice.
     #   file   -- back to the exact bytes the losing run reads, or unlinked when it
     #            read no file at all.
-    #   index  -- back to the commit this run read against, so the tree reports no
+    #   index  -- back to the commit this run read, so the tree reports no
     #            staged change the rival's `git add` made and the writer's own
-    #            `git add` cannot stage it. `--mixed` on the path, so the working
-    #            copy keeps the bytes restored below.
-    _git(repo, "reset", "--quiet", "HEAD~1", "--", ORDER_REL)
-    if as_the_run_read_it is None:
+    #            `git add` cannot stage it.
+    #
+    # The index is put back from HEAD's own parent, named, because this is a commit the
+    # fixture made and is now taking back. The path form of ``git reset`` fills the index
+    # from the WORKING TREE and only falls back to the commit when the file is gone, so on
+    # a tree whose file holds a copy of its own (any scenario with a staged or restamped
+    # file, which is most of them) it leaves the rival's order staged -- and an index that
+    # quietly holds a foreign copy hands the next run an index refusal it was never built
+    # to test, which reads as a wrong-arm bug in the guard.
+    # The index is put back to the commit this run read. HEAD is moved first, so this
+    # helper never knows which commit the rival's is -- the caller restores HEAD when it
+    # wants a particular one, and this line puts the index at the commit under HEAD either
+    # way. ``git reset -- <path>`` is the obvious spelling and is wrong here: it fills the
+    # index from the WORKING TREE and consults the commit only when the file is missing, so
+    # on a tree whose file carries a copy of its own (any scenario with a staged or
+    # restamped file, which is most of them) it leaves the rival's order staged -- and an
+    # index that quietly holds a foreign copy hands the next run an index refusal it was
+    # never built to test, which reads as a wrong-arm bug in the guard. ``--`` is what
+    # keeps it path-scoped: without it the same command would move HEAD itself.
+    # ``--source=`` and not a positional: ``git restore`` takes its source as an option
+    # and refuses a positional that follows ``--`` as a pathspec, so the bare form reads
+    # "HEAD~1" as a file to restore and dies.
+    # HEAD's parent, asked BEFORE the commit under test is taken back, and pinned to a
+    # full object id: a rev walked twice is a rev that can name two things, and this one
+    # decides which bytes the index is put back to.
+    shown = _git_e2(repo, "rev-parse", "HEAD~1^{commit}")
+    assert shown.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", shown.stdout.strip()), (
+        shown.stderr, shown.stdout)
+    parent = shown.stdout.strip()
+    # The row itself is read out of that commit and written back as data. Asking git to
+    # "restore the index from a commit" is the obvious shape and does not answer this
+    # question: ``git restore --staged --source=<commit>`` copies the row including that
+    # commit's stat cache, and git then reports the path as a staged change until it is
+    # rehashed -- and a path the source commit never held is left in the index at all,
+    # which is a third state nobody asked for. ``--index-info`` writes the entry as data
+    # (the same call git's own merge machinery uses), with the mode taken from the tree
+    # entry, so the row round-trips exactly. No row in the commit means no row in the
+    # index, which is the honest answer.
+    listing = _git_e2(repo, "ls-tree", parent, "--", ORDER_REL).stdout.splitlines()
+    row = next((line for line in listing if line.strip()), "")
+    null = "0" * 40
+    if row:
+        mode, blob = row.split()[0], row.split()[2]
+    else:
+        mode, blob = "000000", null
+    git_input(repo, "update-index", "--index-info",
+              text=f"{mode} {blob} 0\t{ORDER_REL}\n")
+    # A row that came from a commit carries that commit's stat cache, and git's index
+    # refresh refuses to trust it for a path whose worktree copy it cannot see (which is
+    # the case on every run of this helper: the file is restored just below). Asked
+    # anyway, it dies with "does not match index". So the row is refreshed AFTER the file
+    # is put back, by the line that follows the restore below, and this one only stages
+    # what HEAD's parent held.
+    if was is None:
         target.unlink()
         # Tolerated rather than checked: when the rival's order was the path's first
         # appearance in HEAD, the reset above already took it out of the index, and
@@ -412,7 +466,30 @@ def _rival_commit(repo: Path, entries: list[dict],
         if not parent_existed:
             target.parent.rmdir()
     else:
-        target.write_bytes(as_the_run_read_it)
+        target.write_bytes(was)
+        # The row above came from a commit, so it carries that commit's stat cache and
+        # git calls it a staged change ("M ") until it is rehashed against the worktree.
+        # ``git add`` is the call that rehashes it, and it is honest here: the bytes about
+        # to be staged are the bytes the run reads, so the index ends up holding exactly
+        # the copy the guard is entitled to see as clean. (``update-index
+        # --really-refresh`` cannot do this job: it refuses to trust a stat cache it did
+        # not write and dies with "does not match index".)
+        _git(repo, "add", "--", ORDER_REL)
+    # Pinned from git rather than assumed: the whole point of the two calls above is that
+    # the tree the fixture hands back has HEAD moved and NOTHING ELSE -- the file and the
+    # staged copy both answering the bytes the losing run reads. A fixture that quietly
+    # left a foreign copy staged hands the next run the index refusal it never set out to
+    # test, and the guard then looks wrong-arm for reasons of its own that it does not
+    # have. Asked of git (not of the guard, which is the code under test).
+    if was is not None:
+        rows = [f.split() for f in _git_e2(
+            repo, "ls-files", "-s", "--", ORDER_REL).stdout.splitlines() if f.strip()]
+        assert [r[2] for r in rows] in ([], ["0"]), (
+            f"the rival's index was not put back: {rows}")
+        assert not rows or _git_e2(repo, "rev-parse", rows[0][1]).stdout.strip(), rows
+        assert not rows or _git_e2(
+            repo, "cat-file", "blob", rows[0][1]).stdout.encode() == was, (
+            "the index does not hold the bytes the run reads")
 
 
 def _committed_order(repo: Path) -> bytes | None:
@@ -454,6 +531,49 @@ def _bare_repo(tmp_path: Path, subdir: str = "bare-repo") -> Path:
 
 
 # --- add ----------------------------------------------------------------------
+
+
+def git_output(repo: Path, *args: str) -> str:
+    """One git call whose ANSWER is stdout, with the harness identity and no stdin.
+
+    The checked half of the harness's two stdin-less shapes: ``_git`` checks and
+    discards stdout, ``_git_e2`` keeps stdout and does not check. A fixture that reads
+    an object id out of git wants both, and wants the failure to be a clear message
+    rather than an empty string the next step mistakes for an answer.
+    """
+    import subprocess
+
+    cmd = ["git", "-C", str(repo),
+           "-c", "user.name=Replay",
+           "-c", "user.email=replay@fixture.invalid",
+           "-c", "commit.gpgsign=false",
+           "-c", f"core.hooksPath={os.devnull}", *args]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"git {args} failed: {proc.stderr.strip()}")
+    return proc.stdout.strip()
+
+
+def git_input(repo: Path, *args: str, text: str) -> str:
+    """One git call that feeds ``text`` on stdin, with the harness identity.
+
+    The harness's ``_git`` / ``_git_e2`` pipe no stdin, so a fixture that must hand git
+    bytes (a blob written with ``hash-object -w --stdin``) builds the same argv here
+    rather than inventing a fourth shape for the harness's git calls. ``-w`` STORES the
+    object: an id the index is told to hold must be one the store can answer for, or a
+    later comparison would be measuring a dangling fixture rather than its own read.
+    """
+    import subprocess
+
+    cmd = ["git", "-C", str(repo),
+           "-c", "user.name=Replay",
+           "-c", "user.email=replay@fixture.invalid",
+           "-c", "commit.gpgsign=false",
+           "-c", f"core.hooksPath={os.devnull}", *args]
+    proc = subprocess.run(cmd, capture_output=True, text=True, input=text)
+    if proc.returncode != 0:
+        raise RuntimeError(f"git {args} failed: {proc.stderr.strip()}")
+    return proc.stdout.strip()
 
 
 def _schema_case(**entry_fields):

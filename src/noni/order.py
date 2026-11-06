@@ -398,6 +398,15 @@ def main(argv: list[str] | None = None) -> int:
     # The lost-update guard; order_probe.py owns the check, its two refusal messages
     # and the reason it sits here rather than with the other refusals. --no-commit is
     # exempt because that route runs no git at all.
+    #
+    # It runs BEFORE the no-change shortcut below, and that ordering is load-bearing.
+    # ``rendered == before`` compares the bytes this run would write against the bytes it
+    # read out of the file, so a run whose file has been moved and moved back -- or
+    # whose file has been restamped to exactly what this verb would have stamped --
+    # reaches "nothing left to add" while HEAD and the index hold an order it never
+    # compared itself against. Reporting success for that run is a lie about the state of
+    # the repository: the guard is the step that says whether this run may write, and a
+    # run that may not write is refused whether or not its own bytes happen to match.
     if not args.no_commit:
         refused = order_probe.probe(repo, order_path, before, verb, args.repo,
                                     EXIT_IO, EXIT_REFUSAL)

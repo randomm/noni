@@ -174,7 +174,8 @@ it is a thin wrapper that runs `noni census` (the unified census,
 `ledger-edited` and `ledger-chain` — and returns the census's own exit code. It
 has no schema, no jq and no exit-code table of its own; the census is the single
 arbiter of every rule and `skills/census/SKILL.md` is the single exit-code
-reference for it. It is a
+reference for it. It runs the ledger group and nothing else, so it reports no
+`hygiene`, `ordering-*` or `intent` row — `noni census` is the whole picture. It is a
 bash script: run it as `bash
 scripts/census.sh <dir>` or, since it carries its executable bit and its bash
 shebang, as `scripts/census.sh <dir>`. Why no interpreter may stand in front of
@@ -203,7 +204,10 @@ reads — is in `references/census.md`.
 
 The sessions register has its own entry point in its own skill,
 `skills/sessions-claims/scripts/census-sessions.sh`; it is the same kind of
-wrapper over the same census, and this script no longer dispatches to it.
+wrapper over the same census, and this script no longer dispatches to it. A
+command line that still types the retired form (`census.sh --sessions DIR`) is
+refused with this script's own usage code, naming the option and pointing at the
+entry point that runs the register.
 
 ## Rules
 

@@ -8,7 +8,9 @@ the session group — `session-double`, `session-claim`, `session-malformed`,
 exits with the census's own code. It carries no parser, no rules and no
 exit-code table of its own, so there is nothing here for it to disagree with the
 census about: **the census's check table and exit-code list in
-`skills/census/SKILL.md` are the reference for this entry point too.** Where an
+`skills/census/SKILL.md` are the reference for this entry point too.** It runs
+the session group and nothing else, so it reports no `hygiene`, `ordering-*` or
+`intent` row — `noni census` is the whole picture. Where an
 older page listed a narrower set of codes and its own row shapes, that list is
 gone; the census is the single arbiter because this wrapper now runs it.
 

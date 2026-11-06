@@ -14,8 +14,6 @@ table to keep in step with the census's, which is what this file used to be.
 
 from __future__ import annotations
 
-import sys
-
 from .census_report import EXIT_CLEAN
 
 CENSUS_SH_HELP = """The ledger shim: the steering ledger's own entry point.
@@ -105,17 +103,3 @@ def print_help(label: str) -> int:
     """
     print(_constant(label))
     return EXIT_CLEAN
-
-
-def main(argv: list[str] | None = None) -> int:
-    """Print the census's help from the package, for a wrapper that has no args.
-
-    ``python -m noni.shim_help`` is the route the wrappers take: one module-level
-    call, no logic in bash, and the same bytes whatever the terminal width.
-    """
-    label = (list(sys.argv[1:] if argv is None else argv) or ["census.sh"])[0]
-    return print_help(label)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

@@ -49,3 +49,23 @@ class _RecordedCensusCall:
             rest = rest[2:]
         self.calls.append((target, list(rest)))
         return 0
+
+
+class _RecordedSessionsCall(_RecordedCensusCall):
+    """The sessions twin of :class:`_RecordedCensusCall`.
+
+    The base double reads the state path out of the wrapper's ``--ledger`` flag,
+    which is the only one the ledger wrapper passes; the sessions wrapper names its
+    register with ``--sessions``, so a call read through the base double dies on a
+    flag the command line never carries. Same contract -- the path the caller
+    spelled and the options the caller named -- read from the flag this entry point
+    actually uses.
+    """
+
+    def __call__(self, argv: list[str]) -> int:
+        target = argv[argv.index("--sessions") + 1]
+        rest = argv[argv.index("--only"):] if "--only" in argv else []
+        while rest[:1] == ["--only"] and len(rest) > 1:
+            rest = rest[2:]
+        self.calls.append((target, list(rest)))
+        return 0

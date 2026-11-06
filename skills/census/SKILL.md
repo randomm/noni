@@ -213,7 +213,8 @@ The same rule extends to the classes that report their own absence:
   are the answer of that one readdir. A `noni/sessions/` that is simply absent
   stays what it always was: clean, because no sessions registered is a real
   state and not a failed read.
-- **`hygiene` (50)** always reports, a clean tree included. When the
+- **`hygiene` (50)** always reports under `noni census`, a clean tree included
+  (the per-artifact wrappers run one group each and report no hygiene row). When the
   deny-list class is not active (its file is `absent`, `corrupt`, or present
   with no entries) the run emits one `hygiene` row naming that state; a scan
   that cannot run at all (`--repo` is not a git repo, `git ls-files` fails or

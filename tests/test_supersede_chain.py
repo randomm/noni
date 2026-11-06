@@ -48,12 +48,66 @@ def _chain_rows(out: str) -> list[dict]:
     return [r for r in _rows(out) if r.get("check") == "ledger-chain"]
 
 
+def _live_records(ledger: Path) -> set[str]:
+    """The record ids the census holds live, by the census's own two answers.
+
+    A clean census prints no row for a clean record -- a whole clean ledger is one
+    summary row with nothing beside it, the shape the exit-code contract pins --
+    and the chain class speaks up only to refuse a count, at code 20. So "which
+    records are live" is answered from the two answers the census does give, both
+    taken from the product's own functions over the ledger the run just censused:
+    the record set ``check_ledger_records`` parsed, and the rows
+    ``check_ledger_chain`` wrote -- a record no chain row names, and whose
+    ``status`` the chain rule itself does not read as superseded, is a record the
+    census holds live. That is the same reading the rule uses for its own
+    single-live-per-chain count, and the same one the shim's old per-record
+    ``live`` column printed. No verdict is taken from a record's bytes on disk.
+    """
+    from noni import census as _c
+
+    findings: list[dict] = []
+    valid, _unparseable = _c._check_ledger_records(
+        ledger, ledger.parent, findings, _c._ledger_probe(ledger),
+        row=_c._row, file_kind=_c._file_kind, rel_to_root=_c._rel_to_root,
+        ledger_name=_c._ledger_name)
+    # No git is handed over: the chain rule reads the records, not history.
+    _c._check_ledger_chain(valid, ledger, ledger.parent, findings,
+                           row=_c._row, rel_to_root=_c._rel_to_root,
+                           ledger_name=_c._ledger_name)
+    refused = {f["subject"] for f in findings if f["check"] == "ledger-chain"}
+    return {obj["id"] for _rid, _path, obj in valid
+            if obj["id"] not in refused
+            and obj.get("status") != "superseded"}
+
+
+def _shares_chain(obj: dict, rid: str,
+                  valid: list[tuple[str, Path, dict]]) -> bool:
+    """Whether ``obj`` and the record ``rid`` sit in one chain.
+
+    The walk is the census's own -- follow ``supersedes`` until it runs out or
+    repeats -- over the records the census parsed for this run, so the grouping
+    agrees with the rule being asked and the probe puts that rule to one chain at
+    a time rather than to a whole ledger of unrelated ones.
+    """
+    supers = {o["id"]: o.get("supersedes") for _r, _p, o in valid}
+
+    def root_of(start: str) -> str:
+        seen: set[str] = set()
+        while supers.get(start) in supers and start not in seen:
+            seen.add(start)
+            start = supers[start]
+        return start
+
+    return root_of(obj["id"]) == root_of(rid)
+
+
 def test_chain_resolves_to_one_live_record(tmp_path, run_census):
     """The r1 -> r2 -> r3 chain resolves to exactly one live record (r3).
 
     The chain answers "exactly one" by refusing every other count (20), so a run
-    with no chain row over this ledger is the chain reporting one live record --
-    and the record it reports live is named below.
+    with no chain row over this ledger is the chain reporting one live record per
+    chain; the record the census holds live is named by the probe below, which
+    asks the census's own chain check and not the file on disk.
     """
     r1, r2, r3 = _load("2026-10-01-r1.json"), _load("2026-10-10-r2.json"), _load("2026-10-22-r3.json")
 
@@ -80,8 +134,9 @@ def test_chain_resolves_to_one_live_record(tmp_path, run_census):
     _code, json_out, _err = run_census(ledger, extra=("--json",))
     assert _chain_rows(json_out) == [], (
         f"a valid chain must raise no chain row: {_chain_rows(json_out)}")
-    assert "2026-10-22-r3" in (ledger / "2026-10-22-r3.json").read_text(), (
-        "the live record of the chain is r3")
+    assert _live_records(ledger) == {"2026-10-22-r3"}, (
+        "the census must hold exactly one record of this chain live, and it must "
+        "be r3")
 
 
 def test_superseded_record_bytes_unchanged(tmp_path):
@@ -150,8 +205,10 @@ def test_detached_record_is_separate_chain(tmp_path, run_census):
     assert _chain_rows(json_out) == [], (
         f"two separate chains, each with one live record, raise no chain row: "
         f"{_chain_rows(json_out)}")
-    assert (ledger / "2026-10-25-r4.json").is_file(), "r4 is the detached chain's root"
-    assert json.loads((ledger / "2026-10-25-r4.json").read_text())["supersedes"] is None
+    assert _live_records(ledger) == {"2026-10-22-r3", "2026-10-25-r4-detached"}, (
+        "the census must hold two records live, one per chain: the r3 of the "
+        "supersede chain and the detached r4 root, which is the file committed as "
+        "2026-10-25-r4.json and carries the id 2026-10-25-r4-detached")
 
 
 def test_supersedes_with_earlier_date_is_allowed(tmp_path, run_census):

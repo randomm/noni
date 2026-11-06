@@ -19,7 +19,7 @@ import sys
 try:
     from noni import census_wrapper
 except ImportError as exc:  # pragma: no cover - the import-failure branch
-    print("census-sessions.sh: the noni package is not importable "
+    print("census-sessions: the noni package is not importable "
           f"({exc}); install it or put its src/ on PYTHONPATH", file=sys.stderr)
     raise SystemExit(3) from exc
 

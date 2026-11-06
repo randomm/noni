@@ -63,8 +63,8 @@ def _command_lines(path: object, text: str) -> list[str]:
 def test_no_doc_page_runs_a_shell_script_under_python() -> None:
     """No page names an interpreter in front of a ``.sh`` entry point.
 
-    The two shims are bash (``census.sh`` needs jq, ``census-sessions.sh``
-    execs ``NONI_PYTHON`` itself). Running either under ``python3`` dies on a
+    The two shims are bash (``census.sh`` and ``census-sessions.sh`` both resolve
+    ``NONI_PYTHON`` themselves). Running either under ``python3`` dies on a
     brace before any check runs, so the reader gets a traceback where the page
     promised an exit code.
     """

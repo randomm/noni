@@ -34,6 +34,8 @@ to ask, and these tests hold the prose to the product's constants.
 
 from __future__ import annotations
 
+import re
+
 from _harness import REPO
 from docs_commands import read
 from docs_promises import (
@@ -210,16 +212,50 @@ def test_the_page_says_no_package_index_carries_noni() -> None:
     assert "PYTHONPATH" in _page(), "the page does not name the PYTHONPATH route"
 
 
-def test_the_page_names_the_three_prerequisites() -> None:
-    """jq, an identity in the state tree, and a Python 3 the wrapper can exec.
+def test_the_page_names_exactly_the_two_prerequisites() -> None:
+    """The Prerequisites section names two things, and nothing else.
 
-    Each one decides whether a first run works, and none of them is something noni
-    can check for the reader before they type the command.
+    The page once carried three: ``jq``, a git identity in the state tree, and a
+    Python 3 the wrapper can exec. The first is gone -- neither census shim shells
+    out to ``jq`` any more, since the unified census reads the records itself
+    (issue #99) -- and a page that still named it would send a reader to install a
+    program nothing runs. So this asserts the closed list rather than the presence
+    of each item: the two prerequisites, an item the section no longer claims,
+    and the section's own count of them, all three read back from the page.
+
+    Each prerequisite decides whether a first run works, and none is something
+    noni can check for the reader before they type the command.
     """
-    text = _page()
-    assert "jq" in text, "the page does not name jq"
-    assert "user.name" in text and "user.email" in text, "the page omits the git identity"
-    assert "NONI_PYTHON" in text, "the page does not name the wrapper's interpreter variable"
+    section = flowed_section("Prerequisites")
+    # The count the section states for itself, so the list and its headline
+    # cannot drift: a third bullet added without the sentence would fail here.
+    stated = re.search(r"(\w+) things outside noni decide whether a first run works",
+                       section)
+    assert stated is not None, (
+        f"the section no longer states how many prerequisites there are: {section}")
+    words_to_digits = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
+    count = words_to_digits.get(stated.group(1).lower())
+    assert count is not None, f"unrecognised count word {stated.group(1)!r}"
+    # The page keeps one sentence about jq -- that neither shim needs it -- so a
+    # reader who installed it for the old shim can drop it. The assertion is that
+    # jq is not one of the items the section lists, not that the letters never
+    # appear: the two items are taken from the page itself, by the heading the
+    # page gives them.
+    items = re.findall(r"- \*\*([^*]+)\*\*", section)
+    assert len(items) == count, (
+        f"the section says {count} prerequisite(s), it lists {len(items)}: {items}")
+    assert count == 2, (
+        f"the page's prerequisites are no longer the two the product has: {items}")
+    assert any("git identity" in item for item in items), (
+        f"the git identity prerequisite is gone: {items}")
+    assert any("Python 3" in item for item in items), (
+        f"the interpreter prerequisite is gone: {items}")
+    assert not any("jq" in item for item in items), (
+        f"jq is listed as a prerequisite, which neither census shim needs: {items}")
+    assert "user.name" in section and "user.email" in section, (
+        f"the git identity is not named by the two settings it needs: {section}")
+    assert "NONI_PYTHON" in section, (
+        f"the page does not name the wrapper's interpreter variable: {section}")
 
 
 def test_the_page_states_the_driver_coexistence_position() -> None:

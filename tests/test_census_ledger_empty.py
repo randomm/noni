@@ -33,8 +33,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from _harness import REPO, subprocess_env
-from census_fixtures import _valid_record
+from _harness import REPO, _commit_file, _init_repo, subprocess_env
+from census_fixtures import _ndjson_rows, _session_body, _valid_record
+from census_run import _run_census
 
 CENSUS_SH = REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"
 
@@ -316,3 +317,53 @@ class TestToolMissingIsTheCensusNotTheWrapper:
             f"a traceback is not a diagnostic: {combined}")
         assert str(missing) in combined, (
             f"the refusal must name the interpreter it could not resolve: {combined}")
+
+
+class TestLedgerRowsAreSilentWhenThereIsSomethingToRead:
+    """The two states where the empty class owes no row at all (issue #99).
+
+    The class is a reporter of absence, so its contract has a negative half: a
+    register that is present and current is not a ledger complaint, and a ledger
+    that holds a record is not an empty one. Both were pinned on the census side
+    before the wrappers were retargeted at the unified arbiter, and both are
+    states a wrapper that grew a verdict of its own would break -- a shim that
+    printed a ledger row beside the census's would print this one. The rows, not
+    just the exit code, are the claim: exit 0 is also what a run that reported
+    nothing at all looks like.
+    """
+
+    def test_sessions_present_without_a_ledger_is_exactly_one_ledger_empty_row(
+        self, tmp_path
+    ):
+        """The two layers stay independent: sessions/ present and decisions/
+        absent is one ledger-empty row and no ledger-record failure.
+
+        A register is not a ledger. The run must still report the missing ledger
+        once -- a census that stayed quiet here could not tell "nothing to
+        census" apart from "the ledger went missing" -- and must not turn the
+        present register into a record complaint or a second row of its own.
+        """
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md",
+                     _session_body("developer"))
+        rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
+        assert rc == 0, f"expected 0, got {rc}\nstderr: {err}"
+        rows = [r for r in _ndjson_rows(out) if r.get("kind") == "finding"]
+        assert [r["check"] for r in rows] == ["ledger-empty"], f"unexpected rows: {rows}"
+
+    def test_a_ledger_holding_a_record_produces_no_ledger_rows(self, tmp_path):
+        """A ledger that holds a valid record emits no ledger-empty row (and no
+        other ledger row): the state the class calls "ok" is silent.
+
+        The counterpart of the case above, and the one that makes it mean
+        something -- a class that always printed would satisfy nothing else.
+        Silence is asserted as the empty row set, not as exit 0: the exit code is
+        the same for a run that reported a finding of another class.
+        """
+        repo = _init_repo(tmp_path / "repo")
+        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                     json.dumps(_valid_record(), indent=2))
+        rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
+        assert rc == 0, f"expected 0, got {rc}\nstderr: {err}"
+        rows = [r for r in _ndjson_rows(out) if r.get("kind") == "finding"]
+        assert rows == [], f"expected no findings: {rows}"

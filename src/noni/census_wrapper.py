@@ -20,19 +20,27 @@ parent keeps an in-tree ledger spelled the way a census over the whole repo
 spells it, and leaves the genuinely out-of-tree case to the census's own naming
 rule.
 
-The one-directory rule, and the refusal of a register that is not there, are
-enforced here, before the census is called. Both belong to the wrapper because
-the census cannot see them: the unified census takes its state paths as flags and
-audits the tree ``--repo`` names, so an unnamed directory, a second directory, or
-a path that is not a directory at all is invisible to a run over the tree that
-contains it -- and a census that reads nothing has no verdict to give. Everything
-every other argument is passed through untouched, so ``--json``, ``--strict``,
-``--now`` and the rest stay the census's flags with the census's refusals -- this
-module re-implements none of them.
+The one-directory rule, the refusal of a register that is not there, and the
+refusal of a path the caller points at through a link are enforced here, before
+the census is called. All three belong to the wrapper because the census cannot
+see them: the unified census takes its state paths as flags and audits the tree
+``--repo`` names, so an unnamed directory, a second directory, or a path that is
+not a directory at all is invisible to a run over the tree that contains it --
+and a census that reads nothing has no verdict to give. Everything every other
+argument is passed through untouched, so ``--json``, ``--strict``, ``--now`` and
+the rest stay the census's flags with the census's refusals -- this module
+re-implements none of them.
 
-Nothing here opens a path, evaluates a class, or invents an exit code. The three
-refusals below return the census's usage code and name the path they refused, in
-the census's own style.
+The state-path flags are the wrapper's own, not pass-throughs: ``--repo``,
+``--ledger`` and ``--sessions`` are what ``argv_for`` fills in, and a caller who
+types one of them -- by name or by an unambiguous prefix -- would have argparse's
+last occurrence win and census a directory this module never validated, exiting
+"clean" where the plain run fails. Any such option is refused here, whatever the
+entry point.
+
+Nothing here opens a path, evaluates a class, or invents an exit code. Every
+refusal below returns the census's usage code and names what it refused, in the
+census's own style.
 """
 
 from __future__ import annotations
@@ -89,6 +97,36 @@ _GROUP_FLAG: dict[frozenset[str], str] = {
     LEDGER_CHECKS: "ledger",
     SESSION_CHECKS: "sessions",
 }
+
+# Every flag that decides which paths a census reads. The wrapper sets all three
+# itself, so a caller's own spelling of any one of them is refused whichever entry
+# point it was typed at (see :func:`_refuse_state_path_option`).
+_STATE_PATH_FLAGS = frozenset({"--repo", "--ledger", "--sessions"})
+
+
+def _resolves_to(option: str, flags: frozenset[str]) -> str | None:
+    """The flag in ``flags`` that the census's parser reads ``option`` as, or ``None``.
+
+    Resolved the way the census resolves it, because a refusal that matched only
+    the exact spelling would let ``--sess`` or ``--re`` through while the parser
+    handed the census a state path (see :func:`_abbreviations`). So an unambiguous
+    prefix is resolved with the parser's own matcher, and a token the parser reads
+    as a flag keeps its ``=value`` half: ``--ledger=/etc`` is still that flag.
+
+    No match is ``None``, and so is an ambiguous prefix -- both are the census's to
+    refuse in its own ``unrecognized arguments`` / ambiguity words, and this module
+    does not guess between two flags.
+    """
+    name = option.partition("=")[0]
+    if name in flags:
+        return name
+    if not name.startswith("--") or "=" in option:
+        return None
+    matches = {action for action, *rest in _build_parser()._get_option_tuples(name)}
+    wanted = {action for action in matches
+              for spelling in action.option_strings
+              if spelling in flags}
+    return next(iter(wanted)).option_strings[0] if len(wanted) == 1 else None
 
 
 def _takes_a_separate_value(option: str, group: frozenset[str] | None = None) -> bool:
@@ -278,20 +316,21 @@ def _is_a_retired_group_option(option: str, group: frozenset[str]) -> bool:
     census parses it, so the wrapper must not spend the token after it on a value
     it is about to refuse. `--name=value` carries its own value and is never one.
 
+    The other register is resolved by prefix, the way the census resolves it, so
+    the token after `--sess` is left standing too rather than spent on a value.
+
     The register flag is taken from :data:`_GROUP_FLAG` by identity, never by
     literal, so this stays true when a register is added or renamed.
     """
-    name = option.partition("=")[0]
     if "=" in option:
         # `--name=value` carries its own value, so it never strands a token after it.
         return False
     own = _GROUP_FLAG.get(group)
-    # The register flags are spelled with their `--`, as the parser knows them.
-    registers = ["--" + flag for flag in _GROUP_FLAG.values()]
-    if own is None or name == "--" + own:
+    if own is None:
         return False
-    return any(name == flag for flag in registers) \
-        and name in _build_parser()._option_string_actions
+    # The register flags are spelled with their `--`, as the parser knows them.
+    other = {"--" + flag for flag in _GROUP_FLAG.values()} - {"--" + own}
+    return _resolves_to(option, other) is not None
 
 
 def _refuse_retired_group_option(label: str, noun: str, argv: list[str],
@@ -313,6 +352,26 @@ def _refuse_retired_group_option(label: str, noun: str, argv: list[str],
             return _refuse(label, noun, f"{name} is not a {label} option "
                                         f"(run {other} over the register that "
                                         f"{name} names)")
+    return None
+
+
+def _refuse_state_path_option(label: str, noun: str, argv: list[str]) -> int | None:
+    """The refusal of a caller's own state-path flag, or ``None`` for a clean line.
+
+    ``--repo``, ``--ledger`` and ``--sessions`` are the wrapper's to set: it derives
+    them from the one directory the caller named (see :func:`argv_for`). Forwarded
+    unchanged, argparse's last occurrence wins, so `census.sh DIR --ledger /etc`
+    censused a directory this module never checked and exited 0 "clean" where
+    `census.sh DIR` exits 10 -- the verdict a scripted caller reads as its own.
+    Refused in either position, in either ``--opt value`` or ``--opt=value`` form,
+    and by any unambiguous prefix, naming the option as the caller typed it.
+    """
+    for arg in argv:
+        flag = _resolves_to(arg, _STATE_PATH_FLAGS)
+        if flag is not None:
+            return _refuse(label, noun, f"{arg} is not allowed here: the "
+                                        f"{label} entry point sets {flag} itself "
+                                        f"from the {noun} directory it is given")
     return None
 
 
@@ -352,6 +411,9 @@ def run(label: str, noun: str, argv: list[str] | None,
         from . import shim_help
 
         return shim_help.print_help(label)
+    state_path = _refuse_state_path_option(label, noun, argv)
+    if state_path is not None:
+        return state_path
     retired = _refuse_retired_group_option(label, noun, argv, checks)
     if retired is not None:
         return retired
@@ -366,6 +428,13 @@ def run(label: str, noun: str, argv: list[str] | None,
         listed = " ".join(positional)
         return _refuse(label, noun, f"one directory at most, got {len(positional)}: {listed}")
     target = Path(positional[0])
+    if target.is_symlink():
+        # `is_dir` follows links, and ``--repo`` is built from the resolved path
+        # while the state flag keeps the spelling the caller typed: a link would
+        # census a directory the caller named only through it.
+        return _refuse(label, noun, f"the {noun} path {positional[0]} "
+                                    f"is a symlink: the census does not read "
+                                    f"through links")
     if not target.is_dir():
         reason = "is not a directory" if target.exists() else "does not exist"
         return _refuse(label, noun, f"the {noun} path {positional[0]} {reason}")

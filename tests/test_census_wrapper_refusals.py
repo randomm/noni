@@ -31,6 +31,23 @@ import pytest
 from census_probe_doubles import _RecordedCensusCall, _RecordedSessionsCall
 from census_wrapper import EXIT_USAGE, LEDGER_CHECKS, SESSION_CHECKS, run_ledger, run_sessions
 
+# The broken-record fixtures of the two registers, each with the code its class wins
+# the run by: an unparseable ledger record is `ledger-record` (10) and a wrongly
+# named register file is `session-malformed` (32).
+_SESSIONS_BROKEN_NAME = "not-an-allocated-session.md"
+_BROKEN_RECORD = {"decisions": ("2026-10-02-broken.json", "{ not json\n", 10),
+                  "sessions": (_SESSIONS_BROKEN_NAME, "- identity: x\n", 32)}
+
+# Every spelling of a state-path flag a caller can type: the exact name, the `=` form,
+# and an unambiguous prefix the census's own parser resolves. Each must be refused at
+# either entry point, whichever group the flag names.
+_STATE_PATH_SPELLINGS = (
+    "--ledger", "--ledger=/tmp/elsewhere",
+    "--sessions", "--sessions=/tmp/elsewhere",
+    "--repo", "--repo=/tmp/elsewhere",
+    "--led", "--sess", "--re",
+)
+
 # The classes either wrapper runs by itself, so a caller's own `--only <class>` is
 # recognised as one by :func:`_forwarded` whichever wrapper it was typed at.
 _GROUP_CLASSES = LEDGER_CHECKS | SESSION_CHECKS
@@ -91,6 +108,9 @@ def paths(tmp_path):
 # quietly cover only the ledger one.
 _WRAPPERS = ((run_ledger, "decisions", _RecordedCensusCall),
              (run_sessions, "sessions", _RecordedSessionsCall))
+
+# The same table without the double, for the cases that run the real census.
+_WRAPPERS_REAL = ((run_ledger, "decisions"), (run_sessions, "sessions"))
 
 
 def _forwarded(options: list[str]) -> list[str]:
@@ -259,6 +279,83 @@ def test_an_empty_string_is_no_directory_and_never_censuses_the_cwd(
         f"the census ran over the cwd: {recorded.calls}")
 
 
+@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger", "sessions"))
+@pytest.mark.parametrize("spelling", _STATE_PATH_SPELLINGS)
+def test_a_callers_own_state_path_option_is_refused_never_forwarded(
+        tmp_path, run, noun, double, spelling, monkeypatch):
+    """The wrapper owns every state-path flag, so a caller's own is exit 2, naming it.
+
+    ``--repo`` / ``--ledger`` / ``--sessions`` are what the wrapper fills in from the
+    one directory it validated. Forwarded, argparse's last occurrence won, so
+    `census.sh DIR --ledger /etc` read a directory nobody checked and printed exit 0
+    where `census.sh DIR` exits 10 — a false clean for whoever scripted the run.
+    Refused whatever the entry point, in either position, in the `=` form, and by an
+    unambiguous prefix, because that is how the census's parser resolves a token.
+    """
+    recorded = double()
+    monkeypatch.setattr("census_wrapper.main", recorded)
+    directory = _register(tmp_path, noun)
+    name = spelling.partition("=")[0]
+    for argv in ([directory, spelling], [spelling, directory],
+                 [directory, "--json", spelling],
+                 [directory, spelling, "/tmp/elsewhere"]):
+        rc, out, err = _run_with(run, argv)
+        assert rc == EXIT_USAGE, f"{argv}: rc={rc}\n{err}"
+        assert out == "", f"{argv}: a refused run printed a report: {out}"
+        assert name in err, f"{argv}: the refusal must name the option: {err}"
+    assert recorded.calls == [], (
+        f"the census read a path the wrapper never validated: {recorded.calls}")
+
+
+@pytest.mark.parametrize("run,noun", _WRAPPERS_REAL, ids=("ledger", "sessions"))
+def test_a_directory_with_a_broken_record_still_exits_ten_through_the_wrapper(
+        tmp_path, run, noun):
+    """The pass-through half of the refusal above: the same wrappers still census a
+    real directory that holds a broken record, and the census's 10 comes back.
+
+    A wrapper that refused every option would look as clean here as it does in the
+    case above, so this one runs the real census -- no double -- and pins the exit
+    code a `--ledger` takeover used to hide behind an exit 0.
+    """
+    name, body, code = _BROKEN_RECORD[noun]
+    directory = Path(_register(tmp_path, noun))
+    (directory / name).write_text(body, encoding="utf-8")
+    rc, out, err = _run_with(run, [str(directory)])
+    assert rc == code, f"a broken record did not fail the census: rc={rc}\n{out}{err}"
+    assert name in out + err, (
+        f"not the broken-record verdict for {name}: {out}{err}")
+
+
+@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger", "sessions"))
+def test_a_positional_that_is_a_symlink_is_refused_never_read_through(
+        tmp_path, run, noun, double, monkeypatch):
+    """A directory handed to the wrapper as a link is exit 2, and the census never runs.
+
+    ``is_dir`` follows links, so a link to a real register was accepted, and it was
+    accepted with a split command line: ``--repo`` is built from the resolved path
+    while the state flag keeps the link's own spelling, so the rows named a tree the
+    caller never typed. The census does not read through links anywhere else (a
+    record that is one is reported, never opened), so the wrapper refuses the one
+    path where it could.
+    """
+    recorded = double()
+    monkeypatch.setattr("census_wrapper.main", recorded)
+    real = tmp_path / "elsewhere" / "noni" / noun
+    real.mkdir(parents=True)
+    link = tmp_path / "state" / "noni" / f"{noun}-link"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(real)
+    for argv in ([str(link)], ["--json", str(link)]):
+        rc, out, err = _run_with(run, argv)
+        assert rc == EXIT_USAGE, f"{argv}: rc={rc}\n{err}"
+        assert out == "", f"{argv}: a refused run printed a report: {out}"
+        assert str(link) in err, f"{argv}: must name the link it refused: {err}"
+        assert "is a symlink" in err and "does not read through links" in err, (
+            f"{argv}: not the symlink refusal: {err}")
+    assert recorded.calls == [], (
+        f"the census read through a link: {recorded.calls}")
+
+
 @pytest.mark.parametrize("slot", ("before", "after", "among"))
 def test_an_unknown_option_is_the_census_usage_refusal_naming_the_option(paths, slot):
     """Every position an unknown flag can be typed in ends at exit 2, with the
@@ -322,9 +419,14 @@ def test_a_ledger_path_that_is_not_a_directory_is_refused_never_followed(
     wrapper's ``is_dir`` gate stops the run, and the reason it prints keeps the
     two states apart for the caller. The link is never read through: the census
     reports a symlink it can see, and a run that resolved this one would have
-    censused a directory the caller never named.
+    censused a directory the caller never named. (A link that *does* resolve is a
+    third state, refused by its own case above.)
     """
     path = paths[kind]
+    if kind == "dangling":
+        # The link still is a link, so the symlink refusal answers it first; this
+        # case is about the reason a path that is no directory at all gets.
+        path.unlink()
     for argv in ([str(path)], ["--json", str(path)]):
         rc, out, err = _refused(argv)
         assert rc == EXIT_USAGE, f"{argv}: rc={rc}\n{err}"

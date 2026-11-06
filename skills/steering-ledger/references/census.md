@@ -42,7 +42,12 @@ The one argument is the ledger directory of the state root — the directory
 `--repo` names for the writers. Pass the absolute path of a clone's ledger to
 census a tree other than the one you are in; run with no argument, the run is a
 usage error (2) rather than a census of whatever `noni/` happened to sit next to
-the caller, and a second directory is the same refusal. Every other argument is
+the caller, and a second directory is the same refusal. A directory handed over
+as a symlink is that refusal too: the census does not read through links. The
+state-path flags `--repo`, `--ledger` and `--sessions` are this entry point's to
+set from that directory, so typing one of them (or a prefix of one) is the same
+refusal too: the census would otherwise read the path you named and call it
+clean. Every other argument is
 passed to the census untouched, so its options are this entry point's options:
 `--json` for the NDJSON rows, `--strict` to promote the warn classes, `--now`
 for a fixed timestamp, `--only` / `--skip` to filter rows. A flag is never

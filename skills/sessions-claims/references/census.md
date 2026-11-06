@@ -36,7 +36,11 @@ The one argument is the sessions directory of the state root — the directory
 directory of the clone you want to audit. There is no current-directory default:
 a run with no argument is a usage error (`2`), so the census never reads whatever
 `noni/sessions` happened to sit next to the caller. One run audits one register,
-so a second directory is that error too.
+so a second directory is that error too, and so is a directory handed over as a
+symlink: the census does not read through links. The state-path flags — `--repo`,
+`--ledger`, `--sessions` — are this entry point's to set from the directory it is
+given, so typing one of them (or a prefix of one) is the same refusal too: the
+census would otherwise read the path you named and call it clean.
 
 Every other argument goes to the census untouched, so its options are this entry
 point's options: `--json` for the machine-readable rows, `--strict` to promote

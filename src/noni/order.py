@@ -33,8 +33,12 @@ Exit codes:
     2  invalid input: an argparse failure, a subcommand outside add/move/remove/confirm,
        an issue that is not a positive integer, a missing --decision on add, an --at or
        --to that is not a 1-based position of the resulting list, a flag passed to the
-       verb that does not own it, --now that is not a valid ISO-8601 timestamp, or a
-       --repo that is not a directory
+       verb that does not own it, --now that is not a valid ISO-8601 timestamp, a
+       --repo that is not a directory, or a noni/, noni/direction or noni/decisions
+       directory -- every one from the state root down to the artifact -- that is not
+       a plain path this writer may read or write through (a symlink, a plain file, a
+       socket or a device, each asked of lstat before any read, write or mkdir, and an
+       absent one admitted because the first add creates it)
     3  a path this writer needs could not be read or written, or a git call failed or
        timed out: the order file is not a regular file at its path (a symlink, a
        directory, an unreadable file), the decision ledger could not be looked in, a
@@ -78,7 +82,7 @@ import hashlib
 import sys
 from pathlib import Path
 
-from . import labels, orderschema, orderstate
+from . import _path_kind, labels, orderschema, orderstate
 from . import order_gitwrite as gitwrite
 
 # The state reader reports a refusal as a (headline, hint) pair and leaves the
@@ -98,6 +102,13 @@ EXIT_REFUSAL: int = 4
 # the unknown-verb refusal, the missing-verb hint and the usage line cannot name
 # three different sets.
 VERBS: tuple[str, ...] = ("add", "move", "remove", "confirm")
+
+# The directories this run reads or writes, in the order the guard walks them:
+# ``noni`` itself first (a link there hides every path beneath it from ``lstat``),
+# then the two directories this writer touches -- the artifact's, and the ledger
+# ``add --decision`` looks a record up in. The wording, the walk and the
+# declined-``lstat`` rule all live in the guard; see :func:`_refuse_linked_state`.
+_GUARDED_DIRS: tuple[str, ...] = ("noni", orderschema.ORDER_DIR, orderstate.DECISIONS_DIR)
 
 # The verb list the unknown-verb refusal and the usage line take, spelled once from
 # ``VERBS``. The missing-subcommand hint spells its conjunction itself, and its own
@@ -177,6 +188,19 @@ def _missing_verb_hint() -> str:
 def _digests(data: bytes) -> str:
     """A short stable digest for a run message; never a path, never file bytes."""
     return hashlib.sha1(data).hexdigest()[:7]
+
+
+def _refuse_linked_state(repo: Path) -> int | None:
+    """The exit-2 refusal for a ``noni/`` this writer may not read or write, or None.
+
+    :func:`noni._path_kind.direction_refusal` asks the directory question of every
+    component of :data:`_GUARDED_DIRS`; this seam gives its refusal this writer's
+    code and voice. The code is ``EXIT_USAGE``, the one docs/PRODUCT.md 7 gives
+    ``order`` for a wrong path, and the guard runs before the artifact read and the
+    ``--decision`` lookup, so no bytes outside the state root are read either.
+    """
+    refused = _path_kind.direction_refusal(repo, _GUARDED_DIRS)
+    return None if refused is None else _fail(EXIT_USAGE, *refused)
 
 
 def _render(body: dict):
@@ -274,6 +298,12 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(EXIT_USAGE, f"--repo {args.repo} is not a directory",
                      "pass the repository root that holds (or will hold) "
                      "noni/direction/order.json")
+    # Every directory this run reads or writes, asked of ``lstat`` before the first
+    # read: a linked noni/ or noni/direction would otherwise carry the artifact and
+    # the decision read below into a tree outside the state root.
+    linked = _refuse_linked_state(repo)
+    if linked is not None:
+        return linked
     order_path = repo / orderschema.ORDER_REL
 
     # --- reads: the artifact, then the decision it must cite -----------------
@@ -360,9 +390,13 @@ def main(argv: list[str] | None = None) -> int:
               "commit")
         return EXIT_OK
     if order_path.parent.exists() and not order_path.parent.is_dir():
-        # The parent path is part of the artifact's identity: a file where the
-        # direction directory belongs is an environment fault, and mkdir would
-        # have failed here anyway with a worse message.
+        # The parent path is part of the artifact's identity, and this is the one
+        # shape about it the pre-read guard does NOT own: an ordinary FILE at
+        # noni/direction, under a real noni/, which the walk admits because nothing
+        # above it is a link. A symlink at that position never reaches here (it is
+        # refused with the rest of the tree at exit 2, before this read); a plain
+        # file is an environment fault, and mkdir would have failed anyway with a
+        # worse message.
         return _fail(EXIT_IO, f"{orderschema.ORDER_DIR} is not a directory",
                      f"remove {orderschema.ORDER_DIR} or move it aside, then re-run "
                      "order.py")

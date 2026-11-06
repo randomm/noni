@@ -220,14 +220,25 @@ def test_a_record_that_is_not_a_regular_file_cannot_set_a_position(tmp_path):
 
 def test_a_ledger_that_is_not_a_directory_cannot_be_looked_in(tmp_path):
     """The contrast: the ledger path itself holds something that is not a
-    directory, so nothing was looked at. That is 'I could not look' (exit 3),
-    not the absence the previous test reports."""
+    directory, so nothing was looked at.
+
+    docs/PRODUCT.md 7 gives a wrong path ``order``'s own code (issue #104), so the
+    code moved from the old environment-fault 3 to the usage code the writer already
+    used for a path the caller spelled wrong; what did NOT move is the distinction
+    this test was written for, the refusal that says "I could not look at the ledger"
+    rather than the exit-4 "no record carries that id" of the test above. The
+    sentence still names the path and still calls it a directory question, and a link
+    at the same position is refused on the same code by the guard rather than by
+    ``is_dir()`` (see the ``parent_link_fixtures`` cases in the artifact suite).
+    """
     repo = _repo(tmp_path)
     shutil.rmtree(repo / "noni" / "decisions")
     (repo / "noni" / "decisions").write_text("not a directory", encoding="utf-8")
     proc = _order(repo, "add", "7", "--decision", BASELINE_ID, "--now", NOW)
-    assert proc.returncode == 3, proc.stderr
-    assert "could not be looked in" in proc.stderr, proc.stderr
+    assert proc.returncode == 2, proc.stderr
+    assert "noni/decisions" in proc.stderr, proc.stderr
+    assert "is not a directory" in proc.stderr, proc.stderr
+    assert "is in the ledger" not in proc.stderr, proc.stderr
 
 
 def test_add_creates_the_direction_directory_for_the_first_entry(tmp_path):

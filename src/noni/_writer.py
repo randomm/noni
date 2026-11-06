@@ -23,7 +23,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable
 
-from . import gitwrite
+from . import _path_kind, gitwrite
 
 
 def allocate_ledger(label: str, repo: Path, ledger: Path) -> tuple[str, str] | None:
@@ -35,7 +35,19 @@ def allocate_ledger(label: str, repo: Path, ledger: Path) -> tuple[str, str] | N
     with an identity, so a run refused for another reason never creates the path it
     was refused at: a ``--repo`` that is not a directory stays absent rather than
     gaining an empty ``noni/``.
+
+    The directory question is asked with :func:`noni._path_kind.direction_refusal`,
+    which is the same ``lstat`` every other guard in this family asks, and the
+    verdict is not simply "not a directory": ``Path.is_dir`` follows a link, so a
+    ``noni/decisions`` that is a link to a directory outside the state repository
+    answered yes here and the ``mkdir`` beside it was a no-op -- which is how the
+    record landed outside. An answer of "absent" is the one this route creates; a
+    link, a device or a declined ``lstat`` comes back as the refusal whose wording
+    the direction writers own, and no bytes or directory are made for it.
     """
+    refused = _path_kind.direction_refusal(repo, (ledger.relative_to(repo).as_posix(),))
+    if refused is not None:
+        return refused
     if ledger.is_dir():
         return None
     try:

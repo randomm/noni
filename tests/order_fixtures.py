@@ -425,3 +425,4 @@ def _order_case(tmp_path: Path) -> tuple[Path, Path, Path]:
 def _order_from(cwd: Path, repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     """order.py launched from ``cwd``, with ``--repo`` naming the state root."""
     return run_from(cwd, ORDER, "--repo", str(repo), *args)
+

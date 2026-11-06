@@ -263,50 +263,35 @@ post-condition and its one exception.
 
 ```
 bash scripts/census-sessions.sh <state-root>/noni/sessions
-
-# equivalent entry point (the steering-ledger census dispatches here)
-bash scripts/census.sh --sessions <state-root>/noni/sessions
 ```
 
-Both are bash wrappers, so `bash <path>` always runs them whatever the file mode
-a checkout landed at; the direct form works where the executable bit is set.
-Neither runs under `python3`: the interpreter they need is the one they exec
-themselves, and `references/census.md` is the page that states that rule.
+The entry point is a bash wrapper, so `bash <path>` always runs it whatever the
+file mode a checkout landed at; the direct form works where the executable bit
+is set. It does not run under `python3`: the interpreter it needs is the one it
+execs itself, and `references/census.md` is the page that states that rule.
+
+It is a thin wrapper over the unified census (`skills/census/SKILL.md`): it runs
+`noni census` over the session group and returns the census's own exit code. It
+has no parser and no exit-code table of its own, so the classes it reports are
+the census's and the single reference for them is that page — `session-double`
+(30, the arbiter), `session-claim` (31), `session-malformed` (32), and the warn
+classes `session-stalled` (40), `probe` (41), `session-same-identity` (43) and
+`session-deleted` (44), each a failure at its own code under `--strict`.
 
 The one argument is the sessions directory of the state root (`--repo` plus
 `noni/sessions`); there is no current-directory default, so a run with no
 argument is the usage error `2`, and a second directory is that error too — one
-run audits one register.
-
-Read-only, NDJSON on stdout, honest exit code:
-
-| code | meaning |
-|---|---|
-| `0` | clean — every session file valid, no double-claims |
-| `2` | usage: no sessions directory was given, more than one was given, or the one given is not a directory |
-| `3` | the interpreter the wrapper runs is not found on the reading machine |
-| `30` | double-claim: two active claims on the same task from different identities |
-| `31` | a claim row was committed without a register file (work is not blocked — report only) |
-| `32` | a session file is malformed (missing required field, or a claim row with no task reference) |
-
-The wrapper runs the interpreter named by `NONI_PYTHON` when that variable is
-set, and `python3` otherwise. `references/census.md` states the same rule for
-the exit-3 row, which is the one a reader misreads as a hint to run the wrapper
-under `python3`.
-
-When several classes fire at once, the lowest code wins (`30 < 31 < 32`);
-every check runs in a single pass and all findings are always in the NDJSON
-output (the priority only selects the returned code). Each non-zero exit
-prints NDJSON rows naming the offending task or file.
+run audits one register. Every other argument is passed to the census, so its
+options are this entry point's options: `--json` for the machine-readable rows,
+`--strict` to promote the warn classes, `--now` for a fixed timestamp.
 
 The census is the deterministic arbiter. It does not block the session's work:
 an unregistered claim (exit 31) is reported, not refused — there is no
 pre-commit or pre-push hook, no write-path refusal.
 
-Beyond this table, the unified census warns (43) when two or more non-terminal
-session files share one `identity`, and (44) when a committed session file is
-deleted from the working tree; both are warn by default and fail at their own
-code under `--strict` (see `skills/census/SKILL.md`).
+When several classes fire at once the lowest code wins, and every check runs
+whatever the exit — the code only selects which is returned, so every finding is
+in the output. Read-only: running it leaves `git status --porcelain` empty.
 
 One golden fixture per code lives under `tests/fixtures/sessions-exit-<code>.json`.
 

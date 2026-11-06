@@ -68,9 +68,8 @@ malformed-record failure: a record that is bad JSON or violates the schema
 keeps its `ledger-record` exit 10. A recordless ledger is a state, not a fault:
 a freshly attached project whose `noni/decisions/` has no records yet censuses
 clean at exit 0, because nothing has been steered yet and there is nothing to
-contradict. The shim agrees with that verdict on that
-directory (see the Rules below), so a freshly attached tree reads the same way to
-either entry point.
+contradict. The ledger wrapper runs this census over that directory, so a
+freshly attached tree reads the same way to either entry point.
 
 When several classes fire at once the lowest code wins; stderr names every
 class that fired.
@@ -339,14 +338,22 @@ substitute for running `scripts/public_safety.py` before publishing.
 
 - **Read-only.** The census never writes, mutates, or creates any file.
   Running it leaves `git status --porcelain` empty.
-- **One entry point.** `noni census` (``census.py``) is the canonical entry point
-  and the one that enforces. The older single-artifact
-  scripts (`census.sh`, `census-sessions.sh`) remain as compatibility
-  shims with a subset of the same exit codes (see the steering-ledger
-  SKILL.md). `census.sh` is the ledger shim (with its `--sessions` dispatch to
-  the sessions-claims twin): on the states the two share they answer alike, the
-  recordless ledger directory among them — both report it as the `ledger-empty`
-  warn, at exit 0 here and 42 under `--strict`.
+- **One arbiter.** `noni census` (``census.py``) is the only entry point that
+  enforces, and the page you are reading is the only exit-code reference. The
+  two per-artifact shell entry points (`skills/steering-ledger/scripts/census.sh`
+  and `skills/sessions-claims/scripts/census-sessions.sh`) are thin wrappers: each
+  takes the one directory its caller names, accepts every census option and
+  passes it through, and runs this census restricted to its group — the ledger
+  shim to `ledger-record`, `ledger-edited` and `ledger-chain`, the sessions shim
+  to the session group. Neither carries a schema, a rule or an exit-code table of
+  its own, so neither can disagree with this one, and `jq` is not a prerequisite
+  of either. They are reached through `bash` or their own executable bit, never
+  under `python3`: the interpreter a wrapper needs is the one it execs itself
+  (`NONI_PYTHON`, `python3` by default), and running the script under an
+  interpreter hands the reader a syntax error before any check runs. A wrapper
+  whose interpreter is missing or whose package will not import says so on one
+  plain line and exits 3, the census's own code for a tool the reading machine
+  does not have.
 - **Time from `--now`.** All time-based checks use `--now` when given (for
   reproducible output in tests) and the current UTC time otherwise.
 - **No self-reported numbers.** Every metric in `--json` mode names the

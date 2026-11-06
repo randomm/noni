@@ -103,7 +103,7 @@ def refuse_name(flag: str, value: str | None, *, fail: Fail,
     blank and the line rules are both carried by ``line_free``, the census's own
     predicate handed in by the caller: a name that is only whitespace names
     nobody, and a name carrying a break is not one name. Keeping both in the
-    handed-in predicate is what stops the writer and the two censuses disagreeing
+    handed-in predicate is what stops the writer and the census disagreeing
     on either.
     """
     if value is None:

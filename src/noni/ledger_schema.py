@@ -74,7 +74,7 @@ SINGLE_OPTION_MARKER = "single_option"
 # (file, group, record) json escapes, and are listed alongside for the
 # hand-edited record: ``str.splitlines`` -- the documented basis of this rule --
 # breaks a line on all ten, so a value carrying one of them is not one line
-# however it was written. Shared by both censuses and the writer so the four of
+# however it was written. Shared by the census and the writer so the four of
 # them never disagree on what a line is.
 LINE_BREAKS = ("\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85",
                "\u2028", "\u2029")
@@ -100,11 +100,11 @@ def is_single_line(value: object) -> bool:
     """Whether ``value`` is the shape the census accepts for a name field: a
     string that is neither blank nor more than one line.
 
-    Two rules, one predicate, so a writer, two censuses and the supersede-target
+    Two rules, one predicate, so a writer, the census and the supersede-target
     read cannot drift on either. Blankness is folded in here rather than kept as
     a separate check the caller has to remember: a name that is only whitespace
     names nobody, so it is refused wherever the shape is asked -- at the flag
-    (exit 2), at the supersede target (exit 4) and in both censuses (exit 10).
+    (exit 2), at the supersede target (exit 4) and in the census (exit 10).
     The line rule is ``LINE_BREAKS``, which is ``str.splitlines`` read out as a
     set, so a value carrying one of the ten is two lines even when json holds it
     as one string.

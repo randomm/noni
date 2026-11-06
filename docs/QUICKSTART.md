@@ -379,18 +379,19 @@ ordering layer is optional.
 
 ## Prerequisites
 
-Three things outside noni decide whether a first run works:
+Two things outside noni decide whether a first run works:
 
-- **`jq`** for `census.sh`, the ledger shim, which exits 3 naming the machine
-  when it is missing. The unified census (`census.py`) does not need it.
 - **A git identity in the state tree**: `git config user.name` and
   `user.email` are read from the tree `--repo` names, not from your shell's
   directory. `decide.py` refuses with exit 3 and names the command that fixes
   it; the writers need `user.email` for the commit itself. On Route B that
   means the state clone, not the project.
-- **A Python 3 on the reading machine** for `census-sessions.sh`, which runs
-  the interpreter named by `NONI_PYTHON` and defaults to `python3`. That
-  interpreter also has to import the package, so the wrappers under
-  `skills/<skill>/scripts/` need the install above or `PYTHONPATH=<clone>/src`
+- **A Python 3 on the reading machine** for every entry point under
+  `skills/<skill>/scripts/`, including `census.sh` and `census-sessions.sh`,
+  which run the interpreter named by `NONI_PYTHON` and default to `python3`. That
+  interpreter also has to import the package, so the wrappers need the install
+  above or `PYTHONPATH=<clone>/src`
   whichever route you took. On the `PYTHONPATH` form the tools are reached with
   `python3 -m noni` rather than `noni`, which is the same command by another name.
+  A wrapper whose interpreter or package is missing names the fault on one plain
+  line and exits 3 rather than printing a traceback.

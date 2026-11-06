@@ -62,7 +62,7 @@ Two input modes, one record shape, on the bounds the question-answer loops in
 this field have converged on:
 
 - **Multiple-choice**: agent asks 1–4 questions × 2–4 options (the bounds the
-  writer enforces and both censuses check), free-text escape hatch always
+  writer enforces and the census checks), free-text escape hatch always
   offered. Answer must name the question
   it answers (id pairing). Never auto-answer for the operator (anti-fabrication).
 - **Free chat**: agent distills the conversation into a candidate record;

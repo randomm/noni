@@ -116,7 +116,7 @@ STATUS_OPEN = "open"
 STATUS_SUPERSEDED = "superseded"
 STATUSES = (STATUS_DECIDED, STATUS_OPEN, STATUS_SUPERSEDED)
 
-# The field order both censuses document; json.dump keeps it. The three names
+# The field order the census documents; json.dump keeps it. The three names
 # after ``source`` are optional and appended last, so a record that carries none
 # of them keeps the eight fields in the order the supersede canonical-form rule
 # compares a target's committed bytes against. Their shapes are the census's

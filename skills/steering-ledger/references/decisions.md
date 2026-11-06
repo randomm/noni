@@ -40,7 +40,7 @@ checked when present.
 
 | field | type | rules |
 |---|---|---|
-| `id` | string | `YYYY-MM-DD-<slug>`; unique across the ledger; equals the filename stem. `decide.py` builds it from `--date` and `--slug`, and the slug is held to `[a-z0-9-]+` so the name stays a plain path segment (census.sh rejects anything else as `10:bad-name`) |
+| `id` | string | `YYYY-MM-DD-<slug>`; unique across the ledger; equals the filename stem. `decide.py` builds it from `--date` and `--slug`, and the slug is held to `[a-z0-9-]+` so the name stays a plain path segment (`ledger-record` reports anything else) |
 | `date` | string | UTC ISO-8601. `decide.py` writes `<--date or today, UTC>T00:00:00Z`; a supersede carries the date of the record it replaces, so the chain, the filename stem and replay order stay in step |
 | `asked_by` | string | the agent role or session that asked |
 | `questions` | array | 1-4 question objects (see below) |
@@ -51,7 +51,7 @@ checked when present.
 | `source` | object \| null (optional) | tracker provenance: `{"issue_number": <int>, "comment_id": <int>}` when the record was produced from a tracker-sourced answer (an adapter's question-legitimacy verdict); `null` or absent for a record that did not come from a tracker. A record without it stays valid. |
 | `decided_by` | string (optional) | who made the decision, when that is not the commit author: a login or pseudonym, never a personal-name requirement. Written by `--decided-by`. Absent means the commit author decided, so records written before this field stay valid. The census types it as a non-empty single-line string and verifies nothing about the identity |
 | `on_behalf_of` | string (optional) | the party a delegated decision was made for, written by `--on-behalf-of`. Same census shape as `decided_by`. `decide.py` refuses it without `--decided-by`; a hand-edited record carrying one name and not the other is well formed, because the pairing is the writer's rule and not the census's |
-| `single_option` | `true` (optional) | written by `--single-option`: the marker that says a question was asked with one option on purpose. It is the only thing that makes a one-option question valid, so a one-option record without it is a `ledger-record` exit 10 in both censuses. It is a per-record marker over a per-question bound: with it set, any question of that record may hold one option and at least one must, so a marker no question carries one option is a `ledger-record` exit 10 as well. Written as the JSON `true` literal, anything else is a malformed marker |
+| `single_option` | `true` (optional) | written by `--single-option`: the marker that says a question was asked with one option on purpose. It is the only thing that makes a one-option question valid, so a one-option record without it is a `ledger-record` exit 10. It is a per-record marker over a per-question bound: with it set, any question of that record may hold one option and at least one must, so a marker no question carries one option is a `ledger-record` exit 10 as well. Written as the JSON `true` literal, anything else is a malformed marker |
 
 ## The question object
 

@@ -66,6 +66,50 @@ EXPECTED_KEYS = {name: 9 + index for index, name in enumerate(JUNK_FIXTURES)}
 BASELINE_FIXTURE = "decision-valid.json"
 
 
+def isolated_python_stub(tmp_path: Path, name: str) -> Path:
+    """A ``python3`` that cannot import ``noni``, on a PATH of its own.
+
+    The wrapper resolves its interpreter with ``command -v``, so PATH must still
+    hold a real program, and a package installed into the venv is reached by a
+    ``.pth`` in that venv's ``site-packages`` -- which no ``PYTHONPATH`` can
+    hide. So the interpreter the caller names is a *script* that starts the real
+    one ``-S -I`` (no ``site``, hence no ``.pth``, no ``site-packages``, no
+    ``PYTHONPATH``): a process with neither route to the package, which is the
+    half-installed machine the wrapper must refuse rather than trace.
+    """
+    python = Path(sys.executable)
+    fake_bin = tmp_path / name / "isolated-bin"
+    fake_bin.mkdir(parents=True, exist_ok=True)
+    stub = fake_bin / "isolated-python"
+    stub.write_text("#!/bin/sh\nexec " + str(python) + " -S -I \"$@\"\n",
+                    encoding="utf-8")
+    stub.chmod(0o755)
+    return stub
+
+
+def no_package_env(tmp_path: Path, name: str) -> dict:
+    """An env for a machine whose interpreter cannot import ``noni``.
+
+    The guard is the point: it proves the premise before the caller asserts the
+    refusal, so an exit-3 assertion cannot pass by accident on a host where the
+    package hides somewhere else.
+    """
+    stub = isolated_python_stub(tmp_path, name)
+    empty_site = tmp_path / name / "empty-site"
+    empty_site.mkdir(parents=True, exist_ok=True)
+    env = subprocess_env({
+        "HOME": str(tmp_path),
+        "NONI_PYTHON": str(stub),
+        "PYTHONPATH": str(empty_site),
+    })
+    probe = subprocess.run([str(stub), "-c", "import noni.census_wrapper"],
+                           capture_output=True, text=True, env=env, timeout=60)
+    assert probe.returncode != 0, (
+        "the fixture did not make the package unimportable, so the exit-3 "
+        f"assertions below prove nothing: {probe.stdout}{probe.stderr}")
+    return env
+
+
 def _fixture(name: str) -> dict:
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
 

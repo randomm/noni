@@ -44,6 +44,7 @@ from ledger_schema_fixtures import (
     _assert_both_refuse,
     _baseline,
     _ledger,
+    no_package_env,
 )
 
 # Each of the three separators json escapes and str.splitlines breaks a line on.
@@ -382,12 +383,15 @@ def test_census_sh_exits_three_when_the_package_is_not_importable(tmp_path):
     a clean it never established.
     """
     ledger = _ledger(tmp_path / "no-import-ledger", _baseline())
-    env = dict(subprocess_env())
-    # A PYTHONPATH that holds nothing, so the child finds no ``noni`` on the route
-    # the harness would otherwise give it. The wrapper still resolves a real
-    # interpreter, so this is the package half of the refusal and not the
-    # interpreter half (which tests/test_sessions_census_exits.py pins).
-    env["PYTHONPATH"] = str(tmp_path / "empty-site")
+    # A ``python3`` that cannot import the package. Overwriting PYTHONPATH alone
+    # is not enough: an installed ``noni`` is reached by a ``.pth`` in the venv's
+    # ``site-packages``, which PYTHONPATH cannot hide (that is what CI does, and
+    # what made this test pass for the wrong reason until issue #99). So the
+    # interpreter the wrapper names is a stub starting the real one ``-S -I``,
+    # with the empty PYTHONPATH as the second route closed. The wrapper still
+    # resolves a real interpreter, so this is the package half of the refusal and
+    # not the interpreter half (which tests/test_sessions_census_exits.py pins).
+    env = no_package_env(tmp_path, "no-import")
     code, out = _run_sh_from(CENSUS_SH, ledger, env)
     assert code == 3, f"expected 3 with no importable package, got {code}:\n{out}"
     assert "not importable" in out, out

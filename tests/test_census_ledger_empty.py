@@ -36,6 +36,7 @@ from pathlib import Path
 from _harness import REPO, _commit_file, _init_repo, subprocess_env
 from census_fixtures import _ndjson_rows, _session_body, _valid_record
 from census_run import _run_census
+from ledger_schema_fixtures import no_package_env
 
 CENSUS_SH = REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"
 
@@ -61,49 +62,17 @@ def _run_sh(ledger: Path) -> tuple[int, str]:
     return proc.returncode, proc.stdout + proc.stderr
 
 
-def _empty_package_env(tmp_path: Path, name: str) -> dict:
-    """An env for a machine whose interpreter cannot import ``noni``.
-
-    The wrapper resolves its interpreter with ``command -v``, so PATH must keep a
-    real program. The package is reached by a ``.pth`` in the venv's
-    ``site-packages``, which PYTHONPATH cannot hide, so the interpreter the caller
-    names is a *script* that starts the real one ``-S -I`` (no ``site``, hence no
-    ``.pth``) with an empty scratch ``PYTHONPATH``: a process with neither route
-    to the package, which is the half-installed machine the wrapper must refuse
-    rather than trace. The guard proves the premise, so the exit-3 assertions
-    cannot pass by accident on a host where the package hides somewhere else.
-    """
-    python = Path(sys.executable)
-    empty_site = tmp_path / name / "empty-site"
-    empty_site.mkdir(parents=True, exist_ok=True)
-    fake_bin = tmp_path / name / "isolated-bin"
-    fake_bin.mkdir(parents=True, exist_ok=True)
-    stub = fake_bin / "isolated-python"
-    stub.write_text("#!/bin/sh\nexec " + str(python) + " -S -I \"$@\"\n",
-                    encoding="utf-8")
-    stub.chmod(0o755)
-    env = subprocess_env({
-        "HOME": str(tmp_path),
-        "NONI_PYTHON": str(stub),
-        "PYTHONPATH": str(empty_site),
-    })
-    probe = subprocess.run([str(stub), "-c", "import noni.census_wrapper"],
-                           capture_output=True, text=True, env=env, timeout=60)
-    assert probe.returncode != 0, (
-        "the fixture did not make the package unimportable, so the exit-3 "
-        f"assertions below prove nothing: {probe.stdout}{probe.stderr}")
-    return env
-
-
 def _run_sh_with_empty_package(tmp_path: Path, ledger: Path,
                                name: str) -> subprocess.CompletedProcess[str]:
     """census.sh over ``ledger`` in an environment that cannot load the census.
 
     The state the wrapper refuses on its own: the census is not importable, so
     there is nothing to run, and a traceback or an exit 0 would both be a false
-    green.
+    green. The env fixture is shared with
+    ``tests/test_ledger_name_and_marker_rules.py`` (``no_package_env``): one
+    fixture, one guard that proves the package really is unreachable.
     """
-    env = _empty_package_env(tmp_path, name)
+    env = no_package_env(tmp_path, name)
     return subprocess.run(["bash", str(CENSUS_SH), str(ledger)],
                           capture_output=True, text=True, env=env, timeout=120)
 

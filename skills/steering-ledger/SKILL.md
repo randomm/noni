@@ -1,6 +1,6 @@
 ---
 name: steering-ledger
-description: Record, attribute and replay operator product-direction decisions as dated, git-committed ledger files under noni/decisions/. Use when an operator steers the direction of an attached project (answers a multiple-choice question or confirms a free-chat candidate record), when a later session or fresh clone needs to replay prior decisions, or when validating the ledger's schema and provenance via the unified census (skills/census/scripts/census.py; the per-epic script census.sh remains a compatible shim). Do NOT use for general code work, CI, or task tracking — this skill owns only the decision-record format, the two steer modes, the supersede chain, and the census that holds the invariants.
+description: Record, attribute and replay operator product-direction decisions as dated, git-committed ledger files under noni/decisions/. Use when an operator steers the direction of an attached project (answers a multiple-choice question or confirms a free-chat candidate record), when a later session or fresh clone needs to replay prior decisions, or when validating the ledger's schema and provenance via the unified census (skills/census/scripts/census.py; the single-artifact script census.sh remains a compatible shim). Do NOT use for general code work, CI, or task tracking — this skill owns only the decision-record format, the two steer modes, the supersede chain, and the census that holds the invariants.
 ---
 
 # steering-ledger
@@ -191,7 +191,7 @@ A `decisions/` directory that holds no `*.json` record is none of the above: the
 shim names it `(42:ledger-empty)` on stderr and exits 0. That is the unified
 census's `ledger-empty` warn, which it also reports at exit 0 and promotes to 42
 under `--strict` — a code this shim has no flag for — so the two entry points
-agree on a freshly attached tree (issue #97). `skills/census/SKILL.md` documents
+agree on a freshly attached tree. `skills/census/SKILL.md` documents
 the unified census's own side of that contract, including the three classes this
 shim does not have.
 
@@ -202,7 +202,7 @@ whether the operator confirmed an answer, so it never claims to (below).
 
 The exit-code contract and how to read the report are in `references/census.md`.
 
-The census also dispatches the sessions check (E2): `bash census.sh --sessions
+The census also dispatches the sessions check: `bash census.sh --sessions
 <state-root>/noni/sessions` reaches into the sibling `sessions-claims` skill via
 the relative path `../../sessions-claims/scripts/census-sessions.sh`. That is a
 documented dependency: with no override, `sessions-claims` must be installed at

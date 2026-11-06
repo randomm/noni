@@ -37,7 +37,7 @@ from docs_promises import (
     section_body,
 )
 from quickstart_golden import CI
-from quickstart_page import COEXISTENCE_HEADING, product_section_8
+from quickstart_page import COEXISTENCE_HEADING, product_adapters_section
 from quickstart_runner import route_commands
 
 from noni import public_safety
@@ -295,56 +295,33 @@ def test_the_coexistence_position_names_no_driver_and_stays_prose() -> None:
         f"covers, so the position has become a step nothing runs: {commands}")
 
 
-def test_the_product_page_links_the_coexistence_position_in_one_bullet() -> None:
-    """docs/PRODUCT.md 8 points at the coexistence section, from one E4 bullet.
+def test_the_product_page_links_the_coexistence_position_in_one_paragraph() -> None:
+    """The product page's adapters section points at the coexistence position.
 
-    The epic map is the binding page's own list of what the epics owe, so the
-    driver-claims adapter's follow-up line belongs inside the E4 entry rather than
-    as a paragraph beside it -- a free-floating note under the heading would let the
-    adapter be dropped from E4 while the page still read as if it were promised.
-    Located word by word over the whole section: the page wraps at its own column,
-    so the words are the contract and the line they broke on is not, which is why
-    this does not scan markdown lines for the heading. :func:`_e4_lines` does the
-    structural half -- the sentence has to sit inside the E4 bullet.
+    The adapters section is the binding page's own statement of what the adapters
+    owe, so the driver-claims adapter's follow-up line belongs inside it rather
+    than as a free-floating note the reader meets somewhere else: a sentence about
+    the adapter planted under a different heading would let the position be dropped
+    from the adapters section while the page still read as if it were promised.
+    Located word by word over the section, because the page wraps at its own
+    column: the words are the contract and the line they broke on is not.
     """
     import re
 
-    section = product_section_8()
+    from quickstart_page import flowed_text
+
+    section = flowed_text(product_adapters_section())
     heading = r"\s+".join(re.escape(word) for word in COEXISTENCE_HEADING.split())
     assert re.search(heading, section), (
-        f"docs/PRODUCT.md 8 no longer names the coexistence section, so the epic "
-        f"map does not point a reader at the position: {section!r}")
+        f"docs/PRODUCT.md's adapters section no longer names the coexistence "
+        f"section, so the page does not point a reader at the position: {section!r}")
     assert "docs/QUICKSTART.md" in section, (
-        "docs/PRODUCT.md 8 names the section without naming the page that carries "
-        "it, so the reference has nothing to resolve against")
-    e4 = _e4_lines(section)
-    assert re.search(heading, " ".join(e4)), (
-        f"the coexistence reference sits outside the E4 adapters bullet, so a "
-        f"reader of the epic map would not find the follow-up where the adapter is "
-        f"promised: {e4!r}")
-    assert "follow-up" in " ".join(e4), (
-        f"the E4 entry lost its follow-up framing, so the adapter reads as shipped: "
-        f"{e4!r}")
-
-
-def _e4_lines(section: str) -> list[str]:
-    """The lines of the E4 bullet of the epic map, its continuation lines included.
-
-    The map is a list whose entries run to several wrapped lines, so a bullet is the
-    line starting with the marker plus every following line that is not a new entry
-    or the end of the section. Read over the section's own lines rather than by
-    regex over the text: the entry the reference belongs to is a structural fact
-    about the list, and a sentence moved under another epic's entry is the drift this
-    exists to catch.
-    """
-    lines = section.splitlines()
-    start = [i for i, line in enumerate(lines)
-             if line.startswith("- ") and line.lower().lstrip("- *").startswith("e4")]
-    assert len(start) == 1, (
-        f"the epic map must hold exactly one E4 entry to carry the follow-up, got "
-        f"{len(start)}: {section!r}")
-    body = lines[start[0] + 1:]
-    end = next((i for i, line in enumerate(body)
-                if line.startswith("- ") or line.startswith("## ")), len(body))
-    return [lines[start[0]], *body[:end]]
+        "the adapters section names the section without naming the page that "
+        "carries it, so the reference has nothing to resolve against")
+    assert "driver-claims adapter" in section, (
+        "the adapters section no longer names the adapter whose coexistence this "
+        f"is: {section!r}")
+    assert "follow-up" in section, (
+        "the adapters section lost its follow-up framing, so the adapter reads as "
+        f"shipped: {section!r}")
 

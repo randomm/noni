@@ -34,7 +34,7 @@ so a second directory is a usage error (`2`) too, naming every path given.
 | `31` | a claim row was committed without a register file (work is not blocked — report only) |
 | `32` | a session file is malformed (missing required field, or a claim row with no task reference) |
 
-**Legacy shim.** This table is `census-sessions.sh`, the per-epic entry point.
+**Legacy shim.** This table is `census-sessions.sh`, the single-artifact entry point.
 The unified census (`skills/census/scripts/census.py`, documented in
 `skills/census/SKILL.md`) is the arbiter and adds three register classes this
 shim does not report: `session-same-identity` (43, warn) — two or more
@@ -87,8 +87,8 @@ allocated by `register.py`):
 
 The census never writes, never mutates a session file, and never creates a
 file. Running it leaves `git status --porcelain` empty. Output goes to stdout
-only; no files are written under `noni/census/` in this epic (that is E3's
-concern).
+only; there is no `noni/census/` directory, because the census keeps no state of
+its own — results are recomputed on every run.
 
 ## The census is the arbiter
 

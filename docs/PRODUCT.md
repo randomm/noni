@@ -103,12 +103,17 @@ All noni state of one project lives under one **state root**, in this layout:
 <state root>/noni/
   direction/   intent.md: the standing intent; order.json: the ordered list of work
   decisions/   steering ledger: one file per dated record
-  sessions/    one committed file per session (registration + claims), one writer each
+  sessions/    one committed file per session (registration + claims), one writer
+               each; optional, and absent until a session first registers
 ```
 
 Both files under `direction/` are optional and each has exactly one writer:
-`intent.py` writes `intent.md` and `order.py` writes `order.json`. Absence is a
-state, not a fault, and the census adds no row for a file that was never written.
+`intent.py` writes `intent.md` and `order.py` writes `order.json`. The
+`sessions/` directory is optional in the same way and has four writers
+(`register`, `claim`, `close`, `release`): a team that does not run them has no
+session register at all, which is a clean state and not a fault — see the
+driver-coexistence position in `docs/QUICKSTART.md`. Absence is a state, not a
+fault, and the census adds no row for a file that was never written.
 
 **Precedence** is the rule that makes the intent file answerable rather than
 decorative. When a question comes up, the answer is the most recent applicable
@@ -131,7 +136,10 @@ The state root is a directory holding (or about to hold) that `noni/` tree, and
   `noni/` layout, selected by passing its path as `--repo`. Choose it when the
   code repository is public and the direction should not be published with it,
   or when a team keeps the direction of several repositories in one private
-  place. Same layout, same writers, same census: only the path changes.
+  place. Same layout, same writers, same census: only the path changes. Such a
+  repository holds the `noni/` layout and nothing else: it is a new, empty,
+  private repository, not a folder of other work, because the census's hygiene
+  class reads every tracked file of the tree `--repo` names.
 
 Every noni writer commits straight to the branch it finds checked out in the
 `--repo` tree, so the in-project route asks a project for direct commits to its

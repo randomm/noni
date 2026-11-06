@@ -28,7 +28,7 @@ uv tool install ./noni
 
 `uv` is a reader-side tool and not a dependency of noni; the git URL of your own
 fork is an equally good target for the second line. Where you would rather not
-install `uv`, build a clean virtual environment instead:
+install `uv`, build a clean virtual environment and use its own `pip`:
 
 ```bash
 python3 -m venv .venv
@@ -37,8 +37,21 @@ python3 -m venv .venv
 
 On Debian and Ubuntu that first line needs the `python3-venv` package installed,
 and a venv creation that failed part way leaves a half-made `.venv` you have to
-delete before the next attempt. Either route installs the same code the clone
-carries: no package index sits between you and it, and neither is a release.
+delete before the next attempt. Where that package is missing the venv is built
+without `pip` at all, the second line stops naming `.venv/bin/pip`, and only the
+`PYTHONPATH` fallback below works: install the distro's venv and pip packages,
+which carry `ensurepip` — what puts `pip` in a new venv — delete the pip-less
+`.venv`, and run the two lines again. Either route installs the same code the
+clone carries: no package index sits between you and it, and neither is a
+release.
+
+Before you run anything, check what you are about to run. An older noni already
+on your PATH shadows the install you just made, and it prints the same version
+string, so nothing but its own location tells you which one answered:
+`command -v noni` prints the path the shell will exec, and it must be the one you
+just installed (`.venv/bin/noni`, or uv's tool directory). An install that has to
+replace an existing one is re-run over it — the same line a second time, not a
+second install beside the first.
 
 The wrappers under `skills/<skill>/scripts/` import the package rather than
 carrying logic, so one of three states has to hold before any of them runs:
@@ -66,11 +79,13 @@ Two routes. Both are supported, and both are covered below.
   repository, so state sits at `<project>/noni/` and is committed with the
   project. Every tool works without `--repo`.
 - **A separate private state repository**: the state root is a clone of a
-  second repository carrying the same `noni/` layout, and every command names
-  it with `--repo .noni-state`. Clone it *inside* the project folder and add
-  the ignore rule below, so an agent confined to the project folder can reach
-  it. Choose it when the code repository is public and the direction should not
-  be published with it.
+  second repository whose tracked content is the `noni/` layout and nothing else,
+  and every command names it with `--repo .noni-state`. Clone it *inside* the
+  project folder and add the ignore rule below, so an agent confined to the
+  project folder can reach it. Choose it when the code repository is public and the
+  direction should not be published with it. Make it a new, empty, private
+  repository: the census's hygiene class reads every tracked file of the tree
+  `--repo` names, so anything beside the layout is scanned as direction too.
 - **Where the writers commit**: every noni writer commits straight to the branch
   it finds checked out in the `--repo` tree, and it never opens a branch or a pull
   request of its own. Route A therefore asks for direct commits to that branch: on a
@@ -103,8 +118,11 @@ and the ledger with nothing to arbitrate — and still ends `verdict ok`.
 ## Route B: a separate private state repository
 
 The state repository is an ordinary git repository whose tracked content is the
-`noni/` layout. Nothing about it is special except that it is private and that
-every command names it.
+`noni/` layout and nothing else — no source, no build output, no notes of your
+own, because the hygiene scan reads every tracked file of the tree `--repo` names
+and reports what it finds as direction. Make it a new, empty, private repository
+rather than a folder of things you already have. Nothing about it is special
+except that it is private and that every command names it.
 
 Create the empty repository on your forge, then clone it inside the project and
 tell your project's git to ignore the directory:
@@ -166,7 +184,11 @@ your project. `intent-draft.md` starts from
 `skills/direction/references/intent-template.md`, which validates as it stands;
 the writer restamps its `Last-confirmed:` line to this run's UTC day and commits
 the file as `intent: <record-id>`. Both direction files are optional: a project
-that has written neither earns no `intent` (51) or `ordering` rows at all. Sessions come next.
+that has written neither earns no `intent` (51) or `ordering` rows at all. The
+session register is optional too: `register`, `claim`, `release` and `close` are
+what create `noni/sessions/`, and a team that does not run them never makes it (see
+[the coexistence section](#using-noni-alongside-a-driver-that-keeps-its-own-claims)
+for when to skip it, and what skipping it means on disk). When you do run them,
 `register` allocates its own session id and prints it, so you never choose one,
 and `claim`, `release` and `close` all take that id as `--session-id`:
 
@@ -179,6 +201,23 @@ The census reads only the tree `--repo`
 names, so the code repository's tracked files never enter it — and its hygiene
 class scans the tree it audits, which here is the state clone.
 
+Then write the state clone's scrub deny-list: the untracked file the section below
+explains. It sits at the clone's root, not the project's, and must stay untracked: a
+committed list of the names being scanned for is the leak the file exists to prevent.
+
+The example names are the ones the deny-list section below shows; put your own in
+their place. Then ignore the file in the clone and commit that rule:
+
+```
+example-corp
+```
+
+```bash
+echo '/.noni-scrub-denylist' >> .noni-state/.gitignore
+git -C .noni-state add .gitignore
+git -C .noni-state commit -q -m 'chore: keep the scrub deny-list untracked'
+```
+
 Then push the branch, once. The writers commit locally (and fetch-rebase-push
 onto the branch they find, with `--push`); on a repository whose branch has
 never existed the only thing to push is what the commands above just committed,
@@ -186,8 +225,13 @@ and `-u` is what makes every later push and pull of that branch work without
 naming the remote again.
 
 ```bash
-git -C .noni-state push -u origin main
+git -C .noni-state push -u origin HEAD
 ```
+
+`HEAD` is deliberate: it names whatever branch the clone happens to be on, so the
+line works whether the forge seeded it with `main`, `master` or a name of your
+own. Naming a branch is what broke the pilot run — a fresh `git init` does not
+have to default to `main`, and the page cannot know which branch yours is on.
 
 ## Run the census in CI
 
@@ -255,8 +299,8 @@ class is inactive, and a `--strict` run fails on it even though nothing in the
 tree is wrong. The row is honest about the state it found: `deny-list class
 inactive (absent)`, or `corrupt`, or `present but empty`.
 
-The file is `.noni-scrub-denylist`, one entry per line, held at the root of the
-tree being audited — `<project>/.noni-scrub-denylist` on Route A,
+The file `.noni-scrub-denylist` holds one entry per line, at the root of the tree
+being audited — `<project>/.noni-scrub-denylist` on Route A,
 `.noni-state/.noni-scrub-denylist` on Route B. `NONI_SCRUB_DENYLIST` names a
 different file when the tree carries no default of its own. Blank lines and
 lines starting with `#` are not entries, so a file that holds only those is
@@ -311,13 +355,17 @@ The census ships no producer. A tracker with a command line and `jq` produce
 one:
 
 ```bash
-gh issue list --json number,state --jq \
+gh issue list --state all --json number,state --jq \
   'map({key: (.number | tostring), value: (.state | ascii_downcase)}) | from_entries' \
   > issue-state.json
 noni census --repo . --issue-state issue-state.json
 ```
 
-Two details in that recipe are the whole of its correctness. `.number |
+Three details in that recipe are the whole of its correctness. `--state all` is
+what makes a closed issue appear at all: `gh issue list` reports open issues
+unless you say otherwise, so without the flag an ordered issue you closed last
+week is simply absent from the map, and the census reads it as a `cannot-tell`
+row of the `ordering-closed` class rather than as closed. `.number |
 tostring` is what makes the key the bare decimal string the census looks up:
 `"007"`, `"+7"`, `0` and a non-ASCII digit are all refused as
 `ordering-malformed` (15) rather than read as silence. `.state | ascii_downcase`

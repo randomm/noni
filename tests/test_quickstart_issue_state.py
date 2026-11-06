@@ -54,13 +54,17 @@ def test_the_gh_recipe_line_is_the_command_the_page_prints() -> None:
     """
     argv = recipe_gh_argv()
     assert argv[0] == "gh" and argv[:3] == ["gh", "issue", "list"], argv
-    assert argv[3:5] == ["--json", "number,state"], (
+    assert argv[3:5] == ["--state", "all"], (
+        f"the recipe no longer asks gh for every issue whatever its state, so a "
+        f"closed ordered issue is missing from the map and reads as cannot-tell: "
+        f"{argv}")
+    assert argv[5:7] == ["--json", "number,state"], (
         f"the recipe no longer asks gh for the two fields jq reads: {argv}")
-    assert argv[5] == "--jq", argv
-    assert argv[6] == issue_state_from_page(), (
+    assert argv[7] == "--jq", argv
+    assert argv[8] == issue_state_from_page(), (
         "the golden recipe's filter and the filter the page quotes are not the same "
-        f"text: {argv[6]!r}")
-    assert argv[7:] == [">", "issue-state.json"], (
+        f"text: {argv[8]!r}")
+    assert argv[9:] == [">", "issue-state.json"], (
         f"the recipe no longer redirects into the file --issue-state opens: {argv}")
 
 
@@ -85,14 +89,26 @@ def test_the_issue_state_recipe_produces_a_map_the_census_accepts(tmp_path: Path
     repo = _repo(tmp_path)
     _seed(repo, _entry(7, BASELINE_ID), _entry(12, BASELINE_ID))
     payload = tmp_path / "issues.json"
+    # Third issue, not in the ordering artifact below: it is the one only
+    # ``--state all`` brings back, since a tracker lists open issues unless the
+    # reader says otherwise, so the recipe's own assertion is what shows a closed
+    # issue survived the call. It is not seeded into the order, which keeps the
+    # census assertions under it the two-issue pair they were. A closed issue is
+    # deliberately the third row rather than one of the first two: ``jq``'s
+    # ``from_entries`` takes the *first* entry when two spell the same key, so an
+    # issue may appear in this payload exactly once.
     payload.write_text(json.dumps([{"number": 7, "state": "CLOSED"},
-                                   {"number": 12, "state": "OPEN"}]), encoding="utf-8")
+                                   {"number": 12, "state": "OPEN"},
+                                   {"number": 34, "state": "CLOSED"}]), encoding="utf-8")
     proc = _jq(filter_text, payload)
     _checked(proc, "the page's jq recipe")
     # The map jq produced, read as JSON: the census's exit code below says the
     # tool accepted it, and this says the recipe's own conversions did their work
-    # (a numeric key or an upper-case state could not produce these two pairs).
-    assert json.loads(proc.stdout) == {"7": "closed", "12": "open"}, proc.stdout
+    # (a numeric key or an upper-case state could not produce these pairs). The
+    # third pair is the closed issue an open-only listing would have dropped, so
+    # the flag's effect is observed here rather than merely printed.
+    assert json.loads(proc.stdout) == {"7": "closed", "12": "open",
+                                       "34": "closed"}, proc.stdout
     map_path = tmp_path / "issue-state.json"
     map_path.write_text(proc.stdout, encoding="utf-8")
 
@@ -101,7 +117,9 @@ def test_the_issue_state_recipe_produces_a_map_the_census_accepts(tmp_path: Path
     # The map's two halves, both observed: the issue it says is closed earns the
     # closed finding, and the one it says is open earns no row (an open issue is
     # the answer the class is happy with, not a cannot-tell). A map the census had
-    # not read would produce neither, and the exit code pinned above is 0.
+    # not read would produce neither, and the exit code pinned above is 0. Issue 34
+    # is named by no ordering entry, so it owes the class no row here; the map
+    # assertion above is where its effect is seen.
     assert [(r["subject"], r["message"].startswith("closed:")) for r in closed] == [
         ("#7", True)], f"the accepted map did not reach the closed class: {rows}"
     assert not [r for r in closed if r["subject"] == "#12"], (

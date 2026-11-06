@@ -39,8 +39,12 @@ shape; the four `SKILL.md` paths above are the product surface it has to preserv
 
 ## The per-session protocol
 
-One agent session in an attached project follows five steps. Each row names the skill
-that owns the step, and the link is where the how lives.
+One agent session in an attached project follows five steps. Each row names the
+skill that owns the step, and the link is where the how lives. The three
+sessions-claims rows are taken only if your team uses noni's sessions and claims;
+the direction and steering-ledger rows are taken by every team. Where a work
+driver of your own already keeps claim state, skip the three and read the
+quickstart's coexistence section, named at the foot of this page, before you do.
 
 | when | step | owning skill |
 |---|---|---|
@@ -51,7 +55,8 @@ that owns the step, and the link is where the how lives.
 | at the end | release the claim you no longer hold, and close the session when it is finished | [`skills/sessions-claims/SKILL.md`](../skills/sessions-claims/SKILL.md) |
 
 Two of those steps need a word about what they are for, because an agent that
-skips them is the failure mode the census exists to catch:
+skips them is the failure mode the census exists to catch. Both words apply to a
+team that runs the two steps:
 
 - **Claim before you work.** Claims are signals, not locks: nothing refuses a second
   agent, and the census's double-claim check is what flags two active claims on one

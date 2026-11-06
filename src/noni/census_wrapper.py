@@ -128,6 +128,20 @@ def argv_for(target: str, options: list[str], checks: frozenset[str]) -> list[st
             *_only(checks), *options]
 
 
+def _takes_value(token: str, argv: list[str], index: int) -> bool:
+    """Whether ``argv[index]`` is the ``--now`` that swallows the token after it.
+
+    A bare ``--now`` takes a value only when there is a token after it that is not
+    another option: ``--now --strict`` is a caller who left the stamp out, not a
+    stamp that begins with a dash. Both walks call this one rule so a token has one
+    meaning in this module: were the two to disagree, the stamp a caller typed for
+    ``--now`` would arrive at the directory check as a second directory, or an
+    option would reach the census's parser holding the wrapper's silence.
+    """
+    return (token == _VALUE_FLAG and index + 1 < len(argv)
+            and not argv[index + 1].startswith("-"))
+
+
 def _positionals(argv: list[str]) -> list[str]:
     """The bare tokens of one permitted command line: the directories the caller named.
 
@@ -135,14 +149,15 @@ def _positionals(argv: list[str]) -> list[str]:
     both walks must agree or the timestamp a caller typed for ``--now`` arrives
     here as a second directory and the run is refused for a path nobody named.
     The rule is the same one the check applies -- an exact ``--now`` swallows the
-    token after it, ``--now=<stamp>`` swallows nothing -- so there is one meaning
-    for a token in this module, not one per walk.
+    token after it only when that token is not another option, and ``--now=<stamp>``
+    swallows nothing -- so there is one meaning for a token in this module, not one
+    per walk.
     """
     positional: list[str] = []
     index = 0
     while index < len(argv):
         token = argv[index]
-        if token == _VALUE_FLAG:
+        if _takes_value(token, argv, index):
             index += 2
         elif not token.startswith("-"):
             positional.append(token)
@@ -180,11 +195,11 @@ def _first_refused_option(argv: list[str]) -> str | None:
     on the same plain rule.
 
     The value of ``--now`` is consumed by position and never re-examined, so a
-    stamp beginning with a dash stays the census's timestamp to refuse rather
-    than becoming an option here. A ``--now`` with nothing after it is refused
-    here too: it has no value to hand on, and the option check runs first so the
-    option-less line never reaches :func:`_allowed_options`, which indexes that
-    value.
+    stamp the caller typed that begins with a dash stays the census's timestamp to
+    refuse rather than becoming an option here. A ``--now`` with nothing after it is
+    refused here too, and so is one whose next token is another option: neither has
+    a value to hand on. The option check runs first, so an option-less line never
+    reaches :func:`_allowed_options`, which indexes that value.
     """
     index = 0
     while index < len(argv):
@@ -192,7 +207,7 @@ def _first_refused_option(argv: list[str]) -> str | None:
         if token in _ALLOWED_SWITCHES or token.startswith(_VALUE_FLAG_PREFIX):
             index += 1
         elif token == _VALUE_FLAG:
-            if index + 1 >= len(argv):
+            if not _takes_value(token, argv, index):
                 return token
             index += 2
         elif not token.startswith("-"):
@@ -267,11 +282,12 @@ def run(label: str, noun: str, argv: list[str] | None,
     # parent should be (``link/noni/decisions`` with ``link`` a symlink) passes
     # every check so far, and ``argv_for`` would then build ``--repo`` from the
     # resolved path while the state flag keeps the caller's spelling -- the same
-    # split verdict a link at the leaf gave, reached one level up.
-    if target.resolve() != Path(os.path.abspath(positional[0])):
-        return _refuse(label, noun, f"a component of {positional[0]} is a "
-                                    f"symlink: the census does not read "
-                                    f"through links")
+    # split verdict a link at the leaf gave, reached one level up. The walk is over
+    # the components as the caller spelled them, and it refuses a ``..`` too:
+    # ``resolve()`` against ``abspath()`` cannot see a link that a ``..`` walks back
+    # out of, and the run would census the tree beside the link.
+    if _path_names_a_link(positional[0]):
+        return _refuse_unsafe_path(label, noun, positional[0])
     return main(argv_for(positional[0], _allowed_options(argv), checks))
 
 
@@ -296,6 +312,46 @@ def _allowed_options(argv: list[str]) -> list[str]:
         else:
             index += 1
     return kept
+
+
+def _refuse_unsafe_path(label: str, noun: str, named: str) -> int:
+    """The refusal of a path the wrapper may not follow, in the link refusal's wording.
+
+    Two faults land here and share one message: a component of the path the caller
+    spelled is a link, and the path walks back out of a link with ``..``. Both are
+    answered as the wrapper's other link refusals are -- the usage code, the path
+    named as typed, and no census -- because both mean the run would audit a tree
+    the caller did not name.
+    """
+    return _refuse(label, noun, f"a component of {named} is a "
+                               f"symlink: the census does not read "
+                               f"through links")
+
+
+def _path_names_a_link(named: str) -> bool:
+    """Whether any component of the path the caller spelled is a symlink or a ``..``.
+
+    The check walks the literal components because neither collapsed form can see the
+    fault: ``Path("link/..").is_symlink()`` is False (the OS resolves the ``..``
+    against the link and reports the directory it lands in), and ``os.path.abspath``
+    drops the ``link/..`` pair, so a comparison against ``resolve()`` agrees and the
+    tree *beside* the link is censused as if it had been named. Walking the prefixes
+    with ``lstat`` -- never ``stat``, which follows -- sees each component as the
+    caller wrote it. A ``..`` is refused outright: it is the hop that hides a link,
+    and an entry point names one directory, never a walk.
+    """
+    path = Path(named)
+    for index in range(1, len(path.parts) + 1):
+        if path.parts[index - 1] == "..":
+            return True
+        prefix = Path(*path.parts[:index])
+        try:
+            os.lstat(prefix)
+        except OSError:
+            continue
+        if os.path.islink(prefix):
+            return True
+    return False
 
 
 def run_entry(label: str, argv: list[str] | None = None) -> int:

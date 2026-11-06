@@ -31,6 +31,7 @@ arrive at the census spelled as the caller spelled them.
 from __future__ import annotations
 
 import io
+import os
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -94,9 +95,15 @@ _REFUSED_TOKENS = (
 )
 
 # ``--now`` is on the allowlist, so it is not refused for being unlisted -- but it
-# is an option that takes a value, and a trailing one with nothing after it is
-# refused all the same (see the case below): it has no stamp to hand on.
-_TRAILING_NOW = (["DIR", "--now"], ["--now"])
+# is an option that takes a value, and a ``--now`` with no value after it is refused
+# all the same (see the case below): it has nothing to hand on. The last two rows
+# are the same fault one token further along: the token after ``--now`` is another
+# option, so there is no stamp there either, and taking it as one is what let the
+# line reach the census's parser instead of being refused here.
+_TRAILING_NOW = (["DIR", "--now"], ["--now"],
+                 ["DIR", "--json", "--now", "--strict"],
+                 ["DIR", "--json", "--now", "--nope"],
+                 ["DIR", "--now", "--strict"], ["DIR", "--now", "--nope"])
 
 
 def _run_with(run, argv: list[str]) -> tuple[int, str, str]:
@@ -220,7 +227,9 @@ def test_a_token_off_the_allowlist_is_refused_and_the_census_never_runs(
 
 
 @pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger", "sessions"))
-@pytest.mark.parametrize("argv", _TRAILING_NOW, ids=("dir-then-now", "now-alone"))
+@pytest.mark.parametrize("argv", _TRAILING_NOW,
+                         ids=("dir-then-now", "now-alone", "json-now-strict",
+                              "json-now-nope", "now-then-strict", "now-then-nope"))
 def test_a_trailing_now_with_no_value_is_refused_and_the_census_never_runs(
         tmp_path, run, noun, double, argv, monkeypatch):
     """``census.sh DIR --now`` is exit 2 naming ``--now``, not an IndexError.
@@ -242,6 +251,10 @@ def test_a_trailing_now_with_no_value_is_refused_and_the_census_never_runs(
     assert _VALUE_FLAG in err, f"{typed}: the refusal must name --now: {err}"
     assert "needs a value" in err, f"{typed}: the reason: {err}"
     assert "Traceback" not in err, f"{typed}: a traceback leaked to the caller: {err}"
+    # A line that reached argparse would have been refused there too, but with the
+    # census's whole flag list in the message: proof the wrapper answered it and
+    # not the census.
+    assert "--ledger" not in err, f"{typed}: the census's parser answered: {err}"
     assert recorded.calls == [], (
         f"the census ran with no timestamp to pin: {recorded.calls}")
 
@@ -381,6 +394,43 @@ def test_a_symlinked_parent_component_is_refused_never_read_through(
             f"{argv}: not the symlink refusal: {err}")
     assert recorded.calls == [], (
         f"the census read through a symlinked parent: {recorded.calls}")
+
+
+@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger", "sessions"))
+def test_a_trailing_dot_dot_through_a_symlink_is_refused_never_read_through(
+        tmp_path, run, noun, double, monkeypatch):
+    """``census.sh link/..`` is exit 2, census never run, and no "all checks passed".
+
+    The parent check compares ``resolve()`` against ``abspath()``, and a ``..`` that
+    walks back out of a link makes the two agree: the OS reads ``link/..`` as the
+    link's parent, ``Path("link/..").is_symlink()`` is False, and ``resolve()``
+    returns that parent's own absolute path. So the wrapper censused the directory
+    *beside* the link, as if the caller had named it, and a clean tree there exits 0
+    with "all checks passed" -- a verdict for a tree nobody named. The components
+    the caller spelled are walked instead of the collapsed path, and a ``..`` is
+    refused outright because it is the hop that hid the link.
+    """
+    recorded = double()
+    monkeypatch.setattr("census_wrapper.main", recorded)
+    real = tmp_path / "real" / "noni" / noun
+    real.mkdir(parents=True)
+    link = tmp_path / "link"
+    link.symlink_to(tmp_path / "real")
+    back = link / ".."
+    assert back.is_dir() and not back.is_symlink(), (
+        "the fixture is not a '..'-out-of-a-link path, so the case proves nothing")
+    assert Path(os.path.abspath(str(back))) == tmp_path, (
+        "the fixture does not name the link's parent, so the case proves nothing")
+    for argv in ([str(back)], ["--json", str(back)]):
+        rc, out, err = _run_with(run, argv)
+        assert rc == EXIT_USAGE, f"{argv}: rc={rc}\n{err}"
+        assert out == "", f"{argv}: a refused run printed a report: {out}"
+        assert "all checks passed" not in out, f"{argv}: a clean verdict for a tree " \
+                                               f"nobody named: {out}"
+        assert str(back) in err, f"{argv}: must name the path it refused: {err}"
+        assert "symlink" in err, f"{argv}: the reason must name the link: {err}"
+    assert recorded.calls == [], (
+        f"the census censused the tree beside a link: {recorded.calls}")
 
 
 def test_a_ledger_path_that_is_a_plain_file_is_refused_never_followed(paths):

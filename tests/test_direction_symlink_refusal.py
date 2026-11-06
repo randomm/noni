@@ -360,15 +360,15 @@ def test_the_three_writers_share_one_guard_and_open_code_no_lstat_of_their_own()
     A fourth writer that grew its own ``lstat`` loop would print its own wording on
     its own code and pass every behavioural test above; the identity assertions are
     what make that drift fail a check instead of a review. A writer may hold the seam
-    that prints the refusal (``decide`` keeps its own, in :mod:`noni._decide_paths`,
+    that prints the refusal (``decide`` keeps its own, in :mod:`noni._decide_flags`,
     to stay within the file-size limit) but the seam must reach the one helper, so
     the walk is followed through the module that owns the seam's globals too.
     """
-    from noni import _decide_paths, _path_kind, decide, intent, order
+    from noni import _decide_flags, _path_kind, decide, intent, order
 
     # The seam module whose own source is searched for an open-coded walk: a writer
     # that keeps its printing in a module of its own is held to the same rule there.
-    seams = {decide: _decide_paths, order: order, intent: intent}
+    seams = {decide: _decide_flags, order: order, intent: intent}
     for module in (decide, order, intent):
         seam = module._refuse_linked_state
         assert _walks_the_guard(seam) is _path_kind, (
@@ -393,7 +393,7 @@ def _walks_the_guard(seam) -> object:
     The seam's own module first (a writer whose seam calls ``_path_kind`` directly is
     done), then the package modules the seam imports by name -- which is how a seam
     that delegates its question one module deeper, as ``decide`` does through
-    ``_decide_paths``, is still followed into the code that asks ``lstat``. The
+    ``_decide_flags``, is still followed into the code that asks ``lstat``. The
     question is whether any of the code between the writer and the ``lstat`` is a walk
     of its own, not how many files the hop passes through.
 

@@ -43,7 +43,6 @@ PRODUCT_MODULES = (
     "src/noni/_marker.py",
     "src/noni/_session_push.py",
     "src/noni/_decide_flags.py",
-    "src/noni/_decide_paths.py",
     "src/noni/close.py",
     "src/noni/release.py",
     "src/noni/census.py",

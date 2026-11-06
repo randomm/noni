@@ -83,35 +83,52 @@ def test_the_helper_refuses_through_the_callers_printer_and_code():
     assert calls == []
 
 
-def _call_arguments(source: str, qualified: str) -> str:
-    """The argument text of the call to ``qualified`` that is not a definition.
+def _call_arguments(source: str, qualified: str, call_site: str = "") -> str:
+    """The argument text of the call to ``qualified``, skipping definitions and prose.
 
     ``qualified`` is spelled as the source spells it (``parse_date(`` inside the
     helper, where the rule is called unqualified). A rule's own signature is a
     ``def`` line and is skipped: a signature names its parameters, it does not pass
-    a printer. The balanced-paren scan starts at the paren that follows the name, so
-    a keyword argument that is itself a call does not end the read early -- the
-    property a plain ``[^)]*`` regex could not give for the assembly call, which
-    forwards several call expressions as values.
+    a printer. A docstring that cites the rule with ``:func:`` markup is skipped the
+    same way -- the sentence "``:func:`refuse_linked_state` asks``" is a mention, not
+    a call, and the parenthesis that follows it in prose is not a call either.
+    ``call_site`` narrows the search to one caller (the writer's own printer, say),
+    so a module that both defines a rule and calls a like-named one hands back the
+    call and not its own signature.
+
+    The balanced-paren scan starts at the paren that follows the name, so a keyword
+    argument that is itself a call does not end the read early -- the property a plain
+    ``[^)]*`` regex could not give for the assembly call, which forwards several call
+    expressions as values.
     """
     at = 0
     while (found := source.find(qualified, at)) != -1:
         at = found + 1
-        if source[max(0, found - 20):found].rstrip().endswith("def"):
+        head = source[max(0, found - 20):found].rstrip()
+        if head.endswith("def") or head.endswith("`"):
             continue
         open_at = found + len(qualified) - 1
-        depth, index = 0, open_at
-        while index < len(source):
-            char = source[index]
-            if char == "(":
-                depth += 1
-            elif char == ")":
-                depth -= 1
-                if depth == 0:
-                    break
-            index += 1
-        return source[open_at + 1:index]
+        if source[open_at] != "(":
+            continue
+        arguments = _balanced_arguments(source, open_at)
+        if not call_site or call_site in arguments:
+            return arguments
     return ""
+
+
+def _balanced_arguments(source: str, open_at: int) -> str:
+    """The text between ``source[open_at]`` and the paren that closes it."""
+    depth, index = 0, open_at
+    while index < len(source):
+        char = source[index]
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        index += 1
+    return source[open_at + 1:index]
 
 
 def _helper_calls(source: str) -> list[tuple[str, str]]:
@@ -199,21 +216,60 @@ def test_the_helper_takes_every_rule_from_its_arguments_and_keeps_none():
     calls = (_helper_calls(source)
              + [("parse_date", _call_arguments(helper_source, "parse_date(")),
                 ("parse_questions", _call_arguments(helper_source, "parse_questions(")),
-                ("check_supersede", _call_arguments(helper_source, "check_supersede("))])
-    # The four single-rule calls, plus the assembly that makes them. The assembly
-    # lives in the helper too, so the count is what says the caller did not quietly
-    # re-implement one of the four beside it -- and every one of them crosses with
-    # the caller's own printer and code.
-    assert len(calls) >= 4, calls
+                ("check_supersede", _call_arguments(helper_source, "check_supersede(")),
+                ("refuse_linked_state",
+                 _call_arguments(source, "refuse_linked_state(", call_site="_fail")),
+                ("refuse_ledger_allocation",
+                 _call_arguments(source, "refuse_ledger_allocation(",
+                                 call_site="_fail")),
+                ("refuse_taken_name",
+                 _call_arguments(source, "refuse_taken_name(", call_site="_fail")),
+                ("_allocation_refusal",
+                 _call_arguments(helper_source, "_allocation_refusal("))])
+    # The four single-rule calls, plus the assembly that makes them, plus the three
+    # path seams decide hands its printer to. The assembly and the seams live in the
+    # helper too, so the count is what says the caller did not quietly re-implement
+    # one of them beside it -- and every one of them crosses with the caller's own
+    # printer and code.
+    assert len(calls) >= 7, calls
     for name, arguments in calls:
         assert name in {"parse_date", "parse_questions", "check_supersede",
-                        "refuse_name", "build_record_flags"}, name
+                        "refuse_name", "build_record_flags",
+                        "refuse_linked_state", "refuse_ledger_allocation",
+                        "refuse_taken_name", "_allocation_refusal"}, name
+        # A rule that takes no printer is exempt from the printer/code pair: the
+        # directory question of the allocation seam answers with a pair of lines and
+        # prints nothing, so it is held to its own call site instead. The three path
+        # seams take both positionally, so they are held to the same contract by name
+        # rather than by keyword.
+        if name == "_allocation_refusal":
+            continue
+        if name in {"refuse_linked_state", "refuse_ledger_allocation",
+                    "refuse_taken_name"}:
+            assert "_fail" in arguments, f"{name} is called without the caller's printer"
+            assert re.search(r"\bEXIT_\w+\b", arguments), \
+                f"{name} is called without the caller's own exit constant"
+            continue
         assert "fail=" in arguments, f"{name} is called without the caller's printer"
         assert "exit_usage=" in arguments, \
             f"{name} is called without the caller's usage code"
+    # The helper's own internal call is the other half of that check: the allocation
+    # seam asks its directory question first, so if that call ever lost the printer
+    # the refusal would be computed and never printed.
+    allocation = _call_arguments(helper_source, "_allocation_refusal(")
+    assert "repo" in allocation and "ledger" in allocation, allocation
     # ...and for the calls the caller makes itself, the values handed over are
-    # literally the writer's own printer and its own usage constant.
+    # literally the writer's own printer and its own usage constant. The three path
+    # seams are exempt: they take the printer and the exit constant positionally, so
+    # the literal check below (which is spelled for the keyword-only flag rules) is
+    # replaced by an assertion that both are named in the argument text.
     for name, arguments in _helper_calls(source):
+        if name in {"refuse_linked_state", "refuse_ledger_allocation",
+                    "refuse_taken_name"}:
+            assert "_fail" in arguments, f"{name} is called without the caller's printer"
+            assert re.search(r"\bEXIT_\w+\b", arguments), \
+                f"{name} is called without the caller's own exit constant"
+            continue
         assert "fail=_fail" in arguments, f"{name} is called without the caller's printer"
         assert "exit_usage=EXIT_USAGE" in arguments, \
             f"{name} is called without the caller's usage code"

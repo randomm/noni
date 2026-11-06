@@ -81,7 +81,7 @@ import re
 import sys
 from pathlib import Path
 
-from . import _decide_flags, _decide_paths, _writer, gitwrite, labels, orderstate
+from . import _decide_flags, _writer, gitwrite, labels, orderstate
 from . import ledger_schema as _schema
 from .ledger_schema import is_single_line
 
@@ -126,7 +126,7 @@ STATUSES = (STATUS_DECIDED, STATUS_OPEN, STATUS_SUPERSEDED)
 # into and the target of a supersede is read from. Spelled from
 # :data:`noni.orderstate.DECISIONS_DIR` rather than from the ``repo / "noni" /
 # "decisions"`` join below, so the guard and the ledger are one spelling; the walk
-# and its declined-``lstat`` rule live in :mod:`noni._decide_paths`.
+# and its declined-``lstat`` rule live in :mod:`noni._decide_flags`.
 _GUARDED_DIRS: tuple[str, ...] = ("noni", orderstate.DECISIONS_DIR)
 
 # The field order both censuses document; json.dump keeps it. The three names
@@ -240,20 +240,20 @@ def _open_ledger(repo: Path, ledger: Path) -> int | None:
     The allocation and its directory question are :func:`noni._writer.allocate_ledger`;
     this seam gives its refusal this writer's exit code and voice.
     """
-    return _decide_paths.refuse_ledger_allocation(_fail, labels.DECIDE,
+    return _decide_flags.refuse_ledger_allocation(_fail, labels.DECIDE,
                                                   EXIT_COMMIT_FAILED, repo, ledger)
 
 
 def _refuse_linked_state(repo: Path) -> int | None:
     """The exit-3 refusal for a ``noni/`` this writer may not read or write, or None.
 
-    :func:`noni._decide_paths.refuse_linked_state` walks the components and words the
+    :func:`noni._decide_flags.refuse_linked_state` walks the components and words the
     two lines; this seam pins the call to :data:`EXIT_GIT`, the code docs/PRODUCT.md 7
     gives ``decide`` for a wrong path. It runs in ``main()`` BEFORE :func:`_identity`,
     so a linked tree is refused by noni rather than read through by the git probes:
     exit 5 beside it stays the verdict for a ledger that could not be created.
     """
-    return _decide_paths.refuse_linked_state(_fail, EXIT_GIT, repo, _GUARDED_DIRS)
+    return _decide_flags.refuse_linked_state(_fail, EXIT_GIT, repo, _GUARDED_DIRS)
 
 
 def _identity(repo: Path) -> str | int:
@@ -320,9 +320,9 @@ def _refuse_taken_name(record_path: Path) -> int:
 
     ``is_file()`` follows a link, so a symlink would have read as free and
     ``os.replace`` would have written through it; the wording is
-    :mod:`noni._decide_paths`' and the code is this writer's.
+    :mod:`noni._decide_flags`' and the code is this writer's.
     """
-    return _decide_paths.refuse_taken_name(_fail, EXIT_COLLISION, record_path)
+    return _decide_flags.refuse_taken_name(_fail, EXIT_COLLISION, record_path)
 
 
 def _load_target(repo: Path, ledger: Path,

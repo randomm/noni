@@ -198,6 +198,8 @@ def test_no_commit_is_exempt_from_the_freshness_probe(tmp_path):
     assert "uncommitted" in out, out
     assert _git_e2(repo, "rev-parse", "HEAD").stdout.strip() == head_before
     assert calls == [], f"--no-commit called git: {calls}"
+
+
 def test_the_committed_route_reaches_the_probe_where_no_commit_does_not(tmp_path):
     """The other half of the exemption: same repo, same rival, no flag, and the run
     is refused.

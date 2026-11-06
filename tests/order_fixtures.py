@@ -8,10 +8,10 @@ Pure moves from the file that covered all of them: no behaviour here changed.
 
 from __future__ import annotations
 
-import ast
+import contextlib
+import io
 import json
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -22,17 +22,37 @@ from _harness import (
     _git,
     _git_e2,
     _init_repo,
-    _script_ast,
     git_pin_date,
     load_package_module,
-    run_from,
     run_order,
     subprocess_env,
 )
-from ordering_shapes import commit_artifact
+from order_doc_readers import (
+    SKILL_DIR,
+    _doc_block,
+    _doc_usage_flags,
+    _docstring,
+    _module_exit_codes,
+    _order_ast,
+    _parser_flags,
+    _skill_section,
+)
+
+__all__ = [
+    "CENSUS", "ORDER", "REPO", "SKILL_DIR", "FIXTURE", "ORDER_REL", "NOW", "STAMP",
+    "BASELINE_ID", "BASELINE_DATE", "SUPERSEDING_ID", "RIVAL_DATE", "SEED_STAMP",
+    "ORDERING_CHECKS",
+    "_schema_module", "_gitwrite_module", "_order_module", "_orderstate_module",
+    "_order_path", "_read", "_issues", "_repo", "_record_json", "_commit_record",
+    "_supersede_baseline", "_order", "_order_inprocess", "_census_ordering",
+    "_assert_census_clean", "_head_paths", "_porcelain", "_canonical", "_seed",
+    "_spied_git", "_writer_git_call", "_git_verb", "_entry", "_rival_commit",
+    "_committed_order", "_schema_case",
+    "_doc_block", "_doc_usage_flags", "_docstring", "_module_exit_codes",
+    "_order_ast", "_parser_flags", "_skill_section",
+]
 
 CENSUS = REPO / "skills" / "census" / "scripts" / "census.py"
-SKILL_DIR = REPO / "skills" / "direction"
 FIXTURE = REPO / "tests" / "fixtures" / "ordering" / "order-valid.json"
 
 ORDER_REL = "noni/direction/order.json"
@@ -41,6 +61,15 @@ STAMP = "2026-10-27T12:00:00Z"
 BASELINE_ID = "2026-10-01-baseline"
 BASELINE_DATE = "2026-10-01T10:00:00Z"
 SUPERSEDING_ID = "2026-10-20-scheduler"
+
+# The stamp the rival writer of the race tests commits at, and the stamp its
+# losing opponent's baseline is seeded at. Both differ from ``NOW`` for the same
+# reason and the same verb: a run whose planned bytes equal the bytes already on
+# disk takes the writer's no-change shortcut and returns before the guard is
+# reached, so a race test built on such bytes would be measuring the shortcut and
+# not the probe.
+RIVAL_DATE = "2026-11-02T09:00:00Z"
+SEED_STAMP = "2026-10-20T08:00:00Z"
 
 # The three ordering checks, so a census here arbitrates the artifact and
 # nothing else: the hygiene class is not this writer's contract (a tree with no
@@ -63,17 +92,31 @@ def _schema_module() -> object:
 
 
 def _gitwrite_module() -> object:
-    """gitwrite.py loaded as a module, for the tests that name its constants."""
-    from noni import order_gitwrite
+    """gitwrite.py loaded as a module, for the tests that name its constants.
 
-    return order_gitwrite
+    Returned as the writer itself resolves it -- ``noni.order_gitwrite`` -- and not
+    through the bare ``order_gitwrite`` alias ``tests/harness_module.py`` registers
+    for the skill wrappers. The two names can bind two module objects (the alias is
+    ``setdefault``, so an earlier import of the bare name wins for that name), and a
+    test that patched one while the writer called the other would measure nothing:
+    every patched call of the test would land on a copy and the run would go ahead as
+    if the guard were absent.
+    """
+    import importlib
+
+    return importlib.import_module("noni.order_gitwrite")
 
 
 def _order_module() -> object:
-    """order.py loaded as a module, for the tests that drive its internals."""
-    from noni import order
+    """order.py loaded as a module, for the tests that drive its internals.
 
-    return order
+    ``noni.order``, for the same reason ``_gitwrite_module`` asks for its qualified
+    name: the in-process tests patch ``module.gitwrite``, so the module they hand
+    back and the module the writer runs must be one object.
+    """
+    import importlib
+
+    return importlib.import_module("noni.order")
 
 
 def _orderstate_module() -> object:
@@ -173,6 +216,24 @@ def _supersede_baseline(repo: Path) -> None:
 def _order(repo: Path, *args: str, env: dict | None = None) -> subprocess.CompletedProcess[str]:
     """Run order.py with exactly the arguments given, identity pinned to Replay."""
     return run_order(repo, *args, env=env)
+
+
+def _order_inprocess(repo: Path, *args: str) -> tuple[int, str, str]:
+    """Run one order.py verb in-process and return ``(code, stdout, stderr)``.
+
+    The guard tests need this rather than a subprocess: a freshness probe, a lying
+    ``git show`` or a tripwire on ``write_atomic`` is a patch on the module object,
+    and the writer only sees it if it runs *in that object*. Spawning the skill
+    wrapper would run the installed copy of the package -- a different module, an
+    unpatched helper, and a run that reports success for a guard that was never
+    installed. Everything else is the subprocess launcher's own contract: the same
+    argv after ``--repo``, the same ``main()`` entry point, the same two streams.
+    """
+    module = _order_module()
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = module.main(["--repo", str(repo), *args])
+    return code, out.getvalue(), err.getvalue()
 
 
 def _census_ordering(repo: Path, *extra: str) -> tuple[int, list[dict], str]:
@@ -282,6 +343,91 @@ def _entry(issue: int, decision: str = BASELINE_ID, confirmed: str = STAMP) -> d
     return {"issue": issue, "decision": decision, "confirmed": confirmed}
 
 
+def _rival_commit(repo: Path, entries: list[dict],
+                  message: str = "direction: rival writer commits first") -> None:
+    """Commit ``entries`` at the artifact path, then leave the tree as it was found.
+
+    The deterministic half of the two-writer race (issue #116): the real race is a
+    window of milliseconds, so racing processes would be flaky by construction, and
+    what has to be reproduced is the state the losing run reaches its write phase in
+    -- one sentence, HEAD moved after this run read.
+
+    Three things have to be true at once, which is why this is a fixture and not a
+    bare commit:
+
+      HEAD  -- moved, so the run's commit would overwrite an order it never read.
+      file  -- left exactly as it was found, because "HEAD moved after this run
+               read" is the state under test and nothing else: a rival that also
+               rewrote the working copy would be caught by the reader's own
+               comparison, which is a different case with a different message.
+      the run's plan -- still a write, so the run cannot take the no-change
+               shortcut and exit 0 having committed nothing.
+
+    So the fixture commits the entries it is handed with the rival's own stamp on
+    every entry (bytes that differ from HEAD's, so git makes the commit rather than
+    refusing an empty one), and puts the file back byte for byte afterwards. The
+    caller seeds the order first: the seeded bytes are then the baseline the losing
+    run reads, and the only thing that has moved by the time it writes is HEAD.
+
+    Committing the rival's brand-new entries and leaving them in the tree instead
+    would model something else entirely -- a run that read the rival's order and
+    wrote it back -- which is a correct run, and refusing it would be a bug.
+
+    The commit goes through :func:`git_pin_date` rather than a bare ``_git``: the
+    writer's git calls run under ``gitenv.child_env()``, which strips every ``GIT_*``
+    name and sandboxes ``HOME``, so a rival committed with the ambient identity is a
+    commit the writer's ``git show`` cannot always resolve -- the probe then reads
+    "nothing committed" where HEAD holds the rival's order, and the run this guard
+    exists to refuse goes ahead. Pinned identity and date are what both can see.
+    """
+    target = _order_path(repo)
+    parent_existed = target.parent.is_dir()
+    as_the_run_read_it = target.read_bytes() if target.is_file() else None
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(_canonical([dict(entry) for entry in entries]), encoding="utf-8")
+    _git(repo, "add", ORDER_REL)
+    git_pin_date(repo, RIVAL_DATE, "commit", "-q", "-m", message)
+
+    # Undo the rival's write, everything but the commit. Three things move together
+    # in a `git add` and a commit, and leaving any one of them behind describes a
+    # scenario that is not this one:
+    #
+    #   HEAD   -- left where the rival put it, which is the whole point. This is a
+    #            real commit and not a rewound history: `git reset` here would move
+    #            HEAD back and erase the very thing the guard is meant to notice.
+    #   file   -- back to the exact bytes the losing run reads, or unlinked when it
+    #            read no file at all.
+    #   index  -- back to the commit this run read against, so the tree reports no
+    #            staged change the rival's `git add` made and the writer's own
+    #            `git add` cannot stage it. `--mixed` on the path, so the working
+    #            copy keeps the bytes restored below.
+    _git(repo, "reset", "--quiet", "HEAD~1", "--", ORDER_REL)
+    if as_the_run_read_it is None:
+        target.unlink()
+        # Tolerated rather than checked: when the rival's order was the path's first
+        # appearance in HEAD, the reset above already took it out of the index, and
+        # `git rm --cached` on a path the index does not know exits 128. The state
+        # wanted is "the index does not hold this path", which both answers leave.
+        _git(repo, "rm", "--cached", "--ignore-unmatch", "--quiet", "--", ORDER_REL)
+        if not parent_existed:
+            target.parent.rmdir()
+    else:
+        target.write_bytes(as_the_run_read_it)
+
+
+def _committed_order(repo: Path) -> bytes | None:
+    """What HEAD holds at the artifact path, or ``None`` when nothing is there.
+
+    Read straight from git rather than through the writer's own probe, so a test
+    can assert what the committed order is without trusting the code under test to
+    report it. The harness's ``_git`` returns no stdout, hence ``_git_e2``.
+    """
+    shown = _git_e2(repo, "show", f"HEAD:{ORDER_REL}")
+    if shown.returncode != 0:
+        return None
+    return shown.stdout.encode("utf-8")
+
+
 # --- add ----------------------------------------------------------------------
 
 
@@ -295,6 +441,7 @@ def _schema_case(**entry_fields):
     return {"schema": schema.ORDER_SCHEMA, "entries": [entry]}
 
 
+<<<<<<< HEAD
 def _order_ast() -> ast.Module:
     return _script_ast(ORDER)
 
@@ -426,3 +573,5 @@ def _order_from(cwd: Path, repo: Path, *args: str) -> subprocess.CompletedProces
     """order.py launched from ``cwd``, with ``--repo`` naming the state root."""
     return run_from(cwd, ORDER, "--repo", str(repo), *args)
 
+=======
+>>>>>>> 29aa8ac (fix(work): order writes silently drop a concurrent writer's…)

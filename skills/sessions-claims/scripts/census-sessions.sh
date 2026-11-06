@@ -1,90 +1,45 @@
 #!/usr/bin/env bash
-# Census of the session register: one NDJSON row per finding for the session
-# files under noni/sessions/. Read-only — never writes, never mutates a
-# session file. Output goes to stdout only (no writes under noni/census/).
+# The sessions census: the session register's own entry point.
 #
-#   census-sessions.sh <state-root>/noni/sessions
+#   census-sessions.sh [--help] [census options] <state-root>/noni/sessions
 #
-# The one argument is the sessions directory of the state root — the directory
-# --repo names for the writers, with noni/sessions under it. There is no
-# current-directory default: a run with no argument is a usage error (2),
-# because a relative default would census whatever noni/sessions happened to
-# sit next to the caller and report a clean the caller never pointed at.
+# A thin wrapper, like the skill's other .py entry points. It carries no rules
+# and no exit-code table of its own: it finds an interpreter, checks that the
+# noni package imports, and execs noni.census_wrapper, which runs the unified
+# census over the session group and returns the census's own exit code. The
+# single exit-code reference is skills/census/SKILL.md, and the census is the
+# arbiter — this script exists so the path the older pages print still runs.
 #
-# The census is the deterministic arbiter for the claim protocol. Two active
-# claims on the same task from different identities are a double-claim: git
-# delays the second claimant, it does not lock them out, so the census is the
-# check that catches it at read time. A claim committed without a register
-# file is flagged (distinct code) but the session's work is not blocked — the
-# census is report-only.
+# The one argument is the sessions directory of the state root. There is no
+# current-directory default, and no option is interpreted here: every flag goes
+# to the census, which owns their meaning and their refusals.
 #
-# Exit codes. The codes are distinct so one failing census names the class of
-# invariant that broke; when several classes are violated at once, the lowest
-# number wins (30 < 31 < 32). Every check runs in a single pass regardless of
-# the exit code — the priority only selects which code is returned — so all
-# findings are always in the NDJSON output:
-#   0   clean — every session file valid (five required fields each), no
-#       double-claims, all claims have a register file
-#   2   usage: no sessions directory was given, more than one was given, or
-#       the one given is not a directory (the state root is named by the
-#       caller, never by the cwd)
-#   3   the interpreter it would run is missing (see NONI_PYTHON below)
-#   30  double-claim: two active claims on the same task from different
-#       identities (the arbiter check)
-#   31  a claim row was committed without a register file under the sessions
-#       directory (work is not blocked — report only)
-#   32  a session file is malformed (a required field is missing or a claim
-#       row has no task reference)
-#
-# Each non-zero exit prints NDJSON rows on stdout naming the offending task
-# or file, e.g. {"type": "double-claim", "task": "#42", "sessions": [...]},
-# plus a stderr line naming the code and noting that all findings are in the
-# NDJSON rows.
-#
-# Requires a Python 3 interpreter on the machine that does the reading. The
-# interpreter is $NONI_PYTHON when that variable is set, and python3
-# otherwise; the exit-3 check below tests the one actually about to run.
-#
-# The --help output is not this header: it is the package constant
-# noni.shim_help.CENSUS_SESSIONS_SH_HELP, so `noni census --sessions --help`
-# and this shim print the same bytes. tests/fixtures/census-sh/
-# sessions-usage.txt is the fixture both routes are compared against, and the
-# header below it is documentation only.
+# Requires a Python 3 that can import the package. NONI_PYTHON names the
+# interpreter (python3 by default); a missing interpreter or an unimportable
+# package is named on one plain line and exits 3 — the census's own code for a
+# tool the reading machine does not have — rather than leaving a traceback as
+# the diagnostic.
 
 set -u
 
-if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-  NONI_PYTHON="${NONI_PYTHON:-python3}"
-  if ! command -v "$NONI_PYTHON" >/dev/null 2>&1; then
-    echo "census-sessions.sh: $NONI_PYTHON not found on $(hostname 2>/dev/null || echo unknown)" >&2
-    exit 3
-  fi
-  # A package that cannot be imported is named on one plain line and exits 3.
-  # The import is probed with stderr captured, so the interpreter's traceback
-  # never reaches the reader: a traceback is not a diagnostic one can act on,
-  # and the shim's exit-code table says 3 for exactly this state.
-  if ! help_text="$("$NONI_PYTHON" -c 'import sys; from noni import shim_help; sys.stdout.write(shim_help.CENSUS_SESSIONS_SH_HELP + "\n")' 2>/dev/null)"; then
-    echo "census-sessions.sh: noni package not importable" >&2
-    exit 3
-  fi
-  printf '%s\n' "$help_text"
-  exit 0
+if [ "$#" -eq 0 ]; then
+  echo "census-sessions.sh: no sessions directory given (usage: census-sessions.sh [--help] [census options] <state-root>/noni/sessions)" >&2
+  exit 2
 fi
 
-# The Python core lives in the same directory as this script. The sessions
-# census is also reachable as `census.sh --sessions` from the steering-ledger
-# skill (skills/steering-ledger/scripts/census.sh dispatches here); this file
-# is the direct entry point.
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-
 NONI_PYTHON="${NONI_PYTHON:-python3}"
-command -v "$NONI_PYTHON" >/dev/null 2>&1 || {
+if ! command -v "$NONI_PYTHON" >/dev/null 2>&1; then
   echo "census-sessions.sh: $NONI_PYTHON not found on $(hostname 2>/dev/null || echo unknown)" >&2
   exit 3
-}
+fi
 
-# The directory argument is passed through verbatim (quoted, so a path with
-# spaces stays one argv entry, and an absent one stays absent so the core
-# refuses it): the core is the single owner of the usage and not-a-directory
-# refusals, and the wrapper must not pre-empt either with its own copy.
+# The import is probed with stderr captured so the interpreter's traceback never
+# reaches the reader: a traceback is not a diagnostic one can act on, and exit 3
+# is the code this run has already committed to for exactly this state.
+if ! "$NONI_PYTHON" -c 'import noni.census_wrapper' 2>/dev/null; then
+  echo "census-sessions.sh: the noni package is not importable; install it or put its src/ on PYTHONPATH" >&2
+  exit 3
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 exec "$NONI_PYTHON" "$SCRIPT_DIR/census-sessions.py" "$@"

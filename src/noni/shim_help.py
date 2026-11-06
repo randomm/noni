@@ -1,100 +1,119 @@
-"""The --help text of the two bash census shims, as package-owned constants.
+"""The --help text of the two shell census entry points, as package constants.
 
-The shims used to print their own header comment, so the same bytes could not
-come from both the shim and the package. The text lives here once and both
-routes emit these constants: ``tests/fixtures/census-sh/usage.txt`` and
-``sessions-usage.txt`` are the single source of truth the tests compare both
-routes against.
+Both entry points print one of these constants verbatim, so the bytes a reader
+sees have exactly one owner and no hard-coded line range drifts when the text
+grows. ``tests/fixtures/census-sh/usage.txt`` and ``sessions-usage.txt`` hold the
+lines the tests both routes are compared against must keep.
 
-A shim prints the constant verbatim, so what a reader sees is the bytes written
-here.
+The text states the wrapper's shape and nothing else. It names the group the
+entry point runs, the one argument it takes, and how to read its exit codes —
+and then it points at ``skills/census/SKILL.md``, the single exit-code reference.
+A wrapper owns no exit-code table of its own, so a page here would be a second
+table to keep in step with the census's, which is what this file used to be.
 """
 
 from __future__ import annotations
 
-CENSUS_SH_HELP = """The census entry point. Two checks live under this name, each with its own
-exit-code table and its own golden fixtures under tests/fixtures/:
+import sys
 
-  census.sh <state-root>/noni/decisions        the decisions census (E1)
-      columns: id date by status live supersedes
-      codes:   0 clean | 2 no ledger dir given | 3 jq missing or the
-               schema program missing (3:schema-program-missing)
-               | 10 record/ledger unusable | 12 edited after commit
-               | 20 supersede chain broken
-               | 42 recordless ledger, reported as the ledger-empty warn
-               at exit 0
-      a record is valid when it carries the eight top-level required
-      fields (plus the optional source, decided_by, on_behalf_of and
-      single_option fields) and the chain resolves
+from .census_report import EXIT_CLEAN
 
-  census.sh --sessions <state-root>/noni/sessions   the sessions census (E2)
-      one NDJSON row per finding; read-only, output to stdout only
-      codes:   0 clean | 2 no sessions dir given | 3 python3 missing
-               | 30 double-claim | 31 claim without a register file
-               | 32 malformed session file
+CENSUS_SH_HELP = """The ledger census: the steering ledger's own entry point.
 
-The one argument each check takes is the state directory of the state root —
-the directory --repo names for the writers — and neither check has a
-current-directory default: run with no argument, either path is a usage error
-(2) rather than a census of whatever noni/ happened to sit next to the caller.
+  census.sh <state-root>/noni/decisions
 
-The two checks are never mixed in one run: the dispatch below selects the
-E1 or the E2 path from the flag set, and the exit code is whichever check
-ran. In the E2 path the sessions census is the deterministic arbiter for
-the claim protocol: claims are signals, git delays the second claimant
-(it does not lock), and the census double-claim check (30) is the check
-that catches it at read time."""
+It is a thin wrapper. It carries no rules and no exit-code table: it runs the
+unified noni census (``noni census``, ``skills/census/scripts/census.py``) over
+the ledger group alone — `ledger-record`, `ledger-edited` and `ledger-chain` —
+and exits with the census's own code. The census itself is the arbiter, and
+`skills/census/SKILL.md` is the single reference for its check classes and exit
+codes; read that page, not this one, when a run tells you something.
 
-CENSUS_SESSIONS_SH_HELP = """Census of the session register: one NDJSON row per finding for the session
-files under noni/sessions/. Read-only — never writes, never mutates a
-session file. Output goes to stdout only (no writes under noni/census/).
+The one argument is the ledger directory of the state root — the directory
+`--repo` names for the writers, with `noni/decisions` under it. There is no
+current-directory default: run with no argument, the run is a usage error (2)
+rather than a census of whatever `noni/` happened to sit next to the caller. Two
+directories are the same refusal — one run audits one ledger.
+
+Every census option is accepted and passed through to the census, so the run
+keeps the flags the unified census documents rather than a subset: `--json`,
+`--strict`, `--now`, `--only`, `--skip` and the rest. `--strict` promotes the
+warn classes the ledger group reports (`ledger-empty` among them), which is the
+flag this wrapper used to have no route to.
+
+Requires the `noni` package importable to the interpreter the wrapper runs: the
+wrapper names that fault on one plain line and exits 3 rather than letting a
+traceback stand as the diagnostic. The census is read-only: running it leaves
+`git status --porcelain` empty."""
+
+CENSUS_SESSIONS_SH_HELP = """The sessions census: the session register's own entry point.
 
   census-sessions.sh <state-root>/noni/sessions
 
-The one argument is the sessions directory of the state root — the directory
---repo names for the writers, with noni/sessions under it. Pass the sessions
-directory of the clone you want to audit. There is no current-directory
-default: a run with no argument is a usage error (2), because a relative
-default would census whatever noni/sessions happened to sit next to the
-caller and report a clean the caller never pointed at.
+It is a thin wrapper. It carries no rules and no exit-code table: it runs the
+unified noni census (``noni census``, ``skills/census/scripts/census.py``) over
+the session group alone — `session-double`, `session-claim`, `session-malformed`
+and the register's warn classes — and exits with the census's own code. The
+census itself is the arbiter, and `skills/census/SKILL.md` is the single
+reference for its check classes and exit codes; read that page, not this one,
+when a run tells you something.
 
 The census is the deterministic arbiter for the claim protocol. Two active
 claims on the same task from different identities are a double-claim: git
 delays the second claimant, it does not lock them out, so the census is the
-check that catches it at read time. A claim committed without a register
-file is flagged (distinct code) but the session's work is not blocked — the
-census is report-only.
+check that catches it at read time. A claim committed without a register file
+is reported but the session's work is not blocked — the census is report-only.
 
-Exit codes. The codes are distinct so one failing census names the class of
-invariant that broke; when several classes are violated at once, the lowest
-number wins (30 < 31 < 32). Every check runs in a single pass regardless of
-the exit code — the priority only selects which code is returned — so all
-findings are always in the NDJSON output:
-  0   clean — every session file valid (five required fields each), no
-      double-claims, all claims have a register file
-  2   usage: no sessions directory was given, more than one was given, or the
-      one given is not a directory (the state root is named by the caller,
-      never by the cwd)
-  3   the interpreter it would run is missing (see NONI_PYTHON below)
-  30  double-claim: two active claims on the same task from different
-      identities (the arbiter check)
-  31  a claim row was committed without a register file under the sessions
-      directory (work is not blocked — report only)
-  32  a session file is malformed (a required field is missing or a claim
-      row has no task reference)
+The one argument is the sessions directory of the state root — the directory
+`--repo` names for the writers, with `noni/sessions` under it. Pass the sessions
+directory of the clone you want to audit. There is no current-directory
+default: a run with no argument is a usage error (2), because a relative default
+would census whatever `noni/sessions` happened to sit next to the caller and
+report a clean the caller never pointed at. Two directories are the same
+refusal — one run audits one register.
 
-Each non-zero exit prints NDJSON rows on stdout naming the offending task
-or file, e.g. {"type": "double-claim", "task": "#42", "sessions": [...]},
-plus a stderr line naming the code and noting that all findings are in the
-NDJSON rows.
+Every census option is accepted and passed through, so the run keeps the flags
+the unified census documents rather than a subset: `--json` for the NDJSON rows,
+`--strict` to promote the warn classes, `--now` for a fixed timestamp, and the
+`--only` / `--skip` filters.
 
-Requires a Python 3 interpreter on the machine that does the reading. The
-interpreter is $NONI_PYTHON when that variable is set, and python3
-otherwise; the exit-3 check below tests the one actually about to run.
+Requires the `noni` package importable to the interpreter the wrapper runs: the
+wrapper names that fault on one plain line and exits 3 rather than letting a
+traceback stand as the diagnostic. The census is read-only: running it leaves
+`git status --porcelain` empty."""
 
-This header is also the --help output: the script prints this constant, so the
-help text has exactly one owner and no hard-coded line range can drift when it
-grows. The Python core is the ``noni`` package (``noni.census_sessions``); the
-sessions census is also reachable as `census.sh --sessions` from the
-steering-ledger skill (skills/steering-ledger/scripts/census.sh dispatches
-here); this script is the direct entry point."""
+
+def _constant(label: str) -> str:
+    """The help constant an entry point prints, chosen by the label it runs under.
+
+    One table keyed by the label rather than two near-identical branches: the
+    label is what the wrapper passes and what a reader of the refusal sees.
+    """
+    table = {"census.sh": CENSUS_SH_HELP, "census-sessions.sh": CENSUS_SESSIONS_SH_HELP}
+    if label not in table:
+        raise KeyError(f"no help text for the entry point {label!r}")
+    return table[label]
+
+
+def print_help(label: str) -> int:
+    """Print one entry point's help and return the census's clean code.
+
+    Returns rather than exits: the caller is a ``main`` whose return value is the
+    process's exit status, so the clean verdict has one owner in the census.
+    """
+    print(_constant(label))
+    return EXIT_CLEAN
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Print the census's help from the package, for a wrapper that has no args.
+
+    ``python -m noni.shim_help`` is the route the wrappers take: one module-level
+    call, no logic in bash, and the same bytes whatever the terminal width.
+    """
+    label = (list(sys.argv[1:] if argv is None else argv) or ["census.sh"])[0]
+    return print_help(label)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

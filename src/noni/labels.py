@@ -2,7 +2,7 @@
 
 Every shipped tool owns a constant label equal to the program name it has always
 printed (``decide.py``, ``register.py``, ``claim.py``, ``close.py``,
-``release.py``, ``census-sessions``, ``census.py``, ``order.py``). The label is
+``release.py``, ``census.py``, ``order.py``). The label is
 defined here and never derived from ``__file__``: the same bytes must come out
 whether the tool ran in place through its wrapper under
 ``skills/<skill>/scripts/`` or through ``noni <tool>`` from the installed
@@ -15,7 +15,6 @@ constants here carry no colon so the one word stays comparable.
 from __future__ import annotations
 
 CENSUS = "census.py"
-CENSUS_SESSIONS = "census-sessions"
 REGISTER = "register.py"
 CLAIM = "claim.py"
 CLOSE = "close.py"

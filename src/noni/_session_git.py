@@ -48,9 +48,8 @@ The set of statuses that end a session lives here too, as
 :data:`TERMINAL_STATUSES`, so the four writers agree on what "already closed" means,
 and :func:`session_status` reads the field that set is decided from, so no writer
 keeps its own copy of the '- status:' scan. A test asserts it equals the census's own
-two inactive sets (``census_sessions._INACTIVE_STATUSES`` and
-``census.INACTIVE_STATUSES``); the census sources are not changed and import nothing
-from here.
+the census's own inactive set (``census.INACTIVE_STATUSES``); the census source is
+not changed and imports nothing from here.
 
 Like the package's other git helpers, every call is bounded, never signs, runs no
 repository hooks and refuses the external transports a remote could name. This module is

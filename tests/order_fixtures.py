@@ -47,7 +47,7 @@ __all__ = [
     "_supersede_baseline", "_order", "_order_inprocess", "_census_ordering",
     "_assert_census_clean", "_head_paths", "_porcelain", "_canonical", "_seed",
     "_spied_git", "_writer_git_call", "_git_verb", "_entry", "_rival_commit",
-    "_committed_order", "_schema_case",
+    "_committed_order", "_bare_repo", "_schema_case",
     "_doc_block", "_doc_usage_flags", "_docstring", "_module_exit_codes",
     "_order_ast", "_parser_flags", "_skill_section",
 ]
@@ -428,6 +428,28 @@ def _committed_order(repo: Path) -> bytes | None:
     return shown.stdout.encode("utf-8")
 
 
+def _bare_repo(tmp_path: Path, subdir: str = "bare-repo") -> Path:
+    """A repository whose HEAD is unborn, with the ledger the writer cites.
+
+    The state a brand new private state repository is in: ``git init`` has run, no
+    commit has. The baseline decision record is committed here because
+    ``add --decision`` looks it up on disk, not in HEAD, so the ledger is what
+    ``_repo`` supplies and the emptiness of the history is the whole difference.
+
+    This tree exists for the freshness probe's honest negative: ``git show`` of any
+    path under an unborn HEAD says "invalid object name 'HEAD'", and a probe that
+    read that as a repository it could not read would refuse the first committed
+    order the quickstart tells the operator to write.
+    """
+    repo = tmp_path / subdir
+    repo.mkdir(parents=True, exist_ok=True)
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.name", "Replay")
+    _git(repo, "config", "user.email", "replay@fixture.invalid")
+    _commit_record(repo, BASELINE_ID, "decided", None)
+    return repo
+
+
 # --- add ----------------------------------------------------------------------
 
 
@@ -439,139 +461,3 @@ def _schema_case(**entry_fields):
     for name, value in entry_fields.items():
         entry[name] = value
     return {"schema": schema.ORDER_SCHEMA, "entries": [entry]}
-
-
-<<<<<<< HEAD
-def _order_ast() -> ast.Module:
-    return _script_ast(ORDER)
-
-
-def _docstring(tree: ast.Module) -> str:
-    doc = ast.get_docstring(tree)
-    assert isinstance(doc, str), "order.py has no module docstring"
-    return doc
-
-
-def _module_exit_codes(tree: ast.Module) -> set[int]:
-    """The codes the EXIT_* module constants hold, read from the source."""
-    codes: set[int] = set()
-    for node in tree.body:
-        value = node.value if isinstance(node, (ast.Assign, ast.AnnAssign)) else None
-        if not isinstance(value, ast.Constant):
-            continue
-        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-        for target in targets:
-            if isinstance(target, ast.Name) and target.id.startswith("EXIT_"):
-                assert type(value.value) is int, f"{target.id} is not an int"
-                codes.add(value.value)
-    assert codes, "order.py defines no EXIT_* constants"
-    return codes
-
-
-def _doc_block(doc: str, header: str) -> dict[int, str] | dict[str, str]:
-    lines = doc.splitlines()
-    try:
-        start = next(i for i, line in enumerate(lines) if line.strip() == header)
-    except StopIteration:
-        raise AssertionError(f"docstring has no {header!r} block") from None
-    block: dict = {}
-    current = None
-    for line in lines[start + 1:]:
-        if not line.strip():
-            continue
-        if not line.startswith(" " * 4):
-            break
-        head = line.strip().split(maxsplit=1)
-        if head and head[0].isdigit():
-            current = int(head[0])
-            block[current] = head[1] if len(head) > 1 else ""
-        elif isinstance(current, int):
-            block[current] += " " + line.strip()
-    assert block, f"the {header!r} block is empty"
-    return block
-
-
-def _parser_flags(tree: ast.Module) -> set[str]:
-    """The long options the parser declares, read from main()."""
-    main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
-    flags: set[str] = set()
-    for node in ast.walk(main):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if node.func.attr == "add_argument":
-                for arg in node.args:
-                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                        if arg.value.startswith("--"):
-                            flags.add(arg.value)
-    assert flags, "no add_argument calls found in main()"
-    return flags
-
-
-def _doc_usage_flags(doc: str) -> set[str]:
-    lines = doc.splitlines()
-    try:
-        start = next(i for i, line in enumerate(lines) if line.strip() == "Usage:")
-    except StopIteration:
-        raise AssertionError("docstring has no 'Usage:' block") from None
-    flags: set[str] = set()
-    for line in lines[start + 1:]:
-        if not line.startswith(" " * 4):
-            break
-        flags.update(re.findall(r"--[A-Za-z][A-Za-z0-9-]*", line))
-    assert flags, "the 'Usage:' block names no flags"
-    return flags
-
-
-# --- State root: the artifact path resolves from --repo and nothing else -------
-#
-# order.py's artifact lives at a fixed path under the state root, so the whole
-# contract is whether that root is the one --repo named. The three trees: a
-# separate state repository holding the ledger the writer cites, a decoy order
-# file beside the cwd carrying an order no run of these tests makes, and an
-# empty cwd a stray write would show up in.
-
-ORDER_STATE_DIR = "order-state-root"
-ORDER_CWD_DIR = "order-cwd"
-ORDER_DECOY_DIR = "order-decoy"
-# An order the decoy holds and no test writes: the entry, not just the file, is
-# the thing a comparison can prove nobody touched.
-ORDER_DECOY_ISSUE = 999
-
-def _order_state_root(tmp_path: Path) -> Path:
-    """The state repository: a git repo with an identity and the baseline
-    record ``add --decision`` cites, and no order file yet."""
-    root = _repo(tmp_path, ORDER_STATE_DIR)
-    _git(root, "config", "user.name", "Replay")
-    _git(root, "config", "user.email", "replay@fixture.invalid")
-    return root
-
-
-def _order_decoy(tmp_path: Path) -> Path:
-    """A decoy state root beside the cwd: a git repo holding one committed
-    ordering artifact, so a cwd-driven run would have had an order to overwrite.
-
-    A git repository for the same reason as decide.py's decoy: a plain directory
-    would make the writer's own path probes answer first, and the test would
-    measure the probe rather than the resolution.
-    """
-    decoy = _init_repo(tmp_path / ORDER_DECOY_DIR)
-    _git(decoy, "config", "user.name", "Replay")
-    _git(decoy, "config", "user.email", "replay@fixture.invalid")
-    commit_artifact(decoy, _canonical([_entry(ORDER_DECOY_ISSUE, BASELINE_ID)]))
-    return decoy
-
-
-def _order_case(tmp_path: Path) -> tuple[Path, Path, Path]:
-    """The three trees of one order state-root run: (state root, decoy, cwd)."""
-    root = _order_state_root(tmp_path)
-    decoy = _order_decoy(tmp_path)
-    cwd = tmp_path / ORDER_CWD_DIR
-    cwd.mkdir(parents=True, exist_ok=True)
-    return root, decoy, cwd
-
-
-def _order_from(cwd: Path, repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    """order.py launched from ``cwd``, with ``--repo`` naming the state root."""
-    return run_from(cwd, ORDER, "--repo", str(repo), *args)
-
-=======
->>>>>>> 29aa8ac (fix(work): order writes silently drop a concurrent writer's…)

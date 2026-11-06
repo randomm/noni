@@ -52,9 +52,12 @@ Exit codes:
        an entry of the existing file whose decision is null, blank or absent (the refusal
        names the entry), or the existing order file is not the artifact this writer writes
        (unparseable, wrong schema, or malformed entries) so overwriting it would destroy an
-       order, or the committed order bytes changed between this run's read and its
-       write ("the order changed since it was read; re-run", so the caller's
-       re-run plans against what the other writer committed)
+       order, or nothing this run planned from is what it read: the committed
+       order bytes moved ("the order changed since it was read; re-run", so the
+       caller's re-run plans against what the other writer committed), or the file
+       at the artifact's path did ("the file changed since it was read; restore it
+       or discard the change", which no re-run settles -- the fix names the
+       checkout that does)
 
 Every refusal (2, 3 or 4) leaves the artifact untouched: reads and checks
 happen before any write -- including the re-read of the committed bytes that
@@ -391,38 +394,26 @@ def main(argv: list[str] | None = None) -> int:
         # Not bytes this writer can produce. The plan is built from validated
         # values, so the file keeps the bytes it had and nothing is claimed.
         return _fail(EXIT_REFUSAL, rendered.headline, rendered.hint)
+    # --- the freshness probe: did anything move under this run? ----------------
+    # The lost-update guard; order_probe.py owns the check, its two refusal messages
+    # and the reason it sits here rather than with the other refusals. --no-commit is
+    # exempt because that route runs no git at all.
+    if not args.no_commit:
+        refused = order_probe.probe(repo, order_path, before, verb, args.repo,
+                                    EXIT_IO, EXIT_REFUSAL)
+        if refused is not None:
+            return refused
     if before is not None and rendered == before:
-        # The file already holds exactly the bytes this run would write (the case a
-        # --no-commit run hands to the next, committed run, and confirming an entry
-        # already stamped at the time it was given). There is nothing left for this
-        # run to add, so it stages nothing, commits nothing and moves no HEAD: no
-        # committed bytes can have moved without the bytes this run read moving with
-        # them, and this run has written nothing. The freshness probe therefore sits
-        # AFTER this shortcut -- it would have nothing to protect here, and checking
-        # HEAD instead would turn the documented no-op into a refusal (issue #116,
-        # against issue #76's idempotent repeat).
+        # The file already holds the bytes this run would write, so there is nothing
+        # left to add: nothing is staged, nothing is committed, no HEAD moves. Only
+        # reachable here on the committed route once the probe above has said nothing
+        # moved, which is what keeps "unchanged" from being printed for an order HEAD
+        # does not hold; --no-commit keeps its own no-git contract and #76's
+        # idempotent repeat by taking the shortcut on the file's bytes alone.
         orderstate.print_order(entries, labels.ORDER)
         print(f"{labels.ORDER}: {orderschema.ORDER_REL} is unchanged; nothing to "
               "commit")
         return EXIT_OK
-    # --- the freshness probe: did anything move under this run? ----------------
-    # The lost-update guard, and the reason this run may not simply write what it
-    # planned: see order_probe.py, which owns the check and its wording. It runs
-    # here and not earlier because every input, artifact and plan refusal above
-    # reports its own reason, and a rival commit must not be able to disguise a
-    # usage error or a malformed artifact as a concurrency refusal. It sits before
-    # mkdir, before the write and before any git add, so a refused run neither
-    # writes nor stages nor moves HEAD.
-    #
-    # --no-commit is exempt: that route runs no git at all and its contract (pinned
-    # by tests/test_order_writer_verbs.py and tests/test_order_writer_usage.py) is
-    # "writes the file and exits 0 without touching git", so a HEAD comparison
-    # would make Route B of the quickstart -- where nothing is committed until
-    # after the last writer has run -- refuse every run after the first.
-    if not args.no_commit:
-        refused = order_probe.probe(repo, order_path, before, verb, args.repo)
-        if refused is not None:
-            return refused
 
     if order_path.parent.exists() and not order_path.parent.is_dir():
         # The parent path is part of the artifact's identity, and this is the one

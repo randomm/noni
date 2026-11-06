@@ -8,12 +8,17 @@ module gives: a patch on the probe is a patch on a module object, and the writer
 honours the copy it runs inside.
 """
 
+from __future__ import annotations
+
+import contextlib
 import json
+from pathlib import Path
 
 from _harness import _git_e2
 from order_fixtures import (
     BASELINE_ID,
     ORDER_REL,
+    RIVAL_DATE,
     SEED_STAMP,
     _committed_order,
     _entry,
@@ -23,18 +28,41 @@ from order_fixtures import (
 
 REFUSAL = "the order changed since it was read; re-run"
 
-# The stamp the rival's own entries carry, distinct from the fixtures' pinned NOW:
-# a run that plans against a rival's entries has to hold a real write, or it takes
-# the writer's no-change shortcut and the guard is never reached (see
-# ``order_fixtures._rival_commit``).
-RIVAL_STAMP = "2026-11-02T09:00:00Z"
+# The other exit-4 cause the guard reports, pinned from the product's own constant by
+# the tests that assert the two arms stay distinguishable.
+FILE_CHANGED = "the file changed since it was read; restore it or discard the change"
+
+# The rival's entry stamp is ``order_fixtures.RIVAL_DATE`` under this module's own
+# name: one literal, one explanation (see that module), imported rather than spelled
+# a second time so the two can never drift -- a rival that carried NOW's stamp would
+# leave every race verb a no-change run that never reaches the guard.
+RIVAL_STAMP = RIVAL_DATE
 
 
-def _head(repo):
+@contextlib.contextmanager
+def interrupt_read(order_module, name: str, replacement):
+    """Replace one of the writer's own reads for one run, then put the real one back.
+
+    The deterministic way into the window the guard covers: the run takes its
+    baseline, the fixture then changes the world (the file, or HEAD), and the run
+    reaches its write phase in the state a real second writer would have left. The
+    restore sits in the same context manager as the swap, so a test cannot leave the
+    product's reader replaced for every later test in the module.
+    """
+    state = order_module.orderstate
+    real = getattr(state, name)
+    setattr(state, name, replacement)
+    try:
+        yield
+    finally:
+        setattr(state, name, real)
+
+
+def _head(repo: Path) -> str:
     return _git_e2(repo, "rev-parse", "HEAD").stdout.strip()
 
 
-def _checkout_head(repo):
+def _checkout_head(repo: Path) -> None:
     """Put the working copy back to what HEAD holds, the way a sync would.
 
     After a refusal the remedy is a re-run, and a re-run is only honest once the
@@ -44,7 +72,7 @@ def _checkout_head(repo):
     _git_e2(repo, "checkout", "HEAD", "--", ORDER_REL)
 
 
-def _issues_in_head(repo):
+def _issues_in_head(repo: Path) -> list[int]:
     """The issues HEAD holds at the artifact path, read straight from git.
 
     The surviving order is asserted from the committed blob and not from the working
@@ -56,7 +84,7 @@ def _issues_in_head(repo):
     return [entry["issue"] for entry in json.loads(committed)["entries"]]
 
 
-def _race_entry(issue, decision=BASELINE_ID):
+def _race_entry(issue: int, decision: str = BASELINE_ID) -> dict:
     """One baseline entry for a race test, stamped at a time the race run restamps.
 
     Deliberately not the fixtures' default stamp: see ``order_fixtures.SEED_STAMP``.
@@ -67,7 +95,7 @@ def _race_entry(issue, decision=BASELINE_ID):
     return _entry(issue, decision, SEED_STAMP)
 
 
-def _rival_raced(repo, *extra):
+def _rival_raced(repo: Path, *extra: tuple[int, str]) -> None:
     """Move HEAD behind the run's back, and leave the file alone.
 
     The deterministic half of the race: the file keeps the bytes the losing run is

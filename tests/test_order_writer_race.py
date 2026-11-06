@@ -24,6 +24,8 @@ the worst way for such a test to fail. The wrapper route stays covered by
 """
 
 
+import pytest
+from order_doc_readers import _skill_section
 from order_fixtures import (
     BASELINE_ID,
     NOW,
@@ -43,12 +45,14 @@ from order_fixtures import (
     _seed,
 )
 from order_race_fixtures import (
+    FILE_CHANGED,
     REFUSAL,
     _checkout_head,
     _head,
     _issues_in_head,
     _race_entry,
     _rival_raced,
+    interrupt_read,
 )
 
 # --- the race itself ----------------------------------------------------------
@@ -174,6 +178,58 @@ def test_a_refused_add_then_a_rerun_lands_both_entries_at_the_position_asked(tmp
     assert "committed" in out, out
 
 
+def _flat(text):
+    """``text`` with every run of whitespace down to one space (the page wraps)."""
+    return " ".join(text.split())
+
+
+def test_a_rerun_on_a_stale_checkout_is_refused_rather_than_claimed_unchanged(tmp_path):
+    """The remedy the skill documents has to be the whole remedy, in both states.
+
+    After a refusal the operator re-runs the same command. A checkout synced to HEAD
+    re-plans from the rival's entries and commits (pinned by
+    ``test_a_refused_add_then_a_rerun_lands_both_entries_at_the_position_asked``).
+    A checkout still holding the refused run's own bytes used to be the hole: the
+    run's plan reproduced the bytes on disk, so it took the writer's no-change
+    shortcut, printed "is unchanged; nothing to commit" and exited 0 while HEAD still
+    lacked the entry the operator had just confirmed -- no probe, no commit, no
+    warning. The shortcut is issue #76's idempotent repeat and stays, so instead it is
+    now guarded by the same committed-bytes read: a shortcut is only taken when HEAD
+    agrees with the file it is compared against.
+    """
+    repo = _repo(tmp_path)
+    _seed(repo, _race_entry(11), _race_entry(22))
+    assert _order_inprocess(repo, "add", "33", "--at", "1", "--decision", BASELINE_ID,
+                            "--now", NOW)[0] == 0
+    _rival_raced(repo, (55, BASELINE_ID))
+    refused = _order_inprocess(repo, "add", "44", "--at", "1",
+                               "--decision", BASELINE_ID, "--now", NOW)
+    assert refused[0] == 4, refused
+
+    # No sync: the file still holds what the refused run read, and the same command
+    # now plans to exactly those bytes. It must be refused, not reported as a no-op.
+    code, out, err = _order_inprocess(repo, "add", "44", "--at", "1",
+                                      "--decision", BASELINE_ID, "--now", NOW)
+    assert code == 4, (code, out + err)
+    assert REFUSAL in err, err
+    assert "unchanged; nothing to commit" not in out, out
+    assert 44 not in _issues_in_head(repo), _issues_in_head(repo)
+
+    # The synced re-run is still the fix, and the page says the checkout has to agree
+    # with HEAD before the re-run settles anything.
+    _checkout_head(repo)
+    code, out, err = _order_inprocess(repo, "add", "44", "--at", "1",
+                                      "--decision", BASELINE_ID, "--now", NOW)
+    assert code == 0, (code, out + err)
+    assert "committed" in out, out
+    assert 44 in _issues_in_head(repo), _issues_in_head(repo)
+
+    page = _flat(_skill_section("Writing the order"))
+    assert "checkout" in page or "sync" in page, (
+        "SKILL.md's re-run remedy promises both entries without saying the working "
+        "copy has to agree with HEAD first")
+
+
 def test_the_refused_run_leaves_the_ordering_census_clean(tmp_path):
     """A refusal is not a census class.
 
@@ -227,24 +283,58 @@ def _refused_by_a_rival_commit(tmp_path, name, *argv):
     return repo
 
 
-def test_add_refuses_a_committed_order_that_moved_after_the_read(tmp_path):
-    repo = _refused_by_a_rival_commit(
-        tmp_path, "add", "add", "44", "--at", "1", "--decision", BASELINE_ID)
-    # The rival's order is the one that still stands, and this run added nothing to
-    # it: HEAD holds the rival's committed entries and the refused run wrote no file.
-    assert _issues_in_head(repo) == [11, 22, 55], _issues_in_head(repo)
+# AC2, for every verb that writes. The four cases share the writer's write phase and
+# therefore the guard, so the shapes are driven from one table rather than four
+# near-identical bodies, and each of the guard's two causes is driven per verb: a
+# moved HEAD (the concurrent writer a re-run fixes) and a changed working file with
+# HEAD unmoved (a local state no re-run fixes, and the reason the two refusals are
+# worded differently).
+_WRITE_VERBS = [
+    ("add", ("add", "44", "--at", "1", "--decision", BASELINE_ID)),
+    ("move", ("move", "22", "--to", "1")),
+    ("remove", ("remove", "22")),
+    ("confirm", ("confirm",)),
+]
 
 
-def test_move_refuses_a_committed_order_that_moved_after_the_read(tmp_path):
-    _refused_by_a_rival_commit(tmp_path, "move", "move", "22", "--to", "1")
+@pytest.mark.parametrize("name,argv", _WRITE_VERBS)
+def test_every_writing_verb_refuses_a_committed_order_that_moved(tmp_path, name, argv):
+    """AC2: add, move, remove and confirm each refuse the rival's commit at exit 4."""
+    repo = _refused_by_a_rival_commit(tmp_path, name, *argv)
+    if name == "add":
+        # The rival's order is the one that still stands, and this run added nothing
+        # to it: HEAD holds the rival's committed entries and the run wrote no file.
+        assert _issues_in_head(repo) == [11, 22, 55], _issues_in_head(repo)
 
 
-def test_remove_refuses_a_committed_order_that_moved_after_the_read(tmp_path):
-    _refused_by_a_rival_commit(tmp_path, "remove", "remove", "22")
+@pytest.mark.parametrize("name,argv", _WRITE_VERBS)
+def test_every_writing_verb_refuses_a_working_file_it_no_longer_recognises(
+        tmp_path, name, argv):
+    """AC2's other arm, per verb: the file moved and HEAD did not.
 
+    The second comparison of the guard exists for this case alone, and a verb that
+    consulted only HEAD would write over bytes it never read. Same post-conditions as
+    the rival case, different wording: the file refusal names the file.
+    """
+    module = _order_module()
+    repo = _repo(tmp_path, f"filed-{name}")
+    _seed(repo, _race_entry(11), _race_entry(22))
+    head_before = _head(repo)
+    committed_before = _committed_order(repo)
+    real_read = module.orderstate.read_order
 
-def test_confirm_of_the_whole_order_refuses_a_moved_committed_order(tmp_path):
-    _refused_by_a_rival_commit(tmp_path, "confirm", "confirm")
+    def read_then_edit(path):
+        read = real_read(path)
+        path.write_bytes(path.read_bytes() + b"\n")
+        return read
+
+    with interrupt_read(module, "read_order", read_then_edit):
+        code, out, err = _order_inprocess(repo, *argv, "--now", NOW)
+    assert code == module.EXIT_REFUSAL, f"{name}: exit {code}: {err}"
+    assert FILE_CHANGED in err, f"{name}: {err}"
+    assert REFUSAL not in err, f"{name}: {err}"
+    assert _head(repo) == head_before, f"{name}: a refused run advanced HEAD"
+    assert _committed_order(repo) == committed_before, f"{name}: HEAD's order moved"
 
 
 # --- --no-commit keeps its contract ------------------------------------------
@@ -285,7 +375,9 @@ def test_no_commit_asks_git_nothing_at_all(tmp_path, monkeypatch):
 
     The exemption is structural, not a comparison that happens to pass: the
     --no-commit route makes no git call of any kind, so there is no code path on
-    which it could be refused for a committed change it cannot see.
+    which it could be refused for a committed change it cannot see. Both halves of
+    the writer's git helper are watched, the text one that stages and commits and
+    the binary one the probe reads the committed blob through.
     """
     helper = _gitwrite_module()
     calls: list[tuple] = []
@@ -295,6 +387,7 @@ def test_no_commit_asks_git_nothing_at_all(tmp_path, monkeypatch):
         raise AssertionError(f"--no-commit made a git call: {args}")
 
     monkeypatch.setattr(helper, "git", no_git)
+    monkeypatch.setattr(helper, "git_bytes", no_git)
     repo = _repo(tmp_path)
     _seed(repo, _race_entry(11), _race_entry(22))
     _rival_raced(repo, (55, BASELINE_ID))

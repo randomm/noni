@@ -35,6 +35,8 @@ from order_usage_support import (
     skill_md_verb_lines,
 )
 
+from noni import order_probe as _order_probe
+
 
 def test_docstring_exit_codes_match_the_exit_constants():
     """The docstring's exit table and the EXIT_* constants are one contract,
@@ -105,7 +107,7 @@ def test_docstring_names_the_refusals_the_code_performs():
     block = _doc_block(_docstring(_order_ast()), "Exit codes:")
     four = block[4].lower()
     for condition in ("already listed", "absent from the order", "no file under",
-                      "superseded", "not the artifact"):
+                      "superseded", "not the artifact", REFUSAL, FILE_REFUSAL):
         assert condition in four, f"the exit 4 row omits {condition!r}: {block[4]}"
     three = block[3].lower()
     for condition in ("not a regular file", "could not be written", "commit"):
@@ -118,6 +120,16 @@ def test_docstring_names_the_refusals_the_code_performs():
 # The refusal wording, spelled once: the product owns it in
 # ``order_probe.CHANGED`` and this module checks the two documents against it.
 REFUSAL = "the order changed since it was read; re-run"
+
+# The second constant is asked of the product rather than copied: a doc that drifted
+# to a near-miss of the wording the run actually prints would otherwise stay green.
+assert _order_probe.CHANGED == REFUSAL, _order_probe.CHANGED
+FILE_REFUSAL = _order_probe.FILE_CHANGED
+
+# The guard's second cause, which the docs have to distinguish too: a moved HEAD is
+# fixed by a re-run, a changed working file is not, and a page that named only the
+# first would send the operator re-running a command that refuses forever.
+FILE_REFUSAL = "the file changed since it was read; restore it or discard the change"
 
 
 def _flat(text: str) -> str:
@@ -173,10 +185,26 @@ def test_skill_md_states_the_refusal_where_its_writer_is_documented():
     ``test_order_names_the_same_path_committed_and_uncommitted``): a reader who only
     read the exit-4 row would expect a concurrent writer to refuse that route too,
     and the flag paragraph is what tells them it runs no git at all.
+
+    Each phrase is checked in the sentence that carries it rather than anywhere in
+    the section, so a page that kept the six words and inverted the claim around
+    them could not pass: the refusal wording, the code and the remedy have to sit in
+    one sentence about the committed route, and the exemption's reason in the
+    sentence about ``--no-commit``.
     """
     writing = _flat(_skill_section("Writing the order"))
     for phrase in (REFUSAL, "exit 4", "re-run", "exempt", "no git", "HEAD"):
         assert phrase in writing, f"the Writing the order section omits {phrase!r}"
+
+    # The sentence a caller acts on: the refusal, its code, and the re-run as the
+    # remedy, in one sentence rather than three unconnected mentions.
+    remedy = [sentence for sentence in writing.split(". ")
+              if REFUSAL in sentence and "re-run" in sentence]
+    assert remedy, f"no single sentence names the refusal and its remedy: {writing}"
+    assert "exit 4" in remedy[0], f"the remedy sentence omits the code: {remedy[0]}"
+    exempt = [sentence for sentence in writing.split(". ") if "exempt" in sentence]
+    assert exempt and "no git" in exempt[0], (
+        f"the exemption is not explained by the route running no git: {exempt}")
 
     edge = _flat(_skill_section("The order edge cases that matter"))
     for phrase in (REFUSAL, "no lock", "re-run", "exit 3"):

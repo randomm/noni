@@ -37,13 +37,24 @@ def _docstring(tree: ast.Module) -> str:
 
 
 def _module_exit_codes(tree: ast.Module) -> set[int]:
-    """The codes the EXIT_* module constants hold, read from the source."""
+    """The codes the EXIT_* module constants hold, read from the source.
+
+    Each assignment form is narrowed before its target is read: ``ast.Assign``
+    carries a list and ``ast.AnnAssign`` a single node, and an annotation-only
+    statement (``EXIT_X: int``, no value) has no value at all, so reaching for
+    ``node.target`` on a node the reader has not proven to be an AnnAssign is an
+    AttributeError inside the pin rather than a refusal of a docstring that lied.
+    """
     codes: set[int] = set()
     for node in tree.body:
-        value = node.value if isinstance(node, (ast.Assign, ast.AnnAssign)) else None
+        if isinstance(node, ast.Assign):
+            value, targets = node.value, list(node.targets)
+        elif isinstance(node, ast.AnnAssign):
+            value, targets = node.value, [node.target]
+        else:
+            continue
         if not isinstance(value, ast.Constant):
             continue
-        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
         for target in targets:
             if isinstance(target, ast.Name) and target.id.startswith("EXIT_"):
                 assert type(value.value) is int, f"{target.id} is not an int"

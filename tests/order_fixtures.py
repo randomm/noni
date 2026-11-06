@@ -429,17 +429,20 @@ def _committed_order(repo: Path) -> bytes | None:
 
 
 def _bare_repo(tmp_path: Path, subdir: str = "bare-repo") -> Path:
-    """A repository whose HEAD is unborn, with the ledger the writer cites.
+    """A repository with one empty commit, plus a committed baseline decision record.
 
-    The state a brand new private state repository is in: ``git init`` has run, no
-    commit has. The baseline decision record is committed here because
-    ``add --decision`` looks it up on disk, not in HEAD, so the ledger is what
-    ``_repo`` supplies and the emptiness of the history is the whole difference.
+    NOT a repository with no history: this fixture makes one empty commit first, so a
+    later ``git commit`` in a test has a parent to record (git refuses a first commit
+    for a path the index does not already hold). What separates it from :func:`_repo`
+    is that the artifact's own path is in no commit at all, so
+    ``git show HEAD:<rel>`` answers "does not exist in 'HEAD'." That is the honest
+    negative the freshness probe must read as "nothing is committed here" rather than
+    as a repository it cannot read, or it would refuse the first committed order the
+    quickstart tells the operator to write.
 
-    This tree exists for the freshness probe's honest negative: ``git show`` of any
-    path under an unborn HEAD says "invalid object name 'HEAD'", and a probe that
-    read that as a repository it could not read would refuse the first committed
-    order the quickstart tells the operator to write.
+    A tree with NO commit at all is a second, distinct honest negative (git then says
+    "invalid object name 'HEAD'", and says something else again once a file of that
+    name sits on disk). ``tests/order_probe_shared.py`` builds that one.
     """
     repo = tmp_path / subdir
     repo.mkdir(parents=True, exist_ok=True)

@@ -18,11 +18,24 @@ from pathlib import Path
 from typing import NamedTuple
 
 from . import gitenv
-from .gitwrite import SHOW_NOT_IN_HEAD
 
 GIT_TIMEOUT = 60
 # What a killed git call reports. No caller may read a git answer from it.
 GIT_TIMEOUT_RC = 124
+
+# The git answer that means "this path is not in that tree". ``git cat-file -e``
+# and ``git rev-parse --verify`` agree on it and on nothing else: 1 means the
+# object is simply not there, which is an honest negative the writer reads as
+# absence, while any other non-zero code answered nothing about the path and is a
+# fault. The number is pinned here, at the one call that reads it, and
+# ``tests/test_order_writer_probe.py`` pins the codes beside it.
+NOT_IN_TREE_RC: int = 1
+
+# The code ``git hash-object`` answers for input it will not name an object for. An
+# empty stdin is the one case the writer meets, and it is not a fault: there is no
+# blob, which the caller reads as "no such object" and never as "the object store is
+# broken".
+NO_BLOB_RC: int = 128
 
 
 class Committed(NamedTuple):
@@ -54,65 +67,152 @@ def committed_bytes(repo: Path, rel: str) -> Committed:
 
     The freshness read of the writer: before a run writes, it compares what HEAD
     holds at the artifact's path against the bytes it read at the start of the
-    run, and refuses when they moved (issue #116). One :func:`git_bytes` call, so
-    the probe carries the same hardening, the same bound and the same test seam as
-    the commit itself, and no second git runner exists to drift from it.
+    run, and refuses when they moved (issue #116). Two bounded calls, both run by
+    :func:`git_bytes`, so the probe carries the same hardening, the same bound and
+    the same test seam as the commit itself, and no second git runner exists to
+    drift from it.
 
     Absence is observed, never inferred from a missing answer -- the same rule
     ``orderstate.read_order`` follows by asking ``lstat`` before it believes a path
-    is empty. The three answers are:
+    is empty. It is also never read out of a sentence. An earlier shape of this
+    function asked one ``git show`` and sorted its 128 into "absent" or "fault" by
+    matching git's English wording against a phrase set, and that reading was wrong
+    in a state the quickstart tells the operator to create: under an unborn HEAD,
+    with the artifact already sitting in the working tree or the index, git does not
+    say "does not exist in 'HEAD'" at all -- it says "path '<rel>' exists on disk,
+    but not in 'HEAD'", no phrase the set carried. The first committed order of such
+    a repository refused, and the wording of a refusal was load-bearing. So the
+    question "is that path in that tree?" is now asked of :func:`tree_blob_id`,
+    which answers it with a return code, and the blob is read only once git has said
+    it is there. The three answers are:
 
-      the call succeeded
+      the blob is in HEAD's tree
         -- ``Committed(data=<bytes>)``: the committed blob verbatim, however empty
            those bytes are. A committed zero-length blob IS a blob: it is compared
            like any other and a run that read a real file refuses against it. The
            read is binary, so there is no decode and no newline translation anywhere
            on the path and what is compared is the byte sequence this writer would
            itself have written.
-      128 with git's own "not in that tree" wording
+      HEAD has no such path
         -- ``Committed(data=None, code=None)``: nothing is committed at that path.
-           The phrase set is ``gitwrite.SHOW_NOT_IN_HEAD``, the single owner of both
-           wordings, and it covers the unborn-HEAD case as well as the absent path: a
-           repository with no commit at all (the state of a freshly initialised
-           private state repository, which is what the quickstart tells the operator
-           to create) says "invalid object name 'HEAD'", and that reads as nothing
-           committed rather than as a fault, or the first committed order of such a
-           repository would never land. The wording is git's English, and the call
-           runs under ``LC_ALL=C`` for that reason: a translated refusal would match
-           no phrase and become a fault, which fails closed.
-      anything else
-        -- ``Committed(code=<n>)``: a call that answered nothing (``GIT_TIMEOUT_RC``
-           for a hang, the call's own return code otherwise), with git's stderr in
-           ``why``. A corrupt object store, a bad HEAD or a hung git is an
-           environment fault and must never be read as "committed bytes, unchanged".
+           This covers the unborn HEAD (a repository with no commit at all, which is
+           what a freshly initialised private state repository is) and a path that
+           no commit has ever held, and both read as nothing committed rather than as
+           a fault, or the first committed order would never land.
+      a call that answered nothing
+        -- ``Committed(code=<n>)``: a hang (``GIT_TIMEOUT_RC``) or any non-zero code
+           that is not the one honest negative above, with git's stderr in ``why``.
+           A corrupt object store, a bad HEAD or a hung git is an environment fault
+           and must never be read as "committed bytes, unchanged".
     """
+    blob, why = tree_blob_id(repo, f"HEAD:{rel}")
+    if blob is None and why:
+        return _fault(NOT_IN_TREE_RC, why)
+    if blob is None:
+        return Committed(data=None, code=None, why="")
     shown = git_bytes(repo, "show", f"HEAD:{rel}")
     if shown.returncode == 0:
         return Committed(data=shown.stdout, code=None, why="")
-    why = _stderr(shown.stderr)
-    if shown.returncode == GIT_TIMEOUT_RC:
-        return _fault(GIT_TIMEOUT_RC, why)
-    # Matched on what git said rather than on its code alone, and on an empty stdout
-    # besides: a 128 that wrote nothing is not an answer this run may read as "there
-    # is no committed order", which would let it commit over one HEAD actually holds.
-    if (shown.returncode == 128 and not shown.stdout
-            and any(phrase in why for phrase in SHOW_NOT_IN_HEAD)):
-        return Committed(data=None, code=None, why="")
-    return _fault(shown.returncode, why)
+    return _fault(shown.returncode, _stderr(shown.stderr))
+
+
+def blob_id(repo: Path, data: bytes | None) -> tuple[str | None, str]:
+    """The ``(blob id, fault)`` of bytes a run read, asked of git itself.
+
+    The three reads of the guard are compared, and a comparison only means something
+    when all three speak one currency. HEAD and the index answer in object ids; the
+    artifact read answers in bytes. Comparing bytes to an id is not a comparison but a
+    guaranteed difference, so this turns the bytes this run planned against into the
+    same id the other two print, by way of ``git hash-object --stdin``, which hashes
+    without storing: no ``-w``, so a probe leaves no loose object behind for a census
+    or a gc to trip over.
+
+    ``None`` -- what the artifact read hands back for a path that did not exist -- has
+    no blob, and answers ``(None, "")`` rather than the id of an empty file. "No file"
+    and "a file that holds nothing" are the two states a run must not confuse, and an
+    empty file is a blob whose id git prints happily.
+    """
+    if data is None:
+        return None, ""
+    hashed = git_bytes(repo, "hash-object", "--stdin", input_text=data)
+    if hashed.returncode == GIT_TIMEOUT_RC:
+        return None, _stderr(hashed.stderr)
+    if hashed.returncode != 0:
+        if hashed.returncode == NO_BLOB_RC and not hashed.stdout.strip():
+            return None, ""
+        return None, _stderr(hashed.stderr) or f"exit {hashed.returncode}"
+    return hashed.stdout.decode("ascii", errors="replace").strip(), ""
+
+
+def tree_blob_id(repo: Path, rev: str) -> tuple[str | None, str]:
+    """The ``(blob id, fault)`` of ``rev``, asked without reading a sentence.
+
+    ``git rev-parse --verify --quiet <rev>`` prints the object id when the name
+    resolves and nothing when it does not, and its exit code is the answer: 0 is the
+    object, ``NOT_IN_TREE_RC`` is "no such object, and git knew exactly that", any
+    other code (or a hang) is a call that answered nothing and comes back with its
+    reason. Neither of the two honest answers depends on locale, on the version of
+    git, or on whether a file of the same name happens to sit on disk.
+
+    This is the question the freshness guard needs twice: does HEAD hold the
+    artifact, and does the index hold the bytes HEAD holds. It deliberately does not
+    distinguish "the tree has no such path" from "there is no tree" -- for a
+    comparison against what this run read, both are "HEAD holds nothing here", and
+    the guard has no use for the difference.
+    """
+    asked = git_bytes(repo, "rev-parse", "--verify", "--quiet", rev)
+    if asked.returncode == GIT_TIMEOUT_RC:
+        return None, _stderr(asked.stderr)
+    if asked.returncode == 0:
+        return asked.stdout.decode("ascii", errors="replace").strip(), ""
+    if asked.returncode == NOT_IN_TREE_RC:
+        return None, ""
+    return None, _stderr(asked.stderr) or f"exit {asked.returncode}"
+
+
+def index_blob_id(repo: Path, rel: str) -> tuple[str | None, str]:
+    """The ``(blob id, fault)`` the INDEX holds at ``rel``, or ``(None, "")``.
+
+    The third read of the guard, and the only one of the three that git's commit
+    actually obeys: ``git commit --only -- <path>`` takes the path from the index,
+    so whatever lands in HEAD is what the index held a moment before. ``git ls-files
+    -s -- <rel>`` answers ``<mode> <blob> <stage>\t<rel>`` for a staged path and
+    prints nothing with exit 0 for a path the index does not hold, which is the
+    whole contract this function reads -- exit 0 with no line is "the index holds
+    nothing at that path", not a fault.
+
+    The two shapes that would NOT answer the question are pinned by the probe's
+    tests: ``ls-files --error-unmatch`` exits 1 for an unstaged path (a code this
+    module would read as "no such object", and which the guard cannot tell from a
+    genuine fault) and ``diff --cached --quiet`` exits 1 for any staged change at
+    all, including the one this writer itself is about to make.
+    """
+    listed = git_bytes(repo, "ls-files", "-s", "--", rel)
+    if listed.returncode == GIT_TIMEOUT_RC:
+        return None, _stderr(listed.stderr)
+    if listed.returncode != 0:
+        return None, _stderr(listed.stderr) or f"exit {listed.returncode}"
+    line = listed.stdout.decode("utf-8", errors="replace").strip()
+    if not line:
+        return None, ""
+    fields = line.split()
+    if len(fields) < 2:
+        return None, "git ls-files answered with no blob id"
+    return fields[1], ""
 
 
 def _stderr(stderr: bytes | None) -> str:
-    """``stderr`` as text, for matching git's own wording and nothing else.
+    """``stderr`` as text, for naming a git fault to the operator.
 
-    Lenient on purpose: this is git's explanation of a fault, decoded only to look
-    for the two honest-negative phrases, so a byte the decoder cannot represent must
-    not raise. No file content ever passes through here -- the blob goes to the
-    caller as bytes, unread.
+    Lenient on purpose: this is git's explanation of a fault, decoded only to be
+    printed, so a byte the decoder cannot represent must not raise. No file content
+    ever passes through here -- the blob goes to the caller as bytes, unread.
     """
     return "" if stderr is None else stderr.decode("utf-8", errors="replace")
 
 
-def git_bytes(repo: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
+def git_bytes(repo: Path, *args: str, input_text: bytes | None = None,
+              ) -> subprocess.CompletedProcess[bytes]:
     """One bounded hardened git call in ``repo``, stdout handed over as raw bytes.
 
     The read half of this module's git helper, for the call that returns file
@@ -123,13 +223,14 @@ def git_bytes(repo: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
     A freshness comparison has to be verbatim, and only a binary read makes "the
     same bytes" a claim about bytes.
 
-    Same hardening, same bound, same environment as :func:`git`: the argv comes
-    from one builder both halves call, so the two can never drift.
+    Same hardening, same bound, same environment as :func:`git` (see
+    :func:`_read_env` for the one thing it adds), and the argv comes from one
+    builder both halves call, so the two can never drift.
     """
     cmd = _git_command(repo, *args)
     try:
         return subprocess.run(cmd, capture_output=True, timeout=GIT_TIMEOUT,
-                              env=_read_env())
+                              input=input_text, env=_read_env())
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(
             cmd, returncode=GIT_TIMEOUT_RC, stdout=b"",
@@ -139,12 +240,26 @@ def git_bytes(repo: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
 
 
 def _read_env() -> dict[str, str]:
-    """The environment of a read whose stderr the probe has to be able to read.
+    """The environment of a read: ``gitenv.child_env()`` plus ``LC_ALL=C``.
 
-    ``gitenv.child_env()`` plus ``LC_ALL=C``: the honest negatives of ``show`` are
-    recognised by git's own wording, and a translated refusal would match no phrase
-    and be reported as a fault. C is the one locale whose wording is fixed, and it
-    changes nothing else about the call.
+    The first half is not decoration and is not the read's own invention: it is the
+    package's single answer for the environment of a git child. A probe that built
+    its environment from ``os.environ`` would keep every ``GIT_*`` name the caller
+    exported, and four of them relocate a repository outright -- ``GIT_DIR`` and
+    ``GIT_COMMON_DIR`` which repository directory to use, ``GIT_WORK_TREE`` which
+    working tree it belongs to, ``GIT_INDEX_FILE`` which index to stage and commit
+    through -- while ``GIT_OBJECT_DIRECTORY`` and
+    ``GIT_ALTERNATE_OBJECT_DIRECTORIES`` move the object store underneath it. A
+    guard that read its committed state through an inherited ``GIT_DIR`` would be
+    told "nothing is committed here" by a different repository and commit over an
+    order it never looked at. ``--repo`` alone decides the repository; see
+    :mod:`noni.gitenv`.
+
+    ``LC_ALL=C`` is the read's own addition. It no longer carries the honesty of the
+    guard -- absence is asked as a return code, not matched in a sentence -- but the
+    two fault arms still hand git's stderr to the operator, and C is the one locale
+    whose wording is fixed, so a message the operator reads cannot come back
+    translated into something this run wrote no phrase for.
     """
     env = gitenv.child_env()
     env["LC_ALL"] = "C"

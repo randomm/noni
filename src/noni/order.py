@@ -405,11 +405,18 @@ def main(argv: list[str] | None = None) -> int:
             return refused
     if before is not None and rendered == before:
         # The file already holds the bytes this run would write, so there is nothing
-        # left to add: nothing is staged, nothing is committed, no HEAD moves. Only
-        # reachable here on the committed route once the probe above has said nothing
-        # moved, which is what keeps "unchanged" from being printed for an order HEAD
-        # does not hold; --no-commit keeps its own no-git contract and #76's
-        # idempotent repeat by taking the shortcut on the file's bytes alone.
+        # left to add: nothing is staged, nothing is committed, no HEAD moves.
+        #
+        # The probe owns the decision about whether this run may write at all, and it
+        # runs ABOVE this shortcut: a no-change run still commits its index entry
+        # when HEAD moved, so a guard that sat below it would let the one run shape
+        # that commits without planning anything slip the lost-update check.
+        #
+        # So this arm is reached only once the guard has said HEAD, the index and the
+        # file all still hold what this run read -- which is exactly when "unchanged"
+        # is a true sentence, and the only reading under which the order below can
+        # print it. --no-commit keeps its own no-git contract and #76's idempotent
+        # repeat by taking the shortcut on the file's bytes alone.
         orderstate.print_order(entries, labels.ORDER)
         print(f"{labels.ORDER}: {orderschema.ORDER_REL} is unchanged; nothing to "
               "commit")

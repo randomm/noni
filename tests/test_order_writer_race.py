@@ -382,7 +382,7 @@ def test_no_commit_asks_git_nothing_at_all(tmp_path, monkeypatch):
     helper = _gitwrite_module()
     calls: list[tuple] = []
 
-    def no_git(repo, *args):
+    def no_git(repo, *args, input_text=None):
         calls.append(args)
         raise AssertionError(f"--no-commit made a git call: {args}")
 

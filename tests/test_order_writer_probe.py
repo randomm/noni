@@ -19,13 +19,16 @@ Runs go through ``order_fixtures._order_inprocess`` for the reason that module g
 
 import os
 import subprocess
+from pathlib import Path
 
 import pytest
+from _harness import _git
 from order_fixtures import (
     BASELINE_ID,
     NOW,
     ORDER_REL,
     _bare_repo,
+    _canonical,
     _committed_order,
     _entry,
     _gitwrite_module,
@@ -39,6 +42,7 @@ from order_fixtures import (
     _rival_commit,
     _seed,
 )
+from order_probe_shared import _no_commit_repo
 from order_race_fixtures import (
     FILE_CHANGED,
     REFUSAL,
@@ -66,13 +70,14 @@ def test_a_first_add_into_an_uncommitted_tree_is_not_a_refusal(tmp_path):
 
 
 def test_an_unborn_head_reads_as_nothing_committed_for_the_probe(tmp_path):
-    """A repository with no commit at all holds nothing, and says so honestly.
+    """A path no commit has ever held holds nothing, and says so honestly.
 
-    ``git show HEAD:<path>`` under an unborn HEAD answers 128 with "invalid object
-    name 'HEAD'.", which is git's way of saying there is no tree to look in. A probe
-    that read that as a repository it could not read would refuse the first committed
-    order with exit 3, and the quickstart's brand new private state repository could
-    never hold an order.
+    ``git show HEAD:<path>`` for a path the history never held answers 128 with
+    "does not exist in 'HEAD'.", and under a HEAD with no commit at all it answers
+    "invalid object name 'HEAD'.". Both are git's way of saying there is nothing to
+    look at. A probe that read either as a repository it could not read would refuse
+    the first committed order with exit 3, and the quickstart's brand new private
+    state repository could never hold an order.
     """
     helper = _gitwrite_module()
     repo = _bare_repo(tmp_path)
@@ -97,153 +102,98 @@ def test_the_first_committed_order_of_a_fresh_repository_is_committed(tmp_path):
     assert _porcelain(repo) == "", "the first committed order left the tree dirty"
 
 
-def test_a_first_add_is_refused_when_a_committed_order_appears_during_the_run(tmp_path):
-    """The other arm of the same decision: bytes that appeared are a change.
+def test_a_path_with_an_embedded_null_is_a_fault_and_not_a_traceback(tmp_path):
+    """A NUL in the path is the filesystem declining to answer, so it is exit 3.
 
-    ``None`` is what the artifact read hands back for a path that does not exist, so
-    it is the value the guard compares when the run read nothing. Read as a wildcard
-    it matches an absent HEAD too and the run commits its one entry over an order it
-    never saw; read as a value it refuses the moment HEAD answers with bytes.
-
-    The rival's order is committed for real and nothing sits at the path, so the
-    only asymmetry is the one under test: nothing read, HEAD holding an order.
+    ``os.lstat`` raises ``ValueError`` for such a path and ``ValueError`` is no
+    ``OSError``, so a classifier that catches only the latter lets the guard die with
+    a traceback in the middle of a commit. The package already answers that question
+    (:func:`noni._path_kind.inspected_file_kind`); the guard asks it.
     """
-    repo = _repo(tmp_path)
-    _rival_commit(repo, [_entry(55, BASELINE_ID, RIVAL_STAMP)])
-    committed = _committed_order(repo)
-    assert committed is not None, "the rival's order is not committed"
+    module = _order_module()
+    probe = module.order_probe
+    answer = probe.file_bytes(Path("noni\x00direction/order.json"))
+    assert answer.code == probe.NO_FAULT + 1, f"a declined lstat is a fault: {answer}"
+    assert answer.data is None, answer
+    assert answer.why, "a fault has to name what the filesystem said"
 
+
+def test_a_regular_file_that_fails_to_read_is_a_fault_and_never_absence(tmp_path):
+    """The shape is fine and the read failed: exit 3, not the exit-4 "re-run".
+
+    ``lstat`` answered "regular", so nothing about the path is wrong and only the
+    read itself failed (a file replaced by a dangling link between the two calls, an
+    I/O error, a permission the operator has to undo). Reading it as absence would
+    compare ``None`` against the bytes this run read, blame a concurrent writer that
+    never ran and tell the operator to re-run a command that refuses forever.
+    """
+    module = _order_module()
+    probe = module.order_probe
+    repo = _repo(tmp_path)
+    _seed(repo, _entry(11, BASELINE_ID))
+    target = _order_path(repo)
+    real_read_bytes = type(target).read_bytes
+
+    def refusing(self):
+        raise OSError("Input/output error")
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(type(target), "read_bytes", refusing, raising=False)
+    try:
+        answer = probe.file_bytes(target)
+    finally:
+        monkey.undo()
+    assert answer.code == probe.NO_FAULT + 1, f"a failed read is a fault: {answer}"
+    assert answer.data is None, answer
+    assert "could not be read" in answer.why, answer
+    assert real_read_bytes is type(target).read_bytes
+
+
+def test_the_guard_reads_no_index_under_a_head_that_names_no_object(tmp_path,
+                                                                   monkeypatch):
+    """No commit yet means no index comparison, because that commit cannot be made.
+
+    ``git commit --only -- <path>`` records a commit whose parent is HEAD, and with no
+    HEAD git refuses a path-restricted commit for anything the index does not already
+    hold -- so the state the index arm exists for is unconstructible here, and a guard
+    that asked the question anyway would refuse every run of a repository whose next
+    commit git also refuses. Absence of HEAD is read as "no committed order to lose",
+    and asked as a return code rather than as a sentence: git swaps the wording it uses
+    for absence the moment a file of that name sits in the tree, and that swap is what
+    the phrase-matching probe got wrong.
+    """
+    helper = _gitwrite_module()
+    repo = _no_commit_repo(tmp_path, "no-head-no-index-read")
+    target = _order_path(repo)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(_canonical([_entry(99, BASELINE_ID, RIVAL_STAMP)]),
+                      encoding="utf-8")
+    _git(repo, "add", ORDER_REL)
+    target.unlink()
+
+    # The state itself, asserted from git and not from the guard's own answer: HEAD
+    # names nothing, and the index does hold bytes this run cannot have read.
+    assert helper.committed_bytes(repo, ORDER_REL).data is None
+    assert helper.index_blob_id(repo, ORDER_REL)[0] is not None
+
+    calls: list[tuple] = []
+    real_git_bytes = helper.git_bytes
+
+    def spy(repo_arg, *args, input_text=None):
+        calls.append(args)
+        return real_git_bytes(repo_arg, *args, input_text=input_text)
+
+    monkeypatch.setattr(helper, "git_bytes", spy)
     code, out, err = _order_inprocess(repo, "add", "7", "--decision", BASELINE_ID,
                                       "--now", NOW)
-    assert code == 4, (code, out + err)
-    assert REFUSAL in err, err
-    assert not _order_path(repo).exists(), "a refused first add must not create the file"
-    assert _committed_order(repo) == committed, "the rival's committed order did not stand"
-
-
-def test_the_probe_compares_bytes_and_not_a_decoded_or_rebuilt_form(tmp_path,
-                                                                   monkeypatch):
-    """What is compared is the byte sequence, with no decode and no re-render.
-
-    ``git show`` answers with the committed bytes plus one trailing newline. A
-    comparison that stripped, normalised line endings or re-rendered the parsed value
-    would call that a match and commit over the rival; one that decoded would die on
-    bytes no artifact should hold. The probe hands the bytes over verbatim and the
-    writer refuses.
-    """
-    helper = _gitwrite_module()
-    module = _order_module()
-    repo = _repo(tmp_path)
-    _seed(repo, _entry(11, BASELINE_ID))
-    committed = _committed_order(repo)
-    assert committed is not None
-
-    def show(*args):
-        # The committed blob with one extra trailing newline: bytes the run did not
-        # read, differing from them only in a byte a decoder would have dropped.
-        # Text mode with errors="replace" would round-trip this to the very bytes
-        # the run read and call a moved HEAD a match; a binary read cannot.
-        return subprocess.CompletedProcess(["git", *args], 0, committed + b"\n\n", b"")
-
-    monkeypatch.setattr(helper, "git_bytes", show)
-    code, _out, _err = _order_inprocess(repo, "add", "7", "--decision", BASELINE_ID,
-                                        "--now", NOW)
-    assert code == module.EXIT_REFUSAL, code
-
-
-def test_the_probe_reads_the_committed_blob_as_raw_bytes(tmp_path, monkeypatch):
-    """The comparison is made on bytes, and no decode stands between the two sides.
-
-    A blob holding a byte no decoder can represent (a stray 0xFF in a position the
-    artifact's JSON would never put) must reach the caller unchanged: decoded through
-    text mode with ``errors="replace"`` it comes back as U+FFFD, and a run that
-    compared that would call a moved HEAD and its own read the same bytes.
-    """
-    helper = _gitwrite_module()
-    repo = _repo(tmp_path)
-    _seed(repo, _entry(11, BASELINE_ID))
-    blob = b'{"schema": "noni.order/1", "entries": []}\n\xff\xfe'
-
-    def show(repo_arg, *args):
-        # Bound: the probe must have asked for the artifact's own path in HEAD, or
-        # the comparison below is a fixed answer and proves nothing about scoping.
-        assert args == ("show", f"HEAD:{ORDER_REL}"), args
-        return subprocess.CompletedProcess(["git", *args], 0, blob, b"")
-
-    monkeypatch.setattr(helper, "git_bytes", show)
-    answer = helper.committed_bytes(repo, ORDER_REL)
-    assert answer.data == blob, f"the blob was not handed over verbatim: {answer.data!r}"
-
-
-def test_a_working_file_that_changed_while_head_stood_names_the_file(tmp_path):
-    """The other cause of the guard's exit 4, told apart from a rival commit.
-
-    Only a moved HEAD is fixed by re-running the same command. When the committed
-    order never moved and the file no longer holds what this run read (a local edit
-    that outlived the read, a stash), a re-run is refused again and again, and the
-    concurrency hint -- "the order that was committed while it ran still stands" --
-    would be a claim this run did not observe. So the refusal names the read that
-    moved and gives the fix that settles it.
-
-    The run is driven in-process with the artifact read interrupted after it parsed,
-    which is the deterministic way to put the run in that window: no other fixture
-    leaves HEAD holding what the run read while the file holds something else.
-    """
-    module = _order_module()
-    repo = _repo(tmp_path)
-    _seed(repo, _entry(11, BASELINE_ID))
-    head_before = _head(repo)
-    committed_before = _committed_order(repo)
-    real_read = module.orderstate.read_order
-
-    def read_then_edit(path):
-        read = real_read(path)
-        path.write_bytes(path.read_bytes() + b"\n")
-        return read
-
-    with interrupt_read(module, "read_order", read_then_edit):
-        code, out, err = _order_inprocess(repo, "add", "7", "--decision", BASELINE_ID,
-                                          "--now", NOW)
-    assert code == module.EXIT_REFUSAL, (code, out + err)
-    assert REFUSAL not in err, f"no rival committed here: {err}"
-    assert FILE_CHANGED in err, err
-    assert "still stands" not in err, err
-    assert ORDER_REL in err and "checkout HEAD" in err, err
-    assert _head(repo) == head_before, "a refused run advanced HEAD"
-    assert _committed_order(repo) == committed_before, "a refused run rewrote HEAD"
-
-
-def test_a_committed_change_still_names_the_concurrent_writer(tmp_path):
-    """The two arms stay distinguishable: a moved HEAD keeps the pinned wording.
-
-    The deletion test above proves the file arm does not print the concurrency
-    sentence; this proves the reverse, so the split cannot be a single message with
-    a hint that happens to mention the wrong cause in one of the two cases.
-    """
-    module = _order_module()
-    repo = _repo(tmp_path)
-    _seed(repo, _entry(11, BASELINE_ID))
-    committed = _committed_order(repo)
-    real_read = module.orderstate.read_order
-
-    def read_then_move_head(path):
-        read = real_read(path)
-        # HEAD moves after the read and the file stays put: the concurrent writer,
-        # with no working-tree change mixed in.
-        _rival_commit(repo, [_entry(11, BASELINE_ID), _entry(55, BASELINE_ID,
-                                                             RIVAL_STAMP)])
-        return read
-
-    with interrupt_read(module, "read_order", read_then_move_head):
-        code, _out, err = _order_inprocess(repo, "add", "7", "--decision",
-                                           BASELINE_ID, "--now", NOW)
-    assert code == 4, (code, err)
-    assert REFUSAL in err, err
-    assert FILE_CHANGED not in err, err
-    assert _committed_order(repo) != committed, "the rival's commit did not land"
-
-
-# --- a probe that cannot answer is an environment fault -----------------------
+    assert code == 0, (code, out + err)
+    assert not [args for args in calls if args[0] == "ls-files"], (
+        f"the index was asked under a HEAD that names no object: {calls}")
+    # The artifact's own path enters the history as the WRITER wrote it: what the index
+    # held before the run is the operator's file, not this run's entry, so asserting the
+    # committed bytes against the writer's render is the claim that survives.
+    assert _committed_order(repo) == _order_path(repo).read_bytes()
+    assert 7 in _issues(repo), _issues(repo)
 
 
 def test_a_path_that_became_a_symlink_is_a_fault_not_a_concurrent_writer(tmp_path):
@@ -308,11 +258,11 @@ def _drive_add_with_probe(repo, monkeypatch, answer):
     real_git = helper.git_bytes
     probes: list[tuple] = []
 
-    def git_bytes(repo, *args):
+    def git_bytes(repo, *args, input_text=None):
         if args and args[0] == "show":
             probes.append(args)
             return answer(args)
-        return real_git(repo, *args)
+        return real_git(repo, *args, input_text=input_text)
 
     # The repository is built first and the spy installed only for the run under
     # test: the spy answers every ``git show``, the fixture's own included, and the
@@ -364,10 +314,14 @@ def test_a_probe_that_hangs_is_exit_three_naming_the_call(tmp_path, monkeypatch)
 
 def test_a_probe_that_failed_for_a_reason_that_told_us_nothing_is_exit_three(
         tmp_path, monkeypatch):
-    """128 with git's "not in HEAD" wording is absence; 128 for any other reason is a
-    fault. Both arms of the probe are pinned so an implementation cannot collapse
-    them, which is how a corrupt object store would otherwise read as "no committed
-    bytes" and let the run commit over an order it never saw."""
+    """A path git says no commit holds is absence; a 128 for any other reason is a fault.
+
+    Both arms of the probe are pinned so an implementation cannot collapse them, which
+    is how a corrupt object store would otherwise read as "no committed bytes" and let
+    the run commit over an order it never saw. The honest answer is now a return code
+    rather than a sentence, so the fault arm is a code that is not that one code -- the
+    ``bad object`` of a store git could not read, which no wording set has to name.
+    """
     module = _order_module()
     repo = _repo(tmp_path)
     _seed(repo, _entry(11, BASELINE_ID))
@@ -392,9 +346,9 @@ def test_the_probe_is_one_hardened_git_call_of_the_writer_s_own_helper(tmp_path,
     real_git = helper.git_bytes
     seen: list[tuple] = []
 
-    def git_bytes(repo, *args):
+    def git_bytes(repo, *args, input_text=None):
         seen.append(args)
-        return real_git(repo, *args)
+        return real_git(repo, *args, input_text=input_text)
 
     # The repository is built first and the spy installed only for the run under
     # test: the spy answers every ``git show``, the fixture's own included, and the

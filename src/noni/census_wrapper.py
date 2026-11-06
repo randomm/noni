@@ -60,6 +60,7 @@ census's own style.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -180,7 +181,10 @@ def _first_refused_option(argv: list[str]) -> str | None:
 
     The value of ``--now`` is consumed by position and never re-examined, so a
     stamp beginning with a dash stays the census's timestamp to refuse rather
-    than becoming an option here.
+    than becoming an option here. A ``--now`` with nothing after it is refused
+    here too: it has no value to hand on, and the option check runs first so the
+    option-less line never reaches :func:`_allowed_options`, which indexes that
+    value.
     """
     index = 0
     while index < len(argv):
@@ -188,6 +192,8 @@ def _first_refused_option(argv: list[str]) -> str | None:
         if token in _ALLOWED_SWITCHES or token.startswith(_VALUE_FLAG_PREFIX):
             index += 1
         elif token == _VALUE_FLAG:
+            if index + 1 >= len(argv):
+                return token
             index += 2
         elif not token.startswith("-"):
             index += 1
@@ -208,6 +214,10 @@ def _refuse_unlisted_option(label: str, noun: str, argv: list[str]) -> int | Non
     token = _first_refused_option(argv)
     if token is None:
         return None
+    if token == _VALUE_FLAG:
+        # The one refused token that is a real option: it was typed, it just
+        # stands at the end of the line with nothing to take as its value.
+        return _refuse(label, noun, f"{_VALUE_FLAG} needs a value")
     return _refuse(label, noun, f"{token} is not a {label} option: run "
                                 f"`noni census` for filters and other options")
 
@@ -253,6 +263,15 @@ def run(label: str, noun: str, argv: list[str] | None,
     if not target.is_dir():
         reason = "is not a directory" if target.exists() else "does not exist"
         return _refuse(label, noun, f"the {noun} path {positional[0]} {reason}")
+    # ``is_symlink`` above sees only the last component: a link standing where a
+    # parent should be (``link/noni/decisions`` with ``link`` a symlink) passes
+    # every check so far, and ``argv_for`` would then build ``--repo`` from the
+    # resolved path while the state flag keeps the caller's spelling -- the same
+    # split verdict a link at the leaf gave, reached one level up.
+    if target.resolve() != Path(os.path.abspath(positional[0])):
+        return _refuse(label, noun, f"a component of {positional[0]} is a "
+                                    f"symlink: the census does not read "
+                                    f"through links")
     return main(argv_for(positional[0], _allowed_options(argv), checks))
 
 

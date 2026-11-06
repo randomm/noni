@@ -80,27 +80,6 @@ def _live_records(ledger: Path) -> set[str]:
             and obj.get("status") != "superseded"}
 
 
-def _shares_chain(obj: dict, rid: str,
-                  valid: list[tuple[str, Path, dict]]) -> bool:
-    """Whether ``obj`` and the record ``rid`` sit in one chain.
-
-    The walk is the census's own -- follow ``supersedes`` until it runs out or
-    repeats -- over the records the census parsed for this run, so the grouping
-    agrees with the rule being asked and the probe puts that rule to one chain at
-    a time rather than to a whole ledger of unrelated ones.
-    """
-    supers = {o["id"]: o.get("supersedes") for _r, _p, o in valid}
-
-    def root_of(start: str) -> str:
-        seen: set[str] = set()
-        while supers.get(start) in supers and start not in seen:
-            seen.add(start)
-            start = supers[start]
-        return start
-
-    return root_of(obj["id"]) == root_of(rid)
-
-
 def test_chain_resolves_to_one_live_record(tmp_path, run_census):
     """The r1 -> r2 -> r3 chain resolves to exactly one live record (r3).
 

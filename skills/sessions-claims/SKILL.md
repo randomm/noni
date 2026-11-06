@@ -276,7 +276,9 @@ has no parser and no exit-code table of its own, so the classes it reports are
 the census's and the single reference for them is that page — `session-double`
 (30, the arbiter), `session-claim` (31), `session-malformed` (32), and the warn
 classes `session-stalled` (40), `probe` (41), `session-same-identity` (43) and
-`session-deleted` (44), each a failure at its own code under `--strict`.
+`session-deleted` (44), each a failure at its own code under `--strict`. It runs
+the session group and nothing else, so it reports no `hygiene`, `ordering-*` or
+`intent` row — `noni census` is the whole picture.
 
 The one argument is the sessions directory of the state root (`--repo` plus
 `noni/sessions`); there is no current-directory default, so a run with no

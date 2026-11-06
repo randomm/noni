@@ -36,7 +36,7 @@ from pathlib import Path
 
 import pytest
 from census_probe_doubles import _RecordedCensusCall, _RecordedSessionsCall
-from census_wrapper import EXIT_USAGE, run_ledger, run_sessions
+from census_wrapper import _VALUE_FLAG, EXIT_USAGE, run_ledger, run_sessions
 
 # The broken-record fixtures of the two registers, each with the code its class wins
 # the run by: an unparseable ledger record is `ledger-record` (10) and a wrongly
@@ -53,7 +53,7 @@ _WRAPPERS = ((run_ledger, "decisions", _RecordedCensusCall),
              (run_sessions, "sessions", _RecordedSessionsCall))
 
 # The same table without the double, for the cases that run the real census.
-_WRAPPERS_REAL = ((run_ledger, "decisions"), (run_sessions, "sessions"))
+_WRAPPERS_REAL = ((run, noun) for run, noun, _double in _WRAPPERS)
 
 # The options a wrapper takes, in each form the docs promise, paired with what
 # the recording double keeps of them: the caller's own tokens, in the order
@@ -92,6 +92,11 @@ _REFUSED_TOKENS = (
     "--only", "--only=ledger-record", "--skip", "--skip=hygiene",
     "-h", "-x", "-", "--", "--nope", "--nope=1", "--help",
 )
+
+# ``--now`` is on the allowlist, so it is not refused for being unlisted -- but it
+# is an option that takes a value, and a trailing one with nothing after it is
+# refused all the same (see the case below): it has no stamp to hand on.
+_TRAILING_NOW = (["DIR", "--now"], ["--now"])
 
 
 def _run_with(run, argv: list[str]) -> tuple[int, str, str]:
@@ -180,7 +185,6 @@ def test_the_help_token_alone_prints_the_wrapper_help_and_censuses_nothing(
     """
     rc = run([token])
     out = capsys.readouterr().out
-    assert rc == EXIT_USAGE or rc == 0
     assert rc == 0, f"{token} alone: rc={rc}"
     assert "census" in out.lower() and out.strip() != "", f"{token}: no help: {out!r}"
 
@@ -213,6 +217,33 @@ def test_a_token_off_the_allowlist_is_refused_and_the_census_never_runs(
             f"{argv}: the refusal must say where the option lives: {err}")
     assert recorded.calls == [], (
         f"the census ran for a refused token: {recorded.calls}")
+
+
+@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger", "sessions"))
+@pytest.mark.parametrize("argv", _TRAILING_NOW, ids=("dir-then-now", "now-alone"))
+def test_a_trailing_now_with_no_value_is_refused_and_the_census_never_runs(
+        tmp_path, run, noun, double, argv, monkeypatch):
+    """``census.sh DIR --now`` is exit 2 naming ``--now``, not an IndexError.
+
+    ``--now`` is on the allowlist, so nothing refused it before: the option walk
+    stepped past the end of the line and the option filter indexed a token that
+    was never typed, so the caller got a traceback at the code a real census
+    failure answers at -- indistinguishable to a script from the census refusing a
+    malformed stamp. The refusal is the wrapper's own usage line, the census is
+    never reached, and the code is the usage code rather than 1.
+    """
+    recorded = double()
+    monkeypatch.setattr("census_wrapper.main", recorded)
+    directory = _register(tmp_path, noun)
+    typed = [directory if token == "DIR" else token for token in argv]
+    rc, out, err = _run_with(run, typed)
+    assert rc == EXIT_USAGE, f"{typed}: rc={rc} (a traceback exits 1)\n{err}"
+    assert out == "", f"{typed}: a refused run printed a report: {out}"
+    assert _VALUE_FLAG in err, f"{typed}: the refusal must name --now: {err}"
+    assert "needs a value" in err, f"{typed}: the reason: {err}"
+    assert "Traceback" not in err, f"{typed}: a traceback leaked to the caller: {err}"
+    assert recorded.calls == [], (
+        f"the census ran with no timestamp to pin: {recorded.calls}")
 
 
 @pytest.mark.parametrize("run,noun", _WRAPPERS_REAL, ids=("ledger", "sessions"))
@@ -317,6 +348,39 @@ def test_a_positional_that_is_a_symlink_is_refused_never_read_through(
             f"{argv}: not the symlink refusal: {err}")
     assert recorded.calls == [], (
         f"the census read through a link: {recorded.calls}")
+
+
+@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger", "sessions"))
+def test_a_symlinked_parent_component_is_refused_never_read_through(
+        tmp_path, run, noun, double, monkeypatch):
+    """A register reached through a symlinked *parent* is exit 2, census never run.
+
+    The leaf check (``is_symlink``) sees only the last component, so ``link/decisions``
+    with ``link`` a symlink to a real tree passed every gate: the run censused a
+    directory the caller named only through a link, with ``--repo`` built from the
+    resolved path and the state flag keeping the link's own spelling -- the split
+    rows the leaf refusal exists to stop, one level up. The comparison is
+    ``resolve()`` against ``abspath()``: the two agree only when no component of
+    the path is a link, which is the rule the wrapper holds everywhere else.
+    """
+    recorded = double()
+    monkeypatch.setattr("census_wrapper.main", recorded)
+    real = tmp_path / "real" / "noni" / noun
+    real.mkdir(parents=True)
+    link = tmp_path / "link"
+    link.symlink_to(tmp_path / "real")
+    through = link / "noni" / noun
+    assert through.is_dir() and not through.is_symlink(), (
+        "the fixture is not a symlinked-parent path, so the case proves nothing")
+    for argv in ([str(through)], ["--json", str(through)]):
+        rc, out, err = _run_with(run, argv)
+        assert rc == EXIT_USAGE, f"{argv}: rc={rc}\n{err}"
+        assert out == "", f"{argv}: a refused run printed a report: {out}"
+        assert str(through) in err, f"{argv}: must name the path it refused: {err}"
+        assert "is a symlink" in err and "does not read through links" in err, (
+            f"{argv}: not the symlink refusal: {err}")
+    assert recorded.calls == [], (
+        f"the census read through a symlinked parent: {recorded.calls}")
 
 
 def test_a_ledger_path_that_is_a_plain_file_is_refused_never_followed(paths):

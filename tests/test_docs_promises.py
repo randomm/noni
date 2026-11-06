@@ -140,11 +140,13 @@ _WRAPPER_SCOPE_PAGES: tuple[tuple[Path, str], ...] = (
     (REPO / "skills" / "steering-ledger" / "SKILL.md", "ledger group"),
     (REPO / "skills" / "sessions-claims" / "references" / "census.md",
      "session group"),
+    (REPO / "skills" / "sessions-claims" / "SKILL.md", "session group"),
 )
 
 
 @pytest.mark.parametrize("page,group", _WRAPPER_SCOPE_PAGES,
-                         ids=("steering-ledger", "sessions-claims"))
+                         ids=("steering-ledger", "sessions-claims-census",
+                              "sessions-claims"))
 def test_each_wrapper_page_scopes_its_report_to_its_own_group(page: Path,
                                                               group: str) -> None:
     """Each per-artifact wrapper page says, in one sentence, that it reports only

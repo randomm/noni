@@ -1,10 +1,10 @@
 # noni
 
-noni is an attachable direction layer for a Git project that several agents or
-people work on at once. It keeps the standing intent, the decisions, the agreed
-order of work, the session register and the claims as plain files committed to
-the repository, and one read-only script reports where the work has drifted from
-that direction, with no service to run and no database to keep in step.
+noni makes sure two agents working on one project never take the same task, and
+that a decision outlives the session that made it. It is an attachable direction
+layer for a Git project: standing intent, decisions, the agreed order of work,
+the session register and the claims are plain files committed to the repo, and
+one read-only script reports where the work has drifted. No service, no database.
 
 ## The problem
 
@@ -126,9 +126,9 @@ unified census with its honest exit codes, and the `noni` package that carries
 them (installed from a clone or a git URL, then `noni <tool>`: there is no
 PyPI package).
 
-Not yet: release trains, and the adapters that fill the tracker-side inputs the
-census reads. `docs/PRODUCT.md` is the product document and the deep reference for
-record shapes, the claim protocol and the census exit codes.
+Not yet: the adapters that fill the tracker-side inputs the census reads.
+`docs/PRODUCT.md` is the product document and the deep reference for record
+shapes, the claim protocol and the census exit codes.
 
 noni's own direction lives in a private state repository, so `git ls-files noni`
 here is empty: pass `--repo` at the tree that holds the `noni/` layout.

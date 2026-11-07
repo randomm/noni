@@ -358,7 +358,7 @@ def _materialise_clone(clone: Path) -> None:
                     ignore=shutil.ignore_patterns(".git", "__pycache__", ".venv",
                                                   "*.pyc", ".pytest_cache",
                                                   ".coverage", ".coverage.*",
-                                                  "noni.egg-info", ".worktrees"))
+                                                  "noni.egg-info", "noni_noni.egg-info", ".worktrees"))
 
 
 def _reader_repository(tmp_path: Path) -> Path:

@@ -10,12 +10,12 @@ is the commands.
 
 ## Install noni
 
-noni is not published. `pip install noni` installs some other project's wheel,
-so every route to it names this repository, and none of them runs `pip` against
-your system Python. On a distribution that marks that interpreter
-externally-managed, a system `pip install` stops there with no `noni` on the
-path, and forcing it past the marker installs noni's dependencies into the
-system packages.
+noni is not published, and the distribution name will be `noni-noni`. `pip install
+noni` installs some other project's wheel, so every route to it names this
+repository, and none of them runs `pip` against your system Python. On a
+distribution that marks that interpreter externally-managed, a system `pip install`
+stops there with no `noni` on the path, and forcing it past the marker installs
+noni's dependencies into the system packages.
 
 The form that also puts `noni` on your PATH is `uv tool install`:
 

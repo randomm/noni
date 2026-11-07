@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "noni"
+name = "noni-noni"
 dynamic = ["version"]
 description = "Attachable product-direction layer: steering ledger, backlog ordering, session claims, census"
 requires-python = ">=3.11"

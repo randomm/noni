@@ -71,10 +71,10 @@ Installing is the other route, and the same code either way. Those scripts impor
 the `noni` package, so it must be installed or importable for them to run: see the
 *Install noni* section of [docs/QUICKSTART.md](docs/QUICKSTART.md#install-noni),
 which installs it with `uv tool install` or in a clean virtual environment. There
-is no PyPI package, so every install route names this repository, and none runs
-`pip` against a system Python, which current distributions refuse. One `noni`
-command then replaces a path per tool (`census`, `decide`, `register`, `claim`,
-`release`, `close`, `order`, `intent`), printing the same bytes as the scripts.
+is no PyPI package and the name will be `noni-noni`, so every route names this
+repository, and none runs `pip` at a system Python, which current distributions
+refuse. One `noni` command replaces a path per tool (`census`, `decide`, `register`,
+`claim`, `release`, `close`, `order`, `intent`), printing the same bytes.
 
 The census is read-only: it never writes, so `git status --porcelain` is empty.
 Read the result. A run with rows ends with the line
@@ -123,8 +123,8 @@ Shipped, and covered by the test suite: the steering ledger with its supersede
 chain, the session register with its claim, release and close verbs, the
 ordering artifact, the standing intent file with its precedence rule, the
 unified census with its honest exit codes, and the `noni` package that carries
-them (installed from a clone or a git URL, then `noni <tool>`: there is no
-PyPI package).
+them (installed from a clone or a git URL, then `noni <tool>`: no PyPI package,
+distribution name `noni-noni`).
 
 Not yet: the adapters that fill the tracker-side inputs the census reads.
 `docs/PRODUCT.md` is the product document and the deep reference for record

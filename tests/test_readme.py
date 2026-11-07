@@ -39,6 +39,7 @@ from pathlib import Path
 
 import pytest
 from _harness import REPO, _git
+from census_report_line import _documented_summary_shape, _summary_parts
 from readme_support import (
     _ALLOWED_SHELL,
     _CLEAN_RUN_WARN_ROWS,
@@ -48,7 +49,6 @@ from readme_support import (
     _HYGIENE_NOT_RUN_MARKER,
     _NUMBER_WORDS,
     _READER_DIR_PLACEHOLDER,
-    _SUMMARY_SEGMENT,
     CONTRIBUTING,
     CONTRIBUTING_GATE_COMMANDS,
     EXPECTED_SECTIONS,
@@ -69,7 +69,6 @@ from readme_support import (
     _script_name,
     _section,
     _section_of,
-    _try_it_section,
 )
 from readme_tryit import _claim_is_documented, _state_token_claim, _try_it_commands
 
@@ -302,64 +301,54 @@ def test_try_it_block_names_scripts_that_run() -> None:
     )
 
 
-def _assert_documented_summary(line: str, expected: str) -> int:
+def _assert_documented_summary(line: str, expected: str | None) -> int:
     """Check the census's last line against the page's, and return the count it reports.
 
-    Whole-segment equality is the assertion: a page that moved ``verdict ok``
-    into an earlier message, or a census that dropped ``summary: clean`` from the
-    final line, would keep two independent substring tests green while the line
-    the reader compares against had changed. The count between ``clean;`` and
-    ``verdict ok`` is the one part the page leaves open (see
-    ``_CLEAN_RUN_WARN_ROWS``), so it is parsed rather than compared and handed
-    back for the caller to tie to the rows above.
+    Whole-segment equality on the head and the machine tail is the assertion: a
+    page that moved ``verdict ok`` into an earlier message, or a census that
+    dropped the human verdict word from the final line, would keep two
+    independent substring tests green while the line the reader compares against
+    had changed. The count between the verdict word and ``verdict ok`` is the one
+    part the page leaves open (see ``_CLEAN_RUN_WARN_ROWS``), so it is parsed
+    rather than compared and handed back for the caller to tie to the rows above.
+
+    The human word is compared with the page's whenever the page pinned one, so a
+    page that says ``clean`` above a run that counted warnings fails here rather
+    than reading as all-clear (issue #117). ``expected`` is None when the page
+    held that word open as a placeholder, which leaves the shape check to the
+    tail; the warn-aware half of the page's promise is held by
+    ``test_readme_census_wording.py``.
     """
     reported = _summary_parts(line)
-    documented = _summary_parts(expected)
-    assert reported[0] == documented[0] and reported[2] == documented[2], (
-        f"the census's summary line is not the page's: {line!r} != {expected!r}"
-    )
-    count = reported[1]
-    assert count is not None, f"the summary line carries no finding count: {line!r}"
-    return count
+    if expected is None:
+        assert reported[3] == "verdict ok", (
+            f"the census's summary line is not the all-clear shape the page "
+            f"documents: {line!r}"
+        )
+    else:
+        documented = _summary_parts(expected)
+        assert reported[0] == documented[0] and reported[3] == documented[3], (
+            f"the census's summary line is not the page's: {line!r} != {expected!r}"
+        )
+        assert reported[1] == documented[1], (
+            f"the census's human verdict word is not the page's: {line!r} != "
+            f"{expected!r}"
+        )
+    assert reported[2].isdigit(), f"the summary line carries no finding count: {line!r}"
+    return int(reported[2])
 
 
-def _summary_parts(line: str) -> tuple[str, int | None, str]:
-    """The ``(head, count, tail)`` of a census summary line, count None if absent.
+def _documented_summary_line() -> str | None:
+    """The page's summary line, or None when the page holds its verdict word open.
 
-    Parsed as one whole shape rather than split on a substring, so a line that
-    merely contains the two phrases in some other arrangement does not parse."""
-    match = _SUMMARY_SEGMENT.match(line)
-    if match is None:
-        return (line, None, "")
-    return (match.group(1), int(match.group(2)), match.group(3))
-
-
-def _documented_summary_line() -> str:
-    """The census's clean summary line, lifted from the fenced block in the try-it section.
-
-    The page prints ``summary: clean; N finding(s); verdict ok``: the count sits
-    between the two phrases every clean run emits. Reading the shape off the page
-    keeps the assertion the page's own promise rather than a copy of it, and the
-    ``N`` is filled with the count a clean run reports (see
-    ``_CLEAN_RUN_WARN_ROWS``), which the page tells the reader to expect.
+    The scrape lives in ``census_report_line._documented_summary_shape`` so this
+    file and ``test_readme_census_wording.py`` read one rendering of the page
+    rather than two that can drift. The line's human word is the page's own, so a
+    page that printed ``clean`` above a warn-bearing run differs here from the
+    real run it is compared against.
     """
-    shown = [line.strip() for line in _try_it_section().splitlines() if line.strip()]
-    candidates = [line for line in shown
-                  if line.startswith("summary:") and line.endswith("verdict ok")]
-    assert candidates, (
-        "the try-it section no longer shows the census's summary line, so the "
-        "assertion in the try-it test would not be the page's own promise"
-    )
-    line = candidates[0]
-    head, _, tail = line.partition("clean;")
-    count, _, _ = tail.rpartition("verdict ok")
-    assert head == "summary: " and count.strip() == "N finding(s);", (
-        f"the documented summary line does not have the shape the census always "
-        f"prints, count included: {line!r}"
-    )
-    # A concrete count so the caller can compare a real line to it; the caller
-    # checks only the count itself, which is the part the page leaves open.
-    return f"summary: clean; {len(_CLEAN_RUN_WARN_ROWS)} finding(s); verdict ok"
+    line, _word, open_count = _documented_summary_shape()
+    return None if open_count else line
 
 
 def _assert_hygiene_ran(lines: list[str]) -> None:
@@ -381,14 +370,19 @@ def _assert_hygiene_ran(lines: list[str]) -> None:
 def test_the_documented_try_it_path_works(tmp_path: Path) -> None:
     """The README's own commands, run verbatim against a materialised noni clone
     and a separate scratch repository, produce what the page promises: one
-    committed record, a census whose last line is the documented clean summary
-    with its hygiene scan actually run, and a tree that stays clean afterwards.
+    committed record, a census whose last line is the documented summary with
+    its hygiene scan actually run, and a tree that stays clean afterwards.
 
     The topology is the documented one: the scripts come from the clone the page
     clones, ``--repo .`` names the reader's own repository (the commands' cwd),
     and nothing is installed in that repository beforehand. That is the only
     shape in which the promise can break, and the only one whose census output a
     reader can compare to the page.
+
+    What the run's lines *say* -- the warn-aware wording of the summary line and
+    the headline above warn rows -- is ``test_readme_census_wording.py``'s; this
+    test covers the commands, the record and the tree (issue #117 split them so
+    each page promise is held in one place).
     """
     clone = tmp_path / NONI_DIR
     _materialise_clone(clone)

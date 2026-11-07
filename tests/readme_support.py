@@ -130,9 +130,6 @@ _NUMBER_WORDS: dict[str, int] = {
     "eight": 8, "nine": 9, "ten": 10,
 }
 
-_SUMMARY_SEGMENT = re.compile(
-    r"^(summary: clean; )(\d+) finding\(s\); (verdict (?:ok|fail))$"
-)
 
 # The warn rows a reader's first census run carries, and the reason each is
 # counted without changing the verdict. The hygiene row is the one the page's
@@ -147,6 +144,13 @@ _SUMMARY_SEGMENT = re.compile(
 # requiring the count the page shows to be the number of rows the run reports,
 # is what stops the page's line and the census's line drifting apart quietly.
 _CLEAN_RUN_WARN_ROWS: tuple[str, ...] = ("deny-list", "ledger-empty")
+
+# The reason the first run's summary line says "2 warning(s)" and not "clean":
+# both rows above are warn classes, so the warn count of that run is exactly
+# the number of rows the page shows. Kept beside the rows themselves because the
+# two facts are one fact: a page that printed "clean" above two WARN rows would
+# read as all-clear, which is the bug this tuple's wording now forecloses.
+_CLEAN_RUN_WARN_COUNT: int = len(_CLEAN_RUN_WARN_ROWS)
 
 # coverage's subprocess data file name, as [tool.coverage.run] produces it with
 # parallel = true: ``.coverage.<host>.pid<pid>.<seq>``. Pinned here against the

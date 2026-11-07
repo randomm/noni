@@ -182,6 +182,40 @@ def test_json_rows_for_the_new_classes_follow_the_schema(tmp_path):
         assert row["fix"] and row["artifact"] and row["message"]
 
 
+def test_a_warn_only_run_keeps_the_machine_summary_row(tmp_path):
+    """The human wording fix may not touch the machine line (issue #117, AC3).
+
+    A warn-only tree is the case the bug was about: exit 0 with rows printed, so
+    it is the run a fix would be tempted to "improve" in --json mode too. The
+    guard is the other side of that: the summary row stays ``ok`` true and
+    ``exit`` 0 with its closed key set and no human verdict word, and the stream
+    stays identical across two runs. A renderer that moved the warn count or the
+    word ``clean`` onto the summary row fails here, and the rest of this file
+    would not have caught it -- it covers the fail path and the ``not_evaluated``
+    field, not a warn-only tree read in both modes.
+    """
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/decisions/2026-10-01-a.json",
+                 json.dumps(_valid_record(), indent=2))
+    rc, rows = _run_census_json(repo)
+    assert rc == 0, f"warn rows alone exit 0, got {rc}: {rows}"
+    findings = [r for r in rows if r["kind"] == "finding"]
+    assert findings and all(r["severity"] == "warn" for r in findings), rows
+    summaries = [r for r in rows if r["kind"] == "summary"]
+    assert len(summaries) == 1, rows
+    summary = summaries[0]
+    assert summary["ok"] is True and summary["exit"] == 0, summary
+    assert set(summary) <= {"schema", "kind", "ok", "exit", "counts",
+                            "not_evaluated"}, summary
+    assert set(summary) >= {"schema", "kind", "ok", "exit", "counts"}, summary
+    assert "verdict" not in json.dumps(summary), summary
+    assert "clean" not in json.dumps(list(summary["counts"])), summary
+    before = [json.dumps(r, sort_keys=True) for r in rows]
+    _rc2, rows2 = _run_census_json(repo)
+    assert [json.dumps(r, sort_keys=True) for r in rows2] == before, (
+        "two --json runs of one warn-only tree differed")
+
+
 def test_json_reproducible_bytes(tmp_path):
     """Two runs with the same --now produce byte-identical stdout."""
     repo = _init_repo(tmp_path / "repo")

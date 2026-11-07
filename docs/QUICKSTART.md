@@ -112,8 +112,10 @@ The record lands at `noni/decisions/<date>-release-scope.json`, committed in
 the same step the writer wrote it. The census reads the tree and recomputes
 everything from git history plus those files, so a first run reports the two
 warnings a tree without operator configuration carries — the inactive deny-list
-and the ledger with nothing to arbitrate — and still ends `verdict ok`.
-`git status --porcelain` is empty after the census: it never writes.
+and the ledger with nothing to arbitrate — and still ends `verdict ok`: its last
+line names them, `summary: W warning(s); N finding(s); verdict ok`. `clean` and
+the all-clear banner `census: no findings; all checks passed` belong to a run
+that counted no row and skipped no check. The census never writes.
 
 ## Route B: a separate private state repository
 
@@ -338,7 +340,9 @@ the `ordering-closed` (46) class is not evaluated at all, so a run with no rows
 from it does not mean every ordered issue is open.
 
 The census says so out loud whichever mode you read it in. In human-readable
-mode that is one line beside the report:
+mode it says it twice: a run with no finding row that skipped a check opens
+`census: no findings; <class> did not run`, not the banner, plus one
+`note:` line:
 
 ```text
 note: ordering-closed was not evaluated: no --issue-state FILE was given, so whether an ordered issue is closed is not asked (the census never contacts a tracker)

@@ -156,15 +156,25 @@ def _assert_verdict(proc_returncode: int, stdout: str, expected: int,
     return lines
 
 
-def _verdict_line(lines: list[str]) -> str:
+def _verdict_line(lines: list[str], expected_tail: str) -> str:
     """The census's summary line, which the page's whole section is about.
 
     Absent it the run reported no verdict at all, so both halves of the clean and
-    failing pair demand it: a clean run ends ``summary: ... verdict ok`` and a
-    failing one names its code and the classes that fired.
+    failing pair demand it: a run that counted nothing ends
+    ``summary: clean; 0 finding(s); verdict ok`` and a failing one names its
+    code and the classes that fired.
+
+    The tail is a parameter rather than an ``endswith`` at each call site, and it
+    is checked here, because the human half of the line moved for a warn-bearing
+    run (issue #117). A reader that only asserted ``startswith("summary: ")``
+    would not notice a rewording that ate into ``verdict ok`` -- the exact word
+    the CI step this page documents reads to decide the build.
     """
     assert lines and lines[-1].startswith("summary: "), (
         f"the census printed no summary line: {lines[-1:]!r}")
+    assert lines[-1].endswith(expected_tail), (
+        f"the census's summary line no longer ends with its machine word "
+        f"{expected_tail!r}: {lines[-1]!r}")
     return lines[-1]
 
 
@@ -175,13 +185,19 @@ def test_the_ci_step_exits_zero_on_a_clean_route_a_tree(world: World) -> None:
 
     The tree is what the page's own Route A steps leave behind, so the clean half
     is asserted on the tree the reader has, not on an empty directory that would
-    pass for the wrong reason.
+    pass for the wrong reason. That tree is not a run with nothing to report:
+    without a deny-list its census counts warn rows, so the step is pinned to end
+    ``verdict ok`` on a warn-bearing run too, which is what the page's "a first
+    CI run exits 0" promise is actually made of (issue #117).
     """
     for argv in route_commands(("Route A",)):
         checked(launch(world, argv, world.project), f"Route A command {argv}")
     code, stdout = _run_route_a(world, _ci_census_command(state=False))
     lines = _assert_verdict(code, stdout, 0, "the CI census step on a clean tree")
-    assert _verdict_line(lines).endswith("verdict ok"), lines[-1]
+    line = _verdict_line(lines, "verdict ok")
+    assert "warning(s)" in line, (
+        f"the page's tree carries warn rows, so the step's summary line should "
+        f"name them rather than read all-clear: {line!r}")
     assert not git(world.project, "status", "--porcelain",
                    env=world.env).stdout.splitlines(), (
         "the documented CI step left the tree dirty")
@@ -202,14 +218,14 @@ def test_the_ci_step_fails_a_route_a_build_on_a_planted_double_claim(
     code, stdout = _run_route_a(world, _ci_census_command(state=False))
     lines = _assert_verdict(code, stdout, census.CLASS_CODE["session-double"],
                             "the CI census step on a planted double claim")
-    assert "session-double" in _verdict_line(lines), lines[-1]
+    assert "session-double" in _verdict_line(lines, "; verdict fail"), lines[-1]
 
 
 def test_the_ci_step_exits_zero_on_a_clean_route_b_tree(world: World) -> None:
     """Route B's line, with the state clone as ``--repo``, ends verdict ok."""
     code, stdout = _run_route_b(world, _ci_census_command(state=True))
     lines = _assert_verdict(code, stdout, 0, "the CI step on a clean state clone")
-    assert _verdict_line(lines).endswith("verdict ok"), lines[-1]
+    assert _verdict_line(lines, "verdict ok"), lines[-1]
 
 
 def test_the_ci_step_fails_a_route_b_build_on_a_planted_double_claim(
@@ -231,7 +247,7 @@ def test_the_ci_step_fails_a_route_b_build_on_a_planted_double_claim(
                             census.CLASS_CODE["session-double"],
                             "the CI step on a state clone holding a planted "
                             "double claim")
-    assert "session-double" in _verdict_line(lines), lines[-1]
+    assert "session-double" in _verdict_line(lines, "; verdict fail"), lines[-1]
     # The project's own tree never carried the pair, which is what the route's
     # ignore rule buys and what the census must not be blamed for missing.
     assert not list((world.project / "noni" / "sessions").glob("*.md")), (

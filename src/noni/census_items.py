@@ -44,21 +44,22 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
-from . import itemschema
+from . import itemschema, orderschema
 
 # The six ids, spelled once each so the group's set, every row's class and the
 # tests' expected ids all read one declaration. ``census_report.CHECKS`` carries the
 # codes and severities beside them; a name typed twice is how a class comes to
 # report a code its table does not carry.
 ITEM_MALFORMED = "item-malformed"
-ITEM_DANGLING_LINK = "item-dangling-link"
-ITEM_ISSUE_MISMATCH = "item-issue-mismatch"
+ITEM_REFERENCE_UNRESOLVED = "item-reference-unresolved"
+ITEM_PROMOTED_WITHOUT_ISSUE = "item-promoted-without-issue"
+ITEM_DROPPED_IN_ORDER = "item-dropped-in-order"
 ITEM_STALE = "item-stale"
-ITEM_UNREADABLE = "item-unreadable"
 ITEM_UNLISTABLE = "item-unlistable"
 
-ITEM_CHECKS = frozenset({ITEM_MALFORMED, ITEM_DANGLING_LINK, ITEM_ISSUE_MISMATCH,
-                         ITEM_STALE, ITEM_UNREADABLE, ITEM_UNLISTABLE})
+ITEM_CHECKS = frozenset({ITEM_MALFORMED, ITEM_REFERENCE_UNRESOLVED,
+                         ITEM_PROMOTED_WITHOUT_ISSUE, ITEM_DROPPED_IN_ORDER,
+                         ITEM_STALE, ITEM_UNLISTABLE})
 
 # The subject of a row that is about the store rather than one item in it, the way
 # hygiene's ``hygiene scan`` and ordering's ``issue-state`` are machine-readable
@@ -69,6 +70,7 @@ STORE_SUBJECT = "noni/items"
 # writer can produce and this group did not name would be reported as nothing.
 STATUS_CANDIDATE = itemschema.STATUS_CANDIDATE
 STATUS_PROMOTED = itemschema.STATUS_PROMOTED
+STATUS_DROPPED = itemschema.STATUS_DROPPED
 
 # The record states that answer "does this decision still stand". A record whose
 # status is anything else decides nothing, so a citation to it is answered like a
@@ -107,32 +109,32 @@ ITEM_ROWS: dict[str, tuple[int, str, str]] = {
         "created stamp, and issue/decision/why only where that status owes them), or "
         "write it with item.py, which refuses the shapes this class reports",
     ),
-    ITEM_DANGLING_LINK: (
+    ITEM_DROPPED_IN_ORDER: (
         53, "fail",
-        "cite a record the ledger holds and has not superseded (item.py drop ID "
-        "--decision <id> --why REASON), or repair the ledger: the point of a dropped "
-        "item is the decision that killed it, so a citation to nothing is the record "
-        "the kill list exists to carry",
+        "the order and the store disagree about one idea: drop it from the order with "
+        "order.py remove ISSUE, or file the idea again under its own id with item.py "
+        "add if the order really does still hold it",
     ),
-    ITEM_ISSUE_MISMATCH: (
+    ITEM_PROMOTED_WITHOUT_ISSUE: (
         54, "fail",
         "make the status and the issue agree: only a promoted item names an issue, "
         "and a promoted item names one the order holds (order.py puts it there); "
         "repair with item.py rather than by hand, which refuses every shape this "
         "class reports",
     ),
+    ITEM_REFERENCE_UNRESOLVED: (
+        55, "fail",
+        "cite a record the ledger holds and has not superseded (item.py drop ID "
+        "--decision <id> --why REASON), or repair the ledger: the point of a dropped "
+        "item is the decision that killed it, so a citation to nothing is the record "
+        "the kill list exists to carry",
+    ),
     ITEM_STALE: (
-        55, "warn",
+        56, "warn",
         "move the candidate or let it go: promote it with item.py promote ID "
         "--issue N, or drop it with item.py drop ID --decision <id> --why REASON; "
         "an unclaimed idea past --stale-after is the operator's last word on the "
         "store only as far back as that",
-    ),
-    ITEM_UNREADABLE: (
-        56, "warn",
-        "restore the file, or remove the path: a symlink, a directory, unreadable "
-        "bytes or a document the strict reader refused is reported by this class and "
-        "never as clean, because the census does not read through links",
     ),
     ITEM_UNLISTABLE: (
         57, "warn",
@@ -213,14 +215,18 @@ def check_items(
                               load_json=load_json_strict, bounded=bounded)
 
     for stem, why in scan.unreadable:
-        # This run's blindness about one file, not that file's defect: a symlink, a
-        # directory, unreadable bytes, or a document the strict reader refused. A
-        # warn by default, promoted by --strict like every other cannot-tell, and
-        # whole-artifact because a filter that named none of these classes must not
-        # turn "I could not read it" into a clean store.
-        add(ITEM_UNREADABLE, stem, f"{rel_store}/{stem}.json",
-            clipped(f"cannot-tell: {why}, so this item was not checked"),
-            severity="warn", whole_artifact=True)
+        # A file this run was told to read and could not: a symlink (never followed),
+        # a directory or device, bytes that are not UTF-8, a document the strict reader
+        # refused, or a name the listing gave that was gone by the read. The ruling
+        # gives the group no blindness class of its own, so it is reported as the one
+        # finding the file does support -- this store holds no item at that path -- and
+        # the row says so in those words rather than quoting a defect the run did not
+        # establish. It is a fail row of a fail class: the whole-artifact marker keeps
+        # it through a filter that named none of these classes, so a store that cannot
+        # be read never reports the clean verdict of a store that holds nothing.
+        add(ITEM_MALFORMED, stem, f"{rel_store}/{stem}.json",
+            clipped(f"malformed: {why}, so no item was read at this path"),
+            whole_artifact=True)
     for stem, problems in scan.not_items:
         add(ITEM_MALFORMED, stem, f"{rel_store}/{stem}.json",
             clipped("malformed: " + "; ".join(problems)))
@@ -306,13 +312,18 @@ def _check_citations(bodies, ledger: Path, ledger_names, add, rel_store: str, *,
         if decision is None:
             continue
         if decision not in records:
-            add(ITEM_DANGLING_LINK, stem, f"{rel_store}/{stem}.json",
-                f"dangling: the item cites decision {decision}, which no file "
+            add(ITEM_REFERENCE_UNRESOLVED, stem, f"{rel_store}/{stem}.json",
+                f"unresolved: the item cites decision {decision}, which no file "
                 f"under {LEDGER_REL}/ carries")
             continue
         state = records[decision]
         if state is None:
-            add(ITEM_UNREADABLE, stem, f"{rel_store}/{stem}.json",
+            # The record's file is there and this run could not read it, so whether
+            # the citation stands is an answer the run does not hold. The class is a
+            # fail class, so the row carries the cannot-tell severity override
+            # explicitly (see ``_row``): the run's own blindness is never a verdict on
+            # the project, and --strict still promotes it like any other cannot-tell.
+            add(ITEM_REFERENCE_UNRESOLVED, stem, f"{rel_store}/{stem}.json",
                 clipped(f"cannot-tell: the record {decision} the item cites could "
                         "not be read, so whether it stands was not answered"),
                 severity="warn", whole_artifact=True)
@@ -320,8 +331,8 @@ def _check_citations(bodies, ledger: Path, ledger_names, add, rel_store: str, *,
             heir = _successor(ledger, ledger_names, decision,
                               read_record=read_record,
                               load_json_strict=load_json_strict)
-            add(ITEM_DANGLING_LINK, stem, f"{rel_store}/{stem}.json",
-                f"dangling: the item cites decision {decision}, which is "
+            add(ITEM_REFERENCE_UNRESOLVED, stem, f"{rel_store}/{stem}.json",
+                f"unresolved: the item cites decision {decision}, which is "
                 f"superseded{'' if heir is None else f' by {heir}'}")
 
 
@@ -375,59 +386,65 @@ def _successor(ledger: Path, names, decision: str, *, read_record,
 def _check_status_and_issue(bodies, order: Path, add, rel_store: str, *,
                             file_kind, read_record, load_json_strict,
                             clipped) -> None:
-    """``item-issue-mismatch``: a status, an ``issue`` and an order that disagree.
+    """``item-promoted-without-issue`` and ``item-dropped-in-order``.
 
-    Four shapes, every one of them a status field and an ``issue`` field that
-    contradict each other, which is what the class is for:
+    Two classes, because two questions are asked and the PM ruling gives each its own
+    id, its own code and its own severity:
 
-    - a ``promoted`` item carrying no issue: promoted to nothing;
-    - a ``candidate`` or ``dropped`` item carrying an issue: an item naming an issue
-      it never became;
-    - a ``promoted`` item whose issue the order no longer holds: the order is the
-      list of work to do next, and an item claiming to be the issue of an order that
-      moved past it is a record nobody can act on.
+    - ``item-promoted-without-issue`` (54) asks a question of the item file alone: a
+      ``promoted`` item that carries no issue was promoted to nothing, and any other
+      status that carries an issue names an issue it never became. The ruling puts the
+      status checks on item files only, which is what makes them answerable now.
+    - ``item-dropped-in-order`` (53) is the one class that reads the order as well as
+      the store, and asks the order-side question the ruling declares here and tests
+      against item files only: an order entry that cites an idea the store has
+      dropped. The item entries sub-issue 2 adds to ``noni.order/2`` are what fill
+      this class in; against a ``noni.order/1`` file, whose entries name an issue and
+      a decision and nothing else, no entry can cite an item, so the class is declared,
+      documented and tested (its shape is pinned in
+      ``tests/test_census_items_group.py``) and reports nothing on a /1 order.
 
-    The third shape is asked only when the order can be read at all. An order the
-    run could not read belongs to ``ordering-malformed`` (its own group reports it)
-    and this class says nothing about it, rather than promoting an empty list into
-    "the order holds no such issue" — the inversion the group's blindness rule
-    exists to prevent.
+    The order question is asked only when the order can be read at all. An order the
+    run could not read belongs to ``ordering-malformed`` (its own group reports it) and
+    this group says nothing about it, rather than promoting an empty list into "the
+    order cites no item" -- the inversion the group's blindness rule exists to prevent.
     """
     for stem, body in bodies:
         status, issue = body["status"], body["issue"]
         if status == STATUS_PROMOTED and issue is None:
-            add(ITEM_ISSUE_MISMATCH, stem, f"{rel_store}/{stem}.json",
-                "mismatch: the item is promoted and names no issue, so it was "
-                "promoted to nothing")
+            add(ITEM_PROMOTED_WITHOUT_ISSUE, stem, f"{rel_store}/{stem}.json",
+                "promoted without an issue: the item is promoted and names no "
+                "issue, so it was promoted to nothing")
         elif status != STATUS_PROMOTED and issue is not None:
-            add(ITEM_ISSUE_MISMATCH, stem, f"{rel_store}/{stem}.json",
-                f"mismatch: the item is {status} and names issue {issue}, which "
-                "only a promoted item does")
+            add(ITEM_PROMOTED_WITHOUT_ISSUE, stem, f"{rel_store}/{stem}.json",
+                f"promoted without an issue: the item is {status} and names issue "
+                f"{issue}, which only a promoted item does")
 
-    ordered = _ordered_issues(order, file_kind=file_kind, read_record=read_record,
-                              load_json_strict=load_json_strict)
-    if ordered is None:
+    cited = _order_item_citations(order, file_kind=file_kind,
+                                  read_record=read_record,
+                                  load_json_strict=load_json_strict)
+    if cited is None:
         return
-    for stem, body in bodies:
-        if body["status"] != STATUS_PROMOTED or body["issue"] is None:
-            continue
-        if body["issue"] not in ordered:
-            add(ITEM_ISSUE_MISMATCH, stem, f"{rel_store}/{stem}.json",
-                clipped(f"mismatch: the item is promoted to issue {body['issue']}, "
-                        "which no entry of noni/direction/order.json holds"))
+    dropped = {stem for stem, body in bodies
+               if body["status"] == STATUS_DROPPED}
+    for stem in sorted(cited & dropped):
+        add(ITEM_DROPPED_IN_ORDER, stem, f"{rel_store}/{stem}.json",
+            clipped(f"dropped in the order: an entry of "
+                    f"{orderschema.ORDER_REL} cites item {stem}, which the store "
+                    "has dropped"))
 
 
-def _ordered_issues(order: Path, *, file_kind, read_record,
-                    load_json_strict) -> set[int] | None:
-    """The issues the order holds, or None when this run could not read the order.
+def _order_item_citations(order: Path, *, file_kind, read_record,
+                          load_json_strict) -> set[str] | None:
+    """The item ids the order cites, or None when this run could not read the order.
 
-    The order read this class needs, answered through the census's own primitives
-    and the same strict reader as every other file: a symlink, a directory,
-    unreadable or unparseable bytes, or a document that is not the order artifact all
-    answer None, which the caller reads as "not asked" and not as "the order holds
-    nothing". An absent order answers the empty set honestly — a project that has
-    never ordered anything has an order holding no issues, and a promoted item is
-    then a real mismatch.
+    Reads the ``item`` field an ``noni.order/2`` entry carries, which a
+    ``noni.order/1`` entry does not: the set is then honestly empty rather than
+    unknown, because the file this run read cites no item and said so. None is the
+    blindness answer (no readable artifact at all), which the caller reads as "not
+    asked" and never as "the order cites nothing" -- an entry naming an item this run
+    never saw is exactly the finding this class exists to make, so it cannot be
+    inferred from a read that failed.
     """
     kind, _problem = file_kind(order)
     if kind == "absent":
@@ -441,15 +458,13 @@ def _ordered_issues(order: Path, *, file_kind, read_record,
         value = load_json_strict(raw)
     except (UnicodeDecodeError, ValueError, RecursionError):
         return None
-    if not isinstance(value, dict) or value.get("schema") != "noni.order/1":
+    if not isinstance(value, dict):
         return None
     entries = value.get("entries")
     if not isinstance(entries, list):
         return None
-    issues = {entry["issue"] for entry in entries
-              if isinstance(entry, dict) and isinstance(entry.get("issue"), int)
-              and not isinstance(entry.get("issue"), bool)}
-    return issues
+    return {entry["item"] for entry in entries
+            if isinstance(entry, dict) and isinstance(entry.get("item"), str)}
 
 
 def _check_stale(bodies, now: datetime, item_stale_after: timedelta, add,

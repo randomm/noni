@@ -126,10 +126,10 @@ def test_the_page_says_what_is_skipped_without_the_state_file() -> None:
     only that "the check does not run" will go looking for it in a ``--json``
     stream and conclude the census is silent. The literal is the product's own, so
     a rename of the note fails here rather than leaving the page quoting a line
-    nobody prints. It lives in ``census_report.py``, the one renderer that speaks
+    nobody prints. It lives in ``census_render.py``, the one renderer that speaks
     both modes, since one sentence printed two ways needs one home.
     """
-    source = (REPO / "src" / "noni" / "census_report.py").read_text(encoding="utf-8")
+    source = (REPO / "src" / "noni" / "census_render.py").read_text(encoding="utf-8")
     assert "ordering-closed was not evaluated" in source, "the note left the product"
     text = _page()
     assert "ordering-closed was not evaluated" in text, "the page does not name the note"

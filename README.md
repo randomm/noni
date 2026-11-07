@@ -90,7 +90,7 @@ missing deny-list and a ledger with nothing to arbitrate), and does not move it.
 
 Read `noni/skills/<skill>/SKILL.md` for what each writer accepts and refuses;
 the steering-ledger and sessions-claims skills keep record-shape detail in their
-`references/` directories. `noni --help` names the eight subcommands and
+`references/` directories. `noni --help` names the nine subcommands and
 `noni <tool> --help` the flags of one.
 
 Everything noni keeps in your repository lives in one directory:

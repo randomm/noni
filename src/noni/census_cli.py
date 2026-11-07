@@ -65,10 +65,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--now", default=None, metavar="ISO-8601", help="fixed timestamp for time-based checks (reproducible output)")
     parser.add_argument("--stale-after", default=SESSION_STALE_AFTER_DEFAULT, metavar="DAYS",
                         help=f"staleness threshold in positive whole days as `<N>` or `<N>d` "
-                             f"(e.g. `7` or `7d`); default {SESSION_STALE_AFTER_DEFAULT} for active "
-                             f"sessions, {ORDERING_STALE_AFTER_DEFAULT} for order entries and "
-                             f"{ITEM_STALE_AFTER_DEFAULT} for filed ideas, or this value for all "
-                             "three when given")
+                             f"(e.g. `7` or `7d`); each class keeps its own default "
+                             f"({SESSION_STALE_AFTER_DEFAULT} for active sessions, "
+                             f"{ORDERING_STALE_AFTER_DEFAULT} for order entries and "
+                             f"{ITEM_STALE_AFTER_DEFAULT} for filed ideas), and a "
+                             "given value applies to all stale classes")
     parser.add_argument("--strict", action="store_true",
                         help=f"treat warn classes ({_warn_class_names()}) as failures")
     parser.add_argument("--json", action="store_true", dest="json_out", help="emit NDJSON records on stdout (noni.census/1)")

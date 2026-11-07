@@ -9,8 +9,10 @@ set the direction, and a refusal leaves the tracked files byte-identical.
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 import pytest
+from _harness import _commit_file, _init_repo
 from intent_fixtures import (
     GOOD_INTENT,
     INTENT_REL,
@@ -312,6 +314,44 @@ def test_a_repo_that_is_not_a_directory_is_exit_2(tmp_path):
     result = intent_run(repo, SET, "--from", draft(tmp_path, GOOD_INTENT),
                         "--decision", RECORD_ID, repo_override=missing)
     assert result.returncode == 2
+
+
+def test_set_is_admitted_on_a_tree_with_no_noni_and_refused_for_the_ledger(tmp_path):
+    """A first ``set`` on a tree with no noni/ is admitted, then refused for its cite.
+
+    ``set`` is the sanctioned creator of ``noni/direction/intent.md``, so the state-root
+    refusal must not fire for it -- refusing it would break the first intent file, the
+    very exception the rule exists for. What still refuses the run is the citation: the
+    record it names does not exist, which is the writer's own exit 4. The two refusals
+    staying separate is the contract: a wrong --repo must not be allowed to invent an
+    intent, and a legitimate first run must not be stopped by a state-root check. The
+    draft is a valid one, so the code below is the citation's answer and not the
+    draft's.
+    """
+    repo = _code_repo(tmp_path)
+    result = intent_run(repo, SET, "--from", draft(tmp_path, GOOD_INTENT),
+                        "--decision", RECORD_ID, repo_override=repo)
+    assert result.returncode == 4, f"{result.returncode}: {result.stderr}"
+    assert "is not a noni state root" not in result.stderr, (
+        f"a sanctioned creator must not meet the state-root refusal: "
+        f"{result.stderr}")
+    assert "is in the ledger" in result.stderr, result.stderr
+    assert not (repo / "noni").exists(), "a refused run created noni/"
+
+
+def _code_repo(tmp_path: Path) -> Path:
+    """A committed git tree holding source and no noni/: a code repository.
+
+    Committed, because a tree with no commit is a different case for the writers' git
+    probes, and source files because the pilot's world was a real repository rather
+    than an empty directory.
+    """
+    repo = _init_repo(tmp_path / "code-repo")
+    _git(repo, "config", "user.name", "Replay")
+    _git(repo, "config", "user.email", "replay@fixture.invalid")
+    _commit_file(repo, "README.md", "# a code repository\n")
+    _commit_file(repo, "src/app.py", "def main() -> int:\n    return 0\n")
+    return repo
 
 
 def test_a_missing_draft_argument_is_exit_2(tmp_path):

@@ -27,6 +27,15 @@ three direction writers (``decide``, ``order``, ``intent``) have no session guar
 borrow: :mod:`noni._session_paths`' sentences are about a session file and stay the
 session writers', so the direction question is answered here, beside the file
 question, in words that name a directory and nothing else.
+
+The fourth question is the STATE-ROOT one: "is this ``--repo`` a noni state root at
+all?" It is the same ``lstat`` on ``noni`` itself, and it has its own sentence pair
+(:data:`STATE_ROOT_NOT_A_NONI`, :data:`STATE_ROOT_NOT_A_NONI_HINT`) rather than a
+reused one, because a directory that holds no ``noni/`` is not the same finding as a
+``noni/`` that is a link or a plain file: the first says the caller named the wrong
+tree, the second says the tree it named is obstructed. The writers that read state
+ask it through :func:`state_root_refusal`; the wording lives here so no writer
+composes its own.
 """
 
 from __future__ import annotations
@@ -46,6 +55,11 @@ SYMLINK_WORD = "symlink"
 # any other kind is the filesystem declining to answer, which is not evidence that the
 # position is free (see :func:`inspected_file_kind`).
 ABSENT_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR})
+
+# The head of the verdict :func:`_declined` renders for an ``lstat`` the filesystem
+# refused to answer. Spelled once so :func:`noni_holds_nothing` can name the declined
+# answer without restating the sentence it belongs to.
+_DECLINED_PREFIX = "could not be inspected"
 
 
 def refusal_reason(exc: BaseException) -> str:
@@ -99,7 +113,7 @@ def _declined(reason: str) -> str:
     syscall said. A declined answer is never read as absence -- see
     :func:`inspected_file_kind` and :func:`direction_refusal`, which both refuse it.
     """
-    return f"could not be inspected ({reason})"
+    return f"{_DECLINED_PREFIX} ({reason})"
 
 
 def inspected_file_kind(path: Path) -> str | None:
@@ -125,6 +139,129 @@ def inspected_file_kind(path: Path) -> str | None:
 # reported as a link the operator should go and remove.
 DIRECTION_REFUSAL = "{path} {kind}: noni never reads or writes through it"
 DIRECTION_REFUSAL_HINT = "replace {path} with a real directory inside the repository"
+
+# The two sentences for a ``--repo`` that is a directory but holds no ``noni/``: a
+# tree the caller named by mistake (a code repository where the state clone was meant,
+# or the reverse). Distinct from :data:`DIRECTION_REFUSAL` on purpose -- that pair
+# reports an obstruction at a ``noni/`` that IS there, this one reports that nothing
+# of noni's lives at the path at all, which is what the pilot's "no decision record
+# ... is in the ledger" answer failed to say. Spelled here rather than in a writer so
+# the three direction writers and the census print one sentence. The path slot is
+# filled with ``--repo`` as the caller spelled it, never a resolved absolute path.
+STATE_ROOT_NOT_A_NONI = "{path} is not a noni state root: no noni/ directory is there"
+STATE_ROOT_NOT_A_NONI_HINT = (
+    "pass --repo naming the state root, the directory that holds (or will hold) "
+    "noni/: the project repository itself, or the private state repository of "
+    "docs/PRODUCT.md 7")
+
+# The four directories a state root may hold, and the only shapes a no-``noni/``
+# refusal may be reached through: absent is the state the sanctioned first writers
+# create, so :func:`noni_holds_nothing` answers for it and nothing else.
+STATE_ROOT_DIR = "noni"
+
+# The directories a noni writer owns under ``noni/``, and the only entries a ``noni/``
+# may hold and still count as a tree noni never wrote to: the ledger's, the session
+# register's, and the two the direction writers write. Anything else at that level is
+# something somebody put there, so :func:`noni_holds_nothing` says the tree holds state.
+NONI_OWN_DIRS = frozenset({"decisions", "sessions", "direction"})
+
+# The two questions this module asks of a directory are both asked by a helper that
+# gives the SAME answer for "a directory I may read" and for "nothing of mine is
+# here": :func:`_directory_kind` returns None for both, which is all its own callers
+# need (either way, do not refuse). The state-root question needs the distinction, so
+# it asks :func:`_directory_verdict` instead, which keeps absence and acceptability
+# apart. :data:`ABSENT` is that helper's one word for nothing at the path, and
+# :data:`NOT_A_STATE_ROOT_STATES` names every other verdict so the states the
+# state-root refusal declines to report are written down rather than implied by a
+# comparison: a link, a plain file, a socket or a device belongs to
+# :data:`DIRECTION_REFUSAL`, and a declined ``lstat`` to the word :func:`_declined`
+# renders. None of them may be collapsed into "no ``noni/`` directory", which would
+# contradict ``skills/census/SKILL.md`` where each stands as its own state.
+ABSENT = "absent"
+NOT_A_STATE_ROOT_STATES = frozenset({f"is a {SYMLINK_WORD}", "is not a directory"})
+
+
+def _directory_verdict(path: Path) -> str | None:
+    """Why ``path`` is no usable directory, :data:`ABSENT` when nothing is there, or
+    None when it is a real directory.
+
+    :func:`_directory_kind` plus the distinction its callers never needed: a plain
+    absence is reported rather than merged with "directory". Same ``lstat``, same
+    bounds -- a link is judged before the directory question, and only
+    ``ENOENT``/``ENOTDIR`` count as absence, so a declined answer stays a refusal.
+    """
+    try:
+        mode = os.lstat(path).st_mode
+    except (OSError, ValueError) as exc:
+        if isinstance(exc, OSError) and exc.errno in ABSENT_ERRNOS:
+            return ABSENT
+        return _declined(refusal_reason(exc))
+    if stat.S_ISLNK(mode):
+        return f"is a {SYMLINK_WORD}"
+    return None if stat.S_ISDIR(mode) else "is not a directory"
+
+
+def has_no_noni(root: Path) -> bool:
+    """Whether ``root`` holds no ``noni`` entry, so nothing of noni's has been written.
+
+    The creator's test, and the strictest one a first run can be let through on: absence
+    and nothing else. An ``noni`` that exists is state, even an empty one -- the census
+    gives it its own state word and the readers answer for it (``skills/census/SKILL.md``)
+    -- so a verb that creates state is admitted only where the directory is genuinely not
+    there. A ``noni`` that is a link, a plain file, a socket or a device answers False
+    beside it: those are :func:`direction_refusal`'s finding, and the census names each as
+    its own state, so no guard here collapses them into "no ``noni/`` directory".
+    """
+    return _directory_verdict(
+        Path(os.path.normpath(str(root))) / STATE_ROOT_DIR) == ABSENT
+
+
+def state_root_refusal(root: Path) -> tuple[str, str] | None:
+    """The ``(headline, hint)`` pair for a ``--repo`` that is no noni state root.
+
+    The question a writer that only READS asks before its first read, probe or
+    ``mkdir``: "does this tree hold any noni state?" It is :func:`noni_holds_nothing`
+    plus the two sentences above -- a few ``lstat``s and listings that stop at the first
+    entry,
+    and it never walks above ``root`` nor follows a link. A run whose verb creates
+    the state it is about to write does not ask it: the first record, the first
+    session, the first order entry and the first intent file all legitimately create
+    ``noni/`` (see :func:`noni._writer.allocate_ledger`), so the refusal belongs to
+    the readers and the verbs with no sanctioned create path, not to every caller of
+    ``--repo``.
+
+    The path in both sentences is the root as the caller spelled it, rendered once
+    through :func:`noni._safe_text.safe_path`; nothing is printed, nothing raises, and
+    the caller prints the pair through its own failure printer with its own label and
+    its own code -- 2 for ``order`` and ``intent``, the code its tool already uses for
+    a wrong path (docs/PRODUCT.md 7).
+    """
+    if not has_no_noni(root):
+        return None
+    text = safe_path(str(root))
+    return (STATE_ROOT_NOT_A_NONI.format(path=text),
+            STATE_ROOT_NOT_A_NONI_HINT)
+
+
+def refuse_state_root(root: Path, creates: bool,
+                      guarded: tuple[str, ...]) -> tuple[str, str] | None:
+    """The one guard a direction writer runs on its ``--repo``, or None.
+
+    Both ``noni/`` questions in the order that matters, asked of the same ``lstat``:
+    first :func:`direction_refusal` over every component of ``guarded`` (a ``noni/``
+    that is a link or a plain file is refused, never followed or written through),
+    then :func:`state_root_refusal` for a tree holding no ``noni/`` at all.
+    The obstruction question comes first so a linked ``noni/`` keeps the sentence that
+    names it rather than being reported as a missing one, which is what
+    ``skills/census/SKILL.md`` documents as its own state.
+
+    A function that returns a ``(headline, hint)`` pair rather than printing, so each
+    writer keeps its own label, its own ``fix:`` shape and its own exit code (2 for
+    ``order`` and ``intent``: docs/PRODUCT.md 7), and the guard still runs before any
+    read, probe or mkdir in the caller.
+    """
+    return (direction_refusal(root, guarded)
+            or (None if creates else state_root_refusal(root)))
 
 
 def _directory_kind(path: Path) -> str | None:

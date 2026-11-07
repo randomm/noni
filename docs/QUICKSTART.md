@@ -71,7 +71,7 @@ Every `noni/` path a tool reads or writes resolves from `--repo`, the one flag
 that names the state root. Nothing else does: not the tool's own location, not
 the current directory beyond `--repo`'s default, and no environment variable. A
 `--repo` that is missing or is not a directory stops the command with a clear
-message and that tool's own argument-refusal code.
+message and that tool's own argument-refusal code, and so does a `--repo` holding no `noni/` (§7).
 
 Two routes. Both are supported, and both are covered below.
 

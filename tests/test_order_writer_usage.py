@@ -28,7 +28,10 @@ import subprocess
 
 from _harness import (
     REPO,
+    _commit_file,
+    _git,
     _git_ok,
+    _init_repo,
     run_from,
     run_module,
     run_noni,
@@ -307,6 +310,64 @@ def test_a_repo_that_is_not_a_directory_is_a_fault(tmp_path):
     assert "--repo" in proc.stderr, proc.stderr
     assert "is not a directory" in proc.stderr, proc.stderr
     assert not (tmp_path / "no-such-repo").exists(), "the writer created a tree it refused"
+
+
+def _code_repo(tmp_path, name: str):
+    """A committed git tree holding source and no ``noni/``: the pilot's mistake.
+
+    Built with a commit rather than an empty ``_init_repo`` tree, because that is the
+    shape a caller actually points ``--repo`` at (their code repository, where the
+    state clone was meant) and the writers' git probes answer differently on a tree
+    with no commit at all.
+    """
+    repo = _init_repo(tmp_path / name)
+    _git(repo, "config", "user.name", "Replay")
+    _git(repo, "config", "user.email", "replay@fixture.invalid")
+    _commit_file(repo, "README.md", "# a code repository\n")
+    _commit_file(repo, "src/app.py", "def main() -> int:\n    return 0\n")
+    return repo
+
+
+def test_a_repo_that_holds_no_noni_directory_is_a_fault(tmp_path):
+    """A committed git tree with no noni/ is the same fault, and the same exit 2.
+
+    The case above names a path that does not exist, which every state-root test in
+    this suite did -- so a directory that exists, is a valid git work tree and simply
+    holds no noni/ fell past the is_dir check into the reads and answered "no decision
+    record ... is in the ledger" about a repository holding no ledger (issue #120,
+    reproduced from the quickstart's Route B block with --repo aimed at the project
+    instead of the clone). The contrast cases stay distinct and stay theirs: a tree
+    with an empty ledger is exit 4, a noni/ that is not a directory is exit 3, and
+    neither of those is this state.
+    """
+    repo = _code_repo(tmp_path, "code-repo")
+    proc = _order(repo, "move", "7", "--to", "1", "--now", NOW)
+    assert proc.returncode == 2, f"{proc.returncode}: {proc.stderr}"
+    assert str(repo) in proc.stderr, (
+        f"the refusal must name the path the caller passed: {proc.stderr}")
+    assert "is not a noni state root" in proc.stderr, proc.stderr
+    assert "no noni/" in proc.stderr, proc.stderr
+    assert "--repo" in proc.stderr, (
+        f"the hint must name the flag the caller passed wrong: {proc.stderr}")
+    assert "is in the ledger" not in proc.stderr, (
+        f"the reads must not answer for a tree with no state root: {proc.stderr}")
+    assert not (repo / "noni").exists(), "the writer created a noni/ it refused"
+
+
+def test_confirm_without_an_issue_creates_nothing_on_a_repo_with_no_noni(tmp_path):
+    """confirm is refused on a no-noni/ tree rather than writing an empty order.
+
+    Reproduced on main: confirm with no issue argument planned no change, so it exited
+    0 and left a valid empty noni/direction/order.json behind on a tree the caller had
+    pointed at the wrong repository -- the first-run write path the rule about which
+    verbs may create noni/ has to close, since confirm creates nothing legitimate.
+    """
+    repo = _code_repo(tmp_path, "code-repo-confirm")
+    proc = _order(repo, "confirm", "--now", NOW, "--no-commit")
+    assert proc.returncode == 2, f"{proc.returncode}: {proc.stderr}"
+    assert "is not a noni state root" in proc.stderr, proc.stderr
+    assert not (repo / "noni").exists(), (
+        "confirm wrote an empty order.json into a tree that is not a state root")
 
 
 # --- AC2: this writer's path token, from a relative --repo -------------------

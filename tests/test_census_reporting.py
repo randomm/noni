@@ -160,9 +160,18 @@ class TestClean:
     def test_no_noni_dir_exits_zero(self, tmp_path):
         """A repo with no noni/ directory at all exits 0 (ledger-empty is a
         warn), but it is never silent: exactly one ledger-empty row carries the
-        state word "absent", and --strict promotes it to exit 42."""
+        state word "absent", and --strict promotes it to exit 42.
+
+        The tree is a code repository (README and source, no noni/), which is how the
+        state ends up missing in practice: --repo aimed at the project instead of the
+        state clone. So the run must also say the one plain thing -- no noni/
+        directory was found under --repo -- because two warn rows about absent
+        artifacts read as a project that has not steered yet rather than as a caller
+        who named the wrong tree.
+        """
         repo = _init_repo(tmp_path / "repo")
         _commit_file(repo, "README.md", "# empty\n")
+        _commit_file(repo, "src/app.py", "def main() -> int:\n    return 0\n")
         rc, out, err = _run_census(repo, json_out=True)
         assert rc == 0, f"expected exit 0 on repo with no noni/, got {rc}\nstderr: {err}\nstdout: {out}"
 
@@ -178,10 +187,64 @@ class TestClean:
             f"expected the 'absent' state word in the message: {ledger_rows[0]['message']}"
         )
 
+        # The machine-readable half of the same fact: --json prints no "note:" line,
+        # so the sentence has to be on the one summary row or a CI consumer of this
+        # stream would never learn the tree holds no state at all.
+        summary = [r for r in _ndjson_rows(out) if r.get("kind") == "summary"]
+        assert len(summary) == 1, _ndjson_rows(out)
+        carried = summary[0].get("not_evaluated")
+        assert isinstance(carried, list) and carried, (
+            f"--json must carry the no-noni/ note: {summary[0]}")
+        assert any("no noni/ directory was found under --repo" in str(line)
+                   for line in carried), carried
+
         rc_strict, _out, err = _run_census(repo, "--only", "ledger-empty", "--strict")
         assert rc_strict == 42, (
             f"expected exit 42 for ledger-empty under --strict, got {rc_strict}\nstderr: {err}"
         )
+
+    def test_no_noni_note_prints_ahead_of_the_rows(self, tmp_path):
+        """The no-noni/ note is the first line, and the verdict line stays the last.
+
+        Ordering is the whole point of the note: findings are sorted by
+        (artifact, check, subject), so a note appended after them would sit below the
+        very rows a wrong --repo makes meaningless, and an operator scanning the top
+        of the report would see ledger-empty and deny-list warnings and conclude the
+        project was merely unconfigured. The verdict line's position is the other half
+        -- a CI step parses lines[-1] -- so both ends are pinned on the same run.
+        """
+        repo = _init_repo(tmp_path / "note-order")
+        _commit_file(repo, "README.md", "# empty\n")
+        _commit_file(repo, "src/app.py", "def main() -> int:\n    return 0\n")
+        rc, out, err = _run_census(repo)
+        lines = out.splitlines()
+        assert rc == 0, f"{rc}\n{out}\n{err}"
+        assert lines[0].startswith("note: "), (
+            f"the no-noni/ note must open the report, above the headline and every "
+            f"row: {lines[:4]!r}")
+        assert "no noni/ directory was found under --repo" in lines[0], lines[0]
+        assert str(repo) in lines[0], f"the note must name --repo as it was passed: {lines[0]}"
+        assert lines[-1].startswith("summary: "), lines[-1]
+        assert lines[-1].endswith("verdict ok"), lines[-1]
+        # Said once, not twice: the leading note is excluded from the trailing block.
+        assert sum(1 for line in lines if line.startswith("note: ")) == 2, lines
+
+    def test_no_noni_note_is_silent_under_a_path_override(self, tmp_path):
+        """No note when a path override names the state, because --repo need not hold it.
+
+        --ledger, --sessions, --ordering and --intent replace the path under the state
+        root rather than selecting it, so a caller who keeps the ledger beside an
+        unrelated --repo has done the sanctioned thing and must not be told their
+        --repo holds no noni/. The state words of ledger-empty keep reporting the
+        override's own tree either way.
+        """
+        repo = _init_repo(tmp_path / "override")
+        _commit_file(repo, "README.md", "# empty\n")
+        outside = tmp_path / "state" / "noni" / "decisions"
+        outside.mkdir(parents=True)
+        _commit_file(_init_repo(outside.parent), "README.md", "# state\n")
+        _rc, out, _err = _run_census(repo, "--ledger", str(outside))
+        assert "no noni/ directory was found under --repo" not in out, out
 
     def test_recordless_ledger_dir_is_a_ledger_empty_warn(self, tmp_path):
         """A decisions/ directory that exists but holds no record is a warn, not

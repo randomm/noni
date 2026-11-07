@@ -127,7 +127,11 @@ def test_package_files_present():
     """
     shipped = {p.name for p in (REPO / "src" / "noni").glob("*.py")}
     for module in (
-        "census.py", "census_hygiene.py", "census_intent.py",
+        "census.py", "census_hygiene.py",
+        # The row-composition helpers the hygiene class was split along (the 500-line
+        # cap has no override), shipped with it.
+        "census_hygiene_rows.py",
+        "census_intent.py",
         "census_intent_readers.py", "census_json.py",
         "census_ledger.py",
         "census_ordering.py", "census_ordering_readers.py",
@@ -137,7 +141,14 @@ def test_package_files_present():
         "decide.py", "gitenv.py", "gitwrite.py", "intent.py", "intentschema.py",
         "labels.py", "order.py",
         "order_gitwrite.py",
-        "orderschema.py", "orderstate.py", "public_safety.py", "register.py",
+        "orderschema.py", "orderstate.py", "public_safety.py",
+        # The allowlist reader and the two modules the scan was split along are shipped
+        # product too, so they belong on the list that keeps a helper from quietly
+        # leaving the package and the scrub that covers it.
+        "public_safety_allowlist.py",
+        "public_safety_io.py",
+        "public_safety_scan.py",
+        "register.py",
         "shim_help.py", "targetschema.py",
     ):
         assert module in shipped, f"src/noni/{module} missing; have: {sorted(shipped)}"

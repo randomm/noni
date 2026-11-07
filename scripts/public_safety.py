@@ -7,10 +7,13 @@ AGENTS.md names: the CLI contract stays here, with the honest exit codes the
 publishing checklist depends on: exit 0 (with a ``clean`` line) only when both
 halves ran, exit 1 on a violation, exit 2 when the deny-list class was not
 active, and exit 3 when the gate could not run at all — the package it imports
-was not importable, so no file was scanned. The last two must never share a
-number: the CI step tolerates exit 2 (a public runner has no deny-list), and a
-gate that never ran is not the same verdict as a gate that ran and found
-nothing to refuse.
+was not importable, so no file was scanned, or the tree's committed allowlist
+could not be read or refused to parse, so the scan did not know its exemptions.
+The last two must never share a number with exit 2: the CI step tolerates exit 2
+(a public runner has no deny-list), and a gate that never ran is not the same
+verdict as a gate that ran and found nothing to refuse. Exit 3 therefore covers
+every state in which the scan did not answer, and the CI step's code table keeps
+rejecting it however many causes share it.
 
 The tree to audit is this repository: it is named from this script's own
 location, never from the package's, because the package may be installed from a
@@ -38,7 +41,18 @@ except ImportError as exc:  # pragma: no cover - the import-failure branch
 
 
 def main() -> int:
-    found, _source, denylist = public_safety.scrub_tracked_files(REPO)
+    found, _source, denylist, allowlist = public_safety.scrub_tracked_files(REPO)
+    if getattr(allowlist, "status", "absent") in ("malformed", "unreadable"):
+        # Exit 3, not 1 and not 2: the findings below are the allowlist's own rows, and
+        # reporting them as violations would say the scan ran and disapproved, when in
+        # fact it never learned its exemptions. 3 is the code CI refuses, which is the
+        # only answer that keeps an unreadable allowlist from reading as clean.
+        state = getattr(allowlist, "status", "unusable")
+        for violation in found:
+            print(violation, file=sys.stderr)
+        print(f"public-safety: NOT clean — {public_safety.GATE_COULD_NOT_RUN_WORD}: "
+              f"the committed allowlist is {state}", file=sys.stderr)
+        return 3
     if found:
         for v in found:
             print(v, file=sys.stderr)

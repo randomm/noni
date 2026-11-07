@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from . import public_safety as _PACKAGE_PUBLIC_SAFETY
+from .census_hygiene_rows import _split_violation
 from .census_text import fault_text
 
 # The artifact a not-run hygiene row names, in the census's own hygiene artifact
@@ -47,12 +48,16 @@ class PublicSafetyModule(Protocol):
     ``_denylist_active`` is a private helper of that module; the census calls it
     because public_safety is a gate file whose surface this release may not
     widen, and `_trusted_public_safety` requires it at runtime precisely so the
-    coupling is detected as a not-run row rather than an AttributeError.
+    coupling is detected as a not-run row rather than an AttributeError. The same
+    is true of ``load_allowlist``: the census asks it directly for the committed
+    allowlist's state, and the state is part of the verdict this class reports.
     """
 
-    def scrub_tracked_files(self, repo: Path) -> tuple[list[str], str | None, Any]: ...
+    def scrub_tracked_files(self, repo: Path) -> tuple[list[str], str | None, Any, Any]: ...
 
     def _denylist_active(self, denylist: Any) -> bool: ...
+
+    def load_allowlist(self, repo: Path) -> Any: ...
 
 
 # A census-owned registry key, never the shared "public_safety" name: the
@@ -135,7 +140,8 @@ def _trusted_public_safety(module: object) -> bool:
     if not isinstance(module, types.ModuleType) or module.__name__ != "noni.public_safety":
         return False
     return all(callable(getattr(module, name, None))
-               for name in ("scrub_tracked_files", "_denylist_active", "load_denylist"))
+               for name in ("scrub_tracked_files", "_denylist_active", "load_denylist",
+                            "load_allowlist"))
 
 
 def _hygiene_labels(public_safety) -> set[str]:
@@ -185,57 +191,6 @@ def _hygiene_labels(public_safety) -> set[str]:
     return labels
 
 
-def _split_violation(violation: str, labels: set[str]) -> tuple[str, int, str] | None:
-    """Split a public_safety violation into (path, line, label-as-emitted), or None.
-
-    The third field is the row's tail verbatim, so a row that names a fault keeps it in
-    the report: the unreadable-file class spells the refusing syscall's class and errno
-    words after its label, and those words are the finding.
-
-    Splitting cannot count colons: a tracked path may contain one ("x:y/p.txt" is legal),
-    so splitting at the first truncates the path and garbles the message -- which also
-    breaks the documented (artifact, check, subject) grouping. The label is a fixed
-    string from public_safety's own tables and holds no colon, so the tail is matched
-    against the known label set exactly and everything before ":<line>: " is the path. A
-    label match is only the start of the check: the head must still parse as
-    "<path>:<digits>", which stops a shorter label appearing partway through a longer one
-    from claiming the row.
-    """
-    if not labels:
-        return None
-    for label in labels:
-        suffix = f": {label}"
-        # A label that is not the tail of the row is not the split, unless the row is a
-        # fault row: "<path>:<line>: <label> (<fault>)".
-        if violation.endswith(suffix):
-            head, tail = violation[: -len(suffix)], label
-        else:
-            head, tail = _fault_row_head(violation, suffix)
-        if head is None:
-            continue
-        path, sep, line_no = head.rpartition(":")
-        if sep and path and line_no.isdigit():
-            return path, int(line_no), tail
-        # The tail matched but the head is not "<path>:<digits>": this label is not the
-        # split, and a later one may match the same tail with a head that parses.
-        continue
-    return None
-
-
-def _fault_row_head(violation: str, suffix: str) -> tuple[str | None, str]:
-    """The head and label tail of "<path>:<line>: <label> (<fault>)", or (None, "").
-
-    The one shape where a label is not the last thing in the row. A paren alone is not
-    enough to claim it: the tail must read as one fault -- "Class: errno words" or the
-    bare class, so at most one colon -- or it stays a verbatim row.
-    """
-    marker = suffix + " ("
-    if not violation.endswith(")") or marker not in violation:
-        return None, ""
-    head, _, fault = violation.partition(marker)
-    if not fault.endswith(")") or fault.count(":") > 1:
-        return None, ""
-    return head, f"{suffix[2:]} ({fault}"
 def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
                   row: Callable[..., dict], bounded: Callable[[str], str]) -> None:
     """The public-repo hygiene class (warn 50): the tracked-file scan, run
@@ -309,7 +264,7 @@ def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
     # and tool faults and nothing else.
     with _pinned_hygiene_env(), _QuietScanStderr():
         try:
-            violations, _source, denylist = public_safety.scrub_tracked_files(top)
+            violations, _source, denylist, allowlist = public_safety.scrub_tracked_files(top)
         except OSError as e:
             # The scan's own read of the tree faulted. ``OSError`` renders itself
             # as the errno words *plus the path it failed on*, so the row is
@@ -349,6 +304,25 @@ def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
             return
 
     labels = _hygiene_labels(public_safety)
+
+    # The committed allowlist decides whether this run had a verdict at all. A file the
+    # operator wrote and the scan could not read (or refused to honour) is the gate-
+    # could-not-run state: it gets the not-run row, which outranks the `--only` filter as
+    # every whole-artifact row does, so a filtered run cannot report hygiene-clean on a
+    # tree whose exemptions went unread. The gate's exit 3 is the same verdict told the
+    # other way, and the census has no 3 to give: the row is this entry point's answer.
+    if getattr(allowlist, "status", "absent") in ("malformed", "unreadable"):
+        add(
+            "hygiene scan",
+            scan_artifact,
+            bounded(f"hygiene scan did not run: the committed allowlist "
+                    f"{_allowlist_identity(allowlist)} was "
+                    f"{_allowlist_state(allowlist)}, so the exemptions this gate was "
+                    "told to honour could not be read — this run is not a "
+                    "hygiene-clean guarantee"),
+        )
+        return
+
     for violation in sorted(violations):
         parsed = _split_violation(violation, labels)
         if parsed is None:
@@ -369,6 +343,30 @@ def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
             "entry was checked, so operator names, external project/tool names and hostnames "
             "are NOT covered — this run is not a hygiene-clean guarantee",
         )
+
+
+def _allowlist_identity(allowlist: Any) -> str:
+    """The allowlist's name for the row: never a machine-local absolute path.
+
+    public_safety already reduces a file inside the audited tree to its
+    repository-relative path; an env-named file outside it arrives as a posix path, of
+    which only the basename may be printed. No row of the census carries a host path.
+    """
+    source = str(getattr(allowlist, "source", "") or "")
+    return source.rpartition("/")[2] or source
+
+
+def _allowlist_state(allowlist: Any) -> str:
+    """The word for why the allowlist gave no verdict.
+
+    public_safety owns the statuses and this only maps them: "malformed" is a file that
+    was read and refused to parse, "unreadable" one the read declined (not a regular
+    file, past the size bound, not UTF-8). A status public_safety adds later surfaces
+    under its own name here rather than being silently mislabelled.
+    """
+    status = str(getattr(allowlist, "status", ""))
+    return {"malformed": "refused as malformed", "unreadable": "unreadable"}.get(
+        status, status or "unusable")
 
 
 def _denylist_state(denylist: Any) -> str:
@@ -392,10 +390,12 @@ class _QuietScanStderr:
 
     ``public_safety`` announces an inactive deny-list on ``sys.stderr`` from two
     places (``scrub_tracked_files`` for absent/corrupt, ``load_denylist`` for an
-    unreadable candidate, which also leaks a machine-local absolute path). The
-    census already reports that same state as a documented ``deny-list`` warn row
-    with its own fix hint, so repeating it on stderr makes ``census --json`` a
-    stream a machine consumer has to redirect to be clean (issue #77, AC3).
+    unreadable candidate, which also leaks a machine-local absolute path), and a
+    refused allowlist from a third (``load_allowlist``, whose message quotes the file
+    the operator named -- an absolute path on the env route). The census already
+    reports each of those states as a row with its own fix hint, so repeating them on
+    stderr makes ``census --json`` a stream a machine consumer has to redirect to be
+    clean (issue #77, AC3).
 
     It is redirected only around the one call, and only for the census, because
     ``public_safety`` is a gate file: its standalone CLI keeps its banner
@@ -427,6 +427,9 @@ class _QuietScanStderr:
 
     # Enough of a stream for the calls the scan makes, so a caller that inspects
     # the stream during the scan gets an answer rather than an AttributeError.
+    # One per state the scan announces: deny-list absent/corrupt, deny-list candidate
+    # unreadable, allowlist refused. A fourth would be a new announcement the census has
+    # not been asked about, and the cap is where that would be noticed.
     _KEEPS = 3
 
     def __init__(self) -> None:

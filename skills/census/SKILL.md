@@ -59,7 +59,7 @@ directory, is a usage error (exit 2) before any check runs.
 | `ordering-stale` | 45 | an order entry whose `confirmed` is older than the `--stale-after` threshold relative to `--now` (warn by default; fail under `--strict`) |
 | `ordering-closed` | 46 | an ordered issue the `--issue-state` file says is closed; also the `cannot-tell` row for an entry the file does not mention (warn by default; fail under `--strict`) |
 | `intent` | 51 | `noni/direction/intent.md` is there and is not the artifact: a `## Purpose` / `## Principles` / `## Never` / `## Ask first` heading missing, repeated or out of order, the `Last-confirmed:` line absent or repeated, or the file past its line cap; or the last commit that touched it is not an `intent: <decision-id>` headline naming a record the ledger holds (`uncited`). The `cannot-tell` row for a file this run could not read, for a cited decision record that is a symlink or any other non-regular path, for a ledger directory reached through a symlink, or for a file no commit touched, is a warn (fail under `--strict`); an absent file adds no row at all |
-| `hygiene` | 50 | a tracked file fails the public-repo hygiene scan (machine-local home path, secret shape, active deny-list entry), or the scan/deny-list did not run (warn by default; fail under `--strict`) |
+| `hygiene` | 50 | a tracked file fails the public-repo hygiene scan (machine-local home path, secret shape, active deny-list entry), a committed allowlist entry matches nothing, or the scan/deny-list did not run (warn by default; fail under `--strict`) |
 
 The `warn` classes are reported either way and never move the exit code on
 their own: a run whose only findings are warnings exits 0, and `--strict`
@@ -166,8 +166,8 @@ consumers should branch on it rather than matching message prose:
 
 | `subject` | meaning | `artifact` |
 |---|---|---|
-| `path:line` of a tracked file | a built-in or active deny-list violation | that file, root-relative |
-| `hygiene scan` | the scan itself did not run (no git tree, `git ls-files` failed or hung, `public_safety` not importable) | the checker, in the hygiene artifact namespace (`noni/public_safety.py`) |
+| `path:line` of a tracked file | a built-in or active deny-list violation, or an allowlist finding (stale, refused) at line 0 | that file, root-relative |
+| `hygiene scan` | the scan itself did not run (no git tree, `git ls-files` failed or hung, `public_safety` not importable, or the committed allowlist unreadable or refused) | the checker, in the hygiene artifact namespace (`noni/public_safety.py`) |
 | `deny-list` | the deny-list half of the scan did not run; the state word (`absent`, `corrupt`, `present but empty`) is in the message | the checker, as above |
 
 A violating file's artifact is rooted in the tree being audited; the two
@@ -177,7 +177,7 @@ namespace instead — the census never prints a machine-local absolute path eith
 way. A tracked path may contain a
 colon, so the census splits public_safety's `path:line: label` on its known
 label set rather than on the first colon, and a violation of an unexpected
-shape is reported verbatim instead of split.
+shape is reported verbatim instead of split; an allowlist finding is reported at line 0.
 
 ## The probe-honesty rule
 

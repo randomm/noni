@@ -324,10 +324,11 @@ python scripts/public_safety.py
 ```
 
 That CLI exits 2 when the class was not active, so it cannot report a false
-"clean" on a tree whose deny-list is absent, corrupt or empty. A gate that
-could not run is a different answer: if the `noni` package is not importable
-the script says so on one line and exits 3.
-
+"clean" on a tree whose deny-list is absent, corrupt or empty. A gate that could not
+run is a different answer, always exit 3: `noni` not importable, or the committed
+`.noni-scrub-allowlist` not readable -- `path | label | reason` per exact path and
+label, letting a fixture keep a token-shaped string (step 1 of
+[Publishing noni](PUBLISHING.md#before-publishing) owns it).
 ## The --issue-state map, and what the census skips without it
 
 The census never contacts a tracker. Whether an ordered issue is closed reaches

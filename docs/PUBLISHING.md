@@ -36,8 +36,31 @@ history. History violations are **reported** (below) and never rewritten here.
    active — absent, unreadable, or present-but-empty (zero usable entries) —
    so it will not report a false "clean" in any of those states. It exits 3
    when the gate could not run at all (the ``noni`` package was not
-   importable), which is a different state from 2: 2 is a scan that ran with
-   half its vocabulary missing, 3 is a scan that never started.
+   importable, or the committed `.noni-scrub-allowlist` could not be read or
+   refused to parse), which is a different state from 2: 2 is a scan that ran
+   with half its vocabulary missing, 3 is a scan that never learned its
+   exemptions and so has no verdict. A green run is only ever published on 0.
+
+   A tracked fixture that carries a token-shaped string on purpose is exempted
+   by a committed **allowlist** rather than by deleting the fixture.
+   `.noni-scrub-allowlist` sits at the root of the tree being audited, one entry
+   per line as `path | label | reason`:
+
+   ```
+   # path | label | reason
+   tests/fixtures/token.txt | GitHub classic token | synthetic token the loader reads
+   ```
+
+   Each entry exempts that one (path, label) pair — a second label on the same
+   line still fails — and names one exact tracked path: never a glob, a
+   directory, or a `..`. No entry may name either config file, or the deny-list
+   label: the allowlist cannot exempt itself, and the deny-list class can never
+   be exempted at all. The file is **committed**, unlike the deny-list, because an
+   exemption widens what the gate accepts and must be reviewed with the code that
+   needs it. An entry whose path the listing no longer holds is reported as a
+   violation — the dangerous direction is a fixture renamed away from its
+   exemption, quietly covering whatever lands on that path next — so delete the
+   entry when you delete the fixture.
 
    `scripts/public_safety.py` is a wrapper: the checks it runs live in
    `src/noni/public_safety.py`, and the wrapper adds only the tree to audit

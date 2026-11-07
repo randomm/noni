@@ -94,6 +94,12 @@ __all__ = [
 # the same host-dependent-passes-in-CI bug as a hostile HOME. Cleared per test
 # like the git vars; a test that wants a deny-list sets it explicitly (or
 # monkeypatches public_safety._default_denylist_file).
+#
+# NONI_SCRUB_ALLOWLIST: the same argument for the committed allowlist, one layer up,
+# and a sharper one. A host allowlist does not merely add vocabulary -- it exempts
+# findings, so an inherited value could turn a test about "this finding is reported"
+# green on a machine whose owner allowed it. A test that wants an allowlist says so
+# through tests/census_allowlist.py.
 NONI_ENV_VARS = (
     "GIT_DIR",
     "GIT_WORK_TREE",
@@ -103,6 +109,7 @@ NONI_ENV_VARS = (
     "GIT_COMMITTER_NAME",
     "GIT_COMMITTER_EMAIL",
     "NONI_SCRUB_DENYLIST",
+    "NONI_SCRUB_ALLOWLIST",
 )
 
 # Make the package importable from test files whether or not it was installed:
@@ -152,6 +159,15 @@ def isolated_noni_env(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
     yield
+
+
+# The allowlist tests are split across four modules (the 500-line cap, with the seam at
+# what an entry exempts / what a stale entry earns / what a refused file does / what the
+# CLI exits with) and all four run over one throwaway tree. Its builder lives in
+# tests/allowlist_tree.py so the fixture has one owner; re-exported here because conftest
+# is the only module pytest collects fixtures from outside a test file -- the same shape
+# the quickstart topology fixtures below use.
+from allowlist_tree import clean_repo  # noqa: E402,F401  (a re-exported fixture)
 
 
 @pytest.fixture

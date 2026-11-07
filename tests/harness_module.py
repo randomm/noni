@@ -49,6 +49,7 @@ for _alias, _pkg_name in (
     ("release", "release"),
     ("census", "census"),
     ("census_hygiene", "census_hygiene"),
+    ("census_hygiene_rows", "census_hygiene_rows"),
     ("census_json", "census_json"),
     ("census_ledger", "census_ledger"),
     ("census_ordering", "census_ordering"),
@@ -67,6 +68,11 @@ for _alias, _pkg_name in (
     ("orderschema", "orderschema"),
     ("orderstate", "orderstate"),
     ("public_safety", "public_safety"),
+    ("public_safety_scan", "public_safety_scan"),
+    # The allowlist reader is registered beside the scanner it serves: a test that bends
+    # the loader (its default path, its parse) must reach the one object
+    # ``noni.public_safety`` bound, not a second copy imported by path.
+    ("public_safety_allowlist", "public_safety_allowlist"),
     ("register", "register"),
     ("targetschema", "targetschema"),
 ):

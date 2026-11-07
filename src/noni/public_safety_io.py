@@ -22,6 +22,12 @@ scanned when its target is a regular file and refused by the same-fd check when 
 not; an ``lstat`` before the open would leave the window in which a regular file is
 swapped for a pipe after the check. This is the idiom
 ``census_intent_readers.read_record`` uses.
+
+The two helpers at the end of this file -- "what is this path, before anyone reads it"
+and "the two answers a caller cannot get from the open alone" -- belong to the same
+question the guard answers, and are here rather than duplicated in the allowlist loader
+because that loader is the third caller of the guard and a per-caller copy of the
+absence rule is the drift the guard exists to prevent.
 """
 from __future__ import annotations
 
@@ -179,3 +185,42 @@ def read_text_lenient(path: Path) -> (
     if fd is None or fd == NOT_REGULAR:
         return None
     return read_open_regular(fd)
+
+
+def is_absent(path: Path) -> bool:
+    """True only for a path the filesystem describes as absent.
+
+    ``lstat`` rather than ``exists``: ``exists`` follows links and answers False for a
+    dangling one, which would make a link to nowhere read as "there is nothing here".
+    ENOENT and ENOTDIR are absence; anything else (EACCES on an unreadable directory,
+    ELOOP on a link loop, or a path that is a directory rather than a file) is a
+    statement about where something lives, not a statement that it is not there.
+
+    The scan itself does not ask this -- a tracked path that vanished after the listing is
+    a skip whatever the reason -- but a caller that answers "no configuration" instead of
+    "unreadable configuration" needs the distinction, because the two have opposite
+    consequences for the run.
+    """
+    try:
+        path.lstat()
+    except OSError as fault:
+        return fault.errno in ABSENT_ERRNOS
+    except Exception:
+        # A path the OS layer cannot describe is not a path reported as absent.
+        return False
+    return False
+
+
+def is_regular_file(path: Path) -> bool:
+    """True when ``path`` is a regular file, without reading or waiting on it.
+
+    The classification the guard makes on an open descriptor, made on a path instead, for
+    a caller that must decide *whether to open at all*. The window the guard exists to
+    close (a swap between check and open) is not a concern here: the result steers a
+    second, guarded open, which re-answers the question on the descriptor it holds.
+    """
+    fd, _fault = open_regular(path)
+    if fd is None or fd == NOT_REGULAR:
+        return False
+    close(fd)
+    return True

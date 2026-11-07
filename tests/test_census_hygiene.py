@@ -5,8 +5,16 @@ run, and the four machine-distinguishable row states that tell a caller which ha
 the scan a row is about.
 
 Split out of ``tests/test_census_unified.py``; the builders are in
-``tests/census_fixtures.py``, the runners in ``tests/census_run.py`` and the
-deny-list planting in ``tests/census_denylist.py``.
+``tests/census_fixtures.py``, the runners in ``tests/census_run.py``, the
+deny-list planting in ``tests/census_denylist.py`` and the allowlist planting in
+``tests/census_allowlist.py``.
+
+The allowlist rows here are the census's half of issue #118: what the census reports
+when the committed allowlist exempts a fixture (nothing), when one of its entries
+matches nothing (a row), and when the file cannot be read or refused parsing (the
+not-run row, which is the census's version of the gate's exit 3). The exemption rules
+themselves are pinned in ``tests/test_public_safety_allowlist.py``; what is pinned here
+is that the census reports them, in rows a caller can act on.
 """
 
 from __future__ import annotations
@@ -22,6 +30,13 @@ from census_run import _run_census
 _HOME_PATH = _home_path_violation()
 
 _SECRET = _secret_violation()
+
+# The label and the token as file content, assembled from the product's own tables: a
+# test file that typed a token literal would need an allowlist entry to pass the check
+# it is testing.
+_SECRET_LINE = f"token {_SECRET}"
+_TOKEN_FIXTURE = _SECRET_LINE + "\n"
+TOKEN_LABEL = "GitHub classic token"
 
 class TestHygiene:
     """The hygiene class (warn 50): the in-process public_safety scan over the
@@ -318,7 +333,7 @@ class TestHygiene:
         # refuse it, so the caller reports it verbatim.
         monkeypatch.setattr(
             public_safety, "_scan_tracked_files",
-            lambda repo, patterns: ["x:y/p.txt:1: unrecognised future label"],
+            lambda repo, patterns, exempt: ["x:y/p.txt:1: unrecognised future label"],
         )
         _with_denylist(tmp_path, "synthetic-project-name")
         try:
@@ -351,7 +366,7 @@ class TestHygiene:
         monkeypatch.setattr(public_safety, "FUTURE_PATTERNS", 5, raising=False)
         monkeypatch.setattr(
             public_safety, "_scan_tracked_files",
-            lambda repo, patterns: ["n.md:2: GitHub classic token"],
+            lambda repo, patterns, exempt: ["n.md:2: GitHub classic token"],
         )
         _with_denylist(tmp_path, "synthetic-project-name")
         try:
@@ -388,7 +403,7 @@ class TestHygiene:
         monkeypatch.setattr(public_safety, "FUTURE_PATTERNS", _BadTable(), raising=False)
         monkeypatch.setattr(
             public_safety, "_scan_tracked_files",
-            lambda repo, patterns: ["n.md:2: unrecognised future label"],
+            lambda repo, patterns, exempt: ["n.md:2: unrecognised future label"],
         )
         _with_denylist(tmp_path, "synthetic-project-name")
         try:
@@ -434,3 +449,4 @@ class TestHygiene:
         (plain / "note.txt").write_text("hello\n", encoding="utf-8")
         rc, _out, err = _run_census(plain, "--only", "hygiene", "--strict")
         assert rc == 50, f"expected 50 under --strict, got {rc}\n{err}"
+

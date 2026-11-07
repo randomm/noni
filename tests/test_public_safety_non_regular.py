@@ -69,7 +69,7 @@ def _scan_in_time(repo: Path) -> list[str]:
         "import json, sys; sys.path.insert(0, {src!r})\n"
         "from pathlib import Path\n"
         "from noni import public_safety\n"
-        "found, _s, _d = public_safety.scrub_tracked_files(Path({repo!r}))\n"
+        "found, _s, _d, _a = public_safety.scrub_tracked_files(Path({repo!r}))\n"
         "print('FOUND::' + json.dumps(found))\n"
     ).format(src=str(SRC), repo=str(repo))
     started = time.monotonic()

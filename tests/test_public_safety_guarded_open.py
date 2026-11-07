@@ -201,7 +201,7 @@ def test_a_scan_reports_the_refused_file_at_line_zero_and_nothing_else(tmp_path)
         pytest.skip("root reads anything, so the 000-mode file cannot be planted")
     assert "sealed.md" in _git(repo, "ls-files").stdout.split(), "git must still list it"
     try:
-        found, _source, _denylist = public_safety.scrub_tracked_files(repo)
+        found, _source, _denylist, _allowlist = public_safety.scrub_tracked_files(repo)
     finally:
         sealed.chmod(0o644)
 

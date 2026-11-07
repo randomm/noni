@@ -123,7 +123,12 @@ does not hold or has superseded, and the census reports an intent whose last
 commit cites no live record (§7's `intent` class, 51).
 
 The state root is a directory holding (or about to hold) that `noni/` tree, and
-`--repo` is the only flag that names it:
+`--repo` is the only flag that names it. The mark is the `noni/` entry itself,
+whatever it holds: a `noni/` that holds nothing yet is the state root of a
+project that has not steered, and the census words its contents as their own
+states (`absent`, `empty`, `not a directory`) rather than collapsing an empty
+directory into a missing one. A directory with no `noni/` at all is the wrong
+tree, and is refused as one (below).
 
 - **Default: the attached project's own repository**, so the state is the tree
   at `<project>/noni/` and every tool run without `--repo` reads and writes

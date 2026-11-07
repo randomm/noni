@@ -143,3 +143,90 @@ def test_product_md_states_the_no_noni_refusal_with_the_creators_excepted():
         "the census reports it and no page may claim it is silent")
 
 
+
+
+def test_the_state_root_note_is_said_once_and_never_duplicated(capsys):
+    """One note, printed once, and every other note still printed below the rows.
+
+    The renderer recognises the note by its opening words and suppresses that one from
+    the trailing ``note:`` block. The two halves must be the same decision, not two
+    relations that happen to agree: a note found by one rule and suppressed by another
+    would print the sentence twice in one report, or drop it entirely. This drives the
+    renderer directly, with the two notes a real no-``noni/`` run can carry at once, and
+    holds the ends of the report as well: the note opens it, the verdict closes it.
+    """
+    import io
+    import sys as _sys
+
+    from noni.census_report import (
+        ORDERING_CLOSED_NOT_EVALUATED,
+        _render,
+        no_state_root_note,
+    )
+
+    note = no_state_root_note("state/repo")
+    buf = io.StringIO()
+    saved = _sys.stdout
+    _sys.stdout = buf
+    try:
+        _render([], {}, True, 0, False, (note, ORDERING_CLOSED_NOT_EVALUATED))
+    finally:
+        _sys.stdout = saved
+    lines = buf.getvalue().splitlines()
+    assert lines[0] == f"note: {note}", lines[:3]
+    assert lines[-1].startswith("summary: "), lines[-1]
+    stated = [line for line in lines if line == f"note: {note}"]
+    assert len(stated) == 1, f"the note printed {len(stated)} times: {lines}"
+    # The other note is untouched by the suppression and still sits below the rows.
+    assert f"note: {ORDERING_CLOSED_NOT_EVALUATED}" in lines, lines
+    # A note that merely repeats the state-root sentence is one note, not two rows of
+    # it: duplication at the producer is not a licence to print the sentence twice.
+    buf = io.StringIO()
+    _sys.stdout = buf
+    try:
+        _render([], {}, True, 0, False, (note, note))
+    finally:
+        _sys.stdout = saved
+    lines = buf.getvalue().splitlines()
+    assert sum(1 for line in lines if line == f"note: {note}") == 1, lines
+    del capsys
+
+
+def test_an_uninspectable_noni_is_never_reported_as_having_no_noni(tmp_path):
+    """A declined ``lstat`` on ``noni/`` is a fault, not the note's ``absent`` state.
+
+    The note keys on the ledger probe's ``absent``, which is answered only when
+    ``noni/`` is genuinely missing -- and "genuinely" is the whole point: a tree the
+    operator cannot traverse made ``Path.exists`` answer False, so a census run there
+    opened with "no noni/ directory was found" and exited 0 beside an inactive
+    deny-list, which is the all-clear this ticket exists to remove. The fault must
+    reach the report as the cannot-tell it is, with no note claiming an absence nobody
+    observed. Skipped where the reading user can lstat through a 000-mode directory
+    (running as root), exactly as the session guard's inspection suite does.
+    """
+    import os
+
+    import pytest
+
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    repo = _code_repo(tmp_path, "census-uninspectable")
+    (repo / "noni" / "decisions").mkdir(parents=True)
+    os.chmod(repo / "noni", 0o000)
+    try:
+        try:
+            os.lstat(repo / "noni" / "decisions")
+        except PermissionError:
+            proc = subprocess.run(
+                [sys.executable, str(CENSUS), "--repo", str(repo)],
+                capture_output=True, text=True, env=subprocess_env(),
+                cwd=str(cwd), timeout=120)
+        else:
+            pytest.skip("the reading user can lstat through a 000-mode directory")
+    finally:
+        os.chmod(repo / "noni", 0o755)
+    assert "no noni/ directory was found under --repo" not in proc.stdout, proc.stdout
+    assert "Permission denied" in proc.stdout or "could not" in proc.stdout, proc.stdout
+    assert proc.returncode != 0, (
+        f"a census that could not inspect the state root must not read as clean: "
+        f"{proc.returncode}\n{proc.stdout}")

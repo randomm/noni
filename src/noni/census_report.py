@@ -21,6 +21,8 @@ import re
 import sys
 from datetime import timedelta
 
+from ._safe_text import safe_path
+
 SCHEMA_VERSION = "noni.census/1"
 
 
@@ -115,11 +117,12 @@ def no_state_root_note(repo: str) -> str:
 
     A function rather than a constant because the path varies per run, and the path
     is the caller's spelling rather than the resolved tree: a census row never carries
-    a machine-local absolute path the operator did not type. Rendered through the
-    census's own scrubbing rule by the caller, which owns the bound and the
-    control-byte stripping of foreign text.
+    a machine-local absolute path the operator did not type. The path is a value from
+    argv, so it is rendered here, once, through :func:`noni._safe_text.safe_path`: a
+    name carrying a newline would otherwise split this note across two stdout lines and
+    break the contract that it opens the report as one line and the verdict closes it.
     """
-    return NO_STATE_ROOT_NOTE.format(repo=repo)
+    return NO_STATE_ROOT_NOTE.format(repo=safe_path(repo))
 
 
 # The opening words of the note above, which is how the human branch recognises it:
@@ -411,7 +414,11 @@ def _render(
         # reader who meets them first reads a wrong --repo as a project that merely
         # has not steered yet. So it opens the human report, ahead of the headline and
         # every row. It is excluded from ``notes`` below because it has already been
-        # said, which also keeps the all-clear banner honest (see its condition).
+        # said, which also keeps the all-clear banner honest (see its condition). The
+        # note selected here and the note suppressed below the rows are the same object
+        # compared by identity, so the two halves cannot disagree about which sentence
+        # has already been said: a second relation (a prefix here, an equality there)
+        # would let a note that merely opens the same way print twice in one report.
         state_note = next((n for n in notes if n.startswith(NO_STATE_ROOT_PREFIX)), None)
         if state_note is not None:
             print(f"note: {state_note}")
@@ -431,7 +438,7 @@ def _render(
             # Reprinting the state-root note would say the same sentence twice in one
             # report; the ordering-closed note and any other still print here, below
             # the rows they qualify.
-            if note != state_note:
+            if note is not state_note:
                 print(f"note: {note}")
         if ok:
             verdict_text = (f"{warns} warning(s)" if warns else "clean")

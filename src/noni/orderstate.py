@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
-from . import labels, orderschema
+from . import _path_kind, labels, orderschema
 
 # A decision record id is what decide.py writes: <YYYY-MM-DD>-<slug> of
 # lowercase letters, digits and dashes. The same shape both directions, so a
@@ -226,7 +226,32 @@ def read_order(path: Path) -> OrderOk | OrderRefused | OrderFaulted:
     return OrderOk(value["entries"], raw)
 
 
-def read_record(path: Path, exit_io: int, exit_refusal: int
+def _no_record_headline(repo: Path, rel: str) -> str:
+    """The sentence for a record this run cannot find, worded for the tree it looked in.
+
+    The ticket's own reproduction ends here: ``order add`` / ``intent set`` against a
+    tree whose state root is empty (or absent) answered "no decision record ... is in
+    the ledger", which is true of the record and useless as an account of the tree --
+    neither run named a state root, and the caller had no way to see they had aimed at
+    the wrong repository. The writer's state-root guard cannot answer this one: the two
+    verbs are the sanctioned creators of ``noni/direction``, so they must be admitted
+    past it. What this can do is say the second fact beside the first, from the same
+    ``lstat`` every other guard in the family asks: the ledger's absence is reported as
+    the reason, never as a record nobody committed.
+
+    ``repo`` is the state root the caller was given, asked of the guard rather than
+    rebuilt from the record's path: the path is ``<repo>/noni/decisions/<id>.json`` and
+    a probe asked of its grandparent would be asking ``<repo>/noni/noni``, which answers
+    "absent" on every real state root and would sentence the right ``--repo``.
+    """
+    if _path_kind.has_no_noni(repo):
+        return (f"no decision record {rel} is in the ledger: this tree holds no "
+                "noni/ directory, so it holds no ledger")
+    return f"no decision record {rel} is in the ledger"
+
+
+def read_record(path: Path, exit_io: int, exit_refusal: int,
+                repo: Path | None = None
                 ) -> tuple[dict, None] | tuple[None, tuple[int, tuple[str, str]]]:
     """The decision record at ``path``, or the (code, (headline, hint)) refusal.
 
@@ -234,12 +259,18 @@ def read_record(path: Path, exit_io: int, exit_refusal: int
     are different kinds of failure: the record is not there (the caller's
     refusal code) and the record could not be read (the caller's I/O code). See
     :func:`decision_problems`.
+
+    ``repo`` is the state root the refusal may describe (see
+    :func:`_no_record_headline`); a caller that has none -- a test that reads one
+    record by its path, a scan over the ledger -- leaves it None and gets the plain
+    sentence, which is what it always got.
     """
     rel = f"{DECISIONS_DIR}/{path.name}"
     kind, why = file_kind(path)
     if kind == "absent":
         return None, (exit_refusal,
-                      (f"no decision record {rel} is in the ledger",
+                      (_no_record_headline(repo, rel) if repo is not None
+                       else f"no decision record {rel} is in the ledger",
                        "name the record that set the position, or add it with the "
                        "steering-ledger writer first"))
     if kind != "regular":
@@ -318,7 +349,7 @@ def decision_problems(repo: Path, decision: str, exit_io: int, exit_refusal: int
                 "a readable directory",
                 "restore the ledger directory, then re-run order.py, or order without "
                 "--decision if no record set this position")
-    found = read_record(path, exit_io, exit_refusal)
+    found = read_record(path, exit_io, exit_refusal, repo)
     if found[0] is None:
         assert found[1] is not None
         code, (headline, hint) = found[1]

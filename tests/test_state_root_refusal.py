@@ -18,6 +18,7 @@ above.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -36,6 +37,8 @@ from _harness import (
     _init_repo,
     subprocess_env,
 )
+
+from noni import _path_kind
 
 # The refusal's code and the tool that owes it, exactly as §7 states them. This
 # tuple is the prose transcribed: a change on either side breaks this test.
@@ -130,6 +133,7 @@ def _launch_against(script: Path, repo: Path, cwd: Path,
         capture_output=True, text=True, env=subprocess_env(), cwd=str(cwd),
         timeout=120,
     )
+
 
 
 def test_each_writer_refuses_a_repo_that_is_not_a_directory_with_its_own_code(tmp_path):
@@ -309,12 +313,12 @@ def test_a_tree_holding_a_noni_directory_is_a_state_root(tmp_path):
 
 
 def test_decide_no_commit_is_admitted_on_a_tree_with_no_noni(tmp_path):
-    """``--no-commit`` is a creator too: it writes and leaves the commit to its caller.
+    """``--no-commit`` stays open where the tree itself holds no ``noni/``.
 
     The shim and the session writers drive ``decide --no-commit`` to mint a record
     without a commit of its own, so a state-root refusal that stopped it would stop
-    those routes outright. Nothing is committed here, so nothing can be committed into
-    the wrong tree; the exception is admitted on that ground and the file still lands
+    those routes outright. The tree answers the question, not the flag: on a tree with
+    no ``noni/`` the run is the first writer either way, and the file still lands
     uncommitted, which is what the caller then commits.
     """
     cwd = tmp_path / "cwd"
@@ -330,56 +334,131 @@ def test_decide_no_commit_is_admitted_on_a_tree_with_no_noni(tmp_path):
     assert NOT_A_STATE_ROOT_WORDS[0] not in proc.stderr, proc.stderr
 
 
-def test_order_add_on_a_tree_with_no_ledger_is_refused_by_the_ledger_not_the_state_root(
-        tmp_path):
-    """``add`` is admitted to the state-root question and still refused for the ledger.
+def test_the_creator_rule_asks_the_tree_first_and_keeps_the_no_commit_route(tmp_path):
+    """decide's creator rule: the tree refuses a wrong ``--repo``, the flag keeps its route.
 
-    The two refusals must stay distinguishable: ``add`` creates ``noni/direction`` for
-    its first entry, so it is admitted past the state-root question, but a tree with no
-    decision record is a refusal of its own at exit 4. Collapsing them (by refusing
-    ``add`` at the state root, or by letting a recordless tree write an entry) would
-    break one half of this pair.
+    The rule is ``ledger_is_first(root) or no_commit`` and both halves are pinned. The
+    tree half, which is what the ticket names: a committed code repository whose
+    ``noni`` is a plain file is no tree this run brings into being, so the run is
+    refused (exit 3, the path named, its fix line named) and nothing is written -- and
+    the refusal is reached *before* the ledger allocation, so the ``noni`` leaf that
+    would have been mkdir'd is still absent afterwards. The flag half: a run into a tree
+    that holds no ``noni/`` at all is the sanctioned first record and stays open with or
+    without ``--no-commit``, so the shim route that mints a record without committing it
+    is not closed by the guard.
+
+    A tree that already holds a ledger is not part of this pair: it is a state root and
+    its run reaches its own answer, which
+    :func:`test_a_first_record_is_admitted_where_the_second_would_commit_into_nothing`
+    pins.
     """
     cwd = tmp_path / "cwd"
     cwd.mkdir()
-    repo = _code_repo(tmp_path, "add-no-ledger")
-    proc = _launch_against(ORDER, repo, cwd, "add", "7", "--decision",
-                           "2026-10-01-absent", "--now", "2026-10-02T00:00:00Z",
-                           "--no-commit")
-    assert proc.returncode == 4, f"{proc.returncode}: {proc.stderr}"
-    assert "is in the ledger" in proc.stderr, proc.stderr
-    assert NOT_A_STATE_ROOT_WORDS[0] not in proc.stderr, (
-        f"add is the sanctioned creator and must not meet the state-root refusal: "
-        f"{proc.stderr}")
+    argv = ("--slug", "probe", "--scope", "state root", "--asked-by", "dev",
+            "--question", "q1=Ship?", "--option", "q1=yes", "--option", "q1=no",
+            "--answer", "q1=yes", "--date", "2026-10-01")
+
+    for no_commit in (False, True):
+        tag = "nc" if no_commit else "commit"
+        repo = _code_repo(tmp_path, f"creator-file-{tag}")
+        (repo / "noni").write_text("not a directory\n", encoding="utf-8")
+        proc = _launch_against(DECIDE, repo, cwd, *argv,
+                               *(() if not no_commit else ("--no-commit",)))
+        assert proc.returncode == 3, (
+            f"noni-as-a-file/{tag}: a tree whose noni is no directory is refused as a "
+            f"wrong --repo: {proc.returncode}: {proc.stderr}")
+        assert str(repo) in proc.stderr, proc.stderr
+        assert "--repo" in proc.stderr or "fix:" in proc.stderr, proc.stderr
+        assert not (repo / "noni" / "decisions").exists(), (
+            f"noni-as-a-file/{tag}: the refused run allocated the ledger anyway")
+
+    for no_commit in (False, True):
+        tag = "nc" if no_commit else "commit"
+        repo = _code_repo(tmp_path, f"first-record-{tag}")
+        proc = _launch_against(DECIDE, repo, cwd, *argv,
+                               *(() if not no_commit else ("--no-commit",)))
+        assert proc.returncode == 0, f"{proc.returncode}: {proc.stderr}"
+        assert (repo / "noni" / "decisions" / "2026-10-01-probe.json").is_file(), (
+            proc.stdout)
+        assert NOT_A_STATE_ROOT_WORDS[0] not in proc.stderr, proc.stderr
 
 
-def test_intent_set_is_admitted_on_a_pure_code_repo_and_refused_for_the_ledger(
-        tmp_path):
-    """`intent set` on a tree holding no noni/ reaches the citation, not the refusal.
+def test_an_uninspectable_repo_is_never_read_as_holding_no_noni(tmp_path):
+    """A declined ``lstat`` is not evidence that a tree holds no state.
 
-    `set` is the sanctioned creator, so on a tree holding nothing of noni's it must
-    be admitted past the state-root question -- the tree it is about to write is the
-    point -- and then refused at exit 4 because the record it cites does not exist.
-    That ordering matters: refusing `set` here would break the first intent file, and
-    admitting it all the way would let a wrong --repo invent an intent. A draft the
-    validator refuses is used so the exit code below can only come from the citation,
-    never from the draft.
+    The sibling directory guards in this module already refuse a declined answer rather
+    than call it absent; the state-root question asks the same ``lstat`` and must give
+    the same reading. Two things follow and both are asserted: the creator is not
+    admitted on a fault (so no writer is let loose on a tree it could not inspect), and
+    the fault is not worded as the missing-``noni/`` sentence -- the reader meets the
+    direction guard's own refusal, which names the fault instead of guessing at it.
+    """
+    unreadable = tmp_path / "unreadable"
+    (unreadable / "noni" / "direction").mkdir(parents=True)
+    os.chmod(unreadable, 0o000)
+    try:
+        if _lstat_blocked(unreadable / "noni"):
+            assert _path_kind.has_no_noni(unreadable) is False, (
+                "an lstat the filesystem declined was read as an absent noni/, so a "
+                "writer would be admitted to a tree it could not inspect")
+            assert _path_kind.state_root_refusal(unreadable) is None, (
+                "a tree that could not be inspected is not reported as a missing "
+                "noni/: the fault belongs to the direction guard, which names it")
+            assert "could not be inspected" in str(
+                _path_kind.direction_refusal(unreadable, ("noni",))), (
+                "the direction guard does not name the declined answer either")
+    finally:
+        os.chmod(unreadable, 0o755)
+
+
+def test_a_writer_never_prints_a_refusal_that_is_not_one_line(tmp_path):
+    """A ``--repo`` whose name carries a newline cannot split a refusal into two.
+
+    Every path a writer prints goes through the one path renderer, so a crafted name
+    shows as ``\\n`` and stays one line: the census's own contract is that its note
+    opens the report and its verdict closes it, and a second, unprefixed line of
+    operator text in between is what a consumer that splits on ``note: `` reads as a
+    row. All three tools are run against the same crafted tree.
     """
     cwd = tmp_path / "cwd"
     cwd.mkdir()
-    repo = _code_repo(tmp_path, "intent-pure")
-    bad_draft = tmp_path / "bad-draft.md"
-    bad_draft.write_text("not an intent file at all\n", encoding="utf-8")
-    proc = _launch_against(INTENT, repo, cwd, "set", "--from", str(bad_draft),
-                           "--decision", "2026-10-01-absent",
-                           "--now", "2026-10-02T00:00:00Z")
-    assert proc.returncode == 4, (
-        f"set is the sanctioned creator: expected the ledger's exit 4, got "
-        f"{proc.returncode}: {proc.stderr}")
-    assert NOT_A_STATE_ROOT_WORDS[0] not in proc.stderr, (
-        f"a creator must not meet the state-root refusal: {proc.stderr}")
-    assert not (repo / "noni").exists(), (
-        f"a refused run created {repo / 'noni'}")
+    crafted = tmp_path / "nl\nrepo"
+    crafted.mkdir()
+    crafted.joinpath("noni").write_text("not a directory\n", encoding="utf-8")
+    cases = ((DECIDE, ("--slug", "probe", "--scope", "s", "--asked-by", "dev",
+                       "--question", "q1=X?", "--option", "q1=yes",
+                       "--option", "q1=no", "--answer", "q1=yes")),
+             (ORDER, ("move", "7", "--to", "1", "--now", "2026-10-02T00:00:00Z")))
+    for script, argv in cases:
+        proc = _launch_against(script, crafted, cwd, *argv)
+        lines = proc.stderr.splitlines()
+        assert lines, f"{script.name}: the refused run printed nothing: {proc.stderr}"
+        assert all(line.startswith(f"{script.stem}.py: ") for line in lines), (
+            f"{script.name}: a refusal line carries no tool prefix, so the path broke "
+            f"the line: {lines}")
+        assert "\\n" in proc.stderr, (
+            f"{script.name}: the crafted newline is printed raw: {lines}")
+    (crafted / "no-state").mkdir()
+    census_proc = subprocess.run(
+        [sys.executable, str(CENSUS), "--repo", str(crafted / "no-state")],
+        capture_output=True, text=True, env=subprocess_env(), cwd=str(cwd),
+        timeout=120)
+    note_lines = [line for line in census_proc.stdout.splitlines()
+                  if line.startswith("note: ")
+                  and "no noni/ directory was found" in line]
+    assert len(note_lines) == 1, (
+        f"the note must be exactly one line: {census_proc.stdout.splitlines()[:4]}")
+    assert census_proc.stdout.splitlines()[-1].startswith("summary: "), (
+        census_proc.stdout.splitlines()[-1:])
+
+
+def _lstat_blocked(path: Path) -> bool:
+    """Whether this user genuinely cannot ``lstat`` ``path`` (root can lstat anything)."""
+    try:
+        os.lstat(path)
+    except OSError:
+        return True
+    return False
 
 
 # A minimal intent draft for the creator case: `intent set` refuses a file that is not

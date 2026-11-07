@@ -30,7 +30,10 @@ arguments, so a helper is never redefined by whichever module needs it.
 
 from __future__ import annotations
 
+import errno
+import os
 import re
+from pathlib import Path
 
 
 def _bounded(message: str, limit: int = 300) -> str:
@@ -278,3 +281,25 @@ def _clipped(message: str, limit: int = 300) -> str:
     whose own path fragments must survive (see :func:`_bounded`).
     """
     return message if len(message) <= limit else message[: limit - 3] + "..."
+
+
+def path_is_known_missing(path: Path) -> bool:
+    """Whether ``path`` is known to be missing, as distinct from the filesystem not saying.
+
+    ``Path.exists`` swallows ``ENOENT``/``ENOTDIR`` and every other ``OSError`` alike, so
+    on a tree the operator cannot traverse it answers False, and a probe that reads that
+    as "absent" tells the operator their state root holds nothing when the probe could
+    not look. That is the misreading the writers' guards refuse
+    (``noni._path_kind.state_root_refusal``), and it is the one the census's own no-
+    ``noni/`` note keys on, so the distinction is asked here rather than by whichever
+    probe needs it: a declined ``lstat`` raises out of this function and the caller's
+    ``except OSError`` turns it into the ``nonregular`` row that carries the fault's
+    text -- the census's existing cannot-tell shape, worded by the same module.
+    """
+    try:
+        os.lstat(path)
+    except OSError as exc:
+        if exc.errno in (errno.ENOENT, errno.ENOTDIR):
+            return False
+        raise
+    return True

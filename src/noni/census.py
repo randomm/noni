@@ -233,7 +233,7 @@ def _file_kind(path: Path, kind: str = "file") -> tuple[str, str | None]:
     try:
         if path.is_symlink():
             return "symlink", "path is a symlink; the census does not read through links"
-        if not path.exists():
+        if not _text.path_is_known_missing(path):
             return "absent", None
         if kind == "dir":
             if not path.is_dir():

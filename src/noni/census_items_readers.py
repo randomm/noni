@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import itemschema
-from .census_text import fault_text
+from .census_text import fault_text, path_is_known_missing
 
 
 @dataclass(frozen=True)
@@ -86,6 +86,21 @@ def items_listing(items: Path) -> ItemsProbe:
     gated on its answer, so the gate and the rows are the same read and cannot
     disagree about whether it happened.
 
+    "A directory that is not there is not a fault" is the rule, and the honest way
+    to hold it is to ask the filesystem rather than to read the exception: an
+    ``OSError`` is the whole family, so it covers the store that cannot be *opened*
+    (no permission, a name too long, a parent whose traversal is refused) as much as
+    the one that is not there, and the two deserve different rows. The classifier is
+    the census's own ``path_is_known_missing``, the one that separates "missing" from
+    "the filesystem would not say": it answers False for an ``ENOENT``/``ENOTDIR``,
+    which is the state of a project that never filed an idea and earns the empty
+    listing and no row; it answers True for a path that exists and still could not be
+    opened, which is this run's blindness and earns ``item-unlistable``; and a
+    declined ``lstat`` raises out of it into the same blindness row, which is the
+    honest third answer. ``_file_kind`` is not used here: its ``absent`` half reads a
+    declined stat as absence, which is the misreading this probe must not make about
+    the store it is reporting on.
+
     ``Path.iterdir`` and never ``Path.glob`` (see the module docstring for the
     swallowed ``OSError`` that decides it), and the fault's text goes out on
     ``fault`` rather than being read as an empty listing. The tuple is sorted
@@ -100,6 +115,8 @@ def items_listing(items: Path) -> ItemsProbe:
         return ItemsProbe(names=tuple(sorted(
             p for p in items.iterdir() if p.suffix == ".json")))
     except OSError as exc:
+        if path_is_known_missing(items) is False:
+            return ItemsProbe(names=())
         return ItemsProbe(fault=fault_text(exc) or type(exc).__name__)
 
 
@@ -147,8 +164,20 @@ class ItemScan:
         answers, and it is asked of the read rather than of a flag a caller sets:
         a run that could not open three files has no standing to say the other
         forty are in order.
+
+        A file this run opened, read in full and found to be no item at all belongs
+        to that test beside the files it could not open. The classes below ask
+        questions of the store as a whole — does any live record answer this
+        citation, which issues does the order hold — and one hand-made file is one
+        item whose status, age and citations are unknown, so a run that certified the
+        rest of that store would report the verdict of a store it did not read. The
+        malformed rows it earned are still reported. Blindness (``unreadable``) and a
+        defect (``not_items``) stay distinct buckets, because the first is a warning
+        about this run and the second a failure about the project; they agree only on
+        the consequence, which is that the group stops short of the store-wide
+        questions.
         """
-        return bool(self.unreadable)
+        return bool(self.unreadable or self.not_items)
 
 
 def items_scan(items: Path, names: tuple[Path, ...], *,

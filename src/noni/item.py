@@ -99,6 +99,7 @@ from pathlib import Path
 from . import (
     _path_kind,
     item_reads,
+    item_write,
     itemschema,
     labels,
     ledger_schema,
@@ -106,7 +107,6 @@ from . import (
     orderstate,
 )
 from . import order_gitwrite as gitwrite
-from ._safe_text import safe_text
 
 
 # The state reader reports a refusal as a (headline, hint) pair and leaves the code
@@ -252,169 +252,6 @@ def _refuse_text(flag: str, value: str, limit: int, what: str) -> int | None:
     return None
 
 
-def _read_item(path: Path, item_id: str) -> tuple[dict | None, int | None]:
-    """The item at ``path``, or the refusal code with its line already printed.
-
-    ``(None, None)`` is absence, which the caller decides the meaning of: an absent
-    item is the "no such item" refusal of drop and promote, and the empty store a
-    first ``add`` extends. A file that is there and is not the artifact is refused
-    rather than overwritten, because destroying a record the operator committed is
-    worse than refusing the run.
-    """
-    rel = itemschema.item_rel(item_id)
-    kind, why = orderstate.file_kind(path)
-    if kind == "absent":
-        return None, None
-    if kind != "regular":
-        return _fail(EXIT_IO, f"{rel} is not a readable regular file: "
-                   f"{why or 'not a regular file'}",
-                     "remove that path or point --repo at the tree that holds the "
-                     "item, then re-run item.py"), None
-    try:
-        raw = path.read_bytes()
-    except OSError as exc:
-        return _fail(EXIT_IO, f"{rel} could not be read "
-                   f"({exc.__class__.__name__}: {exc.strerror or exc})",
-                     f"check that {rel} is readable, then re-run item.py"), None
-    try:
-        value = orderschema.load_json_checked(raw)
-    except (UnicodeDecodeError, ValueError, RecursionError):
-        # The package's one strict reader, so the writer and the census answer one
-        # document alike. The wording is fixed and names none of the bytes: they are
-        # content this writer did not write, and a refusal that quotes them prints
-        # them. RecursionError is no kind of ValueError -- the depth bound answers
-        # short of the interpreter's own ceiling, past which the decoder raises it
-        # first, so the arm is reachable and not decorative.
-        return _fail(EXIT_REFUSAL, f"{rel} is not valid JSON this writer can extend",
-                     f"repair the file (it must hold {itemschema.ITEM_SCHEMA}) or "
-                     "remove it and re-file the idea with item.py add"), None
-    found = itemschema.problems(value)
-    if found:
-        return _fail(EXIT_REFUSAL,
-                     f"{rel} is not an item this writer writes: " + "; ".join(found),
-                     f"repair the file to the documented shape "
-                     f"({itemschema.ITEM_SCHEMA}) or remove it and re-file the idea "
-                     "with item.py add"), None
-    if value["id"] != item_id:
-        return _fail(EXIT_REFUSAL, f"{rel} carries id {value['id']!r}, which is not "
-                     "the item's own name",
-                     "the id and the file's stem are the same name: repair one of "
-                     "them, or remove the file and re-file the idea with item.py add"), None
-    if itemschema.item_bytes(itemschema.body_of(value)) != raw:
-        return _fail(EXIT_REFUSAL, f"{rel} is not in the canonical form this writer "
-                     "writes (its keys, their order or its indent)",
-                     "have item.py write it, or repair and commit it in that form, "
-                     "then re-run item.py"), None
-    return itemschema.body_of(value), None
-
-
-def _listing(repo: Path) -> tuple[list[Path] | None, int | None]:
-    """The store's one listing, or the refusal code a faulted read earned.
-
-    One ``iterdir``, never ``glob``: a store the run could not list must stop the add
-    rather than read as a store holding nothing, which is how a duplicate title would
-    slip past a scan handed an empty listing. The fault is an environment one (exit 3)
-    because nothing about the item being filed is wrong. The listing is taken once per
-    run and handed to whichever scan needs it, so the gate and the scan cannot
-    disagree about what the store holds.
-    """
-    store = repo / itemschema.ITEM_DIR
-    kind, why = orderstate.file_kind(store)
-    if kind == "absent":
-        # The state before the first add: an honest answer to the duplicate scan
-        # ('no dropped item carries that title'), never a fault to report.
-        return [], None
-    if kind != "dir":
-        return _fail(EXIT_IO, f"{itemschema.ITEM_DIR} could not be listed: "
-                   f"{why or 'not a readable directory'}",
-                     f"restore {itemschema.ITEM_DIR} as a directory, then re-run "
-                     "item.py"), None
-    try:
-        return sorted(store.iterdir()), None
-    except OSError as exc:
-        return _fail(EXIT_IO, f"{itemschema.ITEM_DIR} could not be listed "
-                   f"({exc.__class__.__name__}: {exc.strerror or exc})",
-                     f"check that {itemschema.ITEM_DIR} is readable, then re-run "
-                     "item.py"), None
-
-
-def _scan_item(path: Path) -> dict | None:
-    """One file of the store's listing, read as far as a scan needs. None is "skip".
-
-    Not a regular file, unreadable, unparseable, or not an item this shape describes:
-    the scan is not the census and reports nothing. The probe-honesty rule of the
-    census must not leak into the writer's success path, so a broken file never holds
-    up an add -- it is simply a file this scan saw nothing about.
-    """
-    kind, _why = orderstate.file_kind(path)
-    if kind != "regular":
-        return None
-    try:
-        raw = path.read_bytes()
-    except OSError:
-        return None
-    try:
-        value = orderschema.load_json_checked(raw)
-    except (UnicodeDecodeError, ValueError, RecursionError):
-        return None
-    if not isinstance(value, dict) or itemschema.problems(value):
-        return None
-    return itemschema.body_of(value)
-
-
-def _dropped_title_taken(repo: Path, title: str) -> int | None:
-    """The exit-4 refusal for a title a dropped item already carries, or None.
-
-    An idea already killed is recorded as killed: re-filing its title verbatim is the
-    operator asking for that record again, so the add refuses and names the item that
-    holds the reason. A file the scan could not read is skipped rather than fatal, so
-    the run still exits 0 when the matching dropped file is itself unreadable and
-    therefore unable to have matched -- the census's honesty belongs to the census.
-    """
-    paths, code = _listing(repo)
-    if code is not None:
-        return code
-    for path in paths or []:
-        if path.suffix != ".json":
-            continue
-        body = _scan_item(path)
-        if (body is None or body["status"] != itemschema.STATUS_DROPPED
-                or body["title"] != title):
-            continue
-        return _fail(EXIT_REFUSAL, f"an item titled {title!r} was already dropped "
-                     f"as {path.stem}",
-                     "the record of why it was dropped is the answer: file the idea "
-                     "under a different title, or restore that item by its id")
-    return None
-
-
-def _refuse_cited_order(repo: Path, item_id: str) -> int | None:
-    """The refusal ``promote`` owes an order that cites this item, or None.
-
-    Promote is item-only in this sub-issue, so an order that already cites the item
-    is refused rather than left pointing at a newly promoted item the same commit did
-    not rewrite. The question is answered by the borrowed reader, which distinguishes
-    "no entry cites it" from "the order could not be read", and the two get different
-    codes: the first is no refusal at all, the second is exit 3 naming the order path,
-    because a run that read nothing may not promote on the strength of not having read
-    it. Sub-issue 2 replaces this refusal with the same-commit order rewrite.
-    """
-    cited, answered = item_reads.order_cites_item(repo, item_id)
-    if answered and not cited:
-        return None
-    if not answered:
-        return _fail(EXIT_IO, f"{orderschema.ORDER_REL} could not be read, so "
-                     "whether an order entry cites this item cannot be answered",
-                     f"repair or remove {orderschema.ORDER_REL}, then re-run item.py")
-    return _fail(EXIT_REFUSAL,
-                 f"{orderschema.ORDER_REL} has an entry that cites item {item_id}, "
-                 "so promoting the item alone would leave the order out of step",
-                 f"the order is what has to change: correct that entry in "
-                 f"{orderschema.ORDER_REL} with order.py in the same commit as the "
-                 "promotion; until the order carries items, remove it with "
-                 "'order.py remove <issue>' and re-run item.py promote")
-
-
 def _commit(repo: Path, rel: str, subject: str, shown: Path) -> int:
     """Stage and commit exactly ``rel``, or the exit-3 code naming which step failed.
 
@@ -452,59 +289,16 @@ def _commit(repo: Path, rel: str, subject: str, shown: Path) -> int:
     return EXIT_OK
 
 
-def _listing_line(body: dict) -> str:
-    """One line of ``list``: the id, its status, its title, then what it cites.
-
-    Every free text goes through the package's one renderer before it reaches the
-    terminal, because a title and a reason are operator input: a value carrying a
-    control character cannot split a line of the listing, and a value of any length
-    cannot make a row longer than the bound.
-    """
-    detail = [f"created={body['created']}"]
-    if body["issue"] is not None:
-        detail.append(f"issue=#{body['issue']}")
-    if body["decision"] is not None:
-        detail.append(f"decision={body['decision']}")
-    if body["why"] is not None:
-        detail.append(f"why={safe_text(body['why'])}")
-    return (f"  {body['id']} [{body['status']}] {safe_text(body['title'])} "
-            + " ".join(detail))
-
-
-def _listing_bodies(repo: Path) -> tuple[list[dict] | None, int | None]:
-    """Every item the store holds, for ``list``, or the refusal code it earned.
-
-    Same one-listing rule as the duplicate scan, same skip-don't-fail rule about
-    individual files: an item nobody can read is the census's to report, and a listing
-    that died on one broken file would tell the operator nothing about the store they
-    asked to see. A file whose contents name another item is left out, because the
-    listing prints what an item is, not what a stray file says.
-    """
-    paths, code = _listing(repo)
-    if code is not None:
-        return None, code
-    bodies: list[dict] = []
-    for path in paths or []:
-        if path.suffix != ".json":
-            continue
-        body = _scan_item(path)
-        if body is not None and path.stem == body["id"]:
-            bodies.append(body)
-    return bodies, None
-
-
-def _print_listing(bodies: list[dict]) -> None:
-    """The listing, newest first: one line per item, and a head naming the count."""
-    plural = "y" if len(bodies) == 1 else "ies"
-    print(f"{labels.ITEM}: {itemschema.ITEM_DIR} ({len(bodies)} item{plural})")
-    for body in sorted(bodies, key=lambda b: (b["created"], b["id"]), reverse=True):
-        print(_listing_line(body))
-
-
 def _write(repo: Path, body: dict, verb: str, no_commit: bool) -> int:
-    """Render, write, and commit only the one item path. Every check ran already."""
+    """Render, then write and commit only the one item path. Checks all ran already.
+
+    The three answers this step can give -- written and committed, written and left
+    uncommitted, already exactly these bytes -- are the writer's contract and stay
+    here, in the writer's voice and its codes. The file mechanics themselves are
+    ``item_write.write_item``'s, handed back the commit step so the git answers keep
+    their codes and their committed line beside the verb that ran.
+    """
     rel = itemschema.item_rel(body["id"])
-    target = repo / rel
     try:
         rendered = itemschema.item_bytes(body)
     except ValueError:
@@ -514,50 +308,56 @@ def _write(repo: Path, body: dict, verb: str, no_commit: bool) -> int:
         return _fail(EXIT_REFUSAL, "the planned item cannot be written as JSON",
                      "re-run item.py; if it repeats, remove the item and re-file "
                      "the idea")
-    if target.parent.exists() and not target.parent.is_dir():
-        # The one shape about the store's path the pre-read guard does not own: an
-        # ordinary FILE at noni/items, under a real noni/, which the walk admits
-        # because nothing above it is a link. A link there was refused with the rest
-        # of the tree at exit 2; a plain file is an environment fault, and mkdir would
-        # have failed anyway with a worse message.
-        return _fail(EXIT_IO, f"{itemschema.ITEM_DIR} is not a directory",
-                     f"remove {itemschema.ITEM_DIR} or move it aside, then re-run "
-                     "item.py")
-    if _unchanged(target, rendered, body, verb):
+
+    def commit(shown: Path, path_rel: str) -> tuple[str, str, str | None]:
+        if no_commit:
+            print(f"{labels.ITEM}: wrote {shown}; left uncommitted: commit this path "
+                  "before running the census")
+            return "ok", "", None
+        code = _commit(repo, path_rel, f"items: {verb} [{_digests(rendered)}]", shown)
+        return ("ok", "", None) if code == EXIT_OK else ("refuse", "", None)
+
+    verdict, headline, hint = item_write.write_item(repo, body, rendered, commit)
+    if verdict == "unchanged":
+        print(f"{labels.ITEM}: {body['id']} is {body['status']} ({verb})")
+        print(f"{labels.ITEM}: {rel} is unchanged; nothing to commit")
         return EXIT_OK
-    try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        gitwrite.write_atomic(target, rendered)
-    except OSError as exc:
-        return _fail(EXIT_IO, gitwrite.written(exc, f"{rel} could not be written"),
-                     f"check that {itemschema.ITEM_DIR} is writable, then re-run "
-                     "item.py")
+    if verdict == "refuse":
+        # Two shapes reach here: the environment refusals of the file step, which
+        # carry their own two lines and take exit 3, and a commit step that already
+        # printed its own refusal and returned its own code -- for which this prints
+        # nothing and hands back the code the commit chose.
+        return EXIT_OK if not headline else _fail(EXIT_IO, headline, hint)
     print(f"{labels.ITEM}: {body['id']} is {body['status']} ({verb})")
-    if no_commit:
-        print(f"{labels.ITEM}: wrote {target}; left uncommitted: commit this path "
-              "before running the census")
-        return EXIT_OK
-    return _commit(repo, rel, f"items: {verb} [{_digests(rendered)}]", target)
+    return EXIT_OK
 
 
-def _unchanged(target: Path, rendered: bytes, body: dict, verb: str) -> bool:
-    """Whether the file already holds these bytes, so the run has nothing to do.
+def _refuse_cited_order(repo: Path, item_id: str) -> int | None:
+    """The refusal ``promote`` owes an order that cites this item, or None.
 
-    An idempotent repeat stages nothing, commits nothing and moves no HEAD, and says
-    so in one line beside the line the verb itself prints.
+    Promote is item-only in this sub-issue, so an order that already cites the item
+    is refused rather than left pointing at a newly promoted item the same commit did
+    not rewrite. The question is answered by the borrowed reader, which distinguishes
+    "no entry cites it" from "the order could not be read", and the two get different
+    codes: the first is no refusal at all, the second is exit 3 naming the order path,
+    because a run that read nothing may not promote on the strength of not having read
+    it. Sub-issue 2 replaces this refusal with the same-commit order rewrite.
     """
-    if not target.is_file():
-        return False
-    try:
-        same = target.read_bytes() == rendered
-    except OSError:
-        return False
-    if not same:
-        return False
-    print(f"{labels.ITEM}: {body['id']} is {body['status']} ({verb})")
-    print(f"{labels.ITEM}: {itemschema.item_rel(body['id'])} is unchanged; nothing "
-          "to commit")
-    return True
+    cited, answered = item_reads.order_cites_item(repo, item_id)
+    if answered and not cited:
+        return None
+    if not answered:
+        return _fail(EXIT_IO, f"{orderschema.ORDER_REL} could not be read, so "
+                     "whether an order entry cites this item cannot be answered",
+                     f"repair or remove {orderschema.ORDER_REL}, then re-run "
+                     f"{labels.ITEM}")
+    return _fail(EXIT_REFUSAL,
+                 f"{orderschema.ORDER_REL} has an entry that cites item {item_id}, "
+                 "so promoting the item alone would leave the order out of step",
+                 f"the order is what has to change: correct that entry in "
+                 f"{orderschema.ORDER_REL} with order.py in the same commit as the "
+                 "promotion; until the order carries items, remove it with "
+                 "'order.py remove <issue>' and re-run item.py promote")
 
 
 def _state_root(args: argparse.Namespace, verb: str) -> Path | None:
@@ -641,10 +441,14 @@ def _run_list(args: argparse.Namespace) -> int:
     repo = _state_root(args, "list")
     if repo is None:
         return EXIT_USAGE
-    bodies, code = _listing_bodies(repo)
+    bodies, code = item_reads.listing_bodies(repo, _fail, EXIT_IO)
     if code is not None:
         return code
-    _print_listing(bodies or [])
+    print(f"{labels.ITEM}: {itemschema.ITEM_DIR} "
+          f"({len(bodies or [])} item{'y' if len(bodies or []) == 1 else 'ies'})")
+    for body in sorted(bodies or [], key=lambda b: (b["created"], b["id"]),
+                       reverse=True):
+        print(item_reads.listing_line(body))
     return EXIT_OK
 
 
@@ -658,7 +462,8 @@ def _run_add(repo: Path, args: argparse.Namespace, stamp: str) -> int:
     refused = _refuse_text("--title", args.title, itemschema.TITLE_MAX, "the title")
     if refused is not None:
         return refused
-    existing, code = _read_item(repo / itemschema.item_rel(args.id), args.id)
+    existing, code = item_reads.read_item(repo / itemschema.item_rel(args.id),
+                                          args.id, _fail, EXIT_IO, EXIT_REFUSAL)
     if code is not None:
         return code
     if existing is not None:
@@ -666,7 +471,8 @@ def _run_add(repo: Path, args: argparse.Namespace, stamp: str) -> int:
                      f"{existing['status']}",
                      f"its record is what it is: drop it with 'item.py drop "
                      f"{args.id} --decision ID --why REASON' or leave it a candidate")
-    duplicate = _dropped_title_taken(repo, args.title)
+    duplicate = item_reads.dropped_title_taken(repo, args.title, _fail, EXIT_IO,
+                                               EXIT_REFUSAL)
     if duplicate is not None:
         return duplicate
     body = itemschema.entry(args.id, args.title, itemschema.STATUS_CANDIDATE, stamp)
@@ -686,7 +492,8 @@ def _run_drop(repo: Path, args: argparse.Namespace, stamp: str) -> int:
     refused = _refuse_text("--why", args.why, itemschema.WHY_MAX, "the reason")
     if refused is not None:
         return refused
-    existing, code = _read_item(repo / itemschema.item_rel(args.id), args.id)
+    existing, code = item_reads.read_item(repo / itemschema.item_rel(args.id),
+                                          args.id, _fail, EXIT_IO, EXIT_REFUSAL)
     if code is not None:
         return code
     if existing is None:
@@ -720,7 +527,8 @@ def _run_promote(repo: Path, args: argparse.Namespace, stamp: str) -> int:
             return _fail(EXIT_USAGE, f"issue {args.issue!r} is not a positive "
                          "integer", "name the issue by its number, e.g. --issue 42")
         issue = int(args.issue)
-    existing, code = _read_item(repo / itemschema.item_rel(args.id), args.id)
+    existing, code = item_reads.read_item(repo / itemschema.item_rel(args.id),
+                                          args.id, _fail, EXIT_IO, EXIT_REFUSAL)
     if code is not None:
         return code
     if existing is None:

@@ -348,9 +348,10 @@ def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
 def _allowlist_identity(allowlist: Any) -> str:
     """The allowlist's name for the row: never a machine-local absolute path.
 
-    public_safety already reduces a file inside the audited tree to its
-    repository-relative path; an env-named file outside it arrives as a posix path, of
-    which only the basename may be printed. No row of the census carries a host path.
+    public_safety already reduces the tree's committed allowlist to its
+    repository-relative path; a path that would not root inside the tree arrives as a
+    posix path, of which only the basename may be printed. No row of the census carries
+    a host path.
     """
     source = str(getattr(allowlist, "source", "") or "")
     return source.rpartition("/")[2] or source
@@ -392,7 +393,7 @@ class _QuietScanStderr:
     places (``scrub_tracked_files`` for absent/corrupt, ``load_denylist`` for an
     unreadable candidate, which also leaks a machine-local absolute path), and a
     refused allowlist from a third (``load_allowlist``, whose message quotes the file
-    the operator named -- an absolute path on the env route). The census already
+    path it tried to use). The census already
     reports each of those states as a row with its own fix hint, so repeating them on
     stderr makes ``census --json`` a stream a machine consumer has to redirect to be
     clean (issue #77, AC3).

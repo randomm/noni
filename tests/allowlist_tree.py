@@ -49,5 +49,4 @@ def clean_repo(tmp_path, monkeypatch):
     denylist = tmp_path / "denylist"
     denylist.write_text("synthetic-vocab-name\n", encoding="utf-8")
     monkeypatch.setenv(public_safety.DENYLIST_ENV_VAR, str(denylist))
-    monkeypatch.delenv(public_safety.ALLOWLIST_ENV_VAR, raising=False)
     return repo

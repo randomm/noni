@@ -22,6 +22,7 @@ in ``tests/test_file_size_limit.py``.
 
 from __future__ import annotations
 
+import os
 import subprocess
 
 import public_safety
@@ -32,51 +33,46 @@ from allowlist_tree import SECRET_LABEL, TOKEN_FIXTURE, commit_planted
 from census_allowlist import (
     _allowlist_line,
     _entry_fixture,
-    _with_allowlist,
     _with_committed_allowlist,
+    _write_committed_allowlist,
 )
 
 
-def test_a_malformed_allowlist_stops_the_scan(clean_repo, tmp_path):
+def test_a_malformed_allowlist_stops_the_scan(clean_repo):
     """A refused file is not a scan with no exemptions: the scan does not answer.
 
     The violations it returns are the allowlist's own rows and nothing else -- a list
     produced by scanning with unknown exemptions would read as a verdict.
     """
     commit_planted(clean_repo, "fixtures/token.txt", TOKEN_FIXTURE)
-    _with_allowlist(tmp_path, "this line is not an entry")
+    _with_committed_allowlist(clean_repo, "this line is not an entry")
     violations, _source, _denylist, allowlist = public_safety.scrub_tracked_files(clean_repo)
     assert allowlist.status == "malformed"
     assert violations and all(public_safety.ALLOWLIST_FILENAME in v for v in violations), (
         f"a refused allowlist must report only its own rows: {violations}")
 
 
-def test_a_non_utf8_allowlist_is_unreadable_not_absent(clean_repo, tmp_path):
+def test_a_non_utf8_allowlist_is_unreadable_not_absent(clean_repo):
     """Bytes that will not decode are a file the operator wrote, not a missing one.
 
     The two have opposite consequences: "absent" means the tree opted out of the
-    mechanism and the run continues, "unreadable" means the run cannot be trusted.
+    mechanism, "unreadable" means the run cannot be trusted. Written straight to the
+    committed path, because the tree's own file is the only one the loader will read.
     """
-    path = tmp_path / "allowlist.bin"
-    path.write_bytes(b"\xff\xfe\x00\x01 not utf8")
-    import os
-
-    os.environ[public_safety.ALLOWLIST_ENV_VAR] = str(path)
+    _write_committed_allowlist(clean_repo).write_bytes(b"\xff\xfe\x00\x01 not utf8")
     result = public_safety.load_allowlist(clean_repo)
     assert result.status == "unreadable", result
 
 
-def test_a_directory_at_the_allowlist_path_is_not_read_as_absent(clean_repo, tmp_path):
+def test_a_directory_at_the_allowlist_path_is_not_read_as_absent(clean_repo):
     """A path that exists as a directory is a wrong location, not an opted-out tree.
 
-    Reading it as absence is the failure this pins: the operator stated an allowlist and
-    the run would report a clean scan that applied no exemptions.
+    Reading it as absence is the failure this pins: the tree stated an allowlist and
+    the run would report a clean scan that applied no exemptions. A directory cannot be
+    committed, so it stands in the working tree and the listing still holds the rest.
     """
-    import os
-
-    directory = tmp_path / "allowlist-dir"
+    directory = _write_committed_allowlist(clean_repo)
     directory.mkdir()
-    os.environ[public_safety.ALLOWLIST_ENV_VAR] = str(directory)
     result = public_safety.load_allowlist(clean_repo)
     assert result.status != "absent", f"a directory read as 'no allowlist': {result}"
     violations, _s, _d, allowlist = public_safety.scrub_tracked_files(clean_repo)
@@ -84,41 +80,57 @@ def test_a_directory_at_the_allowlist_path_is_not_read_as_absent(clean_repo, tmp
     assert violations, "a run that could not read its exemptions reported no findings at all"
 
 
-def test_a_non_regular_allowlist_is_unreadable(clean_repo, tmp_path):
+def test_a_non_regular_allowlist_is_unreadable(clean_repo):
     """A fifo at the allowlist path is refused at the open and classified, not waited on.
 
     The #91 promise applies to this third read in the package: the guard is what makes
     a blocking read impossible here, and the classification is what stops the refusal
-    reading as an absent file.
+    reading as an absent file. A fifo is not a committable object, so the tree's listing
+    is unchanged and the verdict can only be about what stands at the allowlist path.
     """
-    import os
-
     if not hasattr(os, "mkfifo"):
         pytest.skip("os.mkfifo is POSIX-only")
-    pipe = tmp_path / "allowlist-pipe"
+    pipe = _write_committed_allowlist(clean_repo)
     os.mkfifo(pipe)
-    os.environ[public_safety.ALLOWLIST_ENV_VAR] = str(pipe)
     result = public_safety.load_allowlist(clean_repo)
     assert result.status == "unreadable", result
 
 
-def test_the_env_named_file_is_not_fallen_back_on(clean_repo, tmp_path):
-    """A broken env-named allowlist is the run's answer; the tree's own file is not tried.
+def test_setting_the_old_env_override_changes_nothing(clean_repo, tmp_path, monkeypatch):
+    """NONI_SCRUB_ALLOWLIST is inert: the committed file alone decides.
 
-    The deny-list falls through to its next candidate because an inactive deny-list is
-    still reported as inactive either way. An allowlist is the opposite: quietly dropping
-    the source the caller named would apply one tree's exemptions and report another's.
+    The override is gone (issue #139) -- an env-named file is not tracked, so an
+    exemption that arrived that way carried no review trail. This is the regression
+    test that keeps it gone: a valid file of entries named by the variable must not
+    exempt anything on a tree that wrote no allowlist, and the same file broken must
+    not turn a tree that did write one into an unreadable run. The conftest fixture
+    clears the variable for every test, so this is the only place it is ever set.
     """
-    import os
-
-    _with_committed_allowlist(clean_repo, _allowlist_line("fixtures/x.txt", SECRET_LABEL))
+    exemptable = tmp_path / "outside-allowlist"
+    exemptable.write_text(_allowlist_line("fixtures/token.txt", SECRET_LABEL) + "\n",
+                          encoding="utf-8")
     broken = tmp_path / "broken-allowlist"
     broken.write_bytes(b"\xff\xfe not utf8")
-    os.environ[public_safety.ALLOWLIST_ENV_VAR] = str(broken)
 
+    commit_planted(clean_repo, "fixtures/token.txt", TOKEN_FIXTURE)
+    monkeypatch.setenv("NONI_SCRUB_ALLOWLIST", str(exemptable))
     result = public_safety.load_allowlist(clean_repo)
-    assert result.status == "unreadable", (
-        f"the loader fell back to the tree's committed file: {result}")
+    assert result.status == "absent", (
+        f"the environment named an allowlist: {result}")
+    violations, _, _, _ = public_safety.scrub_tracked_files(clean_repo)
+    assert any(v.startswith("fixtures/token.txt:1:") and SECRET_LABEL in v
+               for v in violations), (
+        f"an env-named file exempted a fixture no reviewer read: {violations}")
+
+    monkeypatch.setenv("NONI_SCRUB_ALLOWLIST", str(broken))
+    _with_committed_allowlist(clean_repo,
+                              _allowlist_line("fixtures/token.txt", SECRET_LABEL))
+    result = public_safety.load_allowlist(clean_repo)
+    assert result.status == "ok", (
+        f"the environment overrode the committed file: {result}")
+    violations, _, _, _ = public_safety.scrub_tracked_files(clean_repo)
+    assert violations == [], (
+        f"an env-named file undid a committed exemption: {violations}")
 
 
 def test_absence_is_the_only_quiet_state(clean_repo):
@@ -136,9 +148,9 @@ def test_absence_is_the_only_quiet_state(clean_repo):
 def test_the_committed_file_is_the_default_route(clean_repo):
     """The tree's own tracked allowlist is read with no environment involved.
 
-    AC1 asks for a committed file, and the env var is the exception rather than the rule;
-    a loader that only honoured the env var would pass every test above and ship a
-    feature nobody can use.
+    AC1 asks for a committed file, and it is now the only route the loader has; a
+    loader that honoured an environment name instead would pass every test above and
+    ship an exemption nobody reviewed.
     """
     commit_planted(clean_repo, "fixtures/token.txt", TOKEN_FIXTURE)
     _with_committed_allowlist(clean_repo, _allowlist_line("fixtures/token.txt", SECRET_LABEL))
@@ -151,14 +163,14 @@ def test_the_committed_file_is_the_default_route(clean_repo):
 
 @pytest.mark.parametrize("protected", [public_safety.ALLOWLIST_FILENAME,
                                        public_safety.DENYLIST_FILENAME])
-def test_neither_configuration_file_can_be_exempted(clean_repo, tmp_path, protected):
+def test_neither_configuration_file_can_be_exempted(clean_repo, protected):
     """An entry naming the allowlist or the deny-list is refused, not honoured.
 
     The allowlist cannot exempt itself (that would let it carry its own fake tokens), and
     it cannot exempt the deny-list (whose path is the operator's private vocabulary). Both
     refusals are load-time, so the entry is a finding rather than a permission.
     """
-    _with_allowlist(tmp_path, _allowlist_line(protected, SECRET_LABEL))
+    _with_committed_allowlist(clean_repo, _allowlist_line(protected, SECRET_LABEL))
     result = public_safety.load_allowlist(clean_repo)
     assert result.status == "malformed", f"{protected!r} was honoured: {result}"
     assert any(public_safety_allowlist.ALLOWLIST_REFUSED_LABEL in row for row in result.findings), (
@@ -200,7 +212,7 @@ def test_the_deny_list_label_can_never_be_exempted(clean_repo, tmp_path, monkeyp
     assert source is None, "a run that could not run reported a deny-list it never applied"
 
 
-def test_allowlist_exempt_refuses_the_deny_list_label_even_when_built(clean_repo, tmp_path):
+def test_allowlist_exempt_refuses_the_deny_list_label_even_when_built():
     """The predicate refuses the label directly, not only by the parser having refused it.
 
     A caller that assembled an entry by hand (a future writer, a test double) gets the
@@ -216,7 +228,7 @@ def test_allowlist_exempt_refuses_the_deny_list_label_even_when_built(clean_repo
         result, "fixtures/note.txt", SECRET_LABEL) is False
 
 
-def test_an_unusable_allowlist_never_exempts(clean_repo, tmp_path):
+def test_an_unusable_allowlist_never_exempts(clean_repo):
     """The entries a refused file did parse are not honoured either.
 
     The parser keeps what it read before the bad line so the report can name it, so the
@@ -265,7 +277,7 @@ def test_the_default_path_seam_is_the_scan_s_own(tmp_path, monkeypatch):
     assert result.findings, "the seam was ignored, or the stale check never ran"
 
 
-def test_the_filename_constant_is_the_single_source(tmp_path):
+def test_the_filename_constant_is_the_single_source():
     """The name the docs quote and the name the loader reads are one constant.
 
     Every per-tree config file in this package works that way (``DENYLIST_FILENAME``
@@ -273,7 +285,6 @@ def test_the_filename_constant_is_the_single_source(tmp_path):
     typing it, so a rename strands the page instead of passing a stale name forever.
     """
     assert public_safety.ALLOWLIST_FILENAME == ".noni-scrub-allowlist"
-    assert public_safety.ALLOWLIST_ENV_VAR == "NONI_SCRUB_ALLOWLIST"
     assert public_safety.ALLOWLIST_FILENAME.startswith(".noni-")
     # A tracked file is named for what it is; the deny-list's ignore rule must not
     # accidentally cover it, which is what the next test checks on the real tree.

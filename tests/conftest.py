@@ -95,11 +95,11 @@ __all__ = [
 # like the git vars; a test that wants a deny-list sets it explicitly (or
 # monkeypatches public_safety._default_denylist_file).
 #
-# NONI_SCRUB_ALLOWLIST: the same argument for the committed allowlist, one layer up,
-# and a sharper one. A host allowlist does not merely add vocabulary -- it exempts
-# findings, so an inherited value could turn a test about "this finding is reported"
-# green on a machine whose owner allowed it. A test that wants an allowlist says so
-# through tests/census_allowlist.py.
+# NONI_SCRUB_ALLOWLIST: the same argument one layer up, and a sharper one. The product
+# no longer reads this variable -- the committed allowlist is the only route there is --
+# but a value inherited from the developer's shell is still cleared so the inertness
+# test below is the only thing that sets it, and nothing about a test's verdict can turn
+# on a variable the harness put in the environment.
 NONI_ENV_VARS = (
     "GIT_DIR",
     "GIT_WORK_TREE",

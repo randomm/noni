@@ -123,7 +123,12 @@ does not hold or has superseded, and the census reports an intent whose last
 commit cites no live record (§7's `intent` class, 51).
 
 The state root is a directory holding (or about to hold) that `noni/` tree, and
-`--repo` is the only flag that names it:
+`--repo` is the only flag that names it. The mark is the `noni/` entry itself,
+whatever it holds: a `noni/` that holds nothing yet is the state root of a
+project that has not steered, and the census words its contents as their own
+states (`absent`, `empty`, `not a directory`) rather than collapsing an empty
+directory into a missing one. A directory with no `noni/` at all is the wrong
+tree, and is refused as one (below).
 
 - **Default: the attached project's own repository**, so the state is the tree
   at `<project>/noni/` and every tool run without `--repo` reads and writes
@@ -160,6 +165,31 @@ one that command already uses for a mistake in its own arguments: 2 for
 not a git work tree). The codes are not interchangeable — each is that tool's
 existing refusal, and a caller tells a wrong path from a fault of the tree by
 which one it gets.
+
+A `--repo` that *is* a directory but holds no `noni/` directory is the same
+mistake wearing a different face, and it gets the same treatment on the same
+code: `order` and `intent` refuse it with one line naming the path and saying it
+is not a noni state root (no `noni/` directory), plus a fix line naming `--repo`.
+`order` refuses `move`, `remove` and `confirm` that way; `add` is admitted
+because its first entry is a sanctioned creator of `noni/direction`, and its
+`--decision` is still resolved against the ledger. `intent set` is admitted for
+the same reason (its first file creates `noni/direction/intent.md`). `decide`
+is admitted on the same ground: its first record is what brings `noni/decisions/`
+into being, and a `--no-commit` run commits nothing until its caller commits it.
+What makes a first `decide` auditable rather than silent is that it is a real,
+reported commit: the run names the state root and the record it wrote, and leaves
+the tree clean. The question is asked before the ledger is read, so a first record
+never lands behind a half-checked tree. What none of them may do is
+answer a *read* with "no decision record … is in the ledger" about a repository
+that holds no ledger at all: that sentence is true of the ledger and useless as
+an account of the wrong `--repo`, so the state root is checked before the reads.
+The unified census changes no exit code for this state (a no-`noni/` tree stays
+0, and 42 under `--strict` for a run that names `ledger-empty`) and instead
+prints one note ahead of its rows saying that no `noni/` directory was found
+under `--repo`; in `--json` mode the same sentence rides the summary row's
+`not_evaluated` field. The note is not printed when any of `--ledger`,
+`--sessions`, `--ordering` or `--intent` replaces the path under the state root,
+because then the state need not live under `--repo` at all.
 
 The four session writers (`register`, `claim`, `close`, `release`) refuse two
 further states the same way. A `--repo` that is itself a symlink: `git` works on

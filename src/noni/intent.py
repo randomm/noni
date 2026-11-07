@@ -140,16 +140,19 @@ class _VerbedParser(argparse.ArgumentParser):
 
 
 def _refuse_linked_state(repo: Path) -> int | None:
-    """The exit-2 refusal for a ``noni/`` this writer may not read or write, or None.
+    """The exit-2 refusal for a ``--repo`` this writer may not read or write, or None.
 
-    :func:`noni._path_kind.direction_refusal` asks the directory question of every
-    component of :data:`_GUARDED_DIRS`; this seam gives its refusal this writer's
-    code and voice. The code is ``EXIT_USAGE``, the one docs/PRODUCT.md 7 gives
-    ``intent`` for a wrong path, and the guard runs before the draft is opened and
-    before the citation is looked up, so no bytes outside the state root are read
-    either.
+    One seam for both ``noni/`` questions, which :func:`noni._path_kind.refuse_state_root`
+    asks of the same ``lstat`` in one order: the obstruction question over every
+    component of :data:`_GUARDED_DIRS` (a link is never followed or written through),
+    then the state-root question for a tree holding no ``noni/`` at all. ``set`` is
+    always admitted to the second: it is this writer's one verb and its one sanctioned
+    creator (the first file makes ``noni/direction``), and its citation is still
+    resolved against the ledger. The code is ``EXIT_USAGE``, the one docs/PRODUCT.md 7
+    gives ``intent`` for a wrong path, and the guard runs before the draft is opened,
+    before the citation is looked up, and before every mkdir.
     """
-    refused = _path_kind.direction_refusal(repo, _GUARDED_DIRS)
+    refused = _path_kind.refuse_state_root(repo, True, _GUARDED_DIRS)
     return None if refused is None else _fail(EXIT_USAGE, *refused)
 
 

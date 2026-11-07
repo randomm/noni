@@ -4,9 +4,11 @@ Extracted from the decide writer suite: the writer driven from a decoy cwd and a
 decoy ledger, so a path leak is a refusal rather than a stray record."""
 
 import json
+from pathlib import Path
 
 from _harness import (
     _git_e2,
+    _init_repo,
 )
 from decide_fixtures import (
     ANSWERED,
@@ -250,3 +252,104 @@ def test_a_bad_date_exits_two(tmp_path):
         assert proc.returncode == 2, f"--date {bad}: {proc.stderr}"
         assert "--date" in proc.stderr
     assert _porcelain(repo, "noni/decisions") == ""
+
+
+# --- the state-root refusal, and the first record that stays open to it ------
+#
+# The state a caller actually arrives at is a committed code repository passed as
+# --repo when the state clone was meant: a valid git work tree, so the work-tree
+# probe admits it and only the state-root question refuses it. The two runs below
+# are the same command against the same kind of tree, told apart only by whether
+# the ledger holds a record yet -- which is what makes the pair worth pinning
+# together in this file rather than in two places.
+
+NO_NONI_WORDS = ("is not a noni state root", "no noni/")
+
+
+def _committed_code_repo(tmp_path: Path, name: str) -> Path:
+    """A git tree with an identity, one commit, and no ``noni/`` of its own."""
+    repo = _init_repo(tmp_path / name)
+    _git_e2(repo, "config", "user.name", "Replay")
+    _git_e2(repo, "config", "user.email", "replay@fixture.invalid")
+    _commit_tree(repo, "README.md", "# a code repository\n", "add readme",
+                 "2026-10-01T00:00:00Z")
+    return repo
+
+
+def test_a_run_into_a_tree_with_no_noni_creates_the_ledger_and_says_what_it_made(
+tmp_path):
+    """A first ``decide`` into a code repository creates ``noni/`` and reports it.
+
+    The ticket's reproduction was a run that committed into a tree that never held
+    state and left the operator no way to see it: the commit succeeded, so the tree
+    read as a state root afterwards and every later run looked legitimate. ``decide``
+    is a sanctioned creator (docs/PRODUCT.md 7), so this run is admitted and exits 0,
+    and what makes it auditable rather than silent is that the tree it touched and the
+    record it made are both named on stdout and left staged-and-committed as one unit.
+    The refusal for a tree that is genuinely no state root belongs to the readers and
+    to ``order``/``intent``; ``decide``'s half of the contract is that the first record
+    is real, reported, and asked before the ledger is read.
+    """
+    repo = _committed_code_repo(tmp_path, "code-repo")
+    proc = _run(repo, "--slug", "probe", "--date", NEW_DATE,
+                *BASE, *QUESTION, *OPTIONS, *ANSWERED)
+    assert proc.returncode == 0, f"{proc.returncode}: {proc.stderr}"
+    made = repo / "noni" / "decisions" / f"{NEW_DATE}-probe.json"
+    assert made.is_file(), f"the first record did not land: {proc.stdout}"
+    assert str(repo) in proc.stdout or "noni/decisions" in proc.stdout, (
+        f"the run must name what it wrote: {proc.stdout}")
+    assert _porcelain(repo) == "", (
+        f"a record left uncommitted is how the ticket's tree drifted: {_porcelain(repo)}")
+
+
+def test_a_first_record_on_a_tree_with_no_noni_is_admitted(tmp_path):
+    """The same command with nothing in the ledger yet is the first record, and lands.
+
+    This is the exception the refusal exists for: ``noni/decisions`` comes into being
+    by the writer allocating it, and docs/QUICKSTART.md's own command blocks are first
+    runs. A refusal that refused this run too would be the same bug with the opposite
+    exit code, so it is asserted beside the refusal rather than somewhere nobody would
+    compare the two.
+    """
+    repo = _committed_code_repo(tmp_path, "first-record")
+    proc = _run(repo, "--slug", "first", "--date", NEW_DATE,
+                *BASE, *QUESTION, *OPTIONS, *ANSWERED)
+    assert proc.returncode == 0, f"{proc.returncode}: {proc.stderr}"
+    assert all(word not in proc.stderr for word in NO_NONI_WORDS), proc.stderr
+    assert (repo / "noni" / "decisions" / f"{NEW_DATE}-first.json").is_file(), proc.stdout
+    assert _porcelain(repo) == "", _porcelain(repo)
+
+
+def test_no_commit_is_admitted_on_a_tree_with_no_noni(tmp_path):
+    """``--no-commit`` commits nothing, so no commit can land in the wrong tree.
+
+    The shim route and the session writers mint a record with ``--no-commit`` and
+    commit it themselves, so a refusal that stopped this run would stop those routes
+    outright. The file still lands, uncommitted, which is what its caller then commits.
+    """
+    repo = _committed_code_repo(tmp_path, "no-commit")
+    proc = _run(repo, "--slug", "minted", "--date", NEW_DATE,
+                *BASE, *QUESTION, *OPTIONS, *ANSWERED, "--no-commit")
+    assert proc.returncode == 0, f"{proc.returncode}: {proc.stderr}"
+    assert all(word not in proc.stderr for word in NO_NONI_WORDS), proc.stderr
+    assert (repo / "noni" / "decisions" / f"{NEW_DATE}-minted.json").is_file(), proc.stdout
+
+
+def test_a_linked_noni_keeps_its_own_refusal_ahead_of_the_state_root_one(tmp_path):
+    """A ``noni/`` that is a link is an obstruction, not a missing state root.
+
+    Both questions are asked of one ``lstat``, and the order is the contract: the
+    census words a linked ``noni/`` as its own state (``skills/census/SKILL.md``), so
+    reporting it as "no noni/ directory is there" would be a second, contradicting
+    account of the same path.
+    """
+    repo = _committed_code_repo(tmp_path, "linked")
+    (repo / "target").mkdir()
+    (repo / "noni").symlink_to(repo / "target")
+    proc = _run(repo, "--slug", "probe", "--date", NEW_DATE,
+                *BASE, *QUESTION, *OPTIONS, *ANSWERED)
+    assert proc.returncode == 3, f"{proc.returncode}: {proc.stderr}"
+    assert "symlink" in proc.stderr, proc.stderr
+    assert NO_NONI_WORDS[0] not in proc.stderr, (
+        f"a linked noni/ is the obstruction finding, not the missing one: "
+        f"{proc.stderr}")

@@ -219,6 +219,8 @@ def test_the_helper_takes_every_rule_from_its_arguments_and_keeps_none():
                 ("check_supersede", _call_arguments(helper_source, "check_supersede(")),
                 ("refuse_linked_state",
                  _call_arguments(source, "refuse_linked_state(", call_site="_fail")),
+                ("refuse_state_root",
+                 _call_arguments(source, "refuse_state_root(", call_site="_fail")),
                 ("refuse_ledger_allocation",
                  _call_arguments(source, "refuse_ledger_allocation(",
                                  call_site="_fail")),
@@ -226,26 +228,27 @@ def test_the_helper_takes_every_rule_from_its_arguments_and_keeps_none():
                  _call_arguments(source, "refuse_taken_name(", call_site="_fail")),
                 ("_allocation_refusal",
                  _call_arguments(helper_source, "_allocation_refusal("))])
-    # The four single-rule calls, plus the assembly that makes them, plus the three
+    # The four single-rule calls, plus the assembly that makes them, plus the four
     # path seams decide hands its printer to. The assembly and the seams live in the
     # helper too, so the count is what says the caller did not quietly re-implement
     # one of them beside it -- and every one of them crosses with the caller's own
     # printer and code.
-    assert len(calls) >= 7, calls
+    assert len(calls) >= 8, calls
     for name, arguments in calls:
         assert name in {"parse_date", "parse_questions", "check_supersede",
                         "refuse_name", "build_record_flags",
-                        "refuse_linked_state", "refuse_ledger_allocation",
+                        "refuse_linked_state", "refuse_state_root",
+                        "refuse_ledger_allocation",
                         "refuse_taken_name", "_allocation_refusal"}, name
         # A rule that takes no printer is exempt from the printer/code pair: the
         # directory question of the allocation seam answers with a pair of lines and
-        # prints nothing, so it is held to its own call site instead. The three path
+        # prints nothing, so it is held to its own call site instead. The four path
         # seams take both positionally, so they are held to the same contract by name
         # rather than by keyword.
         if name == "_allocation_refusal":
             continue
-        if name in {"refuse_linked_state", "refuse_ledger_allocation",
-                    "refuse_taken_name"}:
+        if name in {"refuse_linked_state", "refuse_state_root",
+                    "refuse_ledger_allocation", "refuse_taken_name"}:
             assert "_fail" in arguments, f"{name} is called without the caller's printer"
             assert re.search(r"\bEXIT_\w+\b", arguments), \
                 f"{name} is called without the caller's own exit constant"
@@ -264,8 +267,8 @@ def test_the_helper_takes_every_rule_from_its_arguments_and_keeps_none():
     # the literal check below (which is spelled for the keyword-only flag rules) is
     # replaced by an assertion that both are named in the argument text.
     for name, arguments in _helper_calls(source):
-        if name in {"refuse_linked_state", "refuse_ledger_allocation",
-                    "refuse_taken_name"}:
+        if name in {"refuse_linked_state", "refuse_state_root",
+                    "refuse_ledger_allocation", "refuse_taken_name"}:
             assert "_fail" in arguments, f"{name} is called without the caller's printer"
             assert re.search(r"\bEXIT_\w+\b", arguments), \
                 f"{name} is called without the caller's own exit constant"

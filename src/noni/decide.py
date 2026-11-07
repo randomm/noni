@@ -81,7 +81,7 @@ import re
 import sys
 from pathlib import Path
 
-from . import _decide_flags, _writer, gitwrite, labels, orderstate
+from . import _decide_flags, _decide_state_root, _writer, gitwrite, labels, orderstate
 from . import ledger_schema as _schema
 from .ledger_schema import is_single_line
 
@@ -238,7 +238,8 @@ def _open_ledger(repo: Path, ledger: Path) -> int | None:
     """The exit-5 refusal for a ledger directory that cannot be created, or None.
 
     The allocation and its directory question are :func:`noni._writer.allocate_ledger`;
-    this seam gives its refusal this writer's exit code and voice.
+    this seam gives its refusal this writer's exit code and voice, and hands the allocation
+    this writer's exit code and voice.
     """
     return _decide_flags.refuse_ledger_allocation(_fail, labels.DECIDE,
                                                   EXIT_COMMIT_FAILED, repo, ledger)
@@ -424,6 +425,13 @@ def main(argv: list[str] | None = None) -> int:
     by = _identity(repo)
     if isinstance(by, int):
         return by
+    # Asked after the git probes, so a tree that is no work tree keeps the refusal that
+    # names that fault, and before the allocation, so a wrong --repo is refused without
+    # gaining the directory this run would otherwise have created.
+    no_state = _decide_state_root.refuse_state_root(_fail, EXIT_GIT, repo,
+                                                    args.no_commit)
+    if no_state is not None:
+        return no_state
     opened = _open_ledger(repo, ledger)
     if opened is not None:
         return opened

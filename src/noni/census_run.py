@@ -57,6 +57,7 @@ from .census_report import (
     _known_checks,
     _render,
     _threshold,
+    no_state_root_note,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, nothing imported at runtime
@@ -341,6 +342,21 @@ def _run(argv: list[str] | None = None) -> int:
     # whether the group runs at all, and the same probe goes into
     # `_check_ledger` for the rows.
     ledger_probe = census._ledger_probe(ledger)
+
+    # A tree whose ``noni/`` does not exist at all is the one state the census must
+    # say out loud before its rows: on its own, a no-``noni/`` tree reads as a
+    # ledger-empty warn plus an inactive deny-list and exits 0, which a caller who
+    # pointed --repo at a code repository by mistake reads as a clean project. The
+    # probe already answers that state (``absent`` is answered only when ``noni/``
+    # itself is missing), so the note keys on it and on nothing else -- not the clock,
+    # not the cwd, and not a row. It rides the notes channel, so no check class and no
+    # NDJSON row kind is added and every exit code is unchanged. Suppressed whenever
+    # any of the four path overrides is in effect: with a ``--ledger`` (or sessions,
+    # ordering, intent) pointing elsewhere, the state does not live under --repo and
+    # "no noni/ under --repo" would be a true sentence about an irrelevant tree.
+    if ledger_probe.state == "absent" and not (args.ledger or args.sessions
+                                               or args.ordering or args.intent):
+        notes.append(no_state_root_note(args.repo))
 
     if (LEDGER_CHECKS | {"ledger-empty"}) & requested or ledger_probe.listing_fault:
         # The group runs whenever one of its classes was asked for, and also

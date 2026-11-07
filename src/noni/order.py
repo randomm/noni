@@ -204,16 +204,18 @@ def _digests(data: bytes) -> str:
     return hashlib.sha1(data).hexdigest()[:7]
 
 
-def _refuse_linked_state(repo: Path) -> int | None:
-    """The exit-2 refusal for a ``noni/`` this writer may not read or write, or None.
+def _refuse_linked_state(repo: Path, verb: str) -> int | None:
+    """The exit-2 refusal for a ``--repo`` this writer may not read or write, or None.
 
-    :func:`noni._path_kind.direction_refusal` asks the directory question of every
-    component of :data:`_GUARDED_DIRS`; this seam gives its refusal this writer's
-    code and voice. The code is ``EXIT_USAGE``, the one docs/PRODUCT.md 7 gives
-    ``order`` for a wrong path, and the guard runs before the artifact read and the
-    ``--decision`` lookup, so no bytes outside the state root are read either.
+    One seam for both ``noni/`` questions of :data:`_GUARDED_DIRS`, in the order and
+    with the wording :func:`noni._path_kind.refuse_state_root` owns. Only ``add`` is
+    admitted to the state-root question: it is this writer's one sanctioned creator,
+    while ``move``, ``remove`` and ``confirm`` create nothing legitimate and are
+    refused ahead of the reads that would otherwise answer "no decision record is in
+    the ledger". ``EXIT_USAGE`` is the code docs/PRODUCT.md 7 gives ``order`` for a
+    wrong path; the guard runs before the artifact read, the lookup and every mkdir.
     """
-    refused = _path_kind.direction_refusal(repo, _GUARDED_DIRS)
+    refused = _path_kind.refuse_state_root(repo, verb == "add", _GUARDED_DIRS)
     return None if refused is None else _fail(EXIT_USAGE, *refused)
 
 
@@ -315,7 +317,7 @@ def main(argv: list[str] | None = None) -> int:
     # Every directory this run reads or writes, asked of ``lstat`` before the first
     # read: a linked noni/ or noni/direction would otherwise carry the artifact and
     # the decision read below into a tree outside the state root.
-    linked = _refuse_linked_state(repo)
+    linked = _refuse_linked_state(repo, subcommand)
     if linked is not None:
         return linked
     order_path = repo / orderschema.ORDER_REL

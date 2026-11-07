@@ -107,7 +107,16 @@ distinguish "truly stalled" from "history unavailable" without escalating.
 
 Human mode prints one line per finding (`check`, its `WARN`/`FAIL` tag, its
 subject and message, then the fix hint), then any `note:` line, then the summary
-line. What the first and last lines say is keyed to what the run actually found:
+line. One note is printed first of all, ahead of the headline and every row: on a
+`--repo` holding no `noni/` directory — what a caller gets by pointing `--repo` at
+a code repository instead of a state root — the run says `note: no noni/ directory
+was found under --repo <path>` before rows that would otherwise read as a project
+that has not steered yet (a no-`noni/` tree is just a `ledger-empty` warn beside an
+inactive `deny-list`). It is a note, not a row: no check class, no row kind and no
+exit code is added, and under `--json` it rides the summary row's `not_evaluated`
+like any other note. It is not printed when `--ledger`, `--sessions`, `--ordering`
+or `--intent` replaces the path under the state root. The first and last lines are
+keyed to what the run found:
 
 | state of the run | first line | verdict word of the summary line |
 |---|---|---|

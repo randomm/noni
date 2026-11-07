@@ -21,6 +21,8 @@ import re
 import sys
 from datetime import timedelta
 
+from ._safe_text import safe_path
+
 SCHEMA_VERSION = "noni.census/1"
 
 
@@ -92,6 +94,42 @@ ORDERING_CLOSED_CHECK = "ordering-closed"
 ORDERING_CLOSED_NOT_EVALUATED = (
     "ordering-closed was not evaluated: no --issue-state FILE was given, so whether "
     "an ordered issue is closed is not asked (the census never contacts a tracker)")
+
+# The one sentence a run prints when the tree --repo names holds no ``noni/`` at all:
+# the shape a caller reaches by pointing the census at a code repository instead of a
+# state root. Carried on the same channel as the ordering-closed note (one ``note:``
+# line in human mode, the summary row's ``not_evaluated`` list in ``--json`` mode) so
+# no new check class and no third NDJSON row kind are needed, and so the exit code of
+# a no-``noni/`` tree stays exactly what it was: ledger-empty remains the warn row it
+# already was (0, or 42 under ``--strict``). Keyed on the ledger probe's ``absent``
+# state, which the probe answers only when ``noni/`` itself is missing -- a
+# ``noni/`` that is a file or a symlink is already worded by its own row and is not
+# collapsed into this sentence. The path is --repo as the caller spelled it, never a
+# resolved absolute path (see the machine-local-path rule in ``census.py``).
+NO_STATE_ROOT_NOTE = ("no noni/ directory was found under --repo {repo}: this tree "
+                      "holds no noni state, so the ledger, sessions, ordering and "
+                      "intent groups had nothing to read (pass --repo naming the "
+                      "state root, the directory that holds noni/)")
+
+
+def no_state_root_note(repo: str) -> str:
+    """The no-``noni/`` sentence for one ``--repo`` as the caller spelled it.
+
+    A function rather than a constant because the path varies per run, and the path
+    is the caller's spelling rather than the resolved tree: a census row never carries
+    a machine-local absolute path the operator did not type. The path is a value from
+    argv, so it is rendered here, once, through :func:`noni._safe_text.safe_path`: a
+    name carrying a newline would otherwise split this note across two stdout lines and
+    break the contract that it opens the report as one line and the verdict closes it.
+    """
+    return NO_STATE_ROOT_NOTE.format(repo=safe_path(repo))
+
+
+# The opening words of the note above, which is how the human branch recognises it:
+# the sentence it prints first, and the only note kept out of the trailing ``note:``
+# block. Derived from the template rather than restated, so a reworded note cannot
+# leave the two halves disagreeing about which sentence opens the report.
+NO_STATE_ROOT_PREFIX = NO_STATE_ROOT_NOTE.split(" {repo}", 1)[0]
 
 # The one declaration of the check contract: id -> (code, default severity,
 # fix hint). Everything a caller can read about a class — its exit code, its
@@ -370,6 +408,20 @@ def _render(
     else:
         fired = {f["check"] for f in findings}
         warns = _warn_count(findings)
+        # The no-state-root note is the one sentence a caller needs BEFORE anything
+        # else: on a tree with no ``noni/``, the rows that follow all describe
+        # artifacts that are absent because the whole state root is missing, and a
+        # reader who meets them first reads a wrong --repo as a project that merely
+        # has not steered yet. So it opens the human report, ahead of the headline and
+        # every row. It is excluded from ``notes`` below because it has already been
+        # said, which also keeps the all-clear banner honest (see its condition). The
+        # note selected here and the note suppressed below the rows are the same object
+        # compared by identity, so the two halves cannot disagree about which sentence
+        # has already been said: a second relation (a prefix here, an equality there)
+        # would let a note that merely opens the same way print twice in one report.
+        state_note = next((n for n in notes if n.startswith(NO_STATE_ROOT_PREFIX)), None)
+        if state_note is not None:
+            print(f"note: {state_note}")
         if not findings and not notes:
             print("census: no findings; all checks passed")
         elif not findings:
@@ -383,7 +435,11 @@ def _render(
                 print(f"{f['check']:<16} {tag:<4} {f['subject']}: {f['message']}")
                 print(f"{'':<16} fix: {CLASS_FIX[f['check']]}")
         for note in notes:
-            print(f"note: {note}")
+            # Reprinting the state-root note would say the same sentence twice in one
+            # report; the ordering-closed note and any other still print here, below
+            # the rows they qualify.
+            if note is not state_note:
+                print(f"note: {note}")
         if ok:
             verdict_text = (f"{warns} warning(s)" if warns else "clean")
         else:

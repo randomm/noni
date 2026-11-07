@@ -221,8 +221,9 @@ classes that report their own absence:
   run adds one `ledger-edited` `cannot-tell` row whose `subject` and `artifact`
   both carry the ledger's name and whose message carries the `OSError` text,
   bounded and stripped of machine-local paths. That name is the last-segment
-  rule stated once below, the rule for every row of the ledger group that names
-  the ledger. It is a warn at exit 0 and a failure at 12 under `--strict`.
+  rule stated once below, and it is the rule for every row of the ledger group
+  that names the ledger. It is a warn at exit 0 and a failure at 12 under
+  `--strict`.
 - **An unreadable `noni/sessions/` is never clean.** A `noni/sessions/` that
   stats as a directory and cannot be listed earns exactly one `session-deleted`
   `cannot-tell` row — the class the deletion check already uses for its
@@ -268,7 +269,7 @@ classes that report their own absence:
   rows" as "nothing was deleted". A cannot-tell row is a warn by default and
   is promoted by `--strict`, whatever its class's own severity: not being able
   to read the tree is not itself a protocol violation. The edit check's
-  `cannot verify` row — a committed blob unreachable in a shallow or
+  `cannot verify` row — a committed blob that is unreachable in a shallow or
   pruned tree — follows the same rule: it is a `ledger-edited` row that stays a
   warn at exit 0 and becomes a failure only under `--strict`, unlike the
   genuine `record was edited after commit` row of the same class, which fails
@@ -277,7 +278,7 @@ classes that report their own absence:
   state reaches the census only through `--issue-state FILE`, a JSON map
   `{"<issue>": "open"|"closed"}` an adapter or the operator produces: the census
   never contacts a tracker, and there is no third adapter seam for it. Two
-  states follow. An entry whose issue the map does not mention gets a
+  states follow from that. An entry whose issue the map does not mention gets a
   `cannot-tell` row of the same class rather than silence, so a partial map cannot
   read as "every ordered issue is open"; it is a warn by default and
   `--strict` promotes it to 46. When `--issue-state` was not given at all,
@@ -314,13 +315,13 @@ classes that report their own absence:
   the row is about the file the group was asked to read, not one entry inside it,
   so the group's `--only` filter cannot drop it and a run that checked nothing
   cannot report itself clean. The ledger group's own row for the same unreadable
-  listing is whole-artifact too, which keeps it visible under a filter
+  listing is whole-artifact too, which is what keeps it visible under a filter
   that named no ledger class at all. A ledger that is simply absent or not a
   directory is different — no listing was attempted, and `ledger-empty` owns
   that report.
 - **A map key must be the issue number itself.** `"07"` or `"-7"` can never match
-  an entry's issue, so such a key is malformed, not a silent `cannot-tell` row
-  for an issue the file does name.
+  an entry's issue, so such a key is reported as malformed rather than becoming a
+  silent `cannot-tell` row for an issue the file does name.
 
 ### Every ledger row names the ledger the same way
 
@@ -347,8 +348,8 @@ The rows it applies to, in the fields they render it in:
 The in-tree case is unchanged by the rule and is what a normal run prints: those
 fields carry `noni/decisions`, and the record row carries
 `noni/decisions/<name>.json`. The `deleted` row of `ledger-edited` is not in the
-table because it reports a record's path inside the audited tree, reachable by
-the append-only question only for a ledger inside it.
+table because it reports a record's path inside the audited tree, which the
+append-only question can only reach for a ledger that is inside it.
 
 ### census exit 50 is not the public_safety gate
 
@@ -356,8 +357,9 @@ the append-only question only for a ledger inside it.
 report clean when the deny-list class is inactive and exits 2. The census
 reports the same condition as a `hygiene` warn that leaves the process at exit
 0. Both read the deny-list through `public_safety.load_denylist` and its one
-precedence (the untracked, gitignored default file inside the tree being audited,
-then `NONI_SCRUB_DENYLIST`), so the two entry points never disagree
+precedence (the untracked default file inside the tree being audited, which is
+also gitignored, then `NONI_SCRUB_DENYLIST`), so the two entry points never
+agree
 about whether the deny-list half ran — but a clean census exit 50 is not a
 substitute for running `scripts/public_safety.py` before publishing.
 
@@ -371,17 +373,16 @@ substitute for running `scripts/public_safety.py` before publishing.
   and `skills/sessions-claims/scripts/census-sessions.sh`) are thin wrappers: each
   takes the one directory its caller names, accepts `--json`, `--strict` and
   `--now` and refuses every other option without running the census, and runs
-  this census restricted to its group — the ledger
-  shim (`census.sh`) to `ledger-record`, `ledger-edited` and `ledger-chain`, the
-  sessions shim (`census-sessions.sh`) to the session group. Neither carries a
-  schema, a rule or an exit-code table of its own, so neither can disagree with
-  this one, and `jq` is not a prerequisite
-  of either. They are reached through `bash` or their own executable bit, never
-  under `python3`: the interpreter a wrapper needs is the one it execs itself
-  (`NONI_PYTHON`, `python3` by default), and running the script under an
-  interpreter hands the reader a syntax error before any check runs. A wrapper
-  whose interpreter is missing or whose package will not import says so on one
-  plain line and exits 3, the census's own code for a missing tool.
+  this census restricted to its group — the ledger shim (`census.sh`) to
+  `ledger-record`, `ledger-edited` and `ledger-chain`, the sessions shim
+  (`census-sessions.sh`) to the session group. Neither carries a schema, a rule or
+  an exit-code table of its own, so neither can disagree with this one, and `jq`
+  is not a prerequisite of either. They are reached through `bash` or their own
+  executable bit, never under `python3`: the interpreter a wrapper needs is the one
+  it execs itself (`NONI_PYTHON`, `python3` by default), and running the script
+  under an interpreter hands the reader a syntax error before any check runs. A
+  wrapper whose interpreter is missing or whose package will not import says so on
+  one plain line and exits 3, the census's own code for a missing tool.
 - **Time from `--now`.** All time-based checks use `--now` when given (for
   reproducible output in tests) and the current UTC time otherwise.
 - **No self-reported numbers.** Every metric in `--json` mode names the

@@ -14,9 +14,7 @@ from _harness import (
     ORDER,
     REPO,
 )
-from order_fixtures import (
-    FIXTURE,
-    ORDERING_CHECKS,
+from order_doc_readers import (
     SKILL_DIR,
     _doc_block,
     _doc_usage_flags,
@@ -24,6 +22,11 @@ from order_fixtures import (
     _module_exit_codes,
     _order_ast,
     _parser_flags,
+    _skill_section,
+)
+from order_fixtures import (
+    FIXTURE,
+    ORDERING_CHECKS,
 )
 from order_usage_support import (
     VERBS,
@@ -31,6 +34,8 @@ from order_usage_support import (
     docstring_verb_lines,
     skill_md_verb_lines,
 )
+
+from noni import order_probe as _order_probe
 
 
 def test_docstring_exit_codes_match_the_exit_constants():
@@ -102,7 +107,7 @@ def test_docstring_names_the_refusals_the_code_performs():
     block = _doc_block(_docstring(_order_ast()), "Exit codes:")
     four = block[4].lower()
     for condition in ("already listed", "absent from the order", "no file under",
-                      "superseded", "not the artifact"):
+                      "superseded", "not the artifact", REFUSAL, FILE_REFUSAL):
         assert condition in four, f"the exit 4 row omits {condition!r}: {block[4]}"
     three = block[3].lower()
     for condition in ("not a regular file", "could not be written", "commit"):
@@ -110,6 +115,100 @@ def test_docstring_names_the_refusals_the_code_performs():
     two = block[2].lower()
     for condition in ("positive integer", "--decision", "1-based", "iso-8601"):
         assert condition in two, f"the exit 2 row omits {condition!r}: {block[2]}"
+
+
+# The refusal wording, spelled once: the product owns it in
+# ``order_probe.CHANGED`` and this module checks the two documents against it.
+REFUSAL = "the order changed since it was read; re-run"
+
+# The second constant is asked of the product rather than copied: a doc that drifted
+# to a near-miss of the wording the run actually prints would otherwise stay green.
+assert _order_probe.CHANGED == REFUSAL, _order_probe.CHANGED
+FILE_REFUSAL = _order_probe.FILE_CHANGED
+
+# The guard's second cause, which the docs have to distinguish too: a moved HEAD is
+# fixed by a re-run, a changed working file is not, and a page that named only the
+# first would send the operator re-running a command that refuses forever.
+FILE_REFUSAL = "the file changed since it was read; restore it or discard the change"
+
+
+def _flat(text: str) -> str:
+    """``text`` with every run of whitespace down to one space.
+
+    The page wraps prose at its own width, so a pinned sentence arrives split across
+    lines. Collapsing before the comparison keeps the check about the wording and
+    not about where the author broke the line.
+    """
+    return " ".join(text.split())
+
+
+def test_docstring_and_skill_md_name_the_concurrency_refusal_in_one_voice():
+    """The exit-4 refusal a concurrent writer gets is pinned in all three places
+    the caller reads it from: the wording the run prints, the docstring's exit 4
+    row, and the SKILL.md table row.
+
+    The phrase lives in the source constant ``order_probe.CHANGED``, so the product
+    is asked rather than this module's copy of the string: a doc that drifted to a
+    near-miss ("changed since read") would otherwise stay green while every ``in``
+    check on a literal also passed. Each row is read from its own section rather
+    than the whole file, so the sentence has to sit where a caller looking up exit 4
+    finds it.
+    """
+    from noni import order_probe
+
+    assert order_probe.CHANGED == REFUSAL, order_probe.CHANGED
+
+    block = _doc_block(_docstring(_order_ast()), "Exit codes:")
+    four = block[4]
+    assert REFUSAL in four, f"the docstring's exit 4 row omits the refusal: {four}"
+    for remedy in ("re-run", "committed"):
+        assert remedy in four.lower(), f"the docstring's exit 4 row omits {remedy!r}: {four}"
+
+    assert "freshness probe" in block[3].lower(), f"the exit 3 row omits the probe: {block[3]}"
+
+    row = next(line for line in _skill_section("The exit codes").splitlines()
+               if line.startswith("| `4` |"))
+    for phrase in (REFUSAL, "re-run the same command", "committed"):
+        assert phrase in row, f"SKILL.md's exit 4 row omits {phrase!r}: {row}"
+
+
+def test_skill_md_states_the_refusal_where_its_writer_is_documented():
+    """The prose a reader reaches for the concurrency question.
+
+    The writing section has to carry the refusal, the exit code, and the re-run as
+    the remedy; the edge cases carry what the guard is *not* (no lock, no merge) and
+    the probe fault's exit 3. Reading per section is the point: a mention anywhere
+    else on the page cannot stand in for the paragraph that documents the writer.
+
+    The ``--no-commit`` exemption is the contract the two ``--no-commit`` tests pin
+    (``test_no_commit_writes_the_file_and_moves_no_head`` and
+    ``test_order_names_the_same_path_committed_and_uncommitted``): a reader who only
+    read the exit-4 row would expect a concurrent writer to refuse that route too,
+    and the flag paragraph is what tells them it runs no git at all.
+
+    Each phrase is checked in the sentence that carries it rather than anywhere in
+    the section, so a page that kept the six words and inverted the claim around
+    them could not pass: the refusal wording, the code and the remedy have to sit in
+    one sentence about the committed route, and the exemption's reason in the
+    sentence about ``--no-commit``.
+    """
+    writing = _flat(_skill_section("Writing the order"))
+    for phrase in (REFUSAL, "exit 4", "re-run", "exempt", "no git", "HEAD"):
+        assert phrase in writing, f"the Writing the order section omits {phrase!r}"
+
+    # The sentence a caller acts on: the refusal, its code, and the re-run as the
+    # remedy, in one sentence rather than three unconnected mentions.
+    remedy = [sentence for sentence in writing.split(". ")
+              if REFUSAL in sentence and "re-run" in sentence]
+    assert remedy, f"no single sentence names the refusal and its remedy: {writing}"
+    assert "exit 4" in remedy[0], f"the remedy sentence omits the code: {remedy[0]}"
+    exempt = [sentence for sentence in writing.split(". ") if "exempt" in sentence]
+    assert exempt and "no git" in exempt[0], (
+        f"the exemption is not explained by the route running no git: {exempt}")
+
+    edge = _flat(_skill_section("The order edge cases that matter"))
+    for phrase in (REFUSAL, "no lock", "re-run", "exit 3"):
+        assert phrase in edge, f"the order edge cases omit {phrase!r}"
 
 
 def test_skill_md_documents_the_writer_within_the_line_cap():

@@ -11,18 +11,24 @@ from order_fixtures import (
     BASELINE_ID,
     NOW,
     ORDER_REL,
+    SEED_STAMP,
     STAMP,
     _assert_census_clean,
     _entry,
     _head_paths,
     _issues,
     _order,
+    _order_inprocess,
+    _order_module,
     _order_path,
     _porcelain,
     _read,
     _repo,
     _seed,
+    _spied_git,
 )
+from order_race_fixtures import REFUSAL, RIVAL_STAMP
+from order_rival_commit import _rival_commit
 
 
 def test_move_replaces_the_entry_and_restamps_it(tmp_path):
@@ -148,6 +154,85 @@ def test_no_commit_writes_the_file_and_moves_no_head(tmp_path):
     # (issue #77, AC2).
     assert f"{repo / ORDER_REL}" in line, line
     assert sum("uncommitted" in row for row in printed) == 1, proc.stdout
+
+
+def test_no_commit_is_exempt_from_the_freshness_probe(tmp_path):
+    """The exemption has an arm, not just a paragraph.
+
+    AC6 of issue #116 is that ``--no-commit`` keeps its contract: exit 0, the file
+    written, and no git call. The probe's own tests cover what it does when it
+    runs; nothing pinned that this route never reaches it. So this test plants the
+    state that refuses the committed route -- HEAD moved past the bytes the run
+    read -- and requires the ``--no-commit`` run to come out 0 anyway.
+
+    Both halves run in-process, which is the only way to reach the guard at all (see
+    ``order_fixtures._order_inprocess``). The probe is replaced with one that raises,
+    so a leak is loud rather than an exit code a test has to interpret, and the git
+    spy records every call the writer makes -- the probe's own ``git show`` would
+    appear there if it leaked into this route.
+    """
+    order = _order_module()
+    real_probe = order.order_probe.probe
+    real_git = order.gitwrite.git
+    calls: list[list[str]] = []
+    repo = _repo(tmp_path)
+    _seed(repo, _entry(1, BASELINE_ID, SEED_STAMP))
+    _rival_commit(repo, [_entry(1, BASELINE_ID, SEED_STAMP),
+                         _entry(9, BASELINE_ID, RIVAL_STAMP)])
+    head_before = _git_e2(repo, "rev-parse", "HEAD").stdout.strip()
+
+    def tripwire(*args, **kwargs):
+        raise AssertionError(f"--no-commit reached the freshness probe: {args}")
+
+    order.order_probe.probe = tripwire
+    order.gitwrite.git = _spied_git(real_git, calls)
+    try:
+        code, out, err = _order_inprocess(repo, "add", "7", "--decision", BASELINE_ID,
+                                          "--now", NOW, "--no-commit")
+    finally:
+        order.order_probe.probe = real_probe
+        order.gitwrite.git = real_git
+
+    assert code == 0, err
+    assert _issues(repo) == [1, 7], _issues(repo)
+    assert "uncommitted" in out, out
+    assert _git_e2(repo, "rev-parse", "HEAD").stdout.strip() == head_before
+    assert calls == [], f"--no-commit called git: {calls}"
+
+
+def test_the_committed_route_reaches_the_probe_where_no_commit_does_not(tmp_path):
+    """The other half of the exemption: same repo, same rival, no flag, and the run
+    is refused.
+
+    Without this the exemption test above could be passing because the probe were
+    simply never called by anyone -- an empty log proves nothing on its own. The
+    probe is only watched here, never replaced, so the refusal this run prints is
+    the product's own wording.
+    """
+    order = _order_module()
+    repo = _repo(tmp_path)
+    _seed(repo, _entry(1, BASELINE_ID, SEED_STAMP))
+    _rival_commit(repo, [_entry(1, BASELINE_ID, SEED_STAMP),
+                         _entry(9, BASELINE_ID, RIVAL_STAMP)])
+
+    calls: list[tuple] = []
+    real_probe = order.order_probe.probe
+
+    def spy(*args, **kwargs):
+        calls.append(args)
+        return real_probe(*args, **kwargs)
+
+    order.order_probe.probe = spy
+    try:
+        code, _out, err = _order_inprocess(repo, "add", "7", "--decision", BASELINE_ID,
+                                           "--now", NOW)
+    finally:
+        order.order_probe.probe = real_probe
+
+    assert code == 4, err
+    assert REFUSAL in err, err
+    assert len(calls) == 1, f"the committed route called the probe {len(calls)} times"
+    assert _issues(repo) == [1], _issues(repo)
 
 
 def test_a_file_somebody_else_staged_is_neither_committed_nor_unstaged(tmp_path):

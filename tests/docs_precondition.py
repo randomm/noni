@@ -1,6 +1,8 @@
 """Reading one skill page for the precondition its script commands depend on.
 
-The promise itself is asserted in ``tests/test_docs_precondition.py``. This module
+The promise itself is asserted in ``tests/test_docs_install_promises.py``, beside the
+install commands no page may print in ``tests/test_docs_install_commands.py``. This
+module
 owns only the reading: which lines of a page put a shipped entry point in command
 position, and which words a page has to carry to have stated what must be true before
 such a command can work.
@@ -148,7 +150,8 @@ def quickstart_install_link(text: str, *, path: Path | None = None) -> bool:
 
     One page cannot satisfy this and is exempt on that ground alone: the quickstart,
     which cannot link the section it is standing in. It is held instead by
-    ``tests/test_docs_precondition.py`` to state the precondition inside that section.
+    ``tests/test_docs_install_promises.py`` to state the precondition inside that
+    section.
     """
     if path is not None and path.name == QUICKSTART.name:
         return True

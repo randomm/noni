@@ -45,7 +45,9 @@ def _gate_tree(tmp_path, *allowlist_lines: str) -> tuple[Path, dict[str, str]]:
     by a *tracked* file (which :func:`subprocess_env` refuses to let the ambient
     ``NONI_SCRUB_DENYLIST`` override -- the env route is the operator's private vocabulary,
     and a gate test that depended on it would pass or fail on the host's config), and the
-    allowlist by the file this helper writes.
+    allowlist by the file this helper writes. The child env is the harness's own
+    (``subprocess_env``), which conftest has already cleared of every ``NONI_*`` name the
+    product reads or used to read.
     """
     import shutil
 
@@ -63,7 +65,6 @@ def _gate_tree(tmp_path, *allowlist_lines: str) -> tuple[Path, dict[str, str]]:
     # itself be scanned, so committing one would make the word a violation and every
     # gate case below answer for a finding it is not about.
     env = subprocess_env()
-    env.pop(public_safety.ALLOWLIST_ENV_VAR, None)
     pointer = tmp_path / "gate-denylist"
     pointer.write_text("synthetic-vocab-name\n", encoding="utf-8")
     env[public_safety.DENYLIST_ENV_VAR] = str(pointer)

@@ -13,9 +13,13 @@ no override; the builders are shared with it (``tests/census_fixtures.py``,
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
+from pathlib import Path
 
-from _harness import _commit_file, _init_repo, _secret_violation
-from census_allowlist import _allowlist_line, _with_allowlist, _with_committed_allowlist
+import public_safety
+from _harness import REPO, _commit_file, _git, _init_repo, _secret_violation, subprocess_env
+from census_allowlist import _allowlist_line, _with_committed_allowlist
 from census_denylist import _clear_denylist, _with_denylist
 from census_fixtures import _ndjson_rows, _valid_record
 from census_hygiene_target import _hygiene_target
@@ -229,28 +233,34 @@ class TestCommittedAllowlist:
 
     def test_the_allowlist_path_never_appears_as_an_absolute_path(self, tmp_path,
                                                                    monkeypatch):
-        """A row never prints a machine-local path, even for an env-named allowlist.
+        """A row never prints a machine-local path, even for a source that is one.
 
-        The env route identifies a file outside the tree, so the loader's ``source`` is
-        an absolute host path -- exactly what the public-repo hygiene rule forbids in any
-        published row. The census falls back to the product's filename, and this test is
-        what keeps that fallback from being "improved" away by a caller that finds the
-        real path more informative.
+        The loader names an unreadable allowlist by the absolute path it tried (that is
+        what the gate's banner quotes), and the public-repo hygiene rule forbids such a
+        path in any published row. The census falls back to the product's filename, and
+        this test is what keeps that fallback from being "improved" away by a caller that
+        finds the real path more informative. The seam is how a row is made to carry a
+        host path at all now that the tree's own file is the only one the loader reads.
         """
-        allowlist = _with_allowlist(tmp_path, "this line is not an entry")
+        public_safety = _hygiene_target()
         repo = self._repo(tmp_path, "absolute")
+        outside = tmp_path / "host" / public_safety.ALLOWLIST_FILENAME
+        outside.parent.mkdir(parents=True)
+        outside.write_text("this line is not an entry\n", encoding="utf-8")
+        monkeypatch.setattr(public_safety, "_default_allowlist_file",
+                            lambda repo: outside)
         _with_denylist(tmp_path, "synthetic-project-name")
         try:
             rc, out, err = _run_census(repo, json_out=True)
             assert rc == 0, f"expected 0, got {rc}\n{err}"
             rows = [r for r in _ndjson_rows(out) if r.get("check") == "hygiene"]
             assert len(rows) == 1, f"expected exactly one not-run row: {rows}"
-            assert str(allowlist) not in out + err, (
-                "a census row quoted the operator's absolute allowlist path")
+            assert str(outside) not in out + err, (
+                "a census row quoted the absolute allowlist path")
             assert str(tmp_path) not in out + err, (
                 "the row leaked the fixture directory, so the scrub was not what stopped it")
 
-            assert allowlist.name in rows[0]["message"], (
+            assert outside.name in rows[0]["message"], (
                 f"the row must name the file by its basename: {rows[0]}")
         finally:
             _clear_denylist()
@@ -272,13 +282,12 @@ class TestCommittedAllowlist:
             assert rc == 0, f"expected 0, got {rc}\n{err}"
             rows = [r for r in _ndjson_rows(out) if r.get("check") == "hygiene"]
             assert len(rows) == 1, rows
-            import public_safety
 
             assert rows[0]["subject"] == f"{public_safety.ALLOWLIST_FILENAME}:0", rows[0]
         finally:
             _clear_denylist()
 
-    def test_the_env_allowlist_is_cleared_between_runs(self, tmp_path):
+    def test_no_committed_allowlist_reports_nothing(self, tmp_path):
         """No allowlist anywhere: the mechanism is opt-in and its absence is quiet.
 
         The counterpart to the rows above -- an attached project that never wrote a
@@ -295,3 +304,73 @@ class TestCommittedAllowlist:
             assert rows == [], f"an absent allowlist must report nothing: {rows}"
         finally:
             _clear_denylist()
+
+
+def _gate_tree(tmp_path: Path, name: str, *allowlist_lines: str) -> tuple[Path, dict[str, str]]:
+    """A scratch clone holding the gate, the package it imports, and an allowlist.
+
+    The same shape ``tests/test_public_safety_allowlist_gate.py`` builds: the gate picks
+    its tree by the wrapper's own location, so the tree is copied rather than pointed at.
+    The deny-list is an untracked file (the product requires operator vocabulary to stay
+    untracked) named by ``NONI_SCRUB_DENYLIST``, which :func:`subprocess_env` hands over
+    from the harness environment conftest already cleared.
+    """
+    import shutil
+
+    tree = tmp_path / name
+    (tree / "scripts").mkdir(parents=True)
+    shutil.copy2(REPO / "scripts" / "public_safety.py", tree / "scripts")
+    shutil.copytree(REPO / "src" / "noni", tree / "src" / "noni",
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    (tree / "notes.md").write_text(_TOKEN_FIXTURE, encoding="utf-8")
+    pointer = tmp_path / "gate-denylist"
+    pointer.write_text("synthetic-vocab-name\n", encoding="utf-8")
+    env = subprocess_env()
+    env[public_safety.DENYLIST_ENV_VAR] = str(pointer)
+    if allowlist_lines:
+        (tree / public_safety.ALLOWLIST_FILENAME).write_text(
+            "\n".join(allowlist_lines) + "\n", encoding="utf-8")
+    _git(tree, "init", "-q")
+    _git(tree, "add", "-A")
+    _git(tree, "commit", "-q", "-m", "tree with an allowlist")
+    return tree, env
+
+
+def _run_gate(tree: Path, env: dict[str, str]) -> subprocess.CompletedProcess:
+    """Run the gate in a child: the exit code is the assertion, so it must be an exit."""
+    return subprocess.run([sys.executable, "scripts/public_safety.py"],
+                          capture_output=True, text=True, cwd=tree, env=env, timeout=180)
+
+
+def test_the_gate_ignores_the_old_env_override(tmp_path):
+    """The child agrees: NONI_SCRUB_ALLOWLIST decides nothing at the gate either.
+
+    The in-process inertness test is ``tests/test_public_safety_allowlist_refusal.py``.
+    This is the same claim at the entry point CI acts on, and the child is what makes it
+    the assertion it is: a wrapper that read the variable only in its own process, or a
+    parent that cleaned it before the launch, would pass any in-process test. A tree with
+    an unexempted token answers 1 with the variable pointing at a file that would have
+    exempted it, and 3 with the variable pointing at a clean file of exemptions while the
+    tree's own file is the malformed one -- the code that says the environment reached
+    nothing, in either direction.
+    """
+    outside = tmp_path / "outside-allowlist"
+    outside.write_text(_allowlist_line("notes.md", TOKEN_LABEL) + "\n", encoding="utf-8")
+    tree, env = _gate_tree(tmp_path, "gate-inert")
+    env["NONI_SCRUB_ALLOWLIST"] = str(outside)
+    proc = _run_gate(tree, env)
+    assert proc.returncode == 1, (
+        f"an env-named allowlist exempted the fixture at the gate: "
+        f"{proc.returncode}\n{proc.stdout}\n{proc.stderr}")
+    assert "notes.md:1:" in proc.stderr, proc.stderr
+
+    outside_clean = tmp_path / "outside-clean"
+    outside_clean.write_text(_allowlist_line("notes.md", TOKEN_LABEL) + "\n",
+                             encoding="utf-8")
+    tree, env = _gate_tree(tmp_path, "gate-refused", "this line is not an entry")
+    env["NONI_SCRUB_ALLOWLIST"] = str(outside_clean)
+    proc = _run_gate(tree, env)
+    assert proc.returncode == 3, (
+        f"the gate read the env-named allowlist instead of the tree's own malformed one: "
+        f"{proc.returncode}\n{proc.stdout}\n{proc.stderr}")
+    assert "allowlist" in proc.stderr, proc.stderr

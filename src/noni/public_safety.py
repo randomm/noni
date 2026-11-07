@@ -77,7 +77,6 @@ from . import public_safety_scan as _scan
 # the census and the gate reach the exemption contract through here), so the names are
 # bound rather than reached through the package attribute.
 from .public_safety_allowlist import (  # noqa: F401  (re-export: this module owns the exemption vocabulary)
-    ALLOWLIST_ENV_VAR,
     ALLOWLIST_FILENAME,
     ALLOWLIST_PATTERNS,
     ALLOWLIST_REFUSED_LABEL,

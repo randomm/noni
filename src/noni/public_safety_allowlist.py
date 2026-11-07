@@ -48,7 +48,6 @@ that owns the scan.
 
 from __future__ import annotations
 
-import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -67,13 +66,6 @@ _DENYLIST_FILENAME_LOOKUP = "DENYLIST_FILENAME"
 # tracked: the docs tests read this constant rather than typing the name, so a rename
 # strands the page instead of the suite.
 ALLOWLIST_FILENAME = ".noni-scrub-allowlist"
-
-# Env var naming an alternative allowlist file, for the same reason the deny-list has
-# one: a caller may keep its exemptions outside the tree. Absence is silent, and an
-# unusable file is never a fallback to the tree's own committed copy: a broken pointer
-# would otherwise read as "this tree has no allowlist", which is the exemption nobody
-# reviewed.
-ALLOWLIST_ENV_VAR = "NONI_SCRUB_ALLOWLIST"
 
 # The row labels of the two findings this module can raise, and the pattern table that
 # publishes them. The census harvests its label vocabulary from ``*_PATTERNS``
@@ -125,7 +117,8 @@ class AllowlistResult:
     did not run, and CI tolerates exit 2 but never 3.
 
     ``source`` is the file the verdict came from, tree-relative when the audited tree
-    holds it. ``findings`` carries one ``path:line: label`` string per stale or
+    holds it, which is the only route there is. ``findings`` carries one
+    ``path:line: label`` string per stale or
     refused entry, in the shape the scan's own violations use, so the census splits
     them into path/line/label rows with no extra vocabulary.
     """
@@ -152,10 +145,13 @@ def _default_allowlist_file(repo: Path) -> Path:
 
 
 def _load_candidates(repo: Path) -> list[Path]:
-    """The allowlist files to try, highest precedence first.
+    """The one allowlist this run may honour: the tree's own committed file.
 
-    The env var wins when it names a file, so a caller may keep its exemptions outside
-    the tree; with no env var the tree's own committed file answers.
+    There is no environment route. An allowlist widens what the gate accepts, so the
+    only file that may widen it is one a reviewer saw in the diff: a file named from
+    outside the tree is not tracked, and an exemption that arrives that way is the
+    exemption nobody reviewed. The deny-list keeps its env route because that file only
+    ever narrows the check.
 
     The default is reached through ``public_safety`` -- the module that owns the scan and
     the name the tests patch -- because there is one per-tree config default per scan and
@@ -165,14 +161,11 @@ def _load_candidates(repo: Path) -> list[Path]:
     """
     from . import public_safety
 
-    env_value = os.environ.get(ALLOWLIST_ENV_VAR)
-    if env_value:
-        return [Path(env_value)]
     return [public_safety._default_allowlist_file(repo)]
 
 
 def _read_candidate(path: Path) -> tuple[str | None, str]:
-    """The text of one candidate, plus a reason word when it has none.
+    """The text of the committed allowlist, plus a reason word when it has none.
 
     ``(text, "")`` is a body to parse; ``(None, "")`` is a path that simply is not
     there (the open faulted with ENOENT/ENOTDIR, or the kind has no content), which
@@ -187,7 +180,7 @@ def _read_candidate(path: Path) -> tuple[str | None, str]:
         return None, ": ".join(filter(None, fault)) or "could not be opened"
     if fd == _io.NOT_REGULAR:
         # The guard already gave the descriptor back; NOT_REGULAR only says the kind
-        # was refused. A fifo, a socket or a directory where the operator stated an
+        # was refused. A fifo, a socket or a directory where the tree stated an
         # allowlist is a file that exists and cannot be read, not a missing one.
         return None, "it is not a regular file"
     try:
@@ -295,9 +288,10 @@ def _parse_allowlist(raw: str) -> tuple[list[AllowlistEntry], list[str], list[st
 def _source_of(candidate: Path, repo: Path) -> str:
     """The allowlist's identity for a row: tree-relative when the tree holds it.
 
-    The census never prints a machine-local absolute path, so a file the audited
-    tree holds is named by its repository-relative path and an env-named file
-    outside it by its basename.
+    The census never prints a machine-local absolute path, so the file is named by its
+    repository-relative path. A path that will not root inside the tree (a symlink onto
+    a target outside it, a tree on a mount that moved) still gets a name rather than a
+    host path, so the fallback stays and is not a route of its own.
     """
     try:
         return candidate.resolve().relative_to(Path(repo).resolve()).as_posix()
@@ -328,46 +322,44 @@ def load_allowlist(repo: Path) -> AllowlistResult:
     state, because an attached project that wrote no allowlist is a real state rather
     than an oversight: the exemption mechanism is opt-in.
 
-    The env-var candidate is not a fallback. When it names a file that cannot be read
-    or parsed, this run is unusable and the tree's own committed file is NOT consulted
-    — silently dropping the source the caller stated would report one set of
-    exemptions as another.
+    The tree's committed file is the only candidate. Nothing else is consulted when it
+    cannot be read or parsed, because honouring a different file than the one the tree
+    committed would report one set of exemptions as another.
     """
-    for candidate in _load_candidates(repo):
-        raw, reason = _read_candidate(candidate)
-        if raw is None and not reason:
-            # Nothing at this candidate and nothing to report: absence. Only a path the
-            # filesystem describes as absent counts -- a directory, an empty path or a
-            # bad expansion is not "no allowlist", and answering so would make a typo in
-            # the env var read as a tree that opted out of the mechanism.
-            if _io.is_absent(candidate):
-                return AllowlistResult([], None, "absent", [])
-            return AllowlistResult([], None, "malformed", [_refused_row(
-                "the allowlist path is not a readable file")])
-        if raw is None:
-            # A file that exists and was declined: a fifo, a file the filesystem
-            # refused, a body past the bound, bytes that are not UTF-8. Not a skip:
-            # the operator stated an allowlist and this run could not hold it.
-            print(f"public-safety: WARNING — allowlist {candidate.as_posix()} is "
-                  f"unusable ({reason}); the gate cannot run without reading it.",
-                  file=sys.stderr)
-            return AllowlistResult([], candidate.as_posix(), "unreadable",
-                                   [_refused_row(reason)])
-        entries, findings, refusals = _parse_allowlist(raw)
-        source = _source_of(candidate, repo)
-        if refusals:
-            detail = f" ({refusals[0]})" if len(refusals) == 1 else ""
-            print(f"public-safety: WARNING — allowlist {source} was refused{detail}; "
-                  "the gate cannot run until the file names only exemptable entries.",
-                  file=sys.stderr)
-            return AllowlistResult(entries, source, "malformed", findings)
-        # A file that parsed is checked against the listing before it is handed back, so
-        # the stale rows travel on the result: every caller of the loader -- the scan, the
-        # gate, a test -- sees a stale entry without having to remember to ask for it.
-        findings = findings + stale_entry_findings(
-            AllowlistResult(entries, source, "ok", []), set(_listing_of(repo)))
-        return AllowlistResult(entries, source, "ok", sorted(findings))
-    return AllowlistResult([], None, "absent", [])
+    candidate, = _load_candidates(repo)
+    raw, reason = _read_candidate(candidate)
+    if raw is None and not reason:
+        # Nothing at the committed path and nothing to report: absence. Only a path the
+        # filesystem describes as absent counts -- a directory or an empty path is not
+        # "no allowlist", and answering so would read a wrong location as a tree that
+        # opted out of the mechanism.
+        if _io.is_absent(candidate):
+            return AllowlistResult([], None, "absent", [])
+        return AllowlistResult([], None, "malformed", [_refused_row(
+            "the allowlist path is not a readable file")])
+    if raw is None:
+        # A file that exists and was declined: a fifo, a file the filesystem
+        # refused, a body past the bound, bytes that are not UTF-8. Not a skip:
+        # the tree stated an allowlist and this run could not hold it.
+        print(f"public-safety: WARNING — allowlist {candidate.as_posix()} is "
+              f"unusable ({reason}); the gate cannot run without reading it.",
+              file=sys.stderr)
+        return AllowlistResult([], candidate.as_posix(), "unreadable",
+                               [_refused_row(reason)])
+    entries, findings, refusals = _parse_allowlist(raw)
+    source = _source_of(candidate, repo)
+    if refusals:
+        detail = f" ({refusals[0]})" if len(refusals) == 1 else ""
+        print(f"public-safety: WARNING — allowlist {source} was refused{detail}; "
+              "the gate cannot run until the file names only exemptable entries.",
+              file=sys.stderr)
+        return AllowlistResult(entries, source, "malformed", findings)
+    # A file that parsed is checked against the listing before it is handed back, so
+    # the stale rows travel on the result: every caller of the loader -- the scan, the
+    # gate, a test -- sees a stale entry without having to remember to ask for it.
+    findings = findings + stale_entry_findings(
+        AllowlistResult(entries, source, "ok", []), set(_listing_of(repo)))
+    return AllowlistResult(entries, source, "ok", sorted(findings))
 
 
 def _refused_row(reason: str) -> str:

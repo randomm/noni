@@ -33,24 +33,36 @@ Exit codes:
     2  invalid input: an argparse failure, a subcommand outside add/move/remove/confirm,
        an issue that is not a positive integer, a missing --decision on add, an --at or
        --to that is not a 1-based position of the resulting list, a flag passed to the
-       verb that does not own it, --now that is not a valid ISO-8601 timestamp, or a
-       --repo that is not a directory
+       verb that does not own it, --now that is not a valid ISO-8601 timestamp, a
+       --repo that is not a directory, or a noni/, noni/direction or noni/decisions
+       directory -- every one from the state root down to the artifact -- that is not
+       a plain path this writer may read or write through (a symlink, a plain file, a
+       socket or a device, each asked of lstat before any read, write or mkdir, and an
+       absent one admitted because the first add creates it)
     3  a path this writer needs could not be read or written, or a git call failed or
        timed out: the order file is not a regular file at its path (a symlink, a
        directory, an unreadable file), the decision ledger could not be looked in, a
        decision record it must read is unreadable, the artifact could not be written, or
        the commit step failed (the file is left written and named, never claimed as
-       committed)
+       committed), or the freshness probe could not answer (a ``git show`` that
+       timed out or failed for a reason that told us nothing)
     4  what the order itself refuses: the issue is already listed (add), absent from the
        order (move, remove, confirm), no file under noni/decisions/ carries the given
        --decision id, the record it finds is superseded (the hint names its successor),
        an entry of the existing file whose decision is null, blank or absent (the refusal
        names the entry), or the existing order file is not the artifact this writer writes
        (unparseable, wrong schema, or malformed entries) so overwriting it would destroy an
-       order
+       order, or nothing this run planned from is what it read: the committed
+       order bytes moved ("the order changed since it was read; re-run", so the
+       caller's re-run plans against what the other writer committed), or the file
+       at the artifact's path did ("the file changed since it was read; restore it
+       or discard the change", which no re-run settles -- the fix names the
+       checkout that does)
 
 Every refusal (2, 3 or 4) leaves the artifact untouched: reads and checks
-happen before any write, the write goes to a temp file in its own directory and
+happen before any write -- including the re-read of the committed bytes that
+refuses a run whose order moved underneath it, which is answered before a byte
+is written or staged -- the write goes to a temp file in its own directory and
 moves into place with os.replace, and the commit stages only the path this
 command wrote (git add -- <path> then git commit --only -- <path>), so a file
 somebody else had staged is neither committed nor unstaged. --no-commit writes
@@ -78,7 +90,13 @@ import hashlib
 import sys
 from pathlib import Path
 
-from . import labels, orderschema, orderstate
+from . import (
+    _path_kind,
+    labels,
+    order_probe,
+    orderschema,
+    orderstate,
+)
 from . import order_gitwrite as gitwrite
 
 # The state reader reports a refusal as a (headline, hint) pair and leaves the
@@ -98,6 +116,13 @@ EXIT_REFUSAL: int = 4
 # the unknown-verb refusal, the missing-verb hint and the usage line cannot name
 # three different sets.
 VERBS: tuple[str, ...] = ("add", "move", "remove", "confirm")
+
+# The directories this run reads or writes, in the order the guard walks them:
+# ``noni`` itself first (a link there hides every path beneath it from ``lstat``),
+# then the two directories this writer touches -- the artifact's, and the ledger
+# ``add --decision`` looks a record up in. The wording, the walk and the
+# declined-``lstat`` rule all live in the guard; see :func:`_refuse_linked_state`.
+_GUARDED_DIRS: tuple[str, ...] = ("noni", orderschema.ORDER_DIR, orderstate.DECISIONS_DIR)
 
 # The verb list the unknown-verb refusal and the usage line take, spelled once from
 # ``VERBS``. The missing-subcommand hint spells its conjunction itself, and its own
@@ -177,6 +202,19 @@ def _missing_verb_hint() -> str:
 def _digests(data: bytes) -> str:
     """A short stable digest for a run message; never a path, never file bytes."""
     return hashlib.sha1(data).hexdigest()[:7]
+
+
+def _refuse_linked_state(repo: Path) -> int | None:
+    """The exit-2 refusal for a ``noni/`` this writer may not read or write, or None.
+
+    :func:`noni._path_kind.direction_refusal` asks the directory question of every
+    component of :data:`_GUARDED_DIRS`; this seam gives its refusal this writer's
+    code and voice. The code is ``EXIT_USAGE``, the one docs/PRODUCT.md 7 gives
+    ``order`` for a wrong path, and the guard runs before the artifact read and the
+    ``--decision`` lookup, so no bytes outside the state root are read either.
+    """
+    refused = _path_kind.direction_refusal(repo, _GUARDED_DIRS)
+    return None if refused is None else _fail(EXIT_USAGE, *refused)
 
 
 def _render(body: dict):
@@ -274,6 +312,12 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(EXIT_USAGE, f"--repo {args.repo} is not a directory",
                      "pass the repository root that holds (or will hold) "
                      "noni/direction/order.json")
+    # Every directory this run reads or writes, asked of ``lstat`` before the first
+    # read: a linked noni/ or noni/direction would otherwise carry the artifact and
+    # the decision read below into a tree outside the state root.
+    linked = _refuse_linked_state(repo)
+    if linked is not None:
+        return linked
     order_path = repo / orderschema.ORDER_REL
 
     # --- reads: the artifact, then the decision it must cite -----------------
@@ -350,19 +394,51 @@ def main(argv: list[str] | None = None) -> int:
         # Not bytes this writer can produce. The plan is built from validated
         # values, so the file keeps the bytes it had and nothing is claimed.
         return _fail(EXIT_REFUSAL, rendered.headline, rendered.hint)
+    # --- the freshness probe: did anything move under this run? ----------------
+    # The lost-update guard; order_probe.py owns the check, its two refusal messages
+    # and the reason it sits here rather than with the other refusals. --no-commit is
+    # exempt because that route runs no git at all.
+    #
+    # It runs BEFORE the no-change shortcut below, and that ordering is load-bearing.
+    # ``rendered == before`` compares the bytes this run would write against the bytes it
+    # read out of the file, so a run whose file has been moved and moved back -- or
+    # whose file has been restamped to exactly what this verb would have stamped --
+    # reaches "nothing left to add" while HEAD and the index hold an order it never
+    # compared itself against. Reporting success for that run is a lie about the state of
+    # the repository: the guard is the step that says whether this run may write, and a
+    # run that may not write is refused whether or not its own bytes happen to match.
+    if not args.no_commit:
+        refused = order_probe.probe(repo, order_path, before, verb, args.repo,
+                                    EXIT_IO, EXIT_REFUSAL)
+        if refused is not None:
+            return refused
     if before is not None and rendered == before:
-        # A run that changes no byte (confirming an entry already stamped at the
-        # time it was given) has nothing to commit: it prints the order it read
-        # and says the file is unchanged, rather than committing a --allow-empty
-        # commit no one asked for.
+        # The file already holds the bytes this run would write, so there is nothing
+        # left to add: nothing is staged, nothing is committed, no HEAD moves.
+        #
+        # The probe owns the decision about whether this run may write at all, and it
+        # runs ABOVE this shortcut: a no-change run still commits its index entry
+        # when HEAD moved, so a guard that sat below it would let the one run shape
+        # that commits without planning anything slip the lost-update check.
+        #
+        # So this arm is reached only once the guard has said HEAD, the index and the
+        # file all still hold what this run read -- which is exactly when "unchanged"
+        # is a true sentence, and the only reading under which the order below can
+        # print it. --no-commit keeps its own no-git contract and #76's idempotent
+        # repeat by taking the shortcut on the file's bytes alone.
         orderstate.print_order(entries, labels.ORDER)
         print(f"{labels.ORDER}: {orderschema.ORDER_REL} is unchanged; nothing to "
               "commit")
         return EXIT_OK
+
     if order_path.parent.exists() and not order_path.parent.is_dir():
-        # The parent path is part of the artifact's identity: a file where the
-        # direction directory belongs is an environment fault, and mkdir would
-        # have failed here anyway with a worse message.
+        # The parent path is part of the artifact's identity, and this is the one
+        # shape about it the pre-read guard does NOT own: an ordinary FILE at
+        # noni/direction, under a real noni/, which the walk admits because nothing
+        # above it is a link. A symlink at that position never reaches here (it is
+        # refused with the rest of the tree at exit 2, before this read); a plain
+        # file is an environment fault, and mkdir would have failed anyway with a
+        # worse message.
         return _fail(EXIT_IO, f"{orderschema.ORDER_DIR} is not a directory",
                      f"remove {orderschema.ORDER_DIR} or move it aside, then re-run "
                      "order.py")

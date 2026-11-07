@@ -19,7 +19,11 @@ Exit codes:
     2  invalid input: an argparse failure, a subcommand outside set, a missing or
        unknown --from/--decision, a --from that is not a readable regular file (a
        directory, a symlink) or is not UTF-8, a --now that is not a UTC timestamp,
-       or a --repo that is not a directory
+       a --repo that is not a directory, or a noni/, noni/direction or noni/decisions
+       directory -- every one from the state root down to the intent file -- that is
+       not a plain path this writer may read or write through (a symlink, a plain
+       file, a socket or a device, each asked of lstat before any read, write or
+       mkdir, and an absent one admitted because the first set creates it)
     3  a path this writer needs could not be read or written, or a git call failed
        or timed out: the intent file at its path is not a regular file (a symlink,
        a directory, a device), the decision record it must read is unreadable, the
@@ -57,7 +61,7 @@ from datetime import date, datetime, timezone
 from functools import partial
 from pathlib import Path
 
-from . import intentschema, labels, orderstate
+from . import _path_kind, intentschema, labels, orderstate
 from . import order_gitwrite as gitwrite
 
 # The state reader reports a refusal as a (headline, hint) pair and leaves the
@@ -78,6 +82,14 @@ EXIT_REFUSAL: int = 4
 # The one verb the writer owns, spelled once so the usage line, the unknown-verb
 # refusal and the missing-verb hint cannot name three different sets.
 VERBS: tuple[str, ...] = ("set",)
+
+# The directories this run reads or writes, in the order the guard walks them:
+# ``noni`` itself first (a link there hides every path beneath it from ``lstat``),
+# then the directory the intent file lives in, then the ledger the ``--decision``
+# citation is looked up in. The wording, the walk and the declined-``lstat`` rule
+# all live in the guard; see :func:`_refuse_linked_state`.
+_GUARDED_DIRS: tuple[str, ...] = ("noni", intentschema.INTENT_DIR,
+                                  orderstate.DECISIONS_DIR)
 
 # The verb list the two refusals name, spelled once from ``VERBS``.
 _VERB_LIST = ", ".join(VERBS)
@@ -127,6 +139,20 @@ class _VerbedParser(argparse.ArgumentParser):
         super().error(message)
 
 
+def _refuse_linked_state(repo: Path) -> int | None:
+    """The exit-2 refusal for a ``noni/`` this writer may not read or write, or None.
+
+    :func:`noni._path_kind.direction_refusal` asks the directory question of every
+    component of :data:`_GUARDED_DIRS`; this seam gives its refusal this writer's
+    code and voice. The code is ``EXIT_USAGE``, the one docs/PRODUCT.md 7 gives
+    ``intent`` for a wrong path, and the guard runs before the draft is opened and
+    before the citation is looked up, so no bytes outside the state root are read
+    either.
+    """
+    refused = _path_kind.direction_refusal(repo, _GUARDED_DIRS)
+    return None if refused is None else _fail(EXIT_USAGE, *refused)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _VerbedParser(
         prog=labels.INTENT,
@@ -163,6 +189,12 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(EXIT_USAGE, f"--repo {args.repo} is not a directory",
                      "pass the repository root that holds (or will hold) "
                      f"{intentschema.INTENT_REL}")
+    # Every directory this run reads or writes, asked of ``lstat`` before the first
+    # read: a linked noni/ or noni/direction would otherwise carry the intent file
+    # and the citation read below into a tree outside the state root.
+    linked = _refuse_linked_state(repo)
+    if linked is not None:
+        return linked
 
     # The clock is read before anything is written, so a run that stamps a day it
     # cannot name refuses before touching the tree rather than after.

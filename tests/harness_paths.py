@@ -76,6 +76,7 @@ PRODUCT_MODULES = (
     "src/noni/labels.py",
     "src/noni/order.py",
     "src/noni/order_gitwrite.py",
+    "src/noni/order_probe.py",
     "src/noni/orderschema.py",
     "src/noni/orderstate.py",
     "src/noni/public_safety.py",

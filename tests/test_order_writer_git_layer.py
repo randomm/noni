@@ -28,6 +28,11 @@ from order_fixtures import (
     _spied_git,
     _writer_git_call,
 )
+from parent_link_fixtures import (
+    assert_outside_untouched,
+    plant_parent_link,
+    write_outside_decoy,
+)
 
 
 def test_a_failing_commit_is_exit_three_and_leaves_the_file_written(tmp_path):
@@ -128,19 +133,65 @@ def test_a_run_that_renders_nothing_writable_fails_as_io(tmp_path, monkeypatch):
     assert raw == before, "a failed write must leave the artifact as it was"
 
 
-def test_a_file_where_the_direction_directory_belongs_is_a_fault(tmp_path):
+def test_a_file_where_the_direction_directory_belongs_is_a_wrong_path(tmp_path):
     """The parent path is part of the artifact's identity: a plain file sitting
-    at noni/direction is an environment fault (exit 3), not a refusal of the
-    order and not something the writer works around by replacing it."""
+    at noni/direction is refused, not worked around by replacing it.
+
+    docs/PRODUCT.md 7 gives every wrong path the writer's own code (issue #104), so
+    this moved from the environment-fault 3 to the usage code 2 the writer already
+    used for a path the caller spelled wrong -- and the sentence is the guard's, not
+    the old ``is_dir()`` branch's, naming the path. What did not move is that the
+    file at that position is left exactly as it was: a refused run does not clear an
+    obstruction aside, it reports it.
+    """
     module = _order_module()
     repo = _repo(tmp_path)
     (repo / "noni" / "direction").write_text("not a directory\n", encoding="utf-8")
     with contextlib.redirect_stderr(io.StringIO()) as err:
         code = module.main(["--repo", str(repo), "add", "7", "--decision", BASELINE_ID,
                             "--now", NOW])
-    assert code == module.EXIT_IO, code
+    assert code == module.EXIT_USAGE, code
     assert "is not a directory" in err.getvalue(), err.getvalue()
+    assert "noni/direction" in err.getvalue(), err.getvalue()
     assert (repo / "noni" / "direction").read_text(encoding="utf-8") == "not a directory\n"
+
+
+def test_a_symlinked_parent_directory_is_refused_before_the_writer_reaches_git(
+        tmp_path, monkeypatch):
+    """The guard runs ahead of both git calls this layer owns (issue #104).
+
+    The committed route is the one that leaked: the writer wrote the artifact through
+    a linked ``noni/direction``, then ``git add`` refused a path "beyond a symbolic
+    link" and the run reported git's words at exit 3. Driven in-process, where the
+    spy sees every command, the contract is that a refusal of this shape makes NO git
+    call at all -- no add, no commit, no rollback of a path the run never wrote.
+    """
+    module = _order_module()
+    real = module.gitwrite.git
+    seen: list[tuple[str, ...]] = []
+
+    def spy(repo_arg, *args):
+        seen.append(tuple(args))
+        return real(repo_arg, *args)
+
+    monkeypatch.setattr(module.gitwrite, "git", spy)
+    repo = _repo(tmp_path)
+    _seed(repo, _entry(1, BASELINE_ID))
+    outside = tmp_path / "outside"
+    plant_parent_link(repo, outside, "noni/direction")
+    write_outside_decoy(outside, "noni/direction", "order.json")
+
+    with contextlib.redirect_stderr(io.StringIO()) as err:
+        code = module.main(["--repo", str(repo), "add", "7", "--decision", BASELINE_ID,
+                            "--now", NOW])
+
+    assert code == module.EXIT_USAGE, code
+    assert "symlink" in err.getvalue().lower(), err.getvalue()
+    assert "noni/direction" in err.getvalue(), err.getvalue()
+    assert "beyond a symbolic link" not in err.getvalue(), err.getvalue()
+    assert seen == [], f"a refused run still reached git: {seen}"
+    assert (repo / "noni" / "direction").is_symlink(), "the run unmade the planted link"
+    assert_outside_untouched(outside, "noni/direction", "order.json")
 
 
 def test_a_planned_order_that_cannot_be_rendered_is_refused(tmp_path, monkeypatch):

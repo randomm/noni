@@ -34,6 +34,11 @@ from intent_writer_support import (
     intent_run,
     tracked_digests,
 )
+from parent_link_fixtures import (
+    assert_outside_untouched,
+    plant_parent_link,
+    write_outside_decoy,
+)
 
 SET = "set"
 
@@ -241,6 +246,64 @@ def test_a_directory_at_the_intent_path_is_exit_3(tmp_path):
     result = intent_run(repo, SET, "--from", draft(tmp_path, GOOD_INTENT),
                         "--decision", RECORD_ID)
     assert result.returncode == 3
+
+
+def test_a_symlink_where_the_intent_directory_was_is_refused_never_written_through(tmp_path):
+    """A committed ``noni/direction`` that is a link outside the tree is a wrong
+    path, not a directory to write into (issue #104).
+
+    The writer probed the parent with ``exists()``/``is_dir()`` and created it with
+    ``mkdir(parents=True)``, both of which follow links, so the probe answered yes,
+    the mkdir was a no-op, and the intent landed outside -- exit 0, and the committed
+    route then heard git refuse a path "beyond a symbolic link". The guard asks every
+    component under ``--repo`` of ``lstat`` before the draft is opened, so the answer
+    is now the wrong-path code docs/PRODUCT.md 7 gives ``intent`` (2) with the path
+    named, and the decoy outside still holds the bytes the fixture wrote.
+    """
+    repo = repo_with_record(tmp_path)
+    outside = tmp_path / "outside"
+    plant_parent_link(repo, outside, "noni/direction")
+    write_outside_decoy(outside, "noni/direction", "intent.md")
+
+    result = intent_run(repo, SET, "--from", draft(tmp_path, GOOD_INTENT),
+                        "--decision", RECORD_ID)
+
+    text = result.stdout + result.stderr
+    assert result.returncode == 2, text
+    assert "symlink" in text.lower(), text
+    assert "noni/direction" in text, text
+    assert "pathspec" not in text.lower() and "fatal:" not in text.lower(), text
+    assert (repo / "noni" / "direction").is_symlink(), "the run unmade the planted link"
+    assert_outside_untouched(outside, "noni/direction", "intent.md")
+
+
+def test_a_symlinked_noni_directory_is_refused_though_the_directory_below_it_is_real(tmp_path):
+    """A link at ``noni`` is refused even though ``noni/direction`` under it is a
+    real directory: ``lstat`` resolves the intermediate component, so a guard that
+    asked only the leaf the writer writes into hears "directory" and mkdirs nothing.
+
+    The ledger the ``--decision`` citation reads lives under the same link, so the
+    outside tree carries a decoy at the artifact's name and at the record's: the
+    first says nothing was written outside, the second is the bytes a following read
+    would have answered from.
+    """
+    repo = repo_with_record(tmp_path)
+    outside = tmp_path / "outside"
+    plant_parent_link(repo, outside, "noni")
+    write_outside_decoy(outside, "noni", "intent.md")
+
+    result = intent_run(repo, SET, "--from", draft(tmp_path, GOOD_INTENT),
+                        "--decision", RECORD_ID)
+
+    text = result.stdout + result.stderr
+    assert result.returncode == 2, text
+    assert "symlink" in text.lower(), text
+    assert "noni" in text, text
+    assert "pathspec" not in text.lower() and "fatal:" not in text.lower(), text
+    assert (repo / "noni").is_symlink(), "the run unmade the planted link"
+    assert_outside_untouched(outside, "noni", "intent.md")
+    assert tracked_digests(repo) == {}, (
+        "a refused run added a tracked file under a linked noni")
 
 
 def test_a_repo_that_is_not_a_directory_is_exit_2(tmp_path):

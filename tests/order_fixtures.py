@@ -8,10 +8,10 @@ Pure moves from the file that covered all of them: no behaviour here changed.
 
 from __future__ import annotations
 
-import ast
+import contextlib
+import io
 import json
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -22,17 +22,38 @@ from _harness import (
     _git,
     _git_e2,
     _init_repo,
-    _script_ast,
     git_pin_date,
     load_package_module,
-    run_from,
     run_order,
     subprocess_env,
 )
-from ordering_shapes import commit_artifact
+from order_doc_readers import (
+    SKILL_DIR,
+    _doc_block,
+    _doc_usage_flags,
+    _docstring,
+    _module_exit_codes,
+    _order_ast,
+    _parser_flags,
+    _skill_section,
+)
+
+__all__ = [
+    "CENSUS", "ORDER", "REPO", "SKILL_DIR", "FIXTURE", "ORDER_REL", "NOW", "STAMP",
+    "BASELINE_ID", "BASELINE_DATE", "SUPERSEDING_ID", "RIVAL_DATE", "SEED_STAMP",
+    "ORDERING_CHECKS",
+    "_schema_module", "_gitwrite_module", "_order_module", "_orderstate_module",
+    "_order_path", "_read", "_issues", "_repo", "_record_json", "_commit_record",
+    "_supersede_baseline", "_order", "_order_inprocess", "_census_ordering",
+    "_assert_census_clean", "_head_paths", "_porcelain", "_canonical", "_seed",
+    "_spied_git", "_writer_git_call", "_git_verb", "_entry",
+    "_committed_order", "_bare_repo", "_schema_case", "git_input", "git_output",
+    "_read",
+    "_doc_block", "_doc_usage_flags", "_docstring", "_module_exit_codes",
+    "_order_ast", "_parser_flags", "_skill_section",
+]
 
 CENSUS = REPO / "skills" / "census" / "scripts" / "census.py"
-SKILL_DIR = REPO / "skills" / "direction"
 FIXTURE = REPO / "tests" / "fixtures" / "ordering" / "order-valid.json"
 
 ORDER_REL = "noni/direction/order.json"
@@ -41,6 +62,15 @@ STAMP = "2026-10-27T12:00:00Z"
 BASELINE_ID = "2026-10-01-baseline"
 BASELINE_DATE = "2026-10-01T10:00:00Z"
 SUPERSEDING_ID = "2026-10-20-scheduler"
+
+# The stamp the rival writer of the race tests commits at, and the stamp its
+# losing opponent's baseline is seeded at. Both differ from ``NOW`` for the same
+# reason and the same verb: a run whose planned bytes equal the bytes already on
+# disk takes the writer's no-change shortcut and returns before the guard is
+# reached, so a race test built on such bytes would be measuring the shortcut and
+# not the probe.
+RIVAL_DATE = "2026-11-02T09:00:00Z"
+SEED_STAMP = "2026-10-20T08:00:00Z"
 
 # The three ordering checks, so a census here arbitrates the artifact and
 # nothing else: the hygiene class is not this writer's contract (a tree with no
@@ -63,17 +93,31 @@ def _schema_module() -> object:
 
 
 def _gitwrite_module() -> object:
-    """gitwrite.py loaded as a module, for the tests that name its constants."""
-    from noni import order_gitwrite
+    """gitwrite.py loaded as a module, for the tests that name its constants.
 
-    return order_gitwrite
+    Returned as the writer itself resolves it -- ``noni.order_gitwrite`` -- and not
+    through the bare ``order_gitwrite`` alias ``tests/harness_module.py`` registers
+    for the skill wrappers. The two names can bind two module objects (the alias is
+    ``setdefault``, so an earlier import of the bare name wins for that name), and a
+    test that patched one while the writer called the other would measure nothing:
+    every patched call of the test would land on a copy and the run would go ahead as
+    if the guard were absent.
+    """
+    import importlib
+
+    return importlib.import_module("noni.order_gitwrite")
 
 
 def _order_module() -> object:
-    """order.py loaded as a module, for the tests that drive its internals."""
-    from noni import order
+    """order.py loaded as a module, for the tests that drive its internals.
 
-    return order
+    ``noni.order``, for the same reason ``_gitwrite_module`` asks for its qualified
+    name: the in-process tests patch ``module.gitwrite``, so the module they hand
+    back and the module the writer runs must be one object.
+    """
+    import importlib
+
+    return importlib.import_module("noni.order")
 
 
 def _orderstate_module() -> object:
@@ -99,8 +143,6 @@ def _read(repo: Path) -> dict:
 
 def _issues(repo: Path) -> list[int]:
     return [entry["issue"] for entry in _read(repo)["entries"]]
-
-
 def _repo(tmp_path: Path, subdir: str = "repo") -> Path:
     """A repo whose ledger holds one committed decided record at a pinned date.
 
@@ -173,6 +215,24 @@ def _supersede_baseline(repo: Path) -> None:
 def _order(repo: Path, *args: str, env: dict | None = None) -> subprocess.CompletedProcess[str]:
     """Run order.py with exactly the arguments given, identity pinned to Replay."""
     return run_order(repo, *args, env=env)
+
+
+def _order_inprocess(repo: Path, *args: str) -> tuple[int, str, str]:
+    """Run one order.py verb in-process and return ``(code, stdout, stderr)``.
+
+    The guard tests need this rather than a subprocess: a freshness probe, a lying
+    ``git show`` or a tripwire on ``write_atomic`` is a patch on the module object,
+    and the writer only sees it if it runs *in that object*. Spawning the skill
+    wrapper would run the installed copy of the package -- a different module, an
+    unpatched helper, and a run that reports success for a guard that was never
+    installed. Everything else is the subprocess launcher's own contract: the same
+    argv after ``--repo``, the same ``main()`` entry point, the same two streams.
+    """
+    module = _order_module()
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = module.main(["--repo", str(repo), *args])
+    return code, out.getvalue(), err.getvalue()
 
 
 def _census_ordering(repo: Path, *extra: str) -> tuple[int, list[dict], str]:
@@ -282,7 +342,88 @@ def _entry(issue: int, decision: str = BASELINE_ID, confirmed: str = STAMP) -> d
     return {"issue": issue, "decision": decision, "confirmed": confirmed}
 
 
+def _committed_order(repo: Path) -> bytes | None:
+    """What HEAD holds at the artifact path, or ``None`` when nothing is there.
+
+    Read straight from git rather than through the writer's own probe, so a test
+    can assert what the committed order is without trusting the code under test to
+    report it. The harness's ``_git`` returns no stdout, hence ``_git_e2``.
+    """
+    shown = _git_e2(repo, "show", f"HEAD:{ORDER_REL}")
+    if shown.returncode != 0:
+        return None
+    return shown.stdout.encode("utf-8")
+
+
+def _bare_repo(tmp_path: Path, subdir: str = "bare-repo") -> Path:
+    """A repository with one empty commit, plus a committed baseline decision record.
+
+    NOT a repository with no history: this fixture makes one empty commit first, so a
+    later ``git commit`` in a test has a parent to record (git refuses a first commit
+    for a path the index does not already hold). What separates it from :func:`_repo`
+    is that the artifact's own path is in no commit at all, so
+    ``git show HEAD:<rel>`` answers "does not exist in 'HEAD'." That is the honest
+    negative the freshness probe must read as "nothing is committed here" rather than
+    as a repository it cannot read, or it would refuse the first committed order the
+    quickstart tells the operator to write.
+
+    A tree with NO commit at all is a second, distinct honest negative (git then says
+    "invalid object name 'HEAD'", and says something else again once a file of that
+    name sits on disk). ``tests/order_probe_shared.py`` builds that one.
+    """
+    repo = tmp_path / subdir
+    repo.mkdir(parents=True, exist_ok=True)
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.name", "Replay")
+    _git(repo, "config", "user.email", "replay@fixture.invalid")
+    _commit_record(repo, BASELINE_ID, "decided", None)
+    return repo
+
+
 # --- add ----------------------------------------------------------------------
+
+
+def git_output(repo: Path, *args: str) -> str:
+    """One git call whose ANSWER is stdout, with the harness identity and no stdin.
+
+    The checked half of the harness's two stdin-less shapes: ``_git`` checks and
+    discards stdout, ``_git_e2`` keeps stdout and does not check. A fixture that reads
+    an object id out of git wants both, and wants the failure to be a clear message
+    rather than an empty string the next step mistakes for an answer.
+    """
+    import subprocess
+
+    cmd = ["git", "-C", str(repo),
+           "-c", "user.name=Replay",
+           "-c", "user.email=replay@fixture.invalid",
+           "-c", "commit.gpgsign=false",
+           "-c", f"core.hooksPath={os.devnull}", *args]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"git {args} failed: {proc.stderr.strip()}")
+    return proc.stdout.strip()
+
+
+def git_input(repo: Path, *args: str, text: str) -> str:
+    """One git call that feeds ``text`` on stdin, with the harness identity.
+
+    The harness's ``_git`` / ``_git_e2`` pipe no stdin, so a fixture that must hand git
+    bytes (a blob written with ``hash-object -w --stdin``) builds the same argv here
+    rather than inventing a fourth shape for the harness's git calls. ``-w`` STORES the
+    object: an id the index is told to hold must be one the store can answer for, or a
+    later comparison would be measuring a dangling fixture rather than its own read.
+    """
+    import subprocess
+
+    cmd = ["git", "-C", str(repo),
+           "-c", "user.name=Replay",
+           "-c", "user.email=replay@fixture.invalid",
+           "-c", "commit.gpgsign=false",
+           "-c", f"core.hooksPath={os.devnull}", *args]
+    proc = subprocess.run(cmd, capture_output=True, text=True, input=text)
+    if proc.returncode != 0:
+        raise RuntimeError(f"git {args} failed: {proc.stderr.strip()}")
+    return proc.stdout.strip()
 
 
 def _schema_case(**entry_fields):
@@ -293,135 +434,3 @@ def _schema_case(**entry_fields):
     for name, value in entry_fields.items():
         entry[name] = value
     return {"schema": schema.ORDER_SCHEMA, "entries": [entry]}
-
-
-def _order_ast() -> ast.Module:
-    return _script_ast(ORDER)
-
-
-def _docstring(tree: ast.Module) -> str:
-    doc = ast.get_docstring(tree)
-    assert isinstance(doc, str), "order.py has no module docstring"
-    return doc
-
-
-def _module_exit_codes(tree: ast.Module) -> set[int]:
-    """The codes the EXIT_* module constants hold, read from the source."""
-    codes: set[int] = set()
-    for node in tree.body:
-        value = node.value if isinstance(node, (ast.Assign, ast.AnnAssign)) else None
-        if not isinstance(value, ast.Constant):
-            continue
-        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-        for target in targets:
-            if isinstance(target, ast.Name) and target.id.startswith("EXIT_"):
-                assert type(value.value) is int, f"{target.id} is not an int"
-                codes.add(value.value)
-    assert codes, "order.py defines no EXIT_* constants"
-    return codes
-
-
-def _doc_block(doc: str, header: str) -> dict[int, str] | dict[str, str]:
-    lines = doc.splitlines()
-    try:
-        start = next(i for i, line in enumerate(lines) if line.strip() == header)
-    except StopIteration:
-        raise AssertionError(f"docstring has no {header!r} block") from None
-    block: dict = {}
-    current = None
-    for line in lines[start + 1:]:
-        if not line.strip():
-            continue
-        if not line.startswith(" " * 4):
-            break
-        head = line.strip().split(maxsplit=1)
-        if head and head[0].isdigit():
-            current = int(head[0])
-            block[current] = head[1] if len(head) > 1 else ""
-        elif isinstance(current, int):
-            block[current] += " " + line.strip()
-    assert block, f"the {header!r} block is empty"
-    return block
-
-
-def _parser_flags(tree: ast.Module) -> set[str]:
-    """The long options the parser declares, read from main()."""
-    main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
-    flags: set[str] = set()
-    for node in ast.walk(main):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if node.func.attr == "add_argument":
-                for arg in node.args:
-                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                        if arg.value.startswith("--"):
-                            flags.add(arg.value)
-    assert flags, "no add_argument calls found in main()"
-    return flags
-
-
-def _doc_usage_flags(doc: str) -> set[str]:
-    lines = doc.splitlines()
-    try:
-        start = next(i for i, line in enumerate(lines) if line.strip() == "Usage:")
-    except StopIteration:
-        raise AssertionError("docstring has no 'Usage:' block") from None
-    flags: set[str] = set()
-    for line in lines[start + 1:]:
-        if not line.startswith(" " * 4):
-            break
-        flags.update(re.findall(r"--[A-Za-z][A-Za-z0-9-]*", line))
-    assert flags, "the 'Usage:' block names no flags"
-    return flags
-
-
-# --- State root: the artifact path resolves from --repo and nothing else -------
-#
-# order.py's artifact lives at a fixed path under the state root, so the whole
-# contract is whether that root is the one --repo named. The three trees: a
-# separate state repository holding the ledger the writer cites, a decoy order
-# file beside the cwd carrying an order no run of these tests makes, and an
-# empty cwd a stray write would show up in.
-
-ORDER_STATE_DIR = "order-state-root"
-ORDER_CWD_DIR = "order-cwd"
-ORDER_DECOY_DIR = "order-decoy"
-# An order the decoy holds and no test writes: the entry, not just the file, is
-# the thing a comparison can prove nobody touched.
-ORDER_DECOY_ISSUE = 999
-
-def _order_state_root(tmp_path: Path) -> Path:
-    """The state repository: a git repo with an identity and the baseline
-    record ``add --decision`` cites, and no order file yet."""
-    root = _repo(tmp_path, ORDER_STATE_DIR)
-    _git(root, "config", "user.name", "Replay")
-    _git(root, "config", "user.email", "replay@fixture.invalid")
-    return root
-
-
-def _order_decoy(tmp_path: Path) -> Path:
-    """A decoy state root beside the cwd: a git repo holding one committed
-    ordering artifact, so a cwd-driven run would have had an order to overwrite.
-
-    A git repository for the same reason as decide.py's decoy: a plain directory
-    would make the writer's own path probes answer first, and the test would
-    measure the probe rather than the resolution.
-    """
-    decoy = _init_repo(tmp_path / ORDER_DECOY_DIR)
-    _git(decoy, "config", "user.name", "Replay")
-    _git(decoy, "config", "user.email", "replay@fixture.invalid")
-    commit_artifact(decoy, _canonical([_entry(ORDER_DECOY_ISSUE, BASELINE_ID)]))
-    return decoy
-
-
-def _order_case(tmp_path: Path) -> tuple[Path, Path, Path]:
-    """The three trees of one order state-root run: (state root, decoy, cwd)."""
-    root = _order_state_root(tmp_path)
-    decoy = _order_decoy(tmp_path)
-    cwd = tmp_path / ORDER_CWD_DIR
-    cwd.mkdir(parents=True, exist_ok=True)
-    return root, decoy, cwd
-
-
-def _order_from(cwd: Path, repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    """order.py launched from ``cwd``, with ``--repo`` naming the state root."""
-    return run_from(cwd, ORDER, "--repo", str(repo), *args)

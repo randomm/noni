@@ -170,6 +170,8 @@ Every `finding` row names the `artifact` path it derives from. Both output modes
 subject)` — so the row order is identical across modes and reproducible across runs
 (see `_finding_sort_key`). No metric reads a value from an agent-authored field;
 every value comes from git history, file existence, or file byte size.
+The `hygiene` rows name what they found; [docs/HYGIENE.md](../../docs/HYGIENE.md)
+owns that naming.
 
 ## The probe-honesty rule
 

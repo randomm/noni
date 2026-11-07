@@ -34,7 +34,7 @@ from .census_text import fault_text
 # namespace. It is a fixed package-relative literal rather than a path computed
 # from a file's location: the census never prints a machine-local absolute path,
 # and the same bytes must come out of the in-place wrapper and of `noni census`
-# from the wheel. See skills/census/SKILL.md, "The hygiene artifact namespace".
+# from the wheel. See docs/HYGIENE.md, "The hygiene artifact namespace".
 HYGIENE_SCAN_ARTIFACT = "noni/public_safety.py"
 
 
@@ -215,8 +215,8 @@ def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
     ``hygiene scan`` = the scan itself, ``deny-list`` = the deny-list half of
     the scan, anything else = ``path:line`` of a violating tracked file (whose
     artifact is that file, root-relative, while the first two name the checker
-    in the package-relative hygiene namespace — see SKILL.md, "The hygiene
-    artifact namespace"). The deny-list read follows public_safety's own
+    in the package-relative hygiene namespace — see docs/HYGIENE.md, "The
+    hygiene artifact namespace"). The deny-list read follows public_safety's own
     precedence, so this class reports the same verdict the operator's own
     ``scripts/public_safety.py`` gate gives.
     """

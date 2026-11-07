@@ -127,9 +127,21 @@ def items_listing(items: Path) -> ItemsProbe:
         # and "no such directory" and "not a directory" are two different things an
         # operator can be told. The two families are kept apart by which of them the
         # kernel raised about the path itself.
-        if not isinstance(exc, NotADirectoryError) and (
-                path_is_known_missing(items) is False):
-            return ItemsProbe(names=())
+        #
+        # A declined lstat reaches the same arm and must not escape: the classifier
+        # raises on ``EACCES`` by design (that is how it refuses to call an
+        # untraversable tree "absent"), and an escaping exception would end the whole
+        # census with a traceback instead of the honest cannot-tell row. The raised
+        # error is itself the evidence -- a path that was genuinely absent raised
+        # ``ENOENT``/``ENOTDIR``, so anything else is a store this run was told to look
+        # in and cannot, which is exactly what ``item-unlistable`` reports.
+        if not isinstance(exc, NotADirectoryError):
+            try:
+                known_missing = path_is_known_missing(items)
+            except OSError:
+                return ItemsProbe(fault=fault_text(exc) or type(exc).__name__)
+            if known_missing is False:
+                return ItemsProbe(names=())
         return ItemsProbe(fault=fault_text(exc) or type(exc).__name__)
 
 

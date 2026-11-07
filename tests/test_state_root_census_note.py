@@ -158,7 +158,7 @@ def test_the_state_root_note_is_said_once_and_never_duplicated(capsys):
     import io
     import sys as _sys
 
-    from noni.census_report import (
+    from noni.census_render import (
         ORDERING_CLOSED_NOT_EVALUATED,
         _render,
         no_state_root_note,

@@ -95,7 +95,7 @@ def test_a_note_container_that_is_not_a_tuple_is_refused_at_the_renderer():
     """
     import pytest
 
-    from noni.census_report import _render
+    from noni.census_render import _render
 
     for bad in (NOTE, [NOTE], {NOTE}, {"note": NOTE}, 7, None):
         for json_out in (True, False):
@@ -115,7 +115,7 @@ def test_no_fix_hint_repeats_the_not_evaluated_note():
     -- one that no scraper watched. This asserts the rule the comment claims, over
     every class, so the comment and the table cannot drift apart again.
     """
-    from noni.census_report import CLASS_FIX, ORDERING_CLOSED_NOT_EVALUATED
+    from noni.census_render import CLASS_FIX, ORDERING_CLOSED_NOT_EVALUATED
 
     assert CLASS_FIX, "the derived view of the class table is empty"
     quoted = [check for check, hint in CLASS_FIX.items()
@@ -142,7 +142,7 @@ def test_a_note_that_is_not_a_sentence_is_refused_at_the_renderer(tmp_path):
     """
     import pytest
 
-    from noni.census_report import _render
+    from noni.census_render import _render
 
     for bad in ({"class": "ordering-closed", "why": "no flag"}, ("a", "pair"), 7, None):
         with pytest.raises(TypeError, match="must be a sentence"):

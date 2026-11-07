@@ -115,17 +115,17 @@ def product_adapters_section() -> str:
 def ordering_note_from_product() -> str:
     """The census's own ``ordering-closed`` note, assembled from its source.
 
-    The sentence lives in one constant of ``census_report.py``: the human branch
-    prints it with a ``note: `` prefix and the NDJSON branch carries it verbatim on
-    the summary row's ``not_evaluated`` field. This reads the constant's own
-    literals out of that file and returns the line exactly as human mode prints it,
-    so the page and its test cannot agree with each other while both drift away
-    from the tool. The prefix is added here and not stored in the constant: the
-    NDJSON field carries the sentence, not the presentation.
+    The sentence lives in one constant of ``census_render.py`` (where it moved when
+    the report module split): the human branch prints it with a ``note: `` prefix and
+    the NDJSON branch carries it verbatim on the summary row's ``not_evaluated``
+    field. This reads the constant's own literals out of that file and returns the line
+    exactly as human mode prints it, so the page and its test cannot agree with each
+    other while both drift away from the tool. The prefix is added here and not stored
+    in the constant: the NDJSON field carries the sentence, not the presentation.
     """
     from _harness import REPO
 
-    source = (REPO / "src" / "noni" / "census_report.py").read_text(encoding="utf-8")
+    source = (REPO / "src" / "noni" / "census_render.py").read_text(encoding="utf-8")
     match = re.search(r'ORDERING_CLOSED_NOT_EVALUATED\s*=\s*\(\s*'
                       r'((?:"(?:[^"\\]|\\.)*"\s*)+)\)', source, re.S)
     assert match, "the census no longer holds the ordering-closed note this test cites"

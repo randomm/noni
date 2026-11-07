@@ -34,6 +34,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from . import census_intent as _intent
+from . import census_items as _items
+from . import census_items_readers as _items_readers
 from . import census_json as _census_json
 from . import census_ordering as _ordering
 from . import census_ordering_readers as _ordering_readers
@@ -41,23 +43,27 @@ from . import census_sessions_checks as _sessions_checks
 from . import census_text as _text
 from . import intentschema
 from .census_cli import _build_parser
+from .census_render import (
+    ITEM_STALE_AFTER_DEFAULT,
+    ORDERING_CLOSED_NOT_EVALUATED,
+    ORDERING_STALE_AFTER_DEFAULT,
+    STALE_AFTER_RE,
+    _render,
+    _threshold,
+    no_state_root_note,
+)
 from .census_report import (
     CLASS_CODE,
     EXIT_CLEAN,
     EXIT_TOOL_MISSING,
     EXIT_USAGE,
     INTENT_CHECKS,
+    ITEM_CHECKS,
     LEDGER_CHECKS,
     ORDERING_CHECKS,
-    ORDERING_CLOSED_NOT_EVALUATED,
-    ORDERING_STALE_AFTER_DEFAULT,
     SESSION_CHECKS,
-    STALE_AFTER_RE,
     WHOLE_ARTIFACT_KEY,
     _known_checks,
-    _render,
-    _threshold,
-    no_state_root_note,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, nothing imported at runtime
@@ -165,6 +171,53 @@ def _check_ordering(
                              ledger_name=census._ledger_name)
 
 
+def _check_items(
+    items: Path, ledger: Path, order: Path, root: Path, now: datetime,
+    item_stale_after: timedelta, strict: bool, findings: list[dict], probe,
+    ledger_names: tuple[str, ...] | None,
+) -> None:
+    """The items group, run by the module beside the census.
+
+    The row factory, the root-relative identifier, the path classifier, the two
+    message bounders, the strict JSON reader and the store's own readers module are
+    read off the census at the call rather than closed over at import, so the row
+    shape, the machine-local-path rule and the bound on a foreign message keep their
+    single owner in ``census.py`` and a seam a test puts on any of them is the one
+    the moved group uses.
+
+    ``probe`` is the run's one listing of the store (its names and its fault) and
+    ``ledger_names`` is the same run's one listing of the ledger: the group reads
+    both directories the census already read and never walks either for itself.
+    """
+    census = _census()
+    _items.check_items(items, ledger, order, root, now, item_stale_after, strict,
+                       findings,
+                       listed=probe.names, fault=probe.fault,
+                       ledger_names=ledger_names,
+                       row=census._row,
+                       rel_to_root=census._rel_to_root,
+                       file_kind=census._file_kind,
+                       read_record=_item_read_record,
+                       bounded=census._bounded,
+                       clipped=census._clipped,
+                       load_json_strict=_census_json.load_json_strict,
+                       readers=_items_readers)
+
+
+def _item_read_record(path: Path) -> tuple[bytes | None, OSError | None]:
+    """One file's bytes, opened the way the census opens a file it did not write.
+
+    The census's single open-time-safe reader (``census_intent_readers.read_record``:
+    ``O_NOFOLLOW``, ``O_NONBLOCK`` and an ``fstat`` on the descriptor that was
+    opened), handed to the items group so it uses the same open the intent class
+    uses rather than a second implementation of the same refusal. Classifying first
+    and opening second leaves an interval in which a file can be swapped for a link,
+    and it is the flags on the open, not the earlier ``lstat``, that close it.
+    """
+    from .census_intent_readers import read_record
+    return read_record(path)
+
+
 def _check_intent(
     intent: Path, ledger: Path, root: Path, strict: bool, findings: list[dict]
 ) -> None:
@@ -211,6 +264,27 @@ def _intent_present(intent: Path) -> bool:
     """
     kind, _ = _census()._file_kind(intent)
     return kind != "absent"
+
+
+def _items_present(items: Path, given: bool) -> bool:
+    """Whether the store's one readdir is owed, for the group's filter gate.
+
+    Two answers, and the second is the whole of the ``--items`` ruling: a store the
+    caller named with ``--items`` is owed a read whatever stands at it, because a
+    path the caller pointed the census at and this run cannot read is a finding
+    (``item-unlistable``), while a default path that is simply absent is the state of
+    a project that has never filed an idea and is not a finding at all. So the flag
+    decides, and an absent default answers False without a classification -- no row
+    can come from it either way, and a filtered run of a project with no store pays
+    nothing for the read it can be shown to need.
+
+    A ``--items`` path that is a symlink or a plain file is also owed the read: the
+    probe classifies it and the group words the row, so the gate asks nothing of its
+    own about the shape and never reaches a verdict the group has not stated.
+    """
+    if given:
+        return True
+    return _census()._file_kind(items, kind="dir")[0] != "absent"
 
 
 def _run(argv: list[str] | None = None) -> int:
@@ -276,6 +350,12 @@ def _run(argv: list[str] | None = None) -> int:
                 if a == "--stale-after" or a.startswith("--stale-after=")]
     ordering_stale_after = (stale_after if supplied
                             else _threshold(ORDERING_STALE_AFTER_DEFAULT))
+    # The item threshold, chosen by the same presence rule and for the same reason:
+    # an explicit ``--stale-after 7`` must move the candidates as well as the order
+    # entries, and an absent flag must leave the store at its own thirty days rather
+    # than at the session register's seven.
+    item_stale_after = (stale_after if supplied
+                        else _threshold(ITEM_STALE_AFTER_DEFAULT))
 
     # git is a required tool: the census reads history for three of its four
     # groups. The lookup goes through this module's own ``shutil``, so the seam a
@@ -294,11 +374,20 @@ def _run(argv: list[str] | None = None) -> int:
                 else root / "noni" / "direction" / "order.json")
     intent = (Path(args.intent) if args.intent
               else root / intentschema.INTENT_REL)
+    # The store's default is <repo>/noni/items, and the flag replaces the path under
+    # the state root exactly as the other four overrides do. The distinction the
+    # group keys ``item-unlistable`` on is kept here rather than in the group: only
+    # the run knows whether the caller named the flag, and a store the caller named
+    # and this run cannot read is a row, while a default path that is simply absent
+    # is the state of a project that has never filed an idea.
+    items = Path(args.items) if args.items else root / "noni" / "items"
+    items_given = args.items is not None
     issue_state_path = Path(args.issue_state) if args.issue_state else None
     ledger = Path(os.path.expanduser(str(ledger)))
     sessions = Path(os.path.expanduser(str(sessions)))
     ordering = Path(os.path.expanduser(str(ordering)))
     intent = Path(os.path.expanduser(str(intent)))
+    items = Path(os.path.expanduser(str(items)))
     if issue_state_path is not None:
         issue_state_path = Path(os.path.expanduser(str(issue_state_path)))
 
@@ -427,6 +516,28 @@ def _run(argv: list[str] | None = None) -> int:
     # ``check_intent`` owns that verdict, and the gate must not reach it first.
     if INTENT_CHECKS & requested or _intent_present(intent):
         _check_intent(intent, ledger, root, args.strict, findings)
+        findings[:] = keep(findings)
+
+    # The items group is its own group: one readdir of the store, one read of every
+    # file under it, and the two questions it cannot answer from the store alone
+    # (does the cited record stand, does the order hold the issue) answered from the
+    # ledger listing and the order read this run already has. Like every other group
+    # its path defaults under --repo and ``census_cli`` gives it the same kind of
+    # path override the ledger, sessions, ordering and intent groups have.
+    #
+    # The gate is the store's own probe, taken here before the group is gated on its
+    # answer so the gate and the rows are one readdir (the sessions group's rule).
+    # The group is entered when a class of it was asked for, and also when the probe
+    # could not list a store that exists: that row is the probe-honesty one ``keep``
+    # never drops, so a run whose filter named no item class must still reach the
+    # read that faulted. An absent store is no ground to enter on: it is the state
+    # of a project that has never filed an idea, and the group adds no row for it --
+    # which is why an absent ``--items`` path is silence and a present-but-unreadable
+    # one is a row, the distinction ``items_given`` carries to the group.
+    if (ITEM_CHECKS & requested) or _items_present(items, items_given):
+        items_probe = census._items_listing(items)
+        _check_items(items, ledger, ordering, root, now, item_stale_after,
+                     args.strict, findings, items_probe, ledger_probe.names)
         findings[:] = keep(findings)
 
     # hygiene is its own check group: it scans the tracked files of the census's

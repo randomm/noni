@@ -110,6 +110,30 @@ def parse_timestamp(value: object) -> datetime | None:
     return stamp.astimezone(timezone.utc)
 
 
+def id_problems(value: dict, stem: str) -> list[str]:
+    """Why the ``id`` field of a parsed document does not name its own file.
+
+    Asked separately from ``problems`` because it is answered by a different
+    resource: the rest of the rules need only the bytes this run read, while this one
+    needs the name the directory gave the file. Keeping them in one function would
+    force every caller to hold a stem it does not use (the writer's is the one it was
+    handed) and would let the census treat a mismatch as the state that stops it from
+    describing the item at all. It is not: a file whose two names disagree still
+    states a status, an age and citations worth checking.
+    """
+    if "id" not in value:
+        return []
+    item_id = value["id"]
+    if not is_item_id(item_id):
+        # ``problems`` already reported the shape; this is the same field's rule
+        # against the stem, and a name that is not an id at all cannot match a stem.
+        return []
+    if item_id != stem:
+        return [f"id {item_id!r} does not match the file name {stem}.json, so the "
+                "store holds one item under two names"]
+    return []
+
+
 def problems(value: object) -> list[str]:
     """Why ``value`` is not an item this writer may write over, [] when it is.
 

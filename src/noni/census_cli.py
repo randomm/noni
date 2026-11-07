@@ -9,9 +9,10 @@ re-exports both ``main`` and ``_build_parser`` so the census stays the module it
 wrappers, ``python -m noni census``, ``noni census`` and its tests import.
 
 The parser builds its own help from the check contract: ``--strict`` names the
-warn classes through ``_warn_class_names()`` and ``--stale-after`` quotes the two
-defaults declared in ``census_report.py``, so neither line is a copy that can
-drift from the table. ``prog`` is the label from ``labels``, never a name derived
+warn classes through ``_warn_class_names()`` and ``--stale-after`` quotes the three
+defaults declared in ``census_render.py``, so neither line is a copy that can drift
+from the table. The store's own path override is declared here beside the other four
+so one parser remains the whole flag surface. ``prog`` is the label from ``labels``, never a name derived
 from ``__file__``, which is what lets the in-place wrapper and the console route
 print the same bytes.
 
@@ -24,7 +25,9 @@ from __future__ import annotations
 import argparse
 
 from . import labels
-from .census_report import (
+from .census_render import (
+    ITEM_STALE_AFTER_DEFAULT,
+    ORDERING_CLOSED_NOT_EVALUATED,  # noqa: F401  (doc scraper)
     ORDERING_STALE_AFTER_DEFAULT,
     SESSION_STALE_AFTER_DEFAULT,
     _warn_class_names,
@@ -49,6 +52,12 @@ def _build_parser() -> argparse.ArgumentParser:
                              "<repo>/noni/direction/intent.md); its citation is "
                              "answered against the --ledger of this run, so the "
                              "override moves the file and not the ledger")
+    parser.add_argument("--items", default=None, metavar="DIR",
+                        help="item store (default: <repo>/noni/items); absent is "
+                             "not a finding, since an idea nobody filed earns no "
+                             "row, but a store named here that cannot be listed is "
+                             "reported by item-unlistable rather than reading as an "
+                             "empty store")
     parser.add_argument("--issue-state", default=None, metavar="FILE",
                         help='JSON map {"<issue>": "open"|"closed"} produced by an adapter '
                              "or the operator; without it the ordering-closed check is not "
@@ -57,8 +66,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stale-after", default=SESSION_STALE_AFTER_DEFAULT, metavar="DAYS",
                         help=f"staleness threshold in positive whole days as `<N>` or `<N>d` "
                              f"(e.g. `7` or `7d`); default {SESSION_STALE_AFTER_DEFAULT} for active "
-                             f"sessions and {ORDERING_STALE_AFTER_DEFAULT} for order entries, or this "
-                             "value for both when given")
+                             f"sessions, {ORDERING_STALE_AFTER_DEFAULT} for order entries and "
+                             f"{ITEM_STALE_AFTER_DEFAULT} for filed ideas, or this value for all "
+                             "three when given")
     parser.add_argument("--strict", action="store_true",
                         help=f"treat warn classes ({_warn_class_names()}) as failures")
     parser.add_argument("--json", action="store_true", dest="json_out", help="emit NDJSON records on stdout (noni.census/1)")

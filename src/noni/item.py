@@ -102,11 +102,12 @@ from . import (
     itemschema,
     labels,
     ledger_schema,
-    orderstate,
     orderschema,
+    orderstate,
 )
-from ._safe_text import safe_text
 from . import order_gitwrite as gitwrite
+from ._safe_text import safe_text
+
 
 # The state reader reports a refusal as a (headline, hint) pair and leaves the code
 # to the writer, so the one table of codes stays here and the reader's answers arrive
@@ -267,8 +268,8 @@ def _read_item(path: Path, item_id: str) -> tuple[dict | None, int | None]:
     if kind != "regular":
         return _fail(EXIT_IO, f"{rel} is not a readable regular file: "
                    f"{why or 'not a regular file'}",
-                     f"remove that path or point --repo at the tree that holds the "
-                     f"item, then re-run item.py"), None
+                     "remove that path or point --repo at the tree that holds the "
+                     "item, then re-run item.py"), None
     try:
         raw = path.read_bytes()
     except OSError as exc:

@@ -87,6 +87,23 @@ from .census_ledger_edited import (
     check_ledger_deleted,
     check_ledger_edited,
 )
+from .census_render import (  # noqa: F401  (re-exported: the census is their home)
+    ITEM_STALE_AFTER_DEFAULT,
+    NO_STATE_ROOT_NOTE,
+    NO_STATE_ROOT_PREFIX,
+    ORDERING_CLOSED_CHECK,
+    ORDERING_CLOSED_NOT_EVALUATED,
+    ORDERING_STALE_AFTER_DEFAULT,
+    SESSION_STALE_AFTER_DEFAULT,
+    STALE_AFTER_RE,
+    _finding_sort_key,
+    _promote,
+    _render,
+    _severity,
+    _threshold,
+    _warn_class_names,
+    no_state_root_note,
+)
 
 # The check contract (the class table, its derived views, the severity rules, the
 # threshold and filter helpers and the renderers) lives in census_report.py beside
@@ -100,21 +117,13 @@ from .census_report import (  # noqa: F401  (re-exported: the census is their ho
     EXIT_CLEAN,
     EXIT_TOOL_MISSING,
     EXIT_USAGE,
+    INTENT_CHECKS,
+    ITEM_CHECKS,
     LEDGER_CHECKS,
     ORDERING_CHECKS,
-    ORDERING_STALE_AFTER_DEFAULT,
     SCHEMA_VERSION,
     SESSION_CHECKS,
-    SESSION_STALE_AFTER_DEFAULT,
-    STALE_AFTER_RE,
     WHOLE_ARTIFACT_KEY,
-    _finding_sort_key,
-    _known_checks,
-    _promote,
-    _render,
-    _severity,
-    _threshold,
-    _warn_class_names,
 )
 
 # The census owns these public spellings: they are patch targets, and each is the
@@ -427,6 +436,27 @@ def _check_sessions_deleted(
 # census_json.py). Their composition, the ``--issue-state`` read and the row
 # mechanics handed to them live in ``census_run.py`` beside this file with the
 # body of the run, which reads the mechanics back off this module at the call.
+
+# The six item classes live in census_items.py beside this file and their reads in
+# census_items_readers.py, with the store's one readdir in the same readers module
+# (the ``_sessions_listing`` twin below). The census re-exports the store's probe as
+# its own seam, so the group's tests patch a name of the module they already import
+# and the run reaches one definition of the readdir.
+from . import census_items_readers as _items_probe  # noqa: E402
+
+ItemsProbe = _items_probe.ItemsProbe
+
+
+def _items_listing(items: Path) -> ItemsProbe:
+    """The store's one listing, taken by the census exactly once per run.
+
+    The ``_sessions_listing`` and ``_ledger_probe`` twin: the body is the sibling's,
+    this is the seam the census's tests patch and the one place the body asks for the
+    store. An explicit ``Path.iterdir`` and never ``Path.glob``, because a store the
+    run could not list must not answer as the empty store of a project that filed no
+    idea (see ``census_items_readers.items_listing``).
+    """
+    return _items_probe.items_listing(items)
 
 
 def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict],

@@ -2,7 +2,7 @@
 
 One command, one subcommand per shipped tool: ``census``, ``register``,
 ``claim``, ``close``, ``release``, ``decide`` (a supersede is ``decide``'s
-``--supersedes`` flag), ``order`` and ``intent``. The argv after the subcommand
+``--supersedes`` flag), ``order``, ``intent`` and ``item``. The argv after the subcommand
 is handed to that tool's own ``main`` verbatim, so flags, output, exit codes and
 ``--help`` bytes are exactly what the in-place script produces — which is what
 the paired wrapper-vs-console test asserts.
@@ -28,6 +28,7 @@ TOOLS: dict[str, tuple[str, str]] = {
     "decide": ("noni.decide", "main"),
     "order": ("noni.order", "main"),
     "intent": ("noni.intent", "main"),
+    "item": ("noni.item", "main"),
 }
 
 # One line per subcommand, for this command's own --help. Each tool's flags and
@@ -41,6 +42,7 @@ SUMMARIES: dict[str, str] = {
     "decide": "write one dated steering decision record (supersede with --supersedes)",
     "order": "write the ordered list of issues to work next",
     "intent": "write the standing intent file the agents read first",
+    "item": "file one idea as its own committed record (the item store)",
 }
 
 

@@ -25,6 +25,11 @@ from __future__ import annotations
 
 import json
 
+# The documented field order, read from the product's own declaration: the fixture's
+# one permitted reach into the module under test, because a fixture that restated the
+# order would keep passing when the schema's order changed.
+from noni.itemschema import ITEM_FIELDS
+
 # A created stamp inside the default 30-day window of the harness's NOW, and one well
 # outside it, so a shape that is otherwise well formed is never also reported stale.
 FRESH = "2026-10-26T00:00:00Z"
@@ -57,14 +62,20 @@ def item_body(item_id: str = "idea-0001", title: str = "Say hello first",
 
 
 def canonical(body: dict) -> str:
-    """The canonical bytes for one item: key-sorted, two-space indent, one newline.
+    """The canonical bytes for one item: documented key order, two-space indent, one newline.
 
     Hand-written here rather than taken from the product's renderer: this module is
     imported by the suites that test that renderer, and a shape table that could not
     be built without it would make every row of the table depend on the thing it is
     checking.
+
+    The key order is the schema's declared order, **not** ``sort_keys``: a table that
+    sorted would hand every well-formed body bytes the writer refuses as
+    non-canonical, and each case would pass for the wrong reason (a refusal whose
+    message names the indent rather than the field it was planted to test).
     """
-    return json.dumps(body, indent=2, sort_keys=True) + "\n"
+    document = {field: body[field] for field in ITEM_FIELDS if field in body}
+    return json.dumps(document, indent=2) + "\n"
 
 
 def malformed_shapes() -> list[tuple[str, dict, str]]:

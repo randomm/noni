@@ -304,6 +304,21 @@ def body_of(value: dict) -> dict:
 def entry(item_id: str, title: str, status: str, created: str,
           issue: int | None = None, decision: str | None = None,
           why: str | None = None) -> dict:
-    """One item in the documented key order."""
-    return {"schema": ITEM_SCHEMA, "id": item_id, "title": title, "status": status,
-            "created": created, "issue": issue, "decision": decision, "why": why}
+    """One item in the documented key order, holding only the fields it owes.
+
+    The three optional keys are **omitted** when they name nothing rather than written
+    as ``null``, which is the shape the schema accepts for both shapes it distinguishes
+    (an absent ``why`` and a ``why`` of null are different documents, and the null form
+    is the one ``problems`` refuses), and the reason every reader of the store asks for
+    them with ``.get``: a canonical form that printed all eight keys would put
+    ``"issue": null`` into every candidate the writer produces.
+    """
+    body: dict = {"schema": ITEM_SCHEMA, "id": item_id, "title": title,
+                  "status": status, "created": created}
+    if issue is not None:
+        body["issue"] = issue
+    if decision is not None:
+        body["decision"] = decision
+    if why is not None:
+        body["why"] = why
+    return body

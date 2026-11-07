@@ -23,8 +23,8 @@ from . import itemschema, labels, orderschema, orderstate
 from ._safe_text import safe_text
 
 
-def read_order_entries_or_fault(path: Path) -> list[dict] | None:
-    """The entries of a canonical ``noni.order/1`` file, or None when it is not one.
+def read_order_entries_or_fault(path: Path, *, strict: bool = True):
+    """The entries of a well-formed ``noni.order`` file, or None when nothing was read.
 
     The order read a reader asks. Unlike :func:`noni.orderstate.read_order` it
     refuses nothing, because a caller that only wants to know whether an entry cites
@@ -35,10 +35,17 @@ def read_order_entries_or_fault(path: Path) -> list[dict] | None:
     read.
 
     Returns ``None`` for every state in which no reading was made: the path is not a
-    readable regular file, the bytes do not parse, the shape is not the artifact, or
-    the bytes are not the canonical form the order family writes. Returns ``[]`` for
-    the one state that is an answer rather than a fault: no file at all, which is the
-    state of a project that has never ordered anything.
+    readable regular file, the bytes do not parse, or the shape is not the artifact.
+    Returns ``[]`` for the one state that is an answer rather than a fault: no file at
+    all, which is the state of a project that has never ordered anything.
+
+    ``strict`` adds the byte contract to that list of unreadings, for the callers that
+    *extend* the file (``order.py``, through ``orderstate.read_order``): a file whose
+    bytes are not the canonical form the order family writes is one those writers would
+    refuse, so it may not be extended on top of. A caller that only *reads* passes
+    ``strict=False`` and is handed the entries it actually read -- refusing a promote
+    whose order was read in full, on a message saying the file could not be read, would
+    be a sentence about the file that is not true of it.
 
     The strict reader and the shape rules are the ones ``orderstate`` and
     ``orderschema`` already own, reached as package imports -- the writer's reads and
@@ -46,6 +53,15 @@ def read_order_entries_or_fault(path: Path) -> list[dict] | None:
     arm is named because it is no kind of ``ValueError``: the depth bound answers for
     a document short of the interpreter's own ceiling, past which the decoder raises
     this one first.
+    Reads are lenient about one thing a *writer* is not, and the difference is the
+    whole reason this is not a call to ``orderstate.read_order``: an entry carrying a
+    key the current entry schema does not name is read, not skipped. That key is
+    ``item``, and it arrives with sub-issue 2's order artifact; a scan that applied
+    today's entry rules would report "no entry cites it" for the very entries whose
+    citation this refusal exists to catch -- a clean exit through an entry the reader
+    silently dropped, which is the failure mode this module's docstring names. The
+    entry list read here is the whole list the file holds, and the question asked of
+    each entry is only ever "is this field this item's id".
     """
     kind, _why = orderstate.file_kind(path)
     if kind == "absent":
@@ -60,14 +76,19 @@ def read_order_entries_or_fault(path: Path) -> list[dict] | None:
         value = orderschema.load_json_checked(raw)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError):
         return None
-    if not isinstance(value, dict) or orderschema.problems(value):
+    if not isinstance(value, dict):
         return None
-    if orderstate.render(orderstate.body_of(value)) != raw:
+    if strict and orderschema.problems(value):
+        return None
+    if strict and orderstate.render(orderstate.body_of(value)) != raw:
         # The canonical comparison, asked of the same renderer the order writer
         # compares against: a file the writer would refuse is a file whose entries
         # this run cannot vouch for, so it answers nothing rather than something.
         return None
-    return [dict(item) for item in value["entries"]]
+    entries = value.get("entries")
+    if not isinstance(entries, list):
+        return None if strict else []
+    return [dict(entry) for entry in entries if isinstance(entry, dict)]
 
 
 def order_cites_item(repo: Path, item_id: str) -> tuple[bool, bool]:
@@ -85,7 +106,7 @@ def order_cites_item(repo: Path, item_id: str) -> tuple[bool, bool]:
     answer is the empty scan. The day the order gains the field, the scan already
     asks the right question and only the order's schema changes.
     """
-    entries = read_order_entries_or_fault(repo / orderschema.ORDER_REL)
+    entries = read_order_entries_or_fault(repo / orderschema.ORDER_REL, strict=False)
     if entries is None:
         return False, False
     return any(entry.get("item") == item_id for entry in entries), True
@@ -181,11 +202,15 @@ def listing_line(body: dict) -> str:
     cannot make a row longer than the bound.
     """
     detail = [f"created={body['created']}"]
-    if body["issue"] is not None:
+    # ``.get`` rather than ``[]``: a document that omits an optional key it does not
+    # owe is well-formed (``itemschema.problems`` accepts it, and it is the shape an
+    # ``add`` writes), and a listing that walked into a KeyError over one would turn
+    # the store's own readability on whether a writer happened to print the key.
+    if body.get("issue") is not None:
         detail.append(f"issue=#{body['issue']}")
-    if body["decision"] is not None:
+    if body.get("decision") is not None:
         detail.append(f"decision={body['decision']}")
-    if body["why"] is not None:
+    if body.get("why") is not None:
         detail.append(f"why={safe_text(body['why'])}")
     return (f"  {body['id']} [{body['status']}] {safe_text(body['title'])} "
             + " ".join(detail))
@@ -194,27 +219,35 @@ def listing_line(body: dict) -> str:
 def read_item(path: Path, item_id: str, report, exit_io: int, exit_refusal: int):
     """The item at ``path``, or the refusal code with its line already printed.
 
-    ``(None, None)`` is absence, which the caller decides the meaning of: an absent
-    item is the "no such item" refusal of drop and promote, and the empty store a
-    first ``add`` extends. A file that is there and is not the artifact is refused
-    rather than overwritten, because destroying a record the operator committed is
-    worse than refusing the run.
+    ``(None, code)`` is a refusal the caller returns unchanged; ``(None, None)`` is
+    absence, which the caller decides the meaning of: an absent item is the "no such
+    item" refusal of drop and promote, and the empty store a first ``add`` extends. A
+    file that is there and is not the artifact is refused rather than overwritten,
+    because destroying a record the operator committed is worse than refusing the run.
+
+    The code travels in the **second** slot, which is the only shape that keeps the two
+    answers apart: a refusal in the first slot is an ``int``, and the callers that read
+    ``existing["status"]`` straight after a ``code is not None`` test would walk into
+    ``TypeError: 'int' object is not subscriptable`` on the very file this function
+    exists to refuse. ``tests/test_item_writer_artifact.py`` drives every refused shape
+    through a caller and asserts exit 4 with the file intact.
     """
     rel = itemschema.item_rel(item_id)
     kind, why = orderstate.file_kind(path)
     if kind == "absent":
         return None, None
     if kind != "regular":
-        return report(exit_io, f"{rel} is not a readable regular file: "
+        return None, report(exit_io, f"{rel} is not a readable regular file: "
                    f"{why or 'not a regular file'}",
-                       "remove that path or point --repo at the tree that holds the "
-                       f"item, then re-run {labels.ITEM}"), None
+                             "remove that path or point --repo at the tree that holds "
+                             f"the item, then re-run {labels.ITEM}")
     try:
         raw = path.read_bytes()
     except OSError as exc:
-        return report(exit_io, f"{rel} could not be read "
+        return None, report(exit_io, f"{rel} could not be read "
                    f"({exc.__class__.__name__}: {exc.strerror or exc})",
-                       f"check that {rel} is readable, then re-run {labels.ITEM}"), None
+                            f"check that {rel} is readable, then re-run "
+                            f"{labels.ITEM}")
     try:
         value = orderschema.load_json_checked(raw)
     except (UnicodeDecodeError, ValueError, RecursionError):
@@ -224,31 +257,31 @@ def read_item(path: Path, item_id: str, report, exit_io: int, exit_refusal: int)
         # them. RecursionError is no kind of ValueError -- the depth bound answers
         # short of the interpreter's own ceiling, past which the decoder raises it
         # first, so the arm is reachable and not decorative.
-        return report(exit_refusal,
+        return None, report(exit_refusal,
                        f"{rel} is not valid JSON this writer can extend",
                        f"repair the file (it must hold {itemschema.ITEM_SCHEMA}) or "
-                       f"remove it and re-file the idea with {labels.ITEM} add"), None
+                       f"remove it and re-file the idea with {labels.ITEM} add")
     found = itemschema.problems(value)
     if found:
-        return report(exit_refusal,
+        return None, report(exit_refusal,
                        f"{rel} is not an item this writer writes: "
                        + "; ".join(found),
                        f"repair the file to the documented shape "
                        f"({itemschema.ITEM_SCHEMA}) or remove it and re-file the idea "
-                       f"with {labels.ITEM} add"), None
+                       f"with {labels.ITEM} add")
     if value["id"] != item_id:
-        return report(exit_refusal,
+        return None, report(exit_refusal,
                        f"{rel} carries id {value['id']!r}, which is not the item's "
                        "own name",
                        "the id and the file's stem are the same name: repair one of "
                        "them, or remove the file and re-file the idea with "
-                       f"{labels.ITEM} add"), None
+                       f"{labels.ITEM} add")
     if itemschema.item_bytes(itemschema.body_of(value)) != raw:
-        return report(exit_refusal,
+        return None, report(exit_refusal,
                        f"{rel} is not in the canonical form this writer writes "
                        "(its keys, their order or its indent)",
                        f"have {labels.ITEM} write it, or repair and commit it in that "
-                       f"form, then re-run {labels.ITEM}"), None
+                       f"form, then re-run {labels.ITEM}")
     return itemschema.body_of(value), None
 
 

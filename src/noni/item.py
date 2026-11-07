@@ -297,14 +297,19 @@ def _refuse_cited_order(repo: Path, item_id: str) -> int | None:
 
 
 def _state_root(args: argparse.Namespace, verb: str) -> Path | None:
-    """The ``--repo`` this run works in, or None after printing its refusal."""
+    """The ``--repo`` this run works in, or None after printing its refusal.
+
+    A directory that is not a directory is a wrong argument on every verb; the
+    state-root and symlink questions are asked of the verbs that read or write state
+    (see :func:`_run_list` for the one verb that does neither).
+    """
     repo = Path(args.repo)
     if not repo.is_dir():
         _fail(EXIT_USAGE, f"--repo {args.repo} is not a directory",
               "pass the repository root that holds (or will hold) "
               f"{itemschema.ITEM_DIR}/")
         return None
-    linked = _refuse_linked_state(repo, verb)
+    linked = _refuse_linked_state(repo, verb) if verb != "list" else None
     return None if linked is not None else repo
 
 
@@ -375,7 +380,16 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _run_list(args: argparse.Namespace) -> int:
-    """``list``: print the store, newest first, and change nothing."""
+    """``list``: print the store, newest first, and change nothing.
+
+    The read-only verbs run no state-root question, which is the same rule the census
+    follows: a tree that holds no ``noni/items/`` has no items, and that is the honest
+    answer rather than a finding. ``order``'s ``move``/``remove``/``confirm`` are
+    refused for the same state because they would *create* the direction directory;
+    nothing a list can do creates anything, and refusing it would make the census's own
+    answer (an absent store is silence, exit 0) unreachable from the tool that shows
+    the store.
+    """
     repo = _state_root(args, "list")
     if repo is None:
         return EXIT_USAGE
@@ -493,7 +507,7 @@ def _run_promote(repo: Path, args: argparse.Namespace, stamp: str) -> int:
     if refusal is not None:
         return refusal
     body = itemschema.entry(args.id, existing["title"], itemschema.STATUS_PROMOTED,
-                            existing["created"], issue, existing["decision"], None)
+                            existing["created"], issue)
     return _write(repo, body, f"promote {args.id}", args.no_commit)
 
 

@@ -138,9 +138,11 @@ INTENT = DIRECTION_SKILL / "intent.py"
 CENSUS = CENSUS_SKILL / "census.py"
 
 # The item writer has no skill directory yet (the items skill is its own
-# ticket), so its entry point is the package module file, which is also what
-# ``noni item`` dispatches to.
-ITEM = SRC / "noni" / "item.py"
+# ticket), so its entry point is a thin in-place wrapper under scripts/, the same
+# shape as the other tools' wrappers: running a package module by path fails on
+# its relative imports, and the wrapper is what makes the in-place form and
+# ``noni item`` print the same bytes.
+ITEM = REPO / "scripts" / "item.py"
 
 # The seven tools the ``noni`` command dispatches: subcommand -> the wrapper that
 # must produce the same bytes. The two shell census entry points are the other

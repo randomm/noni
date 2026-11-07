@@ -21,6 +21,7 @@ from harness_paths import (
     COVERAGE_PROCESS_START,
     DECIDE,
     HELP_COLUMNS,
+    ITEM,
     ORDER,
     REGISTER,
     RELEASE,
@@ -148,6 +149,26 @@ def run_order(repo: Path, *args: str, env: Mapping[str, str] | None = None,
     must not be influenced by a host gitconfig either.
     """
     cmd = [sys.executable, str(ORDER), "--repo", str(repo), *args]
+    full_env = subprocess_env()
+    if env is None:
+        full_env.update(_git_env_with_identity())
+    else:
+        full_env.update(env)
+    return subprocess.run(cmd, capture_output=True, text=True, env=full_env,
+                          timeout=120, **_cwd_kwarg(cwd))
+
+
+def run_item(repo: Path, *args: str, env: Mapping[str, str] | None = None,
+             cwd: Path | None = None,
+             ) -> subprocess.CompletedProcess[str]:
+    """Run the item writer with ``--repo repo`` plus the arguments given as strings.
+
+    The same shape as :func:`run_order`: the caller owns the exact command line
+    (``"add", "idea-0001", "--title", "Say hello"``) because the exit-code tests
+    assert on it, and the run carries the deterministic git identity since ``add``,
+    ``drop`` and ``promote`` commit under the tree's configured identity.
+    """
+    cmd = [sys.executable, str(ITEM), "--repo", str(repo), *args]
     full_env = subprocess_env()
     if env is None:
         full_env.update(_git_env_with_identity())

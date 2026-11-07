@@ -157,8 +157,11 @@ def test_the_run_survives_a_path_it_cannot_classify(tmp_path, monkeypatch):
     # this machine), so the shape is pinned too: ``Path.exists`` follows links and
     # propagates the ``OSError`` of a parent it cannot read, which is the crash this
     # gate caused and the reason a dangling link read as no read owed.
-    gate = (SRC / "noni" / "census_run.py").read_text(encoding="utf-8")
-    body = gate[gate.index("def _intent_present"):gate.index("def _run(")]
+    # The gate lives in ``census_items_gate.py`` (it moved there when the items group
+    # was wired in); the assertion is about the gate itself, not the file that calls it.
+    gate = (SRC / "noni" / "census_items_gate.py").read_text(encoding="utf-8")
+    body = gate[gate.index("def _intent_present"):]
+    body = body[:body.index("\ndef ") + 1]
     assert "_file_kind" in body, "the gate stopped asking the census's classifier"
     assert ".exists()" not in body, (
         "the intent gate re-derives the path state itself: a link it follows and a "

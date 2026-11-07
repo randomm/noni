@@ -102,6 +102,7 @@ All noni state of one project lives under one **state root**, in this layout:
   decisions/   steering ledger: one file per dated record
   sessions/    one committed file per session (registration + claims), one writer
                each; optional, and absent until a session first registers
+  items/       the item store: one file per filed idea, optional until a first add
 ```
 
 Both files under `direction/` are optional and each has exactly one writer:
@@ -150,7 +151,7 @@ land on the state repository's own branch.
 
 There is no third mechanism that *selects* the state root: no environment
 variable and no config file names it. The unified census's `--ledger`,
-`--sessions`, `--ordering`, `--intent` and `--issue-state` overrides do not select
+`--sessions`, `--ordering`, `--intent`, `--items` and `--issue-state` overrides do not select
 it either; they replace the path under it, and a leading `~` given by the caller is
 expanded in those five values and nowhere else — the sessions census takes one
 plain path argument and does no expansion of it. Every shipped tool resolves
@@ -160,7 +161,7 @@ never from the current directory beyond `--repo`'s default.
 A `--repo` that is missing, or is not a directory, stops the command with a
 clear message and a non-zero code (the fail-closed rule, §6). The code is the
 one that command already uses for a mistake in its own arguments: 2 for
-`intent`, `order`, `register` and the unified census, 4 for `claim`, `close` and
+`intent`, `order`, `item`, `register` and the unified census, 4 for `claim`, `close` and
 `release`, 3 for `decide` (the same refusal `decide` gives a `--repo` that is
 not a git work tree). The codes are not interchangeable — each is that tool's
 existing refusal, and a caller tells a wrong path from a fault of the tree by

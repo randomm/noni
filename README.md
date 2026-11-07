@@ -74,7 +74,7 @@ which installs it with `uv tool install` or in a clean virtual environment. Ther
 is no PyPI package and the name will be `noni-noni`, so every route names this
 repository, and none runs `pip` at a system Python, which current distributions
 refuse. One `noni` command replaces a path per tool (`census`, `decide`, `register`,
-`claim`, `release`, `close`, `order`, `intent`), printing the same bytes.
+`claim`, `release`, `close`, `order`, `intent`, `item`), printing the same bytes.
 
 The census is read-only: it never writes, so `git status --porcelain` is empty.
 Read the result. A run with rows ends with the line
@@ -90,7 +90,7 @@ missing deny-list and a ledger with nothing to arbitrate), and does not move it.
 
 Read `noni/skills/<skill>/SKILL.md` for what each writer accepts and refuses;
 the steering-ledger and sessions-claims skills keep record-shape detail in their
-`references/` directories. `noni --help` names the eight subcommands and
+`references/` directories. `noni --help` names the nine subcommands and
 `noni <tool> --help` the flags of one.
 
 Everything noni keeps in your repository lives in one directory:

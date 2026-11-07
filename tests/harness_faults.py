@@ -14,9 +14,30 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import pytest
 from harness_git import _git
 from harness_module import HOME_PATH_PATTERNS, SECRET_PATTERNS
+
+
+def _skip(reason: str) -> None:
+    """Skip the running test, through pytest when this module is loaded under it.
+
+    The module-level ``import pytest`` this replaced made every ``from _harness
+    import`` chain import pytest, and this file's own docstring says it is a helper
+    rather than a test -- the same rule the census's reader modules follow. Two of
+    this suite's contracts launch a *pytest-free* child (``python3
+    tests/scenario_eval.py`` must run with no pytest on its path, and the intent
+    group's child runs import the fixtures the same way), and in that child a bare
+    pytest import turned a passing run into ``ModuleNotFoundError``, on the host that
+    has pytest installed and nowhere else.
+
+    The name is bound lazily and the skip reaches the caller's frame either way, so
+    the three environmental preconditions below still skip the test that asked for
+    them rather than the helper's own frame.
+    """
+    import pytest
+
+    pytest.skip(reason)
+
 
 # --- Injected ledger-listing faults -------------------------------------------
 #
@@ -238,7 +259,7 @@ def _plant_unreadable_tracked_file(repo: Path, rel: str, *,
     target.chmod(0o000)
     if os.access(target, os.R_OK):
         target.chmod(0o644)
-        pytest.skip("root reads anything, so the 000-mode file cannot be planted")
+        _skip("root reads anything, so the 000-mode file cannot be planted")
     return target
 
 
@@ -340,4 +361,4 @@ def _leaked_fds_across(callable_, *args) -> int:
         callable_(*args)
         return _open_fd_count() - before
     except _NoFdTable:  # pragma: no cover - non-Linux host only
-        pytest.skip("no /proc/self/fd on this host, so descriptors cannot be counted")
+        _skip("no /proc/self/fd on this host, so descriptors cannot be counted")

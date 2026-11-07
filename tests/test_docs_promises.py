@@ -218,9 +218,14 @@ def test_the_issue_state_recipe_is_documented_once_and_named() -> None:
     ``docs_promises.ISSUE_STATE_RECIPE``); the note text is checked against the
     product's own string so a rename fails the page.
     """
-    from noni import census_report  # noqa: F401  (the module that holds and prints the note)
+    from noni import census_render  # noqa: F401  (the module that holds the note)
 
-    source = (README.parent / "src" / "noni" / "census_report.py").read_text(encoding="utf-8")
+    # The note's home moved when the render half of the contract was split out of
+    # ``census_report.py`` (the table stayed, the printed strings came here), so the
+    # file this reads is the one that states the sentence today. The test's point is
+    # that the page quotes the product's own string, and that point survives the move
+    # only if the path follows it.
+    source = (README.parent / "src" / "noni" / "census_render.py").read_text(encoding="utf-8")
     assert "ordering-closed was not evaluated" in source, "the note left the product"
     quickstart = read(QUICKSTART)
     assert ISSUE_STATE_RECIPE.search(quickstart), (

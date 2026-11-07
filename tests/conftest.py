@@ -116,6 +116,20 @@ NONI_ENV_VARS = (
 # src/ is on sys.path via _harness, and no skill scripts/ directory ever goes on
 # the path (the wrappers there are shims, and a lookalike earlier on sys.path
 # must not be trusted as the census's own code).
+#
+# The same pin has to reach a *child* process, which is what makes this a conftest
+# line rather than a _harness one: the shell wrappers (census.sh, census-sessions.sh)
+# resolve noni with the plain interpreter their preamble finds, and a wrapper is a
+# child that imports pytest never sees. With the package uninstalled -- the state of
+# a plain clone, and of CI before the wheel step -- such a child answered "the noni
+# package is not importable" and exited 3, so every test that launches a wrapper
+# depended on the host's venv happening to carry an editable install. The inherited
+# value is kept and src/ put first, which is the same rule harness_runners pins for
+# the python launchers, applied once for the whole session.
+_INHERITED_PYTHONPATH = os.environ.get("PYTHONPATH")
+os.environ["PYTHONPATH"] = (
+    str(REPO / "src") + os.pathsep + _INHERITED_PYTHONPATH
+    if _INHERITED_PYTHONPATH else str(REPO / "src"))
 
 # The interpreter the sessions-census wrapper execs. census-sessions.sh reads
 # NONI_PYTHON (defaulting to python3); exporting sys.executable here makes the

@@ -59,16 +59,15 @@ directory, is a usage error (exit 2) before any check runs.
 | `hygiene` | 50 | a tracked file fails the public-repo hygiene scan (machine-local home path, secret shape, active deny-list entry), or the scan/deny-list did not run (warn by default; fail under `--strict`) |
 
 The `warn` classes are reported either way and never move the exit code on their
-own: a run whose only findings are warnings exits 0, and `--strict` promotes them
-at their own codes. `ledger-empty` adds rows where no record can be read: no
-`noni/`, `noni/` not a directory, a symlink, `noni/` present without a
+own: a run whose only findings are warnings exits 0, and `--strict` promotes them at
+their own codes. `ledger-empty` adds rows where no record can be read: no `noni/`, `noni/` not a directory, a symlink, `noni/` present without a
 `decisions/` directory, or a `decisions/` directory holding no `*.json` record. It
-never weakens a malformed-record failure: a record that is bad JSON or violates
-the schema keeps its `ledger-record` exit 10. A
-recordless ledger is a state, not a fault: a fresh project whose `noni/decisions/`
-has no records yet exits 0 clean, nothing having been steered yet and nothing to
-contradict. The ledger wrapper runs this census over that directory, so a fresh
-attached tree reads the same way to either entry point.
+never weakens a malformed-record failure: a record that is bad JSON or violates the
+schema keeps its `ledger-record` exit 10. A recordless ledger is a state, not a
+fault: a fresh project whose `noni/decisions/` has no records yet exits 0 clean,
+nothing having been steered yet and nothing to contradict. The ledger wrapper runs
+this census over that directory, so a fresh attached tree reads the same way to
+either entry point.
 
 When several classes fire at once the lowest code wins; stderr names every
 class that fired.
@@ -128,9 +127,10 @@ counted instead of calling itself `clean`, and a run that skipped a check names
 that class instead of claiming every check passed. The warn count is the number
 of rows whose own severity is `warn`, read off the same field as the `WARN` tag
 beside each row, so a cannot-verify or cannot-tell row of a fail class (warn by
-default, escalated by `--strict`) is counted as the warning it prints as; under `--strict` a promoted row reads `FAIL` and leaves that
-count, and the exit code it earns is what the summary line says instead. The
-summary line's tail, `verdict ok` / `verdict fail`, is the machine-readable half
+default, escalated by `--strict`) is counted as the warning it prints as; under
+`--strict` a promoted row reads `FAIL` and leaves that count, and the exit code it
+earns is what the summary line says instead. The summary line's tail,
+`verdict ok` / `verdict fail`, is the machine-readable half
 and is keyed on the exit code alone: it stays the last line of stdout for a CI step
 that reads the report's ending, whatever the human word before it says. `--json`
 mode is unaffected by all of this (see below).
@@ -224,7 +224,7 @@ The same rule extends to the classes that report their own absence:
   both carry the ledger's name and whose message carries the `OSError` text,
   bounded and stripped of machine-local paths. That name is the last-segment
   rule stated once below, and it is the rule for every row of the ledger group
-  that names the ledger, not only this one. It is a warn at exit 0, and a failure
+  that names the ledger, not only this one. It is a warn at exit 0 and a failure
   at 12 under `--strict`.
 - **An unreadable `noni/sessions/` is never clean.** A `noni/sessions/` that
   stats as a directory and cannot be listed earns exactly one `session-deleted`
@@ -283,8 +283,8 @@ The same rule extends to the classes that report their own absence:
   states follow from that. An entry whose issue the map does not mention gets a
   `cannot-tell` row of the same class rather than silence, so a partial map cannot
   read as "every ordered issue is open"; it is a warn by default and `--strict`
-  promotes it to 46. And when `--issue-state` was not given at all the
-  class is not evaluated: the run names the class and the reason in both
+  promotes it to 46. And when `--issue-state` was not given at all, the class is
+  not evaluated: the run names the class and the reason in both
   modes. Human-readable mode prints one `note:` line saying so; `--json` mode
   prints no `note:` line at all and carries the same sentence on the one summary
   record's `not_evaluated` list, so a machine consumer is not left with `"counts":

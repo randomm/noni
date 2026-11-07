@@ -241,25 +241,24 @@ classes that report their own absence:
   stays clean: no sessions registered is a real state, not a failed read.
 - **`hygiene` (50)** always reports under `noni census`, a clean tree included
   (the per-artifact wrappers run one group each and report no hygiene row). When
-  the
-  deny-list class is not active (its file is `absent`, `corrupt`, or present
-  with no entries) the run emits one `hygiene` row naming that state; a scan
-  that cannot run at all (`--repo` is not a git repo, `git ls-files` fails or  hangs, `public_safety` is not importable, or the scanner raises for any reason)
-  emits one row saying the scan did not run. Neither is ever
-  reported as hygiene-clean, and no scanner failure can take the census down:
-  every finding the run already collected is still reported. The scan runs
-  in-process over the census's own git tree — the `--ledger` / `--sessions`
-  overrides never re-target it. The file that switches the deny-list half on is
-  `.noni-scrub-denylist`, one entry per line, kept at the root of the tree being
-  audited (so
-  `<project>/.noni-scrub-denylist`, or `.noni-scrub-denylist` at the state root
-  `--repo` names), and `NONI_SCRUB_DENYLIST` names another file when the tree
-  carries no default of its own. Blank lines and `#` comments are not entries,
-  so a file holding only those reads as `present but empty` and leaves the class
-  inactive: it needs at least one usable entry. It stays untracked by design —
-  the names it guards must not be committed — which is why `--strict` fails on a
-  freshly attached tree and why `docs/PUBLISHING.md` step 1 runs
-  `scripts/public_safety.py` rather than trusting a clean census.
+  the deny-list class is not active (its file is `absent`, `corrupt`, or present
+  with no entries) the run emits one `hygiene` row naming that state; a scan that
+  cannot run at all (`--repo` is not a git repo, `git ls-files` fails or hangs,
+  `public_safety` is not importable, or the scanner raises for any reason) emits
+  one row saying the scan did not run. Neither is ever reported as hygiene-clean,
+  and no scanner failure can take the census down: every finding the run already
+  collected is still reported. The scan runs in-process over the census's own git
+  tree — the `--ledger` / `--sessions` overrides never re-target it. The file that
+  switches the deny-list half on is `.noni-scrub-denylist`, one entry per line,
+  kept at the root of the tree being audited (so `<project>/.noni-scrub-denylist`,
+  or `.noni-scrub-denylist` at the state root `--repo` names), and
+  `NONI_SCRUB_DENYLIST` names another file when the tree carries no default of its
+  own. Blank lines and `#` comments are not entries, so a file holding only those
+  reads as `present but empty` and leaves the class inactive: it needs at least one
+  usable entry. It stays untracked by design — the names it guards must not be
+  committed — which is why `--strict` fails on a freshly attached tree and why
+  `docs/PUBLISHING.md` step 1 runs `scripts/public_safety.py` rather than trusting
+  a clean census.
 - **The deletion classes report what they could not check.** A
   `--sessions`/`--ledger` override that points outside the audited git tree
   switches off the append-only question for that group; both say so in a

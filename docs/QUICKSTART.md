@@ -6,9 +6,7 @@ which covers what that block cannot: how to install noni when no package index
 carries it, where the state root may live, and the two routes to it.
 
 `docs/PRODUCT.md` §7 is the binding statement of the state-root rule; this page
-is the commands. Every tree this page names and every command in it is run
-against a throwaway repository by the suite, so a step that stopped working
-fails a test rather than a first run.
+is the commands.
 
 ## Install noni
 
@@ -290,8 +288,7 @@ per-issue state, worktree claims and a queue. noni does not compete with it.
   `noni/sessions/` **does not exist**: do not create it as an empty directory.
   A register that is absent is a clean state and the sessions group stays
   wordless; a register that exists and cannot be listed earns a `cannot-tell`
-  row of the `session-deleted` class instead. Skipping claims therefore means
-  not writing the directory, not writing an empty one.
+  row of the `session-deleted` class instead.
 
 ## The deny-list, and why --strict fails on a fresh attach
 
@@ -396,8 +393,7 @@ Two things outside noni decide whether a first run works:
   which run the interpreter named by `NONI_PYTHON` and default to `python3`. That
   interpreter also has to import the package, so the wrappers need the install
   above or `PYTHONPATH=<clone>/src`
-  whichever route you took. On the `PYTHONPATH` form the tools are reached with
-  `python3 -m noni` rather than `noni`, which is the same command by another name.
+  whichever route you took.
   A wrapper whose interpreter or package is missing names the fault on one plain
   line and exits 3 rather than printing a traceback. Neither shim needs `jq`: the
   unified census is the one arbiter of both.

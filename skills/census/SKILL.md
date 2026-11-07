@@ -194,8 +194,7 @@ The same rule extends to the classes that report their own absence:
   the other no-record trees: `noni/` present with no `decisions/` directory, and
   a `decisions/` directory that holds no `*.json` record — a freshly attached
   project is a warning, not a failure, and the row names the ledger path
-  relative to the repo root. A record that exists and is malformed is still a
-  `ledger-record` failure (10). Nor does the class gate the integrity checks: a
+  relative to the repo root. Nor does the class gate the integrity checks: a
   record that history shows was added and is now gone stays a `ledger-edited`
   failure (12), so an emptied ledger reports the deletion that emptied it — the
   git-backed integrity checks run whatever the empty probe found, and they ask
@@ -207,8 +206,7 @@ The same rule extends to the classes that report their own absence:
   deletion check cannot put its question to git at all (no git tree, or a
   history read that could not answer) and the ledger reads as `empty`, the run
   adds a `ledger-edited` `cannot-tell` row saying the check could not run: the
-  deletion check is the only signal that committed records were deleted, so a
-  silent one would let a gutted ledger read as a plain no-ledger warning. It is
+  deletion check is the only signal that committed records were deleted. It is
   a warn by default (exit 0) and a failure at 12 under `--strict`.
 - **An unreadable ledger is never `empty`.** The census lists `decisions/` with
   an explicit `iterdir`, through one listing helper that the probe, the record
@@ -216,8 +214,8 @@ The same rule extends to the classes that report their own absence:
   readdir raises and yields nothing — which would let a directory the run could
   not read report the same exit 0 warn as a project that has never steered
   anything. The ledger is classified once per run: the run decides from that one
-  probe whether the group reports at all, and the same probe answers the rows,
-  so two reads of one directory cannot disagree about it. Because the listing is
+  probe whether the group reports at all, and the same probe answers the rows.
+  Because the listing is
   shared, a faulted listing is reported by both groups that read it — the ledger
   group's row below, and the ordering group's row that names the citation check
   it could not perform.
@@ -226,9 +224,7 @@ The same rule extends to the classes that report their own absence:
   name states of the tree, and "unlistable" is a fault of this run's read): the
   run adds one `ledger-edited` `cannot-tell` row whose `subject` and `artifact`
   both carry the ledger's name and whose message carries the `OSError` text,
-  bounded and stripped of machine-local paths. That name is the last-segment
-  rule stated once below, and it is the rule for every row of the ledger group
-  that names the ledger, not only this one. It is a warn at exit 0 and a
+  bounded and stripped of machine-local paths. It is a warn at exit 0 and a
   failure at 12 under `--strict`.
 - **An unreadable `noni/sessions/` is never clean.** A `noni/sessions/` that
   stats as a directory and cannot be listed earns exactly one `session-deleted`
@@ -322,11 +318,8 @@ The same rule extends to the classes that report their own absence:
   faults while an entry cites a decision, each add one row marked whole-artifact:
   the row is about the file the group was asked to read, not one entry inside it,
   so the group's `--only` filter cannot drop it and a run that checked nothing
-  cannot report itself clean. The ledger group's own row for the same unreadable
-  listing is whole-artifact too, which is what keeps it visible under a filter
-  that named no ledger class at all. A ledger that is simply absent or not a
-  directory is different — no listing was attempted, and `ledger-empty` owns
-  that report.
+  cannot report itself clean. A ledger that is simply absent or not a directory
+  is different — no listing was attempted, and `ledger-empty` owns that report.
 - **A map key must be the issue number itself.** `"07"` or `"-7"` can never match
   an entry's issue, so such a key is reported as malformed rather than becoming a
   silent `cannot-tell` row for an issue the file does name.
@@ -394,9 +387,6 @@ substitute for running `scripts/public_safety.py` before publishing.
   does not have.
 - **Time from `--now`.** All time-based checks use `--now` when given (for
   reproducible output in tests) and the current UTC time otherwise.
-- **No self-reported numbers.** Every metric in `--json` mode names the
-  artifact path it derives from; no value comes from a number written inside
-  an agent-authored file.
 - **No project content in the skill.** The census script carries no
   machine-local paths, operator names, or project-specific vocabulary. A row
   built from someone else's exception text is bounded and stripped of absolute

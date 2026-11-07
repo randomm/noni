@@ -58,7 +58,6 @@ from .census_report import (
     EXIT_TOOL_MISSING,
     EXIT_USAGE,
     INTENT_CHECKS,
-    ITEM_CHECKS,
     LEDGER_CHECKS,
     ORDERING_CHECKS,
     SESSION_CHECKS,
@@ -286,13 +285,12 @@ def _run(argv: list[str] | None = None) -> int:
     intent = (Path(args.intent) if args.intent
               else root / intentschema.INTENT_REL)
     # The store's default is <repo>/noni/items, and the flag replaces the path under
-    # the state root exactly as the other four overrides do. The distinction the
-    # group keys ``item-unlistable`` on is kept here rather than in the group: only
-    # the run knows whether the caller named the flag, and a store the caller named
-    # and this run cannot read is a row, while a default path that is simply absent
-    # is the state of a project that has never filed an idea.
+    # the state root exactly as the other four overrides do. Nothing else about the
+    # flag matters to the run: whether a read is owed is answered by what stands at
+    # the path (see the gate at the group's call below), not by whether the caller
+    # named it, so an absent store is silence named or unnamed and a store that exists
+    # and cannot be read is a row named or unnamed.
     items = Path(args.items) if args.items else root / "noni" / "items"
-    items_given = args.items is not None
     issue_state_path = Path(args.issue_state) if args.issue_state else None
     ledger = Path(os.path.expanduser(str(ledger)))
     sessions = Path(os.path.expanduser(str(sessions)))
@@ -438,15 +436,27 @@ def _run(argv: list[str] | None = None) -> int:
     #
     # The gate is the store's own probe, taken here before the group is gated on its
     # answer so the gate and the rows are one readdir (the sessions group's rule).
-    # The group is entered when a class of it was asked for, and also when the probe
-    # could not list a store that exists: that row is the probe-honesty one ``keep``
-    # never drops, so a run whose filter named no item class must still reach the
-    # read that faulted. An absent store is no ground to enter on: it is the state
-    # of a project that has never filed an idea, and the group adds no row for it --
-    # which is why an absent ``--items`` path is silence and a present-but-unreadable
-    # one is a row, the distinction ``items_given`` carries to the group.
-    if (ITEM_CHECKS & requested) or _items_gate._items_present(items, items_given):
-        items_probe = census._items_listing(items)
+    # The probe decides the entry, exactly as the sessions group's fault does above:
+    # a store this run could not list is owed its ``item-unlistable`` row whatever the
+    # filter named, because that row is the probe-honesty one ``keep`` never drops and
+    # a gate that asked the filter first would stop the read that produces it. The
+    # filter itself is applied by ``keep`` after the group has run, which is what lets
+    # a run that asked for one class of the group still read every file of the store:
+    # the six classes share one read, and a filter that selected the rows could not
+    # also select the files that row's own finding depends on. An absent store is no
+    # ground to enter on: it is the state of a project that has never filed an idea,
+    # and the group adds no row for it -- which is why an absent ``--items`` path is
+    # silence and a present-but-unreadable one is a row, the distinction ``items_given``
+    # carries to the group.
+    items_probe = census._items_listing(items)
+    # A store this run could not list is owed its ``item-unlistable`` row whatever the
+    # filter named, because that row is the probe-honesty one ``keep`` never drops and
+    # a gate that asked the filter first would stop the read that produces it. A store
+    # with nothing in it is no ground to enter on at all: an absent path lists as empty
+    # and so does the directory the last cleaned-out item left behind, and neither has
+    # a row to give, which is what keeps a project that filed no idea -- or holds an
+    # empty store -- free of a read it can be shown to need.
+    if items_probe.fault is not None or items_probe.names:
         _items_run._check_items(items, ledger, ordering, root, now, item_stale_after,
                      args.strict, findings, items_probe, ledger_probe.names)
         findings[:] = keep(findings)

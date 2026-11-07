@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta
 
 from . import ledger_schema
 
@@ -69,8 +69,16 @@ TITLE_MAX = 200
 
 # An item id is what ``item.py`` builds a path from, so it is refused before any
 # path is built: lowercase letters, digits and dashes, opening with a letter or a
-# digit. The two suffix rules beside the regex are in :func:`is_item_id`.
+# digit, and at most ``ID_MAX`` of them. The two suffix rules beside the regex are in
+# :func:`is_item_id`.
 ID_RE = re.compile(r"[a-z0-9][a-z0-9-]*")
+
+# The longest id the writer names a file for, in code points. The bound is not a
+# filesystem limit (a modern one takes 255) but a listing one: an id is what a census
+# row, a ``list`` line and a commit subject all print, and an unbounded name makes each
+# of them unbounded. Compared with ``len`` over code points, like the other two bounds
+# of this artifact, so one measure covers the writer, the census and the shape table.
+ID_MAX = 80
 
 
 def item_rel(item_id: str) -> str:
@@ -84,20 +92,33 @@ def is_item_id(value: object) -> bool:
     The regex half alone is not enough. ``.json`` is refused because the census
     keys an item by its file's stem, so a name carrying the suffix would be one
     item named two ways; a trailing dot is refused because the filesystem hides it
-    and the stem no longer names anything. Both halves are asked here so the
-    writer, the census and the shared shape table ask one question.
+    and the stem no longer names anything; and the length bound is asked here rather
+    than at the callers because it is part of what an id *is*, not a separate rule
+    they each have to remember. All three halves are asked here so the writer, the
+    census and the shared shape table ask one question.
     """
-    return (isinstance(value, str) and not value.endswith(".json")
+    return (isinstance(value, str) and len(value) <= ID_MAX
+            and not value.endswith(".json")
             and not value.endswith(".") and bool(ID_RE.fullmatch(value)))
 
 
 def parse_timestamp(value: object) -> datetime | None:
     """The UTC instant ``value`` names, or None when it names none.
 
-    A bare time names no instant, so it answers None and both the writer and the
-    census call the field malformed rather than judge its item stale or fresh
-    against a minute nobody chose. Shared by both sides for the reason ``WHY_MAX``
-    is shared: two parsers of one stamp field is two answers.
+    Two shapes are refused rather than converted, and both because the artifact's
+    contract is a UTC stamp and not "any instant expressible as one":
+
+    - a bare time names no instant at all, so it answers None and both the writer and
+      the census call the field malformed rather than judge an item stale or fresh
+      against a minute nobody chose;
+    - an offset stamp (``+02:00``) names an instant but not the instant the field
+      claims, and a reader that shifted it into UTC would be accepting a value the
+      writer never produces and could not produce. ``Z`` is the only suffix the field
+      carries, so ``fromisoformat`` is asked of the text with that one substitution
+      and nothing else, and a stamp whose ``tzinfo`` is not UTC answers None.
+
+    Shared by both sides for the reason ``WHY_MAX`` is shared: two parsers of one stamp
+    field is two answers.
     """
     if not isinstance(value, str):
         return None
@@ -105,9 +126,9 @@ def parse_timestamp(value: object) -> datetime | None:
         stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
-    if stamp.tzinfo is None:
+    if stamp.tzinfo is None or stamp.utcoffset() != timedelta(0):
         return None
-    return stamp.astimezone(timezone.utc)
+    return stamp
 
 
 def id_problems(value: dict, stem: str) -> list[str]:
@@ -169,8 +190,8 @@ def _id_problems(value: dict, found: list[str]) -> None:
         return
     item_id = value["id"]
     if not is_item_id(item_id):
-        found.append(f"id {item_id!r} is not a lowercase id of letters, digits "
-                     "and dashes")
+        found.append(f"id {item_id!r} is not an id of at most {ID_MAX} lowercase "
+                     "letters, digits and dashes, opening with a letter or digit")
 
 
 def _title_problems(value: dict, found: list[str]) -> None:
@@ -185,7 +206,17 @@ def _title_problems(value: dict, found: list[str]) -> None:
 
 
 def _status_problems(value: dict, found: list[str]) -> None:
-    """The status word, and the fields that status owes."""
+    """The status word, and the fields that status owes.
+
+    The pairing of ``status`` with ``issue`` and ``why`` is stated here in full for the
+    shapes this artifact's reader can refuse, which is everything except the one the
+    arbiter owns: the schema checks bytes, and "the ``issue`` field is missing" is not
+    a malformed document -- ``item-malformed`` reports a field that is *there* and
+    wrong. A promoted item that names no issue is the census's own finding, and the one
+    the writer refuses on its behalf (``item.py promote`` needs ``--issue``), so a
+    three-field document carrying ``"issue": null`` is refused here as the hand-edited
+    artifact it is while the four-field one is left for the arbiter to report.
+    """
     if "status" not in value:
         return
     status = value["status"]
@@ -195,11 +226,33 @@ def _status_problems(value: dict, found: list[str]) -> None:
         return
     if status == STATUS_DROPPED:
         _dropped_problems(value, found)
-    elif value.get("why") is not None:
+        return
+    if status == STATUS_PROMOTED:
+        if "issue" in value and value["issue"] is None:
+            found.append("a promoted item carries a null issue, so it was promoted "
+                         "to nothing")
+        if value.get("why") is not None:
+            # Same rule as the branch below, asked here because the promoted return
+            # would otherwise let a dropped item's reason ride along on a promoted
+            # record: the reason belongs to the kill list, whichever status carries it.
+            found.append("why is only carried by a dropped item")
+        return
+    if value.get("why") is not None:
         # ``why`` is the dropped item's reason. On any other status it states
         # something the item does not do, so it is refused rather than left to
         # read as a reason nobody dropped anything for.
         found.append("why is only carried by a dropped item")
+    if value.get("issue") is not None:
+        # The other half of the same rule, and the reason the census's
+        # ``item-promoted-without-issue`` does not have to ask it: an ``issue`` is
+        # what a promoted item became, so a candidate that carries one has named an
+        # issue it never became and a writer must not file it. Refused here, at the
+        # schema that holds the pairing, in the branch that is not ``promoted`` --
+        # ``promoted`` itself is reached before this line is ever asked, and the
+        # converse (a ``promoted`` item carrying no issue) is the one half of the
+        # pairing the schema cannot refuse, because it is a missing value rather than
+        # a present one: the arbiter reports it as its own class.
+        found.append("issue is only carried by a promoted item")
 
 
 def _dropped_problems(value: dict, found: list[str]) -> None:
@@ -207,7 +260,8 @@ def _dropped_problems(value: dict, found: list[str]) -> None:
     if not ledger_schema.is_non_empty_string(value.get("decision")):
         found.append("a dropped item cites no decision record")
     if not ledger_schema.is_single_line(value.get("why")):
-        found.append("a dropped item carries no reason")
+        found.append("a dropped item carries no why: the reason it was "
+                     "dropped is the record the kill list exists to carry")
     elif len(value["why"]) > WHY_MAX:
         found.append(f"why is {len(value['why'])} characters, past the {WHY_MAX} limit")
     if value.get("issue") is not None:

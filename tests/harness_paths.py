@@ -137,6 +137,11 @@ ORDER = DIRECTION_SKILL / "order.py"
 INTENT = DIRECTION_SKILL / "intent.py"
 CENSUS = CENSUS_SKILL / "census.py"
 
+# The item writer has no skill directory yet (the items skill is its own
+# ticket), so its entry point is the package module file, which is also what
+# ``noni item`` dispatches to.
+ITEM = SRC / "noni" / "item.py"
+
 # The seven tools the ``noni`` command dispatches: subcommand -> the wrapper that
 # must produce the same bytes. The two shell census entry points are the other
 # half of the wrapper surface: each is compared against the package route in

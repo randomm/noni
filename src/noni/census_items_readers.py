@@ -109,13 +109,26 @@ def items_listing(items: Path) -> ItemsProbe:
 
     A directory that is not there at all is not a fault: it lists as empty, which
     is the state of a project that has never filed an idea, and the group adds no
-    row for it. Only a directory that exists and cannot be listed faults.
+    row for it. Only a directory that exists and cannot be listed faults -- and
+    "cannot be listed" is read from the raised ``OSError``, not from a guess about
+    what kind of path was expected. A plain file where the store should be raises
+    ``NotADirectoryError``, which is not an ``ENOENT``/``ENOTDIR`` about the path's
+    own existence, so it is a fault: the caller named a path (or the default names
+    one) that holds something that is not the store, and an empty listing there
+    would be the census certifying a store it never opened.
     """
     try:
         return ItemsProbe(names=tuple(sorted(
             p for p in items.iterdir() if p.suffix == ".json")))
     except OSError as exc:
-        if path_is_known_missing(items) is False:
+        # ``NotADirectoryError`` is an ``ENOTDIR``, which the classifier below reads
+        # as "this path is known not to be there". For the store that answer is wrong
+        # in the dangerous direction: the path *is* there, it is just not a directory,
+        # and "no such directory" and "not a directory" are two different things an
+        # operator can be told. The two families are kept apart by which of them the
+        # kernel raised about the path itself.
+        if not isinstance(exc, NotADirectoryError) and (
+                path_is_known_missing(items) is False):
             return ItemsProbe(names=())
         return ItemsProbe(fault=fault_text(exc) or type(exc).__name__)
 
@@ -144,11 +157,14 @@ class ItemScan:
       ``bodies`` and its age and citations stay checkable.
 
     The distinction between the last two is the whole of the probe-honesty rule
-    for this group: a file the run could not read is blindness (``item-unreadable``
-    — a warning about this run) and a file it read and found wrong is a finding
-    (``item-malformed`` — a failure about the project). A single list would let
-    either be reported as the other, which is exactly how an unreadable store
-    starts reporting clean.
+    for this group: a file the run could not read and a file it read and found wrong
+    stay distinct buckets, because the first is a warning about this run and the second
+    a failure about the project; they agree only on the consequence, which is that the
+    group stops short of the store-wide questions. The ruling gives the group one
+    blindness class of its own (``item-unlistable``, for the store it could not open)
+    and no class for a single file it could not open: such a file is reported as
+    ``item-malformed`` with the reason this run could not read it, which is the one
+    finding the file does support -- no item was read at that path.
     """
 
     bodies: tuple[tuple[str, dict], ...] = ()

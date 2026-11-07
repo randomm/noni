@@ -43,17 +43,34 @@ ITEM_CLASSES = ("item-malformed", "item-dropped-in-order",
                 "item-stale", "item-unlistable")
 
 
-def item_body(item_id: str, status: str = "candidate", created: str = FRESH,
-              issue: int | None = None, decision: str | None = None,
-              why: str | None = None, title: str = "An idea") -> dict:
-    """One item document in the documented key order.
+def item_body(item_id: str = "idea-0001", status: str = "candidate",
+              created: str = FRESH, issue: int | None = None,
+              decision: str | None = None, why: str | None = None,
+              title: str = "An idea", schema: str = "noni.item/1") -> dict:
+    """One item document in the documented key order, holding all eight fields.
 
     Built here rather than through ``itemschema.entry`` so a test can hand the census
     a shape the writer would refuse: a builder that validated what it emitted could
     not plant the malformed file it exists to plant.
+
+    The three optional fields are **omitted** when they name nothing, which is what
+    the writer itself produces (``itemschema.item_bytes`` writes only the keys a body
+    holds). The two shapes are not interchangeable and the schema tells them apart: a
+    ``dropped`` item with ``"why": null`` is a hand-edited artifact it refuses, and one
+    that carries no ``why`` key at all is the same defect reported by the same rule
+    with a different document underneath. A builder that always emitted all eight keys
+    could not produce the clean file, because a promoted item's own ``"issue": null``
+    is one of the shapes the reader refuses.
     """
-    return {"schema": "noni.item/1", "id": item_id, "title": title, "status": status,
-            "created": created, "issue": issue, "decision": decision, "why": why}
+    body: dict = {"schema": schema, "id": item_id, "title": title,
+                  "status": status, "created": created}
+    if issue is not None:
+        body["issue"] = issue
+    if decision is not None:
+        body["decision"] = decision
+    if why is not None:
+        body["why"] = why
+    return body
 
 
 def item_bytes(body: dict) -> str:

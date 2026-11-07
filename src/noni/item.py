@@ -33,8 +33,8 @@ Usage:
 Exit codes:
     0  the item was written (and committed unless --no-commit), or listed
     2  invalid input: an argparse failure, a subcommand outside add/list/drop/promote,
-       a missing --title on add, --decision or --why passed to a verb that does not
-       own them, an id that is not lowercase letters, digits and dashes (or ends in
+       a missing --title on add, a missing --issue on promote, --decision or --why
+       passed to a verb that does not own them, an id that is not lowercase letters, digits and dashes (or ends in
        .json), a --title or --why that is blank or more than one line or past its
        length limit, an --issue that is not a positive integer, a --now that is not a
        valid UTC ISO-8601 timestamp, a --repo that is not a directory, or a noni/ or
@@ -327,7 +327,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--why", default=None, metavar="REASON",
                         help="the reason the item was dropped (required for drop)")
     parser.add_argument("--issue", default=None, metavar="N",
-                        help="the issue a promoted item became")
+                        help="the issue a promoted item became (required for "
+                             "promote: a promoted item that names no issue was "
+                             "promoted to nothing)")
     parser.add_argument("--now", default=None, metavar="ISO-8601",
                         help="fixed UTC timestamp for the created stamp "
                              "(default: the current UTC time)")
@@ -465,6 +467,16 @@ def _run_promote(repo: Path, args: argparse.Namespace, stamp: str) -> int:
             return _fail(EXIT_USAGE, f"issue {args.issue!r} is not a positive "
                          "integer", "name the issue by its number, e.g. --issue 42")
         issue = int(args.issue)
+    if issue is None:
+        # A promoted item is one that became an issue, and the schema refuses a
+        # ``promoted`` item that carries none, so a verb that wrote one would leave a
+        # file the next ``add`` refuses to write over and the census reports
+        # ``item-malformed``. Refused here, at the verb that owes the field, for the
+        # same reason ``drop`` owes ``--decision`` and ``--why``.
+        return _fail(EXIT_USAGE, "promote needs --issue N: a promoted item is one "
+                     "that became an issue, and one that names none was promoted to "
+                     "nothing", "name the issue it became, e.g. --issue 42, or leave "
+                     "it a candidate until an issue is filed for it")
     existing, code = item_reads.read_item(repo / itemschema.item_rel(args.id),
                                           args.id, _fail, EXIT_IO, EXIT_REFUSAL)
     if code is not None:

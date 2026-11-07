@@ -3,7 +3,7 @@
 Copy this file, fill the four sections in, and install it with the writer (the
 noni package must be installed or importable for the writer to run -- see the
 *Install noni* section of
-[docs/QUICKSTART.md](docs/QUICKSTART.md#install-noni)):
+[docs/QUICKSTART.md](../../../docs/QUICKSTART.md#install-noni)):
 
 ```
 scripts/intent.py --repo REPO set --from ./intent-draft.md --decision <record-id>

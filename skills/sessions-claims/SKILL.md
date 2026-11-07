@@ -70,7 +70,7 @@ Read `references/register.md` before writing a register file. Read
 The four writers below and the sessions census are wrappers: they import the
 `noni` package, which must be installed or importable on `PYTHONPATH` before any
 of them runs (the *Install noni* section of
-[docs/QUICKSTART.md](docs/QUICKSTART.md#install-noni)); `noni register`,
+[docs/QUICKSTART.md](../../docs/QUICKSTART.md#install-noni)); `noni register`,
 `noni claim`, `noni release`, `noni close` and `noni census` are the same code
 once it is.
 

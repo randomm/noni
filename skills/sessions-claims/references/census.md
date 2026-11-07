@@ -26,11 +26,10 @@ honest exit code. Output goes to stdout only (no writes under `noni/census/`).
 
 ## Usage
 
-Unlike the writers, this census reads its own arguments and needs nothing
-installed; where a sessions-claims wrapper does run, it imports the `noni`
-package, which must be installed or importable on `PYTHONPATH` (the *Install
-noni* section of
-[docs/QUICKSTART.md](docs/QUICKSTART.md#install-noni)).
+The shim parses its own arguments in bash, but the census it runs imports the
+`noni` package, which must be installed or importable on `PYTHONPATH`; without it
+the run names that on one line and exits 3 (the *Install noni* section of
+[docs/QUICKSTART.md](../../../docs/QUICKSTART.md#install-noni) owns the commands).
 
 ```
 bash scripts/census-sessions.sh <state-root>/noni/sessions   the sessions census

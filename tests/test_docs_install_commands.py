@@ -41,12 +41,9 @@ from docs_promises import README
 
 # The install claim a page may not make as an *instruction*: a bare ``pip
 # install noni``, which resolves on the public index to a different project
-# entirely. Two shapes are legitimate and are excused by position rather than by
-# wording: an install that names a path or a URL after the package name, and a
-# mention of the bare command inside prose that is warning the reader away from
-# it -- the sentence that names the command to tell the reader it does not do
-# what they think. The second exemption is what keeps a truthful retraction from
-# being flagged as the claim it retracts.
+# entirely. Both legitimate shapes -- an install that names a path or a URL, and a
+# prose mention that warns the reader away from the command -- are excused by the
+# gate below, whose docstring carries the reasoning.
 _BARE_PIP_INSTALL = re.compile(r"pip install noni\b(?![-/\w])")
 
 
@@ -57,6 +54,13 @@ def test_no_page_tells_a_reader_to_install_from_a_package_index() -> None:
     project's wheel, and the reader's ``noni census`` then names a module that
     does not exist. Every page that offers an install route names the clone or
     the git URL instead.
+
+    Two shapes are legitimate and are excused by position rather than by wording:
+    an install that names a path or a URL after the package name, and a mention of
+    the bare command inside prose that is warning the reader away from it -- the
+    sentence that names the command to tell the reader it does not do what they
+    think. The second exemption is what keeps a truthful retraction from being
+    flagged as the claim it retracts.
 
     The exemption is per line, not per page, and it is earned: a line that
     names the bare command has to say in the same breath that it is the wrong

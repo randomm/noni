@@ -124,7 +124,7 @@ not who decided. `decided_by` records the decider separately, and
 `on_behalf_of` names the party a delegate acted for (the writer is a wrapper, so
 the `noni` package must be installed or importable on `PYTHONPATH` first -- see
 the *Install noni* section of
-[docs/QUICKSTART.md](docs/QUICKSTART.md#install-noni)):
+[docs/QUICKSTART.md](../../../docs/QUICKSTART.md#install-noni)):
 
 ```
 scripts/decide.py --repo . --decided-by operator-ann --on-behalf-of "the platform team" ...

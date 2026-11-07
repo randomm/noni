@@ -39,6 +39,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import docs_precondition
 import pytest
 from _harness import _git, _init_repo
 from docs_commands import read
@@ -55,12 +56,52 @@ from docs_promises import QUICKSTART, section_body
 # wrapper whose package is missing says it is "not importable", and the route out is an
 # install. Held here so the planted page below and the real pages are measured against
 # one wording.
+# The anchor's page, spelled from the page that owns the link: the quickstart's own
+# path, then the anchor. Written this way so the sentence can be planted at any depth
+# under a tree, which is where the non-vacuity rows below put it -- see
+# ``_install_link_from`` for what each page's own directory has to contribute.
+_INSTALL_LINK = "[Install noni](docs/QUICKSTART.md#install-noni)"
 PRECONDITION_SENTENCE = (
     "The wrappers under `skills/<skill>/scripts/` import the package, so it must be "
     "installed, installed editable, or importable via `PYTHONPATH=<clone>/src`; the "
     "commands are in the *Install noni* section of "
-    "[docs/QUICKSTART.md](docs/QUICKSTART.md#install-noni)."
+    + _INSTALL_LINK + "."
 )
+
+
+def _install_link_from(depth: int) -> str:
+    """The install link as a page in ``depth`` directories below the root must write it.
+
+    The gate resolves a relative href against the linking page's own directory, so the
+    correct form is a function of where the page sits: a page in ``skills/x/`` (two
+    directories deep) needs ``../../docs/QUICKSTART.md``, a page at the root needs
+    ``docs/QUICKSTART.md``, and a page under a link farm's ``x/y/`` needs three. A page
+    that wrote the root form from ``skills/<skill>/references/`` aimed at
+    ``skills/<skill>/references/docs/QUICKSTART.md``, which is no page at all, and only
+    a resolver catches that.
+    """
+    return "[Install noni](" + "../" * depth + "docs/QUICKSTART.md#install-noni)"
+
+
+def _quickstart_tree(repo: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A committed ``docs/QUICKSTART.md`` carrying the anchor the links point at.
+
+    The planted tree plays the role of the repository for the tests that need a real
+    link target, so the page the gate treats as exempt is pointed at the plant for the
+    duration of the test and restored by the fixture. It is routed through
+    ``monkeypatch`` rather than a plain assignment because a bare module global leaks
+    into every later test in the session, which would hand the exemption to whichever
+    page happened to share the plant's path. The path is resolved the way the gate
+    resolves it, so a tree reached through a symlink still compares equal.
+    """
+    docs = repo / "docs"
+    docs.mkdir(parents=True, exist_ok=True)
+    page = docs / "QUICKSTART.md"
+    page.write_text("# Quickstart\n\n## Install noni\n\nbody\n", encoding="utf-8")
+    _commit_tree(repo)
+    quickstart = page.resolve() if page.is_file() else page
+    monkeypatch.setattr(docs_precondition, "QUICKSTART", quickstart)
+    return page
 
 
 # --- AC1: the sentence every page with a command owes ---------------------------
@@ -194,14 +235,19 @@ def test_the_reader_does_not_read_prose_as_a_command() -> None:
 
 # --- the offender shape is proven on a planted page ----------------------------
 
-def test_the_gate_refuses_a_command_page_with_no_sentence(tmp_path: Path) -> None:
+def test_the_gate_refuses_a_command_page_with_no_sentence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The pilot's page, planted: a bare script fence and no precondition anywhere.
 
     Built in a throwaway repository rather than edited into a real page, so the
     offender shape is asserted without touching the tree the other checks read. The
     tree is committed because the size gate measures a worktree against
     ``git ls-files``: an uncommitted plant is an offender for that gate, exactly as an
-    uncommitted scratch file would be.
+    uncommitted scratch file would be. A ``docs/QUICKSTART.md`` carrying the anchor is
+    planted beside it so the link half has a real target to resolve to, and the
+    passing form of the link is the one ``skills/probe-skill/`` has to write -- two
+    directories below the root.
 
     The same page, carrying the sentence and the link, then has to pass: that half is
     what shows the gate refuses the missing sentence rather than the page's subject. A
@@ -209,6 +255,7 @@ def test_the_gate_refuses_a_command_page_with_no_sentence(tmp_path: Path) -> Non
     second assertion, so the two failures stay distinguishable.
     """
     repo = _init_repo(tmp_path / "probe")
+    _quickstart_tree(repo, monkeypatch)
     skill = repo / "skills" / "probe-skill"
     skill.mkdir(parents=True)
     command_page = (
@@ -223,15 +270,15 @@ def test_the_gate_refuses_a_command_page_with_no_sentence(tmp_path: Path) -> Non
         "the gate let a bare script command through with no precondition on the page")
 
     page.write_text(command_page.replace(
-        "The writer appends one row and commits it.", PRECONDITION_SENTENCE),
+        "The writer appends one row and commits it.",
+        PRECONDITION_SENTENCE.replace(_INSTALL_LINK, _install_link_from(2))),
         encoding="utf-8")
     assert _verdicts(repo) == ([], []), (
         "the gate refuses a page that states the precondition and links the install")
 
     page.write_text(command_page.replace(
         "The writer appends one row and commits it.",
-        PRECONDITION_SENTENCE.replace(
-            "[docs/QUICKSTART.md](docs/QUICKSTART.md#install-noni)", "the quickstart")),
+        PRECONDITION_SENTENCE.replace(_INSTALL_LINK, "the quickstart")),
         encoding="utf-8")
     assert _verdicts(repo) == ([], ["skills/probe-skill/SKILL.md"]), (
         "a page with the sentence and no link is not reported by the link assertion")
@@ -286,4 +333,131 @@ def test_the_promise_survives_a_rewrap_and_dies_on_a_dropped_fact() -> None:
     assert not quickstart_install_link(
         PRECONDITION_SENTENCE.replace("#install-noni", "")), (
         "a sentence that names the quickstart without the install anchor counts as the "
+        "link")
+
+
+# --- the link half is proven on the shapes a page can carry it wrong ------------
+
+# Each row is a page state that must NOT satisfy the link gate, with the reason the
+# gate owes the reader. The real pages got all three wrong at once when the sentence
+# landed: nine pages wrote the root-relative form of the href, which resolves inside
+# ``skills/<skill>/references/`` to a file that has never existed, and the words were
+# present as well, so a gate that looked for the words was green.
+@pytest.mark.parametrize("form", (
+    pytest.param("wrong-base", id="a link whose base is the repo root, not the page"),
+    pytest.param("inline-code", id="the target spelled as inline code, not a link"),
+    pytest.param("no-anchor", id="a link to the page with no section anchor"),
+))
+def test_the_link_gate_refuses_a_link_the_reader_cannot_follow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, form: str
+) -> None:
+    """Each wrong shape of the install link is a finding, not a pass.
+
+    Planted one directory deep (``skills/probe-skill/references/``) next to a
+    ``docs/QUICKSTART.md`` that carries the anchor, so the only thing deciding the
+    verdict is the href: the file exists, the anchor exists, the sentence exists.
+    """
+    repo = _init_repo(tmp_path / "probe")
+    _quickstart_tree(repo, monkeypatch)
+    page_dir = repo / "skills" / "probe-skill" / "references"
+    page_dir.mkdir(parents=True)
+    sentence = PRECONDITION_SENTENCE.replace(_INSTALL_LINK, {
+        # The form every real page carried: written for the root, resolved from here.
+        "wrong-base": _INSTALL_LINK,
+        # The promise named in the reader's vocabulary but not linked: nothing to follow.
+        "inline-code": "`docs/QUICKSTART.md#install-noni`",
+        # The right file, the wrong section: lands on the top of a long page.
+        "no-anchor": "[docs/QUICKSTART.md](../../../docs/QUICKSTART.md)",
+    }[form])
+    page = page_dir / "claim.md"
+    page.write_text("# Claiming\n\n" + sentence + "\n", encoding="utf-8")
+    _commit_tree(repo)
+    assert not quickstart_install_link(page.read_text(encoding="utf-8"), path=page), (
+        f"the gate accepted {form}, which leaves the reader no link to follow")
+
+
+def test_the_link_gate_accepts_the_form_each_page_depth_has_to_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The resolved form passes at the depth it was written for, and only there.
+
+    The positive half of the row above, and the reason the depth is a parameter rather
+    than a constant: a gate that only ever saw the root form would accept a reference
+    page that links nothing and refuse one that links correctly.
+
+    The exemption for the quickstart's own path has to be switched off here: depth 0
+    plants its page in ``docs/``, the same directory the quickstart itself sits in, and
+    a fixture whose subject is other pages' links must not be answered by the rule for
+    one page. The exempt page itself is asserted on its own below, where the plant is
+    the exempt page rather than a neighbour of it.
+    """
+    repo = _init_repo(tmp_path / "probe")
+    _quickstart_tree(repo, monkeypatch)
+    monkeypatch.setattr(docs_precondition, "QUICKSTART", Path("/__no_such_page__.md"))
+    for depth in (0, 1, 2, 3):
+        page_dir = repo
+        for part in ("a", "b", "c")[:depth]:
+            page_dir = page_dir / part
+        page_dir.mkdir(parents=True, exist_ok=True)
+        page = page_dir / "page.md"
+        page.write_text(PRECONDITION_SENTENCE.replace(_INSTALL_LINK,
+                                                      _install_link_from(depth)),
+                        encoding="utf-8")
+        assert quickstart_install_link(page.read_text(encoding="utf-8"), path=page), (
+            f"the gate refuses the correct link from depth {depth}, so a page has no "
+            f"form it can write to satisfy it: {page}")
+        if depth:
+            # The same bytes one level up resolve to a directory that holds no
+            # quickstart, which is the mistake the real pages made in reverse.
+            shallow = page_dir.parent / "shallow.md"
+            shallow.write_text(PRECONDITION_SENTENCE.replace(_INSTALL_LINK,
+                                                             _install_link_from(depth)),
+                               encoding="utf-8")
+            assert not quickstart_install_link(shallow.read_text(encoding="utf-8"),
+                                               path=shallow), (
+                f"a link written for depth {depth} passes from its parent, so the gate "
+                "is not resolving hrefs against the page's own directory")
+
+
+def test_the_link_gate_needs_the_anchor_to_be_a_heading_in_the_target(
+    tmp_path: Path
+) -> None:
+    """A target file without the heading is not the section the reader was sent to.
+
+    The anchor is the half of the link that survives a page rewrite least well: rename
+    the heading and every link on every page points at the top of the document. The
+    gate reads the target, so a heading rename that orphans the links turns the pages
+    red rather than the reader's browser.
+    """
+    repo = _init_repo(tmp_path / "probe")
+    docs = repo / "docs"
+    docs.mkdir(parents=True)
+    (docs / "QUICKSTART.md").write_text("# Quickstart\n\n## Getting it\n\nbody\n",
+                                        encoding="utf-8")
+    _commit_tree(repo)
+    page = repo / "page.md"
+    page.write_text(PRECONDITION_SENTENCE, encoding="utf-8")
+    assert not quickstart_install_link(page.read_text(encoding="utf-8"), path=page), (
+        "a link whose anchor matches no heading in the target counts as the promise")
+
+
+def test_the_link_gate_resolves_a_link_that_points_at_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The quickstart stays exempt, and the exemption is about that page alone.
+
+    The exemption exists because the page cannot link the section it is standing in.
+    A second page named QUICKSTART.md, or the quickstart judged at another path, must
+    not inherit it, or one mis-named file would silence the gate over the whole set.
+    """
+    repo = _init_repo(tmp_path / "probe")
+    _quickstart_tree(repo, monkeypatch)
+    quickstart = repo / "docs" / "QUICKSTART.md"
+    assert quickstart_install_link("no link at all", path=quickstart), (
+        "the quickstart is charged for a link it cannot write")
+    lookalike = repo / "skills" / "QUICKSTART.md"
+    lookalike.parent.mkdir(parents=True)
+    lookalike.write_text("# Quickstart\n\nnothing here\n", encoding="utf-8")
+    assert not quickstart_install_link("no link at all", path=lookalike), (
+        "a page that merely shares the quickstart's file name is exempt from the "
         "link")

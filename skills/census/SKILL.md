@@ -12,8 +12,8 @@ under `noni/`, flags violations, and reports. It writes no file.
 ## The entry point
 
 The census is a wrapper that imports the `noni` package, so it must be installed or
-importable to run (`noni census` is the same code); *Install noni* in
-`docs/QUICKSTART.md#install-noni` owns the install commands.
+importable to run (`noni census` is the same code); [Install
+noni](../../docs/QUICKSTART.md#install-noni) owns the install commands.
 
 ```
 python3 skills/census/scripts/census.py [options]

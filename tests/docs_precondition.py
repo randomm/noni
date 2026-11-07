@@ -139,20 +139,98 @@ def has_install_precondition(text: str) -> bool:
 _PRECONDITION_PHRASES: tuple[str, ...] = ("must be installed", "importable")
 
 
+# A markdown link's target: ``[text](href)``, the href captured. The text half is
+# discarded, so the gate reads the target the reader's editor actually follows.
+_LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
+
+# The anchor of the section the link owes, kept apart from the page path so the href
+# can be cut in half without spelling the anchor twice.
+_ANCHOR = "#install-noni"
+
+# The tail a link to the install has to carry: the quickstart's own file name, and the
+# anchor of the section that states the precondition. Matched on the *suffix* of the
+# href, because the correct href depends on where the linking page sits --
+# ``../../../docs/QUICKSTART.md#install-noni`` from a reference page, ``docs/QUICKSTART.md
+# #install-noni`` from the README and ``QUICKSTART.md#install-noni`` from a page that
+# lives beside the quickstart are all the same link. The path part is not matched, only
+# the file name: what decides whether a link is usable is where it resolves to, which the
+# third half below checks, not how many ``../`` the author counted out.
+_INSTALL_LINK_SUFFIX = "QUICKSTART.md" + _ANCHOR
+
+# GitHub's slug for a heading: downcased, with punctuation gone and runs of
+# whitespace collapsed to single hyphens. The rule the anchor has to match.
+_HEADING = re.compile(r"^#{1,6}\s+(.*?)\s*#*\s*$")
+_SLUG_PUNCTUATION = re.compile(r"[^\w\s-]")
+
+
+def _slug(heading: str) -> str:
+    """The anchor GitHub gives a heading line's text."""
+    return _SLUG_PUNCTUATION.sub("", heading.strip().lower()).replace(" ", "-")
+
+
+def _same_page(candidate: Path, expected: Path) -> bool:
+    """Whether two paths name one file, tolerant of a tree reached by two names.
+
+    ``resolve()`` is the only comparison that sees through a symlinked or bind-mounted
+    root, and a gate that raised on either would turn a filesystem quirk into a red
+    suite, so an unresolvable path falls back to the plain comparison.
+    """
+    try:
+        return candidate.resolve() == expected
+    except OSError:
+        return candidate == expected
+
+
+def _anchors(page_text: str) -> set[str]:
+    """Every anchor a page carries, by GitHub's slug rule."""
+    return {_slug(match.group(1)) for match in map(_HEADING.match, page_text.splitlines())
+            if match is not None}
+
+
 def quickstart_install_link(text: str, *, path: Path | None = None) -> bool:
-    """Whether the page sends the reader to the quickstart's install section.
+    """Whether the page links the quickstart's install section, as a resolvable link.
 
     The link is the sentence's target: a page that says the package must be installed,
     without saying where the install is documented, leaves the reader to find the page
-    that owns it. The anchor is required as well as the page, so the link lands on the
-    section that carries the prose rather than on the top of a long page. Both are
-    matched on the raw text: a markdown link is not rewrapped mid-path.
+    that owns it. Three things are required, because each is a way a page has broken
+    the promise in practice:
 
-    One page cannot satisfy this and is exempt on that ground alone: the quickstart,
-    which cannot link the section it is standing in. It is held instead by
-    ``tests/test_docs_install_promises.py`` to state the precondition inside that
-    section.
+    - the promise is a **markdown link** (``[text](href)``), not the words typed in
+      backticks. An inline-code mention reads as the promise to a skimming author and
+      resolves to nothing for the reader.
+    - the href **ends in** ``docs/QUICKSTART.md#install-noni``, so it names the section
+      that carries the prose rather than the top of a long page.
+    - the href **resolves from the linking page's own directory to a file that exists**
+      and carries a heading whose GitHub slug is the anchor. A relative href is
+      relative to that page, not to the repository root, which is why a page under
+      ``skills/<skill>/references/`` needs ``../../../docs/QUICKSTART.md`` and the
+      README needs ``docs/QUICKSTART.md``.
+
+    ``path`` is the page's own location. Without it the file and anchor halves cannot
+    be checked, so the caller over a real page passes it; a caller that only has a
+    sentence in hand is asserting the link shape, which the suffix alone decides.
+
+    One page is exempt, and the exemption is by identity rather than by file name: the
+    quickstart itself, which cannot link the section it is standing in. A page that
+    merely carries the same file name somewhere else in the tree gets no exemption,
+    since only one QUICKSTART.md exists and a name match would hand the pass to
+    whatever file a rewrite happened to move.
     """
-    if path is not None and path.name == QUICKSTART.name:
+    if path is not None and _same_page(path, QUICKSTART):
         return True
-    return "docs/QUICKSTART.md" in text and "#install-noni" in text
+    for href in _LINK.findall(text):
+        if not href.endswith(_INSTALL_LINK_SUFFIX):
+            continue
+        if path is None:
+            return True
+        # ``PurePath`` does not fold ``..`` away, and it has to be folded: a link that
+        # reads ``../docs/QUICKSTART.md`` from a page two directories down points at the
+        # root's copy, and an unfolded path would send the reader into a directory that
+        # holds no quickstart. ``resolve(strict=False)`` folds them without refusing a
+        # path that does not exist, which is the answer we want here anyway.
+        target = (path.parent / href[: -len(_ANCHOR)]).resolve()
+        if not target.is_file():
+            continue
+        if _ANCHOR.lstrip("#") in _anchors(target.read_text(encoding="utf-8")):
+            return True
+    return False

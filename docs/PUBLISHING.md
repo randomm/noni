@@ -24,9 +24,9 @@ history. History violations are **reported** (below) and never rewritten here.
    run above is not by itself proof the deny-list was active (a run with the
    deny-list absent or empty also passes); the authoritative pre-publish
    check is the CLI directly (it is a wrapper over `src/noni/public_safety.py`,
-   so the `noni` package must be installed or importable on `PYTHONPATH` (see the
+   so the `noni` package must be installed or importable on `PYTHONPATH`; the
    *Install noni* section of
-   [docs/QUICKSTART.md](docs/QUICKSTART.md#install-noni)):
+   [Install noni](QUICKSTART.md#install-noni) owns the commands that do it:
 
    ```sh
    python scripts/public_safety.py

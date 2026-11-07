@@ -69,7 +69,7 @@ def scrub_in_time(repo: Path) -> list[str]:
         "import json, sys; sys.path.insert(0, {src!r})\n"
         "from pathlib import Path\n"
         "from noni import public_safety\n"
-        "found, _source, _dl = public_safety.scrub_tracked_files(Path({repo!r}))\n"
+        "found, _source, _dl, _al = public_safety.scrub_tracked_files(Path({repo!r}))\n"
         "print('FOUND::' + json.dumps(found))\n"
     ).format(src=_src_dir(), repo=str(repo))
     return json.loads(_run(script, "FOUND::", "the scan"))
@@ -101,7 +101,7 @@ def scan_with_short_reads(repo: Path) -> list[str]:
         "def bent(fd, size):\n"
         "    return real(fd, 1)\n"
         "public_safety.os.read = bent\n"
-        "found, _s, _d = public_safety.scrub_tracked_files(Path({repo!r}))\n"
+        "found, _s, _d, _a = public_safety.scrub_tracked_files(Path({repo!r}))\n"
         "public_safety.os.read = real\n"
         "print('FOUND::' + json.dumps(found))\n"
     ).format(src=_src_dir(), repo=str(repo))
@@ -121,7 +121,7 @@ def run_bent_scan(repo: Path, bends: str) -> list:
         "from pathlib import Path\n"
         "from noni import public_safety\n"
         + bends +
-        "found, _s, _d = public_safety.scrub_tracked_files(Path({repo!r}))\n"
+        "found, _s, _d, _a = public_safety.scrub_tracked_files(Path({repo!r}))\n"
         "print('FOUND::' + payload())\n"
     ).format(src=_src_dir(), repo=str(repo))
     return json.loads(_run(script, "FOUND::", "the bent scan"))

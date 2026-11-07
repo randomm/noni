@@ -48,7 +48,7 @@ def clean_repo(tmp_path, monkeypatch):
 def test_scrub_passes_on_clean_fixture(clean_repo):
     """A clean tracked tree produces no violations (either with or without a
     deny-list)."""
-    violations, _, _ = public_safety.scrub_tracked_files(clean_repo)
+    violations, _, _, _ = public_safety.scrub_tracked_files(clean_repo)
     assert violations == []
 
 
@@ -58,7 +58,7 @@ def test_scrub_fails_on_planted_home_path(clean_repo):
     _git(clean_repo, "add", "note.md")
     _git(clean_repo, "commit", "-q", "-m", "plant path")
 
-    violations, _, _ = public_safety.scrub_tracked_files(clean_repo)
+    violations, _, _, _ = public_safety.scrub_tracked_files(clean_repo)
     assert len(violations) == 1
     assert violations[0].startswith("note.md:1:")
     assert "home path" in violations[0]
@@ -70,7 +70,7 @@ def test_scrub_fails_on_planted_linux_home_path(clean_repo):
     _git(clean_repo, "add", "note.md")
     _git(clean_repo, "commit", "-q", "-m", "plant linux path")
 
-    violations, _, _ = public_safety.scrub_tracked_files(clean_repo)
+    violations, _, _, _ = public_safety.scrub_tracked_files(clean_repo)
     assert len(violations) == 1
     assert violations[0].startswith("note.md:1:")
     assert "home path" in violations[0]
@@ -82,7 +82,7 @@ def test_scrub_fails_on_planted_secret(clean_repo):
     _git(clean_repo, "add", "note.md")
     _git(clean_repo, "commit", "-q", "-m", "plant secret")
 
-    violations, _, _ = public_safety.scrub_tracked_files(clean_repo)
+    violations, _, _, _ = public_safety.scrub_tracked_files(clean_repo)
     assert len(violations) == 1
     assert violations[0].startswith("note.md:1:")
     assert "token" in violations[0]
@@ -98,7 +98,7 @@ def test_scrub_fails_on_denylist_entry(clean_repo, tmp_path, monkeypatch):
     _git(clean_repo, "add", "note.md")
     _git(clean_repo, "commit", "-q", "-m", "plant denylist name")
 
-    violations, source, _ = public_safety.scrub_tracked_files(clean_repo)
+    violations, source, _, _ = public_safety.scrub_tracked_files(clean_repo)
     assert source == denylist.as_posix()
     assert len(violations) == 1  # only the deny-list entry matches
     assert "deny-list entry" in violations[0]
@@ -110,7 +110,7 @@ def test_scrub_notice_when_denylist_absent(clean_repo, capsys):
     """When no deny-list file exists, the deny-list class is skipped with a
     prominent stderr notice while the built-in patterns still run. The notice
     explicitly states that the run is NOT a scrub-clean guarantee."""
-    violations, source, _ = public_safety.scrub_tracked_files(clean_repo)
+    violations, source, _, _ = public_safety.scrub_tracked_files(clean_repo)
     assert violations == []
     assert source is None
     captured = capsys.readouterr()
@@ -135,7 +135,7 @@ def test_denylist_present_but_empty_is_not_active(clean_repo, tmp_path, monkeypa
 
     # The scrub itself still runs; the file was loaded (source is not None),
     # but with zero entries the class is not active.
-    violations, source, _ = public_safety.scrub_tracked_files(clean_repo)
+    violations, source, _, _ = public_safety.scrub_tracked_files(clean_repo)
     assert violations == []
     assert source == empty.as_posix()
 
@@ -168,14 +168,14 @@ def test_scrub_skips_binary_file_gracefully(clean_repo):
     _git(clean_repo, "add", "blob.bin")
     _git(clean_repo, "commit", "-q", "-m", "binary")
 
-    violations, _, _ = public_safety.scrub_tracked_files(clean_repo)
+    violations, _, _, _ = public_safety.scrub_tracked_files(clean_repo)
     assert violations == []
 
 
 def test_scrub_checks_tracked_files_only(clean_repo):
     """Untracked files are not scanned (the scrub covers git ls-files only)."""
     (clean_repo / "untracked.md").write_text("synthetic-untracked secret here\n", encoding="utf-8")
-    violations, _, _ = public_safety.scrub_tracked_files(clean_repo)
+    violations, _, _, _ = public_safety.scrub_tracked_files(clean_repo)
     assert violations == []
 
 
@@ -187,7 +187,7 @@ def test_scrub_excludes_own_source(clean_repo):
     synthetic names, so nothing planted in a test file can hide behind it. A
     planted violation in any *other* tracked file is still caught (see
     test_scrub_exemption_does_not_hide_planted_secret)."""
-    violations, _, _ = public_safety.scrub_tracked_files(REPO)
+    violations, _, _, _ = public_safety.scrub_tracked_files(REPO)
     assert not any(v.startswith("scripts/public_safety.py") for v in violations)
     assert not any(v.startswith("tests/test_public_safety.py") for v in violations)
 
@@ -206,7 +206,7 @@ def test_scrub_exemption_keeps_pattern_literal_file_clean(clean_repo, monkeypatc
 
     # The scrub module (in this repo) carries its own pattern literals; the
     # exemption is what keeps it clean under the built-in patterns.
-    violations, _, _ = public_safety.scrub_tracked_files(REPO)
+    violations, _, _, _ = public_safety.scrub_tracked_files(REPO)
     assert not any(v.startswith("scripts/public_safety.py") for v in violations), (
         f"scripts/public_safety.py carries pattern literals; the exemption must keep it clean: {violations}"
     )
@@ -215,7 +215,7 @@ def test_scrub_exemption_keeps_pattern_literal_file_clean(clean_repo, monkeypatc
     (clean_repo / "note.md").write_text(literal + "\n", encoding="utf-8")
     _git(clean_repo, "add", "note.md")
     _git(clean_repo, "commit", "-q", "-m", "plant vocab")
-    violations, _, _ = public_safety.scrub_tracked_files(clean_repo)
+    violations, _, _, _ = public_safety.scrub_tracked_files(clean_repo)
     assert any(v.startswith("note.md:1:") and "deny-list entry" in v for v in violations)
 
 
@@ -226,7 +226,7 @@ def test_scrub_exemption_does_not_hide_planted_secret(clean_repo):
     _git(clean_repo, "add", "note.md")
     _git(clean_repo, "commit", "-q", "-m", "plant in non-exempt file")
 
-    violations, _, _ = public_safety.scrub_tracked_files(clean_repo)
+    violations, _, _, _ = public_safety.scrub_tracked_files(clean_repo)
     assert any(v.startswith("note.md") for v in violations), (
         "a planted home path in a non-exempt file must be caught"
     )
@@ -248,7 +248,7 @@ def test_scrub_exemption_does_not_hide_planted_denylist_entry(clean_repo, monkey
     _git(clean_repo, "add", "scripts/public_safety.py")
     _git(clean_repo, "commit", "-q", "-m", "plant denylist entry in exempt path")
 
-    violations, _, _ = public_safety.scrub_tracked_files(clean_repo)
+    violations, _, _, _ = public_safety.scrub_tracked_files(clean_repo)
     assert any(
         v.startswith("scripts/public_safety.py:1:") and "deny-list entry" in v for v in violations
     ), (f"a deny-list entry in an exempt file path must be caught: {violations}")
@@ -268,7 +268,7 @@ def test_scrub_exemption_does_not_hide_planted_secret_in_exempt_file(clean_repo)
     _git(clean_repo, "add", "tests/test_public_safety.py")
     _git(clean_repo, "commit", "-q", "-m", "plant secret in exempt path")
 
-    violations, _, _ = public_safety.scrub_tracked_files(clean_repo)
+    violations, _, _, _ = public_safety.scrub_tracked_files(clean_repo)
     assert any(
         v.startswith("tests/test_public_safety.py:1:") and "AWS access key" in v for v in violations
     ), (f"a secret-shaped token in an exempt file path must be caught: {violations}")
@@ -287,7 +287,7 @@ def test_denylist_corrupt_file_degrades_gracefully(clean_repo, tmp_path, monkeyp
     assert result.status == "corrupt"
 
     # scrub_tracked_files reports the deny-list class as not active.
-    violations, source, _ = public_safety.scrub_tracked_files(clean_repo)
+    violations, source, _, _ = public_safety.scrub_tracked_files(clean_repo)
     assert violations == []
     assert source is None
 
@@ -346,7 +346,7 @@ def test_denylist_is_read_from_the_audited_tree_not_the_cwd(tmp_path, monkeypatc
     assert result.entries == ["synthetic-project-name"]
     assert result.source == str((repo / public_safety.DENYLIST_FILENAME).resolve())
 
-    violations, source, _ = public_safety.scrub_tracked_files(repo)
+    violations, source, _, _ = public_safety.scrub_tracked_files(repo)
     assert source is not None, "the scrub did not activate the deny-list class"
     assert [v for v in violations if v.startswith("note.md:1:")
             and "deny-list entry" in v], violations
@@ -395,7 +395,7 @@ def test_repo_local_fsmonitor_helper_does_not_run_during_a_scan(clean_repo):
     stat_before = index.stat()
     os.utime(index, ns=(stat_before.st_atime_ns, stat_before.st_mtime_ns + 2_000_000_000))
 
-    violations, _source, _ = public_safety.scrub_tracked_files(clean_repo)
+    violations, _source, _, _ = public_safety.scrub_tracked_files(clean_repo)
     assert violations == []
     assert not marker.exists(), "the scrub ran a core.fsmonitor helper it must not run"
 
@@ -447,7 +447,7 @@ def test_noni_repo_is_clean():
     built-in run must pass either way). The self-file exemption covers the
     two files that carry built-in pattern literals (the scrub module and the
     scrub test file); everything else must be violation-free."""
-    violations, _, _ = public_safety.scrub_tracked_files(REPO)
+    violations, _, _, _ = public_safety.scrub_tracked_files(REPO)
     assert violations == []
 
 

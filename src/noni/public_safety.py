@@ -47,19 +47,48 @@ The tree to audit and the deny-list location are parameters of the scan, never r
 this file's own location: the module ships inside a wheel, so its ``__file__`` says
 nothing about the repository being scrubbed. See ``scrub_tracked_files`` and
 ``load_denylist``.
+
+Intentional fixtures are the exemption this module cannot carry: a tracked file written
+to prove the secret shapes catch something trips the check it documents, and the only
+built-in allowance is the narrow ``_SELF_FILES`` list below. The general form is the
+audited tree's committed allowlist, which lives in ``public_safety_allowlist`` and is
+re-bound here as ``load_allowlist`` and its helpers so the scan keeps one entry point
+(see that module for the file's format and its three narrowings: exact paths, one label
+per path, and neither config file exemptable).
 """
 
 from __future__ import annotations
 
 import os
 import re
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+# The committed allowlist's reader lives one module deeper, split for the same reason
+# ``public_safety_io`` was (the 500-line cap has no override) and bound here as the names
+# the scan and its tests use, so ``public_safety`` keeps owning the whole exemption
+# contract: binding, not copying -- the functions are one object, in one place.
 from . import public_safety_io as _io
+from . import public_safety_scan as _scan
+
+# The re-export is deliberate: these are this module's published vocabulary (the tests,
+# the census and the gate reach the exemption contract through here), so the names are
+# bound rather than reached through the package attribute.
+from .public_safety_allowlist import (  # noqa: F401  (re-export: this module owns the exemption vocabulary)
+    ALLOWLIST_ENV_VAR,
+    ALLOWLIST_FILENAME,
+    ALLOWLIST_PATTERNS,
+    ALLOWLIST_REFUSED_LABEL,
+    ALLOWLIST_STALE_LABEL,
+    AllowlistEntry,
+    AllowlistResult,
+    allowlist_exempt,
+    allowlist_reason,
+    default_allowlist_file,
+    load_allowlist,
+)
 
 # The guarded open and the read built on it live one module deeper, split along the seam
 # #91 created. Bound here as the private names the scan and its tests already use, so
@@ -83,6 +112,17 @@ DENYLIST_FILENAME = ".noni-scrub-denylist"
 def default_denylist_file(repo: Path) -> Path:
     """The untracked deny-list path of the tree being audited."""
     return Path(repo).resolve() / DENYLIST_FILENAME
+
+
+def _default_allowlist_file(repo: Path) -> Path:
+    """The default allowlist path of the tree being audited. The seam tests patch.
+
+    A name of this module's own, mirroring ``_default_denylist_file``: the scan reaches
+    its config default through a spelling the module that owns the scan declares, so one
+    test seam covers both config files. The loader's own copy of the rule is a fallback
+    for a caller that imports only the loader.
+    """
+    return default_allowlist_file(repo)
 
 
 def _default_denylist_file(repo: Path) -> Path:
@@ -301,89 +341,56 @@ def _self_file_exempt(pattern: re.Pattern, label: str, is_self: bool) -> bool:
     Lets the checker's own source and its test carry the literal shapes they detect. Keys
     on the pattern, so a planted secret literal in a self file is still a violation.
     """
-    return is_self and label != "deny-list entry" and pattern in _EXEMPT_BUILTIN_PATTERNS
+    return is_self and label != DENYLIST_LABEL and pattern in _EXEMPT_BUILTIN_PATTERNS
 
 
-def _scan_lines(rel: str, lines: list[str],
-                patterns: list[tuple[re.Pattern, str]]) -> list[str]:
-    """The ``path:line: label`` rows one file's lines earn, at most one per line."""
-    is_self = _is_self_file(rel)
-    rows = []
-    for lineno, line in enumerate(lines, 1):
-        for pattern, label in patterns:
-            if _self_file_exempt(pattern, label, is_self):
-                continue
-            if pattern.search(line):
-                rows.append(f"{rel}:{lineno}: {label}")
-                break  # one violation label per line is enough
-    return rows
-
-
-def _scan_tracked_files(repo: Path, patterns: list[tuple[re.Pattern, str]]) -> list[str]:
-    # The tree being scanned is someone else's, so its config may not turn a read-only
-    # listing into execution: core.fsmonitor names a helper git execs, core.hooksPath
-    # redirects hooks, protocol.ext.allow enables external transport helpers, and a
-    # repo-embedded config carrying any of them would otherwise run under the
-    # scanner's privileges. The two config files a host may carry are pinned to the
-    # null device for the same reason.
-    try:
-        env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
-        result = subprocess.run(
-            ["git", "-C", str(repo),
-             "-c", "core.fsmonitor=false",
-             "-c", f"core.hooksPath={os.devnull}",
-             "-c", "protocol.ext.allow=never",
-             "ls-files", "-z"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env=env,
-        )
-    except subprocess.TimeoutExpired as e:
-        raise RuntimeError("git ls-files timed out (30s); a stuck index lock or fs hang is likely") from e
-    if result.returncode != 0:
-        raise RuntimeError(f"git ls-files failed: {result.stderr.strip()}")
-    violations = []
-    for rel in result.stdout.split("\0"):
-        rel = rel.strip()
-        if not rel:
-            continue
-        result = _read_text_lenient(repo / rel)
-        if result is None:
-            continue
-        lines, fault = result
-        if lines is None:
-            # A regular tracked file the scan could not open or read: reported, not
-            # skipped, because a scan that never held the bytes cannot certify them. Line
-            # 0 is the file itself, and the fault is named by its class and its errno
-            # words -- never its message, which carries a path.
-            detail = f"{fault[0]}: {fault[1]}" if fault[1] else fault[0]
-            violations.append(f"{rel}:0: {UNREADABLE_TRACKED_FILE_LABEL} ({detail})")
-            continue
-        violations += _scan_lines(rel, lines, patterns)
-    return violations
-
-
-def scrub_tracked_files(repo: Path) -> tuple[list[str], str | None, DenylistResult]:
+def scrub_tracked_files(
+    repo: Path,
+) -> tuple[list[str], str | None, DenylistResult, AllowlistResult]:
     """Scan every git-tracked file under ``repo``.
 
     ``repo`` is required: the tree is always named by the caller (the census passes the
     git top level it already read, the CLI the repository it was run from), so a
     wheel-installed copy of this module can never scan the wrong tree by locating itself.
 
-    Returns (violations, denylist_source, denylist): violations is a list of
+    Returns (violations, denylist_source, denylist, allowlist): violations is a list of
     ``path:line: label`` strings (empty means the repo is clean); denylist_source is the
     deny-list file path that was loaded, or None when the class was not active (absent or
     corrupt — a prominent stderr notice is printed either way, and a green run without the
     deny-list does NOT guarantee scrub-clean; see docs/PUBLISHING.md step 1); denylist
     carries the full outcome for callers that need to tell a comments-only file apart from
-    a missing one.
+    a missing one; allowlist carries the committed allowlist's outcome, including the
+    ``path:line: label`` rows its own stale and refused entries earn, which travel in
+    ``violations`` beside the scan's.
+
+    ``allowlist.status`` is what the two entry points read to decide their verdict: the
+    gate exits 3 and the census reports the class as not run on "malformed" or
+    "unreadable", because a scan that could not read the exemptions it was told to
+    honour did not run. The fourth tuple member is part of the scan's contract: the
+    callers that unpack it are ``scripts/public_safety.py`` and the census's hygiene
+    class, and both name it.
     """
     denylist = load_denylist(repo)
+    allowlist = load_allowlist(repo)
     patterns = list(BUILTIN_PATTERNS)
     for entry in denylist.entries:
-        patterns.append((re.compile(re.escape(entry)), "deny-list entry"))
-    violations = _scan_tracked_files(repo, patterns)
+        patterns.append((re.compile(re.escape(entry)), DENYLIST_LABEL))
+    # The state check comes first, and before any scan: a run that could not read the
+    # exemptions it was told to honour did not run, so it reports the allowlist's own rows
+    # and nothing else. Scanning anyway and returning the result would dress an unknown
+    # exemption set up as a verdict, and the loader's stderr line (which the CLI prints
+    # and the census silences) would be the only trace of why.
+    if allowlist.status in ("malformed", "unreadable"):
+        return list(allowlist.findings), None, denylist, allowlist
+
+    exempt = exempted_pairs(allowlist)
+    # The scan call goes through this module's own name, not ``_scan``'s: it is the seam
+    # ``tests/test_census_hygiene.py`` bends, and the census must run what the test bent.
+    violations = _scan_tracked_files(repo, patterns, exempt)
+    # The allowlist's own rows (a stale entry, a refused file) are carried by
+    # ``allowlist.findings``, which the loader filled -- they are not recomputed here, so
+    # the loader is the one place that decides what the file itself is accused of.
+    violations += list(allowlist.findings)
     if denylist.status != "ok":
         reason = "unreadable/corrupt" if denylist.status == "corrupt" else "absent"
         source_note = f" file: {denylist.source}" if denylist.source else ""
@@ -394,7 +401,27 @@ def scrub_tracked_files(repo: Path) -> tuple[list[str], str | None, DenylistResu
             "guarantee. See docs/PUBLISHING.md step 1.",
             file=sys.stderr,
         )
-    return violations, denylist.source if denylist.status == "ok" else None, denylist
+    return violations, denylist.source if denylist.status == "ok" else None, \
+        denylist, allowlist
+
+
+# The scan's entry points, re-bound as this module's own: they are patch targets, and
+# each is the moved function re-exported under the spelling its callers and tests name.
+_scan_tracked_files = _scan.scan_tracked_files
+_scan_lines = _scan.scan_lines
+_tracked_listing = _scan.tracked_listing
+exempted_pairs = _scan.exempted_pairs
+
+# The row label the deny-list class gives a hit, published because the allowlist's rules
+# are stated against it (a committed file may never exempt it) and because a test that
+# plants a deny-list hit needs the same spelling the scan writes.
+DENYLIST_LABEL = "deny-list entry"
+
+
+# The gate's word for the state the CLI reports as exit 3 because of the allowlist. The
+# number carries the verdict; this is the phrase the CLI line and the census row agree on,
+# and the docs test reads it out of this module rather than a copy in a page.
+GATE_COULD_NOT_RUN_WORD = "the gate could not run"
 
 
 def _denylist_active(denylist: DenylistResult) -> bool:

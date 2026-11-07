@@ -275,7 +275,7 @@ def materialise_clone(dest: Path) -> None:
                     ignore=shutil.ignore_patterns(".git", "__pycache__", ".venv",
                                                   "*.pyc", ".pytest_cache",
                                                   ".coverage", ".coverage.*",
-                                                  "noni.egg-info", ".worktrees"))
+                                                  "noni.egg-info", "noni_noni.egg-info", ".worktrees"))
 
 
 def install_venv(installed: InstalledWorld) -> None:

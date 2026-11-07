@@ -46,6 +46,7 @@ UNLICENSED_SOURCE_FILES = ("src", "pyproject.toml")
 # The METADATA headers the [project] table is expected to produce, and the value
 # each must carry. Read from the built artifact rather than from pyproject.toml:
 # the file on disk declaring a key is not the wheel shipping it.
+EXPECTED_NAME = "noni-noni"
 EXPECTED_AUTHOR = "noni contributors"
 EXPECTED_URLS = {
     "Homepage": "https://github.com/OWNER/noni",
@@ -162,6 +163,21 @@ def test_wheel_metadata_declares_the_license_the_file_shows(licensed_wheel: Path
     assert "License :: OSI Approved :: Apache Software License" in (
         message.get_all("Classifier") or []
     ), "the license classifier is missing from the wheel's metadata"
+
+
+def test_wheel_metadata_names_the_distribution(licensed_wheel: Path) -> None:
+    """The artifact carries the reserved distribution name, spelled exactly.
+
+    The build normalises a name twice over: the wheel filename and the
+    ``dist-info`` directory get the underscore form while ``METADATA`` keeps the
+    hyphen, so the assertion is on the header value and not on a substring a
+    normalised spelling would also satisfy. It is what pins ``[project] name``
+    to the artifact: nothing else in the suite reads that header.
+    """
+    name = _metadata(licensed_wheel).get("Name")
+    assert name == EXPECTED_NAME, (
+        f"the wheel's Name is {name!r}, expected exactly {EXPECTED_NAME!r}"
+    )
 
 
 def test_wheel_metadata_names_the_authors_without_a_personal_name(

@@ -474,6 +474,13 @@ def test_pyproject_declares_the_package_and_the_console_command():
     'one install and one command' true.
     """
     data = _pyproject()
+    # The distribution is named apart from the import package and the command:
+    # the short name was already taken on the index, so the wheel a reader
+    # installs and the `noni` they type are deliberately spelled differently.
+    assert data["project"]["name"] == "noni-noni", (
+        f"[project] name is not the distribution the project reserves: "
+        f"{data['project'].get('name')!r}"
+    )
     assert data["project"]["scripts"] == {"noni": "noni.cli:main"}, (
         f"[project.scripts] is not the one noni command: {data['project'].get('scripts')}"
     )

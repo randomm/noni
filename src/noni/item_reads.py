@@ -277,3 +277,38 @@ def dropped_title_taken(repo: Path, title: str, report, exit_io: int,
                        "the record of why it was dropped is the answer: file the idea "
                        "under a different title, or restore that item by its id")
     return None
+
+
+def refuse_cited_order(repo: Path, item_id: str, report, exit_io: int,
+                       exit_refusal: int) -> int | None:
+    """The refusal ``promote`` owes an order that cites this item, or None.
+
+    Promote is item-only in this sub-issue, so an order that already cites the item
+    is refused rather than left pointing at a newly promoted item the same commit did
+    not rewrite. The question is answered by :func:`order_cites_item` beside this
+    function, which distinguishes "no entry cites it" from "the order could not be
+    read", and the two get different codes: the first is no refusal at all, the second
+    is the caller's environment code naming the order path, because a run that read
+    nothing may not promote on the strength of not having read it. Sub-issue 2 replaces
+    this refusal with the same-commit order rewrite.
+
+    The two refusals are built here and printed through the caller's ``report``, the
+    way every other read in this module hands its answer back: the reader keeps the
+    question and the wording of its answer, and the writer keeps its codes, its voice
+    and the choice of when the question is asked at all.
+    """
+    cited, answered = order_cites_item(repo, item_id)
+    if answered and not cited:
+        return None
+    if not answered:
+        return report(exit_io, f"{orderschema.ORDER_REL} could not be read, so "
+                     "whether an order entry cites this item cannot be answered",
+                       f"repair or remove {orderschema.ORDER_REL}, then re-run the "
+                       "item writer")
+    return report(exit_refusal,
+                  f"{orderschema.ORDER_REL} has an entry that cites item {item_id}, "
+                  "so promoting the item alone would leave the order out of step",
+                  f"the order is what has to change: correct that entry in "
+                  f"{orderschema.ORDER_REL} with the order writer in the same commit "
+                  "as the promotion; until the order carries items, remove it and "
+                  "re-run promote")

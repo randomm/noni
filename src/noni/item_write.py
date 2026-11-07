@@ -68,3 +68,45 @@ def unchanged(target: Path, rendered: bytes) -> bool:
     except OSError:
         return False
     return same
+
+
+def commit(repo: Path, rel: str, subject: str, shown: Path, report, exit_io: int,
+           exit_ok: int, label: str) -> int:
+    """Stage and commit exactly ``rel``, or the exit-3 code naming which step failed.
+
+    ``--only`` with the explicit path: the commit carries what this run wrote and
+    never a file somebody else had staged. A timeout is its own answer (the caller's
+    exit-3 code, the file named, never claimed as committed) rather than a traceback,
+    so every caller classifies a hung git the same way. The two lines of each refusal
+    and the committed line are built here and printed through the caller's ``report``,
+    so the writer keeps the voice and the code table and this module keeps the git
+    mechanics: ``label`` is the running program's name, which is what lets a refusal
+    reached through borrowed mechanics read as coming from the program that ran.
+    """
+    added = gitwrite.git(repo, "add", "--", rel)
+    if added.returncode == gitwrite.GIT_TIMEOUT_RC:
+        return report(exit_io, f"git add timed out for {rel} after "
+                   f"{gitwrite.GIT_TIMEOUT}s (the file is written, its staged state "
+                   "unknown)",
+                       "check 'git status --porcelain' once git answers, then stage "
+                       f"and commit the path by hand or re-run {label}")
+    if added.returncode != 0:
+        detail = added.stderr.strip() or added.stdout.strip() or "no reason given"
+        return report(exit_io, f"git add failed for {rel} (the file is written, "
+                   f"unstaged): {detail}",
+                       f"run 'git status --porcelain -- {rel}' and stage the path by "
+                       f"hand, or re-run {label}")
+    committed = gitwrite.git(repo, "commit", "-q", "-m", subject, "--only", "--", rel)
+    if committed.returncode == gitwrite.GIT_TIMEOUT_RC:
+        return report(exit_io, f"git commit timed out for {rel} after "
+                   f"{gitwrite.GIT_TIMEOUT}s (the file is written and staged, not "
+                   "committed)",
+                       "check 'git log -1 --oneline' once git answers, then commit "
+                       f"the path by hand or re-run {label} once git answers")
+    if committed.returncode != 0:
+        detail = committed.stderr.strip() or committed.stdout.strip() or "no reason given"
+        return report(exit_io, f"git commit failed for {rel} (the file is written "
+                   f"and staged, not committed): {detail}",
+                       f"commit {rel} by hand, or re-run {label} once git answers")
+    print(f"{label}: committed {shown} ({subject.split(' [', 1)[0]})")
+    return exit_ok

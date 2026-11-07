@@ -80,13 +80,13 @@ success line names (wrote, committed, or left uncommitted) is the artifact's rea
 location as seen from the caller's working directory: ``--repo`` followed by
 noni/items/<id>.json, spelled the same with and without --no-commit.
 
-The artifact's shape lives in itemschema.py in the package, the read of the order it
-must not contradict in item_reads.py, and the reads of the ledger it cites are reused
-from orderstate.py; the git and atomic-write mechanics are reused from
-order_gitwrite.py. All are package imports: inside an installed wheel there is no
-sibling file to load by path, and no directory of the package ever goes on
-``sys.path``, so no caller can put a lookalike ahead of them. This file owns the
-verbs, the exit codes, the plan and the commit.
+The artifact's shape lives in itemschema.py in the package, the two guards the verbs
+run first in item_guard.py, the reads of the order and the ledger it must not
+contradict in item_reads.py, and the file and git mechanics in item_write.py (whose
+own git calls are reused from order_gitwrite.py). All are package imports: inside an
+installed wheel there is no sibling file to load by path, and no directory of the
+package ever goes on ``sys.path``, so no caller can put a lookalike ahead of them. This
+file owns the verbs, the exit codes, the plan and what each run prints.
 """
 
 from __future__ import annotations
@@ -97,16 +97,13 @@ import sys
 from pathlib import Path
 
 from . import (
-    _path_kind,
+    item_guard,
     item_reads,
     item_write,
     itemschema,
     labels,
-    ledger_schema,
-    orderschema,
     orderstate,
 )
-from . import order_gitwrite as gitwrite
 
 
 # The state reader reports a refusal as a (headline, hint) pair and leaves the code
@@ -220,73 +217,21 @@ def _digests(data: bytes) -> str:
 def _refuse_linked_state(repo: Path, verb: str) -> int | None:
     """The exit-2 refusal for a ``--repo`` this writer may not read or write, or None.
 
-    One seam for both ``noni/`` questions of :data:`_GUARDED_DIRS`, in the order and
-    with the wording :func:`noni._path_kind.refuse_state_root` owns. Only ``add`` is
-    admitted to the state-root question: it is this writer's one sanctioned creator,
-    while ``list``, ``drop`` and ``promote`` create nothing legitimate and are refused
-    ahead of the reads that would otherwise answer "no such item". ``EXIT_USAGE`` is
-    the code docs/PRODUCT.md 7 gives ``item`` for a wrong path; the guard runs before
-    the artifact read, the ledger lookup and every mkdir.
+    The guard's rule, its walk and its wording are ``item_guard``'s; the code and the
+    voice of the printed refusal are this writer's, handed over at the call.
     """
-    refused = _path_kind.refuse_state_root(repo, verb == "add", _GUARDED_DIRS)
-    return None if refused is None else _fail(EXIT_USAGE, *refused)
-
-
-def _refuse_text(flag: str, value: str, limit: int, what: str) -> int | None:
-    """The exit-2 refusal for a flag whose value is not one bounded line, or None.
-
-    Blank, multi-line and over-long are the three ways a free-text flag stops being
-    the one line it names, and all three are refused at the flag rather than at the
-    file: a value carrying a newline into the artifact would put a second line into a
-    listing, and one past the bound would put an unbounded row into the census. The
-    predicate is the ledger's, so one rule holds a decision record's name field and
-    an item's title.
-    """
-    if not ledger_schema.is_single_line(value):
-        return _fail(EXIT_USAGE, f"{flag} {value!r} is not a non-blank single line",
-                     f"{what} is one line of text: pass it without a newline and "
-                     "with something in it")
-    if len(value) > limit:
-        return _fail(EXIT_USAGE, f"{flag} is {len(value)} characters, past the "
-                     f"{limit} limit", f"shorten {flag} to at most {limit} characters")
-    return None
+    return item_guard.linked_state(repo, verb, _GUARDED_DIRS, _fail, EXIT_USAGE)
 
 
 def _commit(repo: Path, rel: str, subject: str, shown: Path) -> int:
     """Stage and commit exactly ``rel``, or the exit-3 code naming which step failed.
 
-    ``--only`` with the explicit path: the commit carries what this run wrote and
-    never a file somebody else had staged. A timeout is its own answer (exit 3, the
-    file named, never claimed as committed) rather than a traceback, so every caller
-    classifies a hung git the same way.
+    The git mechanics and their four refusals are ``item_write.commit``'s; the code
+    table, the printed voice and the committed line's label are this writer's, handed
+    over at the call, so a hung or failing git is classified one way by every route.
     """
-    added = gitwrite.git(repo, "add", "--", rel)
-    if added.returncode == gitwrite.GIT_TIMEOUT_RC:
-        return _fail(EXIT_IO, f"git add timed out for {rel} after "
-                   f"{gitwrite.GIT_TIMEOUT}s (the file is written, its staged state "
-                   "unknown)",
-                     "check 'git status --porcelain' once git answers, then stage "
-                     "and commit the path by hand or re-run item.py")
-    if added.returncode != 0:
-        detail = added.stderr.strip() or added.stdout.strip() or "no reason given"
-        return _fail(EXIT_IO, f"git add failed for {rel} (the file is written, "
-                   f"unstaged): {detail}",
-                     f"run 'git status --porcelain -- {rel}' and stage the path by "
-                     "hand, or re-run item.py")
-    committed = gitwrite.git(repo, "commit", "-q", "-m", subject, "--only", "--", rel)
-    if committed.returncode == gitwrite.GIT_TIMEOUT_RC:
-        return _fail(EXIT_IO, f"git commit timed out for {rel} after "
-                   f"{gitwrite.GIT_TIMEOUT}s (the file is written and staged, not "
-                   "committed)",
-                     "check 'git log -1 --oneline' once git answers, then commit the "
-                     "path by hand or re-run item.py once git answers")
-    if committed.returncode != 0:
-        detail = committed.stderr.strip() or committed.stdout.strip() or "no reason given"
-        return _fail(EXIT_IO, f"git commit failed for {rel} (the file is written and "
-                   f"staged, not committed): {detail}",
-                     f"commit {rel} by hand, or re-run item.py once git answers")
-    print(f"{labels.ITEM}: committed {shown} ({subject.split(' [', 1)[0]})")
-    return EXIT_OK
+    return item_write.commit(repo, rel, subject, shown, _fail, EXIT_IO, EXIT_OK,
+                             labels.ITEM)
 
 
 def _write(repo: Path, body: dict, verb: str, no_commit: bool) -> int:
@@ -308,7 +253,29 @@ def _write(repo: Path, body: dict, verb: str, no_commit: bool) -> int:
         return _fail(EXIT_REFUSAL, "the planned item cannot be written as JSON",
                      "re-run item.py; if it repeats, remove the item and re-file "
                      "the idea")
+    verdict, headline, hint = item_write.write_item(
+        repo, body, rendered, _committable(repo, verb, no_commit, rendered))
+    if verdict == "refuse":
+        # Two shapes reach here: the environment refusals of the file step, which
+        # carry their own two lines and take exit 3, and a commit step that already
+        # printed its own refusal and returned its own code -- for which this prints
+        # nothing and hands back the code the commit chose.
+        return EXIT_OK if not headline else _fail(EXIT_IO, headline, hint)
+    print(f"{labels.ITEM}: {body['id']} is {body['status']} ({verb})")
+    if verdict == "unchanged":
+        print(f"{labels.ITEM}: {rel} is unchanged; nothing to commit")
+    return EXIT_OK
 
+
+def _committable(repo: Path, verb: str, no_commit: bool, rendered: bytes):
+    """The commit step ``item_write.write_item`` runs once the file is in place.
+
+    A step of the verb above, curried into a callback so the file module never names
+    git, a code or a line of output: ``--no-commit`` answers for itself, and otherwise
+    the verb's own commit runs and turns its code back into the (verdict, headline,
+    hint) triple the write speaks. The digest is taken over the bytes actually put on
+    disk, which is what makes a repeat of the same item a repeat of the same subject.
+    """
     def commit(shown: Path, path_rel: str) -> tuple[str, str, str | None]:
         if no_commit:
             print(f"{labels.ITEM}: wrote {shown}; left uncommitted: commit this path "
@@ -317,47 +284,16 @@ def _write(repo: Path, body: dict, verb: str, no_commit: bool) -> int:
         code = _commit(repo, path_rel, f"items: {verb} [{_digests(rendered)}]", shown)
         return ("ok", "", None) if code == EXIT_OK else ("refuse", "", None)
 
-    verdict, headline, hint = item_write.write_item(repo, body, rendered, commit)
-    if verdict == "unchanged":
-        print(f"{labels.ITEM}: {body['id']} is {body['status']} ({verb})")
-        print(f"{labels.ITEM}: {rel} is unchanged; nothing to commit")
-        return EXIT_OK
-    if verdict == "refuse":
-        # Two shapes reach here: the environment refusals of the file step, which
-        # carry their own two lines and take exit 3, and a commit step that already
-        # printed its own refusal and returned its own code -- for which this prints
-        # nothing and hands back the code the commit chose.
-        return EXIT_OK if not headline else _fail(EXIT_IO, headline, hint)
-    print(f"{labels.ITEM}: {body['id']} is {body['status']} ({verb})")
-    return EXIT_OK
+    return commit
 
 
 def _refuse_cited_order(repo: Path, item_id: str) -> int | None:
     """The refusal ``promote`` owes an order that cites this item, or None.
 
-    Promote is item-only in this sub-issue, so an order that already cites the item
-    is refused rather than left pointing at a newly promoted item the same commit did
-    not rewrite. The question is answered by the borrowed reader, which distinguishes
-    "no entry cites it" from "the order could not be read", and the two get different
-    codes: the first is no refusal at all, the second is exit 3 naming the order path,
-    because a run that read nothing may not promote on the strength of not having read
-    it. Sub-issue 2 replaces this refusal with the same-commit order rewrite.
+    The question, its two answers and their wording are ``item_reads``'; the code
+    table and the printed voice are this writer's, handed over at the call.
     """
-    cited, answered = item_reads.order_cites_item(repo, item_id)
-    if answered and not cited:
-        return None
-    if not answered:
-        return _fail(EXIT_IO, f"{orderschema.ORDER_REL} could not be read, so "
-                     "whether an order entry cites this item cannot be answered",
-                     f"repair or remove {orderschema.ORDER_REL}, then re-run "
-                     f"{labels.ITEM}")
-    return _fail(EXIT_REFUSAL,
-                 f"{orderschema.ORDER_REL} has an entry that cites item {item_id}, "
-                 "so promoting the item alone would leave the order out of step",
-                 f"the order is what has to change: correct that entry in "
-                 f"{orderschema.ORDER_REL} with order.py in the same commit as the "
-                 "promotion; until the order carries items, remove it with "
-                 "'order.py remove <issue>' and re-run item.py promote")
+    return item_reads.refuse_cited_order(repo, item_id, _fail, EXIT_IO, EXIT_REFUSAL)
 
 
 def _state_root(args: argparse.Namespace, verb: str) -> Path | None:
@@ -459,7 +395,8 @@ def _run_add(repo: Path, args: argparse.Namespace, stamp: str) -> int:
                      "a name",
                      f"{labels.ITEM} --repo REPO add my-idea --title 'Cache the "
                      "census'")
-    refused = _refuse_text("--title", args.title, itemschema.TITLE_MAX, "the title")
+    refused = item_guard.bad_text("--title", args.title, itemschema.TITLE_MAX,
+                                      "the title", _fail, EXIT_USAGE)
     if refused is not None:
         return refused
     existing, code = item_reads.read_item(repo / itemschema.item_rel(args.id),
@@ -489,7 +426,8 @@ def _run_drop(repo: Path, args: argparse.Namespace, stamp: str) -> int:
         return _fail(EXIT_USAGE, "drop needs --why REASON: a kill without a reason "
                      "is a deletion, not a record",
                      "pass the one line that says why, e.g. --why 'duplicated #12'")
-    refused = _refuse_text("--why", args.why, itemschema.WHY_MAX, "the reason")
+    refused = item_guard.bad_text("--why", args.why, itemschema.WHY_MAX,
+                                    "the reason", _fail, EXIT_USAGE)
     if refused is not None:
         return refused
     existing, code = item_reads.read_item(repo / itemschema.item_rel(args.id),

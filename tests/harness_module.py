@@ -51,6 +51,7 @@ for _alias, _pkg_name in (
     ("census_hygiene", "census_hygiene"),
     ("census_hygiene_rows", "census_hygiene_rows"),
     ("census_items", "census_items"),
+    ("census_items_gate", "census_items_gate"),
     ("census_items_readers", "census_items_readers"),
     ("census_json", "census_json"),
     ("census_ledger", "census_ledger"),
@@ -71,7 +72,9 @@ for _alias, _pkg_name in (
     ("orderschema", "orderschema"),
     ("orderstate", "orderstate"),
     ("item", "item"),
+    ("item_reads", "item_reads"),
     ("itemschema", "itemschema"),
+    ("item_write", "item_write"),
     ("public_safety", "public_safety"),
     ("public_safety_scan", "public_safety_scan"),
     # The allowlist reader is registered beside the scanner it serves: a test that bends

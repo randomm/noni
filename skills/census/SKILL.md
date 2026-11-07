@@ -31,10 +31,11 @@ directory, is a usage error (exit 2) before any check runs.
 | `--sessions PATH` | `<repo>/noni/sessions` | override the sessions directory |
 | `--ordering PATH` | `<repo>/noni/direction/order.json` | override the ordering artifact |
 | `--intent PATH` | `<repo>/noni/direction/intent.md` | override the standing intent file (its citation is still answered against the run's `--ledger`) |
+| `--items DIR` | `<repo>/noni/items` | override the item store. An absent store is not a finding (an idea nobody filed earns no row); a store named here that cannot be listed is reported by `item-unlistable` rather than reading as an empty store |
 | `--issue-state FILE` | — | JSON map `{"<issue>": "open"\|"closed"}` produced by an adapter or the operator; the only route by which closed state reaches the census, which never contacts a tracker |
 | `--now ISO-8601` | current UTC | fixed timestamp for time-based checks (reproducible output) |
-| `--stale-after` | `7d` for `session-stalled`, `30d` for `ordering-stale` | staleness threshold; positive whole days as `<N>` or `<N>d` (e.g. `7` or `7d`). Given explicitly, it is the one threshold both classes use; omitted, each class keeps its own default |
-| `--strict` | off | treat every warn class as a failure: `session-stalled`, `probe`, `ledger-empty`, `session-same-identity`, `session-deleted`, `ordering-stale`, `ordering-closed`, `hygiene` |
+| `--stale-after` | `7d` for `session-stalled`, `30d` for `ordering-stale` and `item-stale` | staleness threshold; positive whole days as `<N>` or `<N>d` (e.g. `7` or `7d`). Given explicitly, it is the one threshold all three classes use; omitted, each class keeps its own default |
+| `--strict` | off | treat every warn class as a failure: `session-stalled`, `probe`, `ledger-empty`, `session-same-identity`, `session-deleted`, `ordering-stale`, `ordering-closed`, `hygiene`, `item-stale`, `item-unreadable`, `item-unlistable` |
 | `--json` | off | emit NDJSON records on stdout (`noni.census/1`) |
 | `--only CHECK` | all | run only the named check (repeatable). Rows of a class it does not name are dropped; a row about the file a group was asked to read is reported whatever the filter names, because a group that could not read its input must say so |
 | `--skip CHECK` | none | skip the named check (repeatable) |
@@ -60,6 +61,12 @@ directory, is a usage error (exit 2) before any check runs.
 | `ordering-closed` | 46 | an ordered issue the `--issue-state` file says is closed; also the `cannot-tell` row for an entry the file does not mention (warn by default; fail under `--strict`) |
 | `intent` | 51 | `noni/direction/intent.md` is there and is not the artifact: a `## Purpose` / `## Principles` / `## Never` / `## Ask first` heading missing, repeated or out of order, the `Last-confirmed:` line absent or repeated, or the file past its line cap; or the last commit that touched it is not an `intent: <decision-id>` headline naming a record the ledger holds (`uncited`). The `cannot-tell` row for a file this run could not read, for a cited decision record that is a symlink or any other non-regular path, for a ledger directory reached through a symlink, or for a file no commit touched, is a warn (fail under `--strict`); an absent file adds no row at all |
 | `hygiene` | 50 | a tracked file fails the public-repo hygiene scan (machine-local home path, secret shape, active deny-list entry), a committed allowlist entry matches nothing, or the scan/deny-list did not run (warn by default; fail under `--strict`) |
+| `item-malformed` | 52 | an item file under `noni/items/` is there and is not the artifact: wrong `schema`, an `id` that is not its own file's name or is not lowercase letters, digits and dashes, a `title` that is blank, multi-line or past its bound, a `status` outside `candidate`/`promoted`/`dropped`, a `created` that is not a UTC timestamp, or an `issue`/`decision`/`why` carried by a status that does not owe it (a `dropped` item with no `decision` or no `why` is one of these) |
+| `item-dangling-link` | 53 | an item's `decision` names no live record: no file under `noni/decisions/` carries that id, or the record it finds is superseded (the row names its successor when the ledger holds one) |
+| `item-issue-mismatch` | 54 | a status, an `issue` and the order disagree: a `promoted` item naming no issue, a `candidate` or `dropped` item naming an issue, or a `promoted` item whose issue no entry of `noni/direction/order.json` holds |
+| `item-stale` | 55 | a `candidate` whose `created` is older than the `--stale-after` threshold relative to `--now` (warn by default; fail under `--strict`) |
+| `item-unreadable` | 56 | a file the run was told to read and could not: a symlink (never followed), a directory or device, unreadable bytes, or a document the strict reader refused; also the `cannot-tell` row for a cited decision record this run could not read (warn by default; fail under `--strict`) |
+| `item-unlistable` | 57 | the store exists and could not be listed, so no item of it was checked (warn by default; fail under `--strict`) |
 
 The `warn` classes are reported either way and never move the exit code on
 their own: a run whose only findings are warnings exits 0, and `--strict`
@@ -99,6 +106,12 @@ class that fired.
 46  ordering-closed (warn by default; failure under --strict)
 50  hygiene (warn by default; failure under --strict)
 51  intent
+52  item-malformed
+53  item-dangling-link
+54  item-issue-mismatch
+55  item-stale (warn by default; failure under --strict)
+56  item-unreadable (warn by default; failure under --strict)
+57  item-unlistable (warn by default; failure under --strict)
 ```
 
 A clean exit with warnings is normal: a cannot-tell staleness probe (no git

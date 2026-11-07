@@ -53,9 +53,12 @@ from __future__ import annotations
 import re
 import sys
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 
+# The census's git view lives in census_git.py beside this file; its names are
+# re-exported here because the census is their home for callers and for the census's
+# own tests, which patch and assert on them through the module they already import.
 from .census_git import (  # noqa: F401  (re-exported: the census is their home)
     GIT_ENV_NEUTRAL,
     Git,
@@ -109,7 +112,7 @@ from .census_render import (  # noqa: F401  (re-exported: the census is their ho
 # threshold and filter helpers and the renderers) lives in census_report.py beside
 # this file, and is re-exported here for the same reason: the census is the entry
 # point its callers and tests import.
-from .census_report import (  # noqa: F401  (re-exported: the census is their home)
+from .census_report import (  # noqa: F401  (re-exported: the census is home)
     CHECKS,
     CLASS_CODE,
     CLASS_FIX,
@@ -125,6 +128,12 @@ from .census_report import (  # noqa: F401  (re-exported: the census is their ho
     SESSION_CHECKS,
     WHOLE_ARTIFACT_KEY,
 )
+
+# The row factory and the path/time text helpers live in census_row.py beside this
+# file, re-exported as the census's own names: the row shape and the ``--now`` parse
+# keep one owner and one spelling, and a seam a test puts on ``census._row`` is the
+# one every group's reporter reads at its call.
+from .census_row import _parse_iso, _parse_now, _rel_to, _rel_to_root, _row  # noqa: F401  (re-exported: the census is their home)
 
 # The census owns these public spellings: they are patch targets, and each is the
 # moved function re-exported under the spelling its callers and tests name, not a
@@ -145,84 +154,6 @@ INACTIVE_STATUSES = {"closed", "done", "superseded", "ended"}
 # Session register files follow the allocated shape <YYYY-MM-DD>-<6 hex>.md;
 # anything else is reported as malformed, never treated as an allocated file.
 SESSION_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[0-9a-f]{6}\.md$")
-
-
-def _parse_iso(ts: str) -> datetime | None:
-    try:
-        value = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    except (ValueError, TypeError):
-        return None
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
-
-
-def _parse_now(value: str | None) -> tuple[datetime | None, str | None]:
-    if value is None:
-        return datetime.now(timezone.utc), None
-    parsed = _parse_iso(value)
-    if parsed is None:
-        return None, f"error: --now {value!r} is not a valid ISO-8601 timestamp"
-    return parsed, None
-
-
-def _rel_to(top: Path, path: Path) -> str | None:
-    try:
-        return path.resolve().relative_to(top.resolve()).as_posix()
-    except ValueError:
-        return None
-
-
-def _rel_to_root(root: Path, path: Path) -> str:
-    """``path`` spelled from ``root``, or verbatim when it does not live under it.
-
-    ``resolve`` is the one step that cannot be trusted: it follows the chain a
-    symlinked artefact stands at, and ``pathlib`` turns an ``ELOOP`` into
-    ``RuntimeError``, which is no kind of answer about a path. A row's artifact is
-    its root-relative identifier and nothing more, so the unresolvable path is
-    reported as it was given rather than ending the run.
-    """
-    try:
-        return path.resolve().relative_to(root.resolve()).as_posix()
-    except ValueError:
-        return str(path)
-    except RuntimeError:
-        return str(path)
-
-
-def _row(check: str, strict: bool, subject: str, artifact: str, message: str,
-         root: Path, relative_artifact: bool = True, severity: str | None = None,
-         whole_artifact: bool = False) -> dict:
-    """Build one finding row: the only place a row's shape is written.
-
-    ``code``/``fix`` come from CHECKS and ``severity`` from `_severity`, so a
-    new row field (or a change to how those three are derived) is one edit
-    here rather than five reporter-by-reporter copies. ``artifact`` is rooted
-    into the audited tree by default; a reporter that names an artefact
-    outside it passes ``relative_artifact=False`` and supplies its own id.
-
-    ``severity`` overrides the class default for a single row. It exists for
-    the probe-honesty case only — a row that reports *this run could not read
-    its input* rather than a protocol violation, which is a warn regardless of
-    its class. The override goes through `_promote`, so ``--strict`` still
-    escalates it and that rule keeps its one owner. A reporter that passes
-    ``severity`` must pass the run's ``strict``, not a literal.
-
-    ``whole_artifact`` marks a row as about the file a group was asked to read
-    rather than one entry inside it: the marker is ``WHOLE_ARTIFACT_KEY``,
-    underscore-keyed so it is stripped at render, and the run's row filter never
-    drops such a row (see the module docstring and ``census_run.keep``).
-    """
-    severity = _promote(severity, strict) if severity else _severity(check, strict)
-    return {
-        "check": check,
-        "code": CLASS_CODE[check],
-        "severity": severity,
-        "subject": subject,
-        "artifact": _rel_to_root(root, Path(artifact)) if relative_artifact else artifact,
-        "message": message,
-        WHOLE_ARTIFACT_KEY: whole_artifact,
-    }
 
 
 def _file_kind(path: Path, kind: str = "file") -> tuple[str, str | None]:
@@ -437,26 +368,12 @@ def _check_sessions_deleted(
 # mechanics handed to them live in ``census_run.py`` beside this file with the
 # body of the run, which reads the mechanics back off this module at the call.
 
-# The six item classes live in census_items.py beside this file and their reads in
-# census_items_readers.py, with the store's one readdir in the same readers module
-# (the ``_sessions_listing`` twin below). The census re-exports the store's probe as
-# its own seam, so the group's tests patch a name of the module they already import
-# and the run reaches one definition of the readdir.
-from . import census_items_readers as _items_probe  # noqa: E402
-
-ItemsProbe = _items_probe.ItemsProbe
-
-
-def _items_listing(items: Path) -> ItemsProbe:
-    """The store's one listing, taken by the census exactly once per run.
-
-    The ``_sessions_listing`` and ``_ledger_probe`` twin: the body is the sibling's,
-    this is the seam the census's tests patch and the one place the body asks for the
-    store. An explicit ``Path.iterdir`` and never ``Path.glob``, because a store the
-    run could not list must not answer as the empty store of a project that filed no
-    idea (see ``census_items_readers.items_listing``).
-    """
-    return _items_probe.items_listing(items)
+# The six item classes live in census_items.py beside this file, their reads in
+# census_items_readers.py, and the store's one readdir in census_items_probe.py (the
+# ``_sessions_listing`` twin), re-exported here as the census's own seam so the
+# group's tests patch a name of the module they already import and the run reaches
+# one definition of the readdir.
+from .census_items_probe import ItemsProbe, _items_listing  # noqa: E402,F401
 
 
 def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict],

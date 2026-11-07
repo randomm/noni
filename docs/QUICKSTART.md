@@ -6,9 +6,7 @@ which covers what that block cannot: how to install noni when no package index
 carries it, where the state root may live, and the two routes to it.
 
 `docs/PRODUCT.md` §7 is the binding statement of the state-root rule; this page
-is the commands. Every tree this page names and every command in it is run
-against a throwaway repository by the suite, so a step that stopped working
-fails a test rather than a first run.
+is the commands.
 
 ## Install noni
 
@@ -72,6 +70,7 @@ that names the state root. Nothing else does: not the tool's own location, not
 the current directory beyond `--repo`'s default, and no environment variable. A
 `--repo` that is missing or is not a directory stops the command with a clear
 message and that tool's own argument-refusal code, and so does a `--repo` holding no `noni/` (§7).
+
 Two routes. Both are supported, and both are covered below.
 
 - **In-project state** (the default): the state root is the project's own
@@ -205,6 +204,7 @@ class scans the tree it audits, which here is the state clone.
 Then write the state clone's scrub deny-list: the untracked file the section below
 explains. It sits at the clone's root, not the project's, and must stay untracked: a
 committed list of the names being scanned for is the leak the file exists to prevent.
+
 The example names are the ones the deny-list section below shows; put your own in
 their place. Then ignore the file in the clone and commit that rule:
 
@@ -221,7 +221,8 @@ git -C .noni-state commit -q -m 'chore: keep the scrub deny-list untracked'
 Then push the branch, once. The writers commit locally (and fetch-rebase-push
 onto the branch they find, with `--push`); on a repository whose branch has
 never existed the only thing to push is what the commands above just committed,
-and `-u` is what makes every later push and pull work without naming the remote again.
+and `-u` is what makes every later push and pull of that branch work without
+naming the remote again.
 
 ```bash
 git -C .noni-state push -u origin HEAD
@@ -287,8 +288,7 @@ per-issue state, worktree claims and a queue. noni does not compete with it.
   `noni/sessions/` **does not exist**: do not create it as an empty directory.
   A register that is absent is a clean state and the sessions group stays
   wordless; a register that exists and cannot be listed earns a `cannot-tell`
-  row of the `session-deleted` class instead. Skipping claims therefore means
-  not writing the directory, not writing an empty one.
+  row of the `session-deleted` class instead.
 
 ## The deny-list, and why --strict fails on a fresh attach
 
@@ -338,7 +338,8 @@ from it does not mean every ordered issue is open.
 
 The census says so out loud whichever mode you read it in. In human-readable
 mode it says it twice: a run with no finding row that skipped a check opens
-`census: no findings; <class> did not run`, not the banner, plus one `note:` line:
+`census: no findings; <class> did not run`, not the banner, plus one
+`note:` line:
 
 ```text
 note: ordering-closed was not evaluated: no --issue-state FILE was given, so whether an ordered issue is closed is not asked (the census never contacts a tracker)
@@ -351,7 +352,8 @@ Keep the ordering group in the run either way (`--only` must name an ordering cl
 or name none), because a run that never reached the class reports nothing about
 it.
 
-The census ships no producer. A tracker with a command line and `jq` produce one:
+The census ships no producer. A tracker with a command line and `jq` produce
+one:
 
 ```bash
 gh issue list --state all --json number,state --jq \
@@ -387,11 +389,11 @@ Two things outside noni decide whether a first run works:
   means the state clone, not the project.
 - **A Python 3 on the reading machine** for every entry point under
   `skills/<skill>/scripts/`, including the ledger shim `census.sh` and the
-  sessions shim `census-sessions.sh`, which run the interpreter named by
-  `NONI_PYTHON` and default to `python3`. That interpreter also has to import the
-  package, so the wrappers need the install above or `PYTHONPATH=<clone>/src`,
-  whichever route you took. On the `PYTHONPATH` form the tools are reached with
-  `python3 -m noni` rather than `noni`, which is the same command by another name.
+  sessions shim `census-sessions.sh`,
+  which run the interpreter named by `NONI_PYTHON` and default to `python3`. That
+  interpreter also has to import the package, so the wrappers need the install
+  above or `PYTHONPATH=<clone>/src`
+  whichever route you took.
   A wrapper whose interpreter or package is missing names the fault on one plain
   line and exits 3 rather than printing a traceback. Neither shim needs `jq`: the
   unified census is the one arbiter of both.

@@ -27,8 +27,10 @@ from __future__ import annotations
 
 import re
 import shlex
+from pathlib import Path
 
 from docs_commands import fenced_pairs
+from docs_promises import QUICKSTART
 
 # A script path: path segments of word characters, dots, dashes and angle brackets
 # (the placeholder a page spells an unknown location with), the last one carrying the
@@ -135,7 +137,7 @@ def has_install_precondition(text: str) -> bool:
 _PRECONDITION_PHRASES: tuple[str, ...] = ("must be installed", "importable")
 
 
-def quickstart_install_link(text: str) -> bool:
+def quickstart_install_link(text: str, *, path: Path | None = None) -> bool:
     """Whether the page sends the reader to the quickstart's install section.
 
     The link is the sentence's target: a page that says the package must be installed,
@@ -143,5 +145,11 @@ def quickstart_install_link(text: str) -> bool:
     that owns it. The anchor is required as well as the page, so the link lands on the
     section that carries the prose rather than on the top of a long page. Both are
     matched on the raw text: a markdown link is not rewrapped mid-path.
+
+    One page cannot satisfy this and is exempt on that ground alone: the quickstart,
+    which cannot link the section it is standing in. It is held instead by
+    ``tests/test_docs_precondition.py`` to state the precondition inside that section.
     """
+    if path is not None and path.name == QUICKSTART.name:
+        return True
     return "docs/QUICKSTART.md" in text and "#install-noni" in text

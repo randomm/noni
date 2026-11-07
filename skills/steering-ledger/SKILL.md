@@ -48,6 +48,11 @@ repository never reads as a stray `noni/` beside the project.
 
 ## Writing a record
 
+`decide.py` is a wrapper: it imports the `noni` package, which must be installed
+or importable on `PYTHONPATH` before it runs (the *Install noni* section of
+[docs/QUICKSTART.md](docs/QUICKSTART.md#install-noni)); `noni decide` is the same
+code once it is.
+
 ```
 scripts/decide.py --repo REPO --slug SLUG --scope SCOPE --asked-by ROLE
                   --question ID=TEXT [--option ID=OPTION]... [--answer ID=ANSWER]...

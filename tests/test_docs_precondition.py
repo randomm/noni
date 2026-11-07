@@ -82,7 +82,7 @@ def test_every_page_printing_a_script_command_states_the_install_promise() -> No
             continue
         if not has_install_precondition(text):
             offenders.append((_label(path), entry_points))
-        elif not quickstart_install_link(text):
+        elif not quickstart_install_link(text, path=path):
             unlinked.append(_label(path))
     assert not offenders, (
         f"pages print a script entry point without stating that the noni package "
@@ -248,7 +248,7 @@ def _verdicts(root: Path) -> tuple[list[str], list[str]]:
             continue
         if not has_install_precondition(text):
             offenders.append(str(path.relative_to(root)))
-        elif not quickstart_install_link(text):
+        elif not quickstart_install_link(text, path=path):
             unlinked.append(str(path.relative_to(root)))
     return offenders, unlinked
 

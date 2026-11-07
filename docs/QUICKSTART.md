@@ -52,12 +52,12 @@ replace an existing one is re-run over it — the same line a second time, not a
 second install beside the first.
 
 The wrappers under `skills/<skill>/scripts/` import the package rather than
-carrying logic, so one of three states has to hold before any of them runs:
-installed as above, installed editable, or `PYTHONPATH=<clone>/src`. On that last
-state the command to type is `PYTHONPATH=<clone>/src python3 -m noni <tool>`, which
-runs the same CLI as `noni <tool>`; there is no `noni` on your PATH yet, because
-nothing was installed. A wrapper whose package is missing says so on one line and
-exits 3; it does not raise.
+carrying logic, so it must be installed, installed editable, or importable on
+`PYTHONPATH=<clone>/src` before any of them runs; every skill page that prints
+one points back here. On that state the command is
+`PYTHONPATH=<clone>/src python3 -m noni <tool>`, the same CLI as `noni <tool>`;
+there is no `noni` on your PATH yet, because nothing was installed. A wrapper
+whose package is missing says so on one line and exits 3; it does not raise.
 
 `noni` and the wrapper paths are the same code and print the same bytes. Use
 whichever the rest of this page makes shorter to type. `.venv/bin/noni <tool>` is

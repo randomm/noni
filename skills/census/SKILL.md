@@ -5,12 +5,16 @@ description: Run the unified noni census — a single read-only script that chec
 
 # census
 
-**Mission:** one entry point that runs every noni protocol check and returns
-an honest exit code. The census is the arbiter: it reads git history plus the
-committed files under `noni/`, flags violations, and reports. It never writes
-anything — running it leaves `git status --porcelain` empty.
+**Mission:** one entry point that runs every noni protocol check and returns an honest
+exit code. The census is the arbiter: it reads git history plus the committed files
+under `noni/`, flags violations, and reports. It never writes anything — running it
+leaves `git status --porcelain` empty.
 
 ## The entry point
+
+The census is a wrapper: it imports the `noni` package, which must be installed or
+importable to run (`noni census` is the same code once it is; *Install noni* in
+`docs/QUICKSTART.md#install-noni` owns the commands).
 
 ```
 python3 skills/census/scripts/census.py [options]

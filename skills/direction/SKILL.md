@@ -91,6 +91,12 @@ a project can install it as-is and edit it afterwards.
 
 ## Writing the intent
 
+Both writers in this skill are wrappers: they import the `noni` package, which
+must be installed or importable on `PYTHONPATH` before any of them runs (the
+*Install noni* section of
+[docs/QUICKSTART.md](docs/QUICKSTART.md#install-noni)); the `noni intent` and
+`noni order` commands are the same code once it is.
+
 ```
 scripts/intent.py --repo REPO set --from FILE --decision ID [--no-commit]
 ```

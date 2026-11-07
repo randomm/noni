@@ -26,6 +26,12 @@ honest exit code. Output goes to stdout only (no writes under `noni/census/`).
 
 ## Usage
 
+Unlike the writers, this census reads its own arguments and needs nothing
+installed; where a sessions-claims wrapper does run, it imports the `noni`
+package, which must be installed or importable on `PYTHONPATH` (the *Install
+noni* section of
+[docs/QUICKSTART.md](docs/QUICKSTART.md#install-noni)).
+
 ```
 bash scripts/census-sessions.sh <state-root>/noni/sessions   the sessions census
 bash scripts/census-sessions.sh --help        the wrapper's own help

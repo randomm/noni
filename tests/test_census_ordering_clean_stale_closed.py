@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 
 from _harness import REPO
-from ordering_fixtures import _commit, _entry, _repo, _run, _seed
+from ordering_fixtures import _commit, _entry, _human, _repo, _run, _seed
 from ordering_shapes import issue_state_shapes
 
 BASELINE_ID = "2026-10-01-baseline"
@@ -57,6 +57,23 @@ def test_a_confirmed_time_past_the_threshold_is_a_warn_at_forty_five(tmp_path):
     assert rows[0]["code"] == 45 and rows[0]["severity"] == "warn"
     assert rows[0]["subject"] == "#7", rows[0]
     assert rows[0]["message"].startswith("stale:"), rows[0]
+    # The same tree read by a person (issue #117). Before the fix this run --
+    # one warn row, exit 0 -- opened "census: no findings; all checks passed"
+    # and ended "summary: clean", so the only reading of the exit code agreed
+    # with the report and both were wrong. The human branch is launched by
+    # ``_human``, not by the NDJSON runner above, because the wording exists
+    # only there: ``_run``'s own stdout could not fail this assertion.
+    human_code, human_out, human_err = _human(repo, "--stale-after", "7")
+    assert human_code == 0, (human_code, human_out, human_err)
+    lines = human_out.splitlines()
+    assert "WARN" in human_out, human_out
+    assert lines[0] != "census: no findings; all checks passed", lines[0]
+    assert "no findings" not in lines[0], (
+        f"the headline denied the warn row it prints below: {lines[0]!r}")
+    assert "all checks passed" not in lines[0], lines[0]
+    assert "1 warning(s)" in lines[0], (
+        f"the headline did not name the warn count: {lines[0]!r}")
+    assert lines[-1] == "summary: 1 warning(s); 1 finding(s); verdict ok", lines[-1]
 
 
 def test_the_stale_row_says_so_under_strict(tmp_path):

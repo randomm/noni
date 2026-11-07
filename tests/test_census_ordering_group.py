@@ -25,6 +25,7 @@ from ordering_fixtures import (
     _seed,
     _state,
 )
+from quickstart_page import ordering_note_from_product
 
 CENSUS = REPO / "skills" / "census" / "scripts" / "census.py"
 
@@ -69,7 +70,16 @@ def test_no_flag_means_the_closed_question_is_not_asked_and_says_so(tmp_path):
     """The census never contacts a tracker, so with no --issue-state the class
     is not evaluated. Silence would read as 'every ordered issue is open', so
     the human-readable run prints one note; the NDJSON stream stays
-    findings-only, which is what keeps it byte-reproducible."""
+    findings-only, which is what keeps it byte-reproducible.
+
+    The human half is more than the note (issue #117): the report's first line
+    used to say "all checks passed" here, above the very note that says a check
+    did not run, so the headline is pinned to name the class the note names and
+    neither line may carry the all-clear wording of a run that skipped nothing.
+    A skipped class earns no verdict of its own, so a run that counted no row
+    still says `clean` on its summary line -- what it may not say is that every
+    check ran. The exit code stays 0 for the same reason.
+    """
     repo = _repo(tmp_path)
     _seed(repo, _entry(7, BASELINE_ID))
     code, rows, _out, _err = _run(repo)
@@ -78,6 +88,17 @@ def test_no_flag_means_the_closed_question_is_not_asked_and_says_so(tmp_path):
     assert code == 0, (code, out, err)
     assert "ordering-closed was not evaluated" in out, out
     assert "never contacts a tracker" in out, out
+    lines = out.splitlines()
+    assert lines[0] != "census: no findings; all checks passed", (
+        f"a run that skipped a check opened with the all-clear banner: {lines[0]!r}")
+    assert "all checks passed" not in lines[0], (
+        f"the first line claimed every check passed above the not-evaluated "
+        f"note: {lines[0]!r}")
+    assert "ordering-closed" in lines[0], (
+        f"the first line did not name the class that did not run: {lines[0]!r}")
+    # The class name and the note's own sentence come from the product, not from
+    # a copy kept here: one scraper, three doc tests, this assertion.
+    assert ordering_note_from_product() in out, out
 
 
 def test_the_note_is_carried_by_both_modes_and_is_not_a_finding_row(tmp_path):

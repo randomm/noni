@@ -83,6 +83,12 @@ EXIT_TOOL_MISSING = 3
 # one run cannot say one thing in one mode and its opposite in the other. The
 # docs that quote the literal are scraped from this constant, so a rename reddens
 # the pages rather than leaving them quoting a line nothing prints.
+# The class id the note above is about, declared beside it rather than read out
+# of its prose: the no-rows headline names this id, and the note's wording is the
+# docs' property (three tests scrape the sentence). A headline that derived the
+# class from the sentence's leading clause would be silently rewritten the next
+# time somebody reworded that sentence, which is the drift this constant closes.
+ORDERING_CLOSED_CHECK = "ordering-closed"
 ORDERING_CLOSED_NOT_EVALUATED = (
     "ordering-closed was not evaluated: no --issue-state FILE was given, so whether "
     "an ordered issue is closed is not asked (the census never contacts a tracker)")
@@ -216,6 +222,54 @@ def _threshold(raw: str) -> timedelta:
     return timedelta(days=int(raw.rstrip("dD")))
 
 
+def _warn_count(findings: list[dict]) -> int:
+    """How many rows of this run are warnings, read off the rows themselves.
+
+    Counted off the rendered ``severity`` of each row and nowhere else: the
+    headline, the verdict word and the ``WARN``/``FAIL`` tag beside every row all
+    read the same field, so one run cannot answer "was this a warning?" two ways.
+    Asking the class table instead is what used to go wrong here — a row whose
+    *class* is a fail class but whose own severity is ``warn`` (the cannot-verify
+    and cannot-tell rows of probe honesty, escalated only under ``--strict``)
+    printed ``WARN`` above a headline that counted it as neither a warning nor
+    clean (issue #117).
+
+    ``--strict`` is what a class-table count was there for, and it does not need
+    one: a promotion is a no-op for the report, because it moves the row's tag
+    and its count together. A promoted row reads ``FAIL`` and leaves the warn
+    count, and the exit code it earns is what the summary line says instead of a
+    warn count — so the strict run is not double-reported as a warning, and the
+    run that merely could not read its input is not quietly un-counted.
+
+    Derived from the run's own rows and never handed in beside them: a number a
+    caller passed could disagree with the rows printed above it.
+    """
+    return sum(1 for f in findings if f["severity"] == "warn")
+
+
+def _not_evaluated_headline(notes: tuple[str, ...]) -> str:
+    """The clause of a no-rows headline that says which checks went unasked.
+
+    A note is a sentence the product wrote for a reader, and this clause is a
+    class id, so the two are not derived from each other: a note whose class this
+    module knows about is named by that id (``ORDERING_CLOSED_CHECK`` beside the
+    sentence itself), and the sentence may be reworded without rewriting the
+    headline. A note this module does not know names nothing, so the clause falls
+    back to a count rather than print a sentence as a class name — and because
+    the known note is counted before that test, a known note can never be
+    swallowed by the fallback. Several notes read as a list.
+    """
+    named = [ORDERING_CLOSED_CHECK for note in notes
+             if note == ORDERING_CLOSED_NOT_EVALUATED]
+    unknown = sum(1 for note in notes
+                  if note != ORDERING_CLOSED_NOT_EVALUATED and not note.strip())
+    if not named:
+        return f"{unknown or len(notes)} check(s) did not run"
+    if unknown:
+        return f"{', '.join(named)}, {unknown} other check(s) did not run"
+    return f"{', '.join(named)} did not run"
+
+
 def _warn_class_names() -> str:
     """The comma-separated ids of every warn class, derived from CHECKS — the
     --strict contract is written once, in the table, and appears here and in
@@ -261,6 +315,20 @@ def _render(
     nothing to say, so a run that evaluated everything keeps the byte stream it
     had before the field existed.
 
+    The human branch says nothing that is not true of the run it renders. The
+    all-clear banner needs both halves of "nothing to report" — no rows *and*
+    no note — and the verdict word of the summary line follows the number of
+    rows tagged ``WARN``, not ``ok`` alone, so a run that counted warnings does
+    not read ``clean`` and a run that skipped a check does not read ``all checks
+    passed`` (issue #117). The count is the same field the ``WARN`` tag beside
+    each row is read from, so a row that prints ``WARN`` is a warning in the
+    headline too, whatever its class's default severity says. A headline about
+    skipped checks names the classes the notes name, so the report says *which*
+    question went unasked rather than only that one did. The machine word of the summary line, ``verdict ok`` /
+    ``verdict fail``, is keyed on ``ok`` alone and never moves: it is what the
+    CI steps and the docs tests of this repository read, and ``--json`` carries
+    the same fact as its own ``ok`` field.
+
     ``census notes must be a tuple`` is the field's contract, and ``tuple`` is
     part of it, not just the elements: the producer in ``census_run`` hands over
     a tuple, and a one-note caller that passed a bare ``str`` would otherwise
@@ -301,9 +369,15 @@ def _render(
         print(json.dumps(summary, sort_keys=True))
     else:
         fired = {f["check"] for f in findings}
-        if not findings:
+        warns = _warn_count(findings)
+        if not findings and not notes:
             print("census: no findings; all checks passed")
+        elif not findings:
+            # "Nothing to report" is two facts, and the headline says the one
+            # that is true of this run: no rows, and these checks unasked.
+            print(f"census: no findings; {_not_evaluated_headline(notes)}")
         else:
+            print(f"census: {warns} warning(s), {len(findings)} finding(s)")
             for f in sorted(findings, key=_finding_sort_key):
                 tag = {"fail": "FAIL", "warn": "WARN"}.get(f["severity"], "?")
                 print(f"{f['check']:<16} {tag:<4} {f['subject']}: {f['message']}")
@@ -311,7 +385,7 @@ def _render(
         for note in notes:
             print(f"note: {note}")
         if ok:
-            verdict_text = "clean"
+            verdict_text = (f"{warns} warning(s)" if warns else "clean")
         else:
             verdict_text = f"{exit_code} ({', '.join(sorted(fired))})"
         # The verdict line stays the last line of stdout: a CI step that reads the

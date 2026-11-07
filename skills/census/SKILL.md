@@ -103,6 +103,32 @@ A clean exit with warnings is normal: a cannot-tell staleness probe (no git
 history available) is a warning, not a failure, because the census cannot
 distinguish "truly stalled" from "history unavailable" without escalating.
 
+## The human report
+
+Human mode prints one line per finding (`check`, its `WARN`/`FAIL` tag, its
+subject and message, then the fix hint), then any `note:` line, then the summary
+line. What the first and last lines say is keyed to what the run actually found:
+
+| state of the run | first line | verdict word of the summary line |
+|---|---|---|
+| no rows, no note | `census: no findings; all checks passed` | `clean` |
+| rows counted | `census: W warning(s), N finding(s)` | `W warning(s)` |
+| no rows, a note | `census: no findings; <class> did not run` | `clean` |
+
+So the all-clear banner and the word `clean` are reserved for a report that
+carried nothing at all: a run whose only findings are warnings names how many it
+counted instead of calling itself `clean`, and a run that skipped a check names
+that class instead of claiming every check passed. The warn count is the number
+of rows whose own severity is `warn`, read off the same field as the `WARN` tag
+beside each row, so a cannot-verify or cannot-tell row of a fail class (warn by
+default, escalated by `--strict`) is counted as the warning it prints as; under
+`--strict` a promoted row reads `FAIL` and leaves that count, and the exit code
+it earns is what the summary line says instead. The summary line's tail,
+`verdict ok` / `verdict fail`, is the machine-readable half and is keyed on the
+exit code alone: it stays the last line of stdout for a CI step that reads the
+report's ending, whatever the human word before it says. `--json` mode is
+unaffected by all of this (see below).
+
 ## --json output (NDJSON)
 
 One `finding` record per violation, followed by exactly one `summary` record:

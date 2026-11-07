@@ -77,14 +77,14 @@ replaces a path per tool (`noni census`, `decide`, `register`, `claim`, `release
 `close`, `order`, `intent`), printing the same bytes as the scripts above.
 
 The census is read-only: it never writes, so `git status --porcelain` is empty.
-Read the result. A clean run ends with the line
+Read the result. A run with rows ends with the line
 
 ```
-summary: clean; N finding(s); verdict ok
+summary: W warning(s); N finding(s); verdict ok
 ```
 
-where `N` names the rows above it. Warnings (a missing deny-list, a ledger with
-nothing to arbitrate) are counted there and do not change the verdict.
+where `W` counts the warnings among the `N` rows above it (on a first tree, a
+missing deny-list and a ledger with nothing to arbitrate), and does not move it.
 
 ## How it works
 
@@ -107,15 +107,15 @@ Nothing else is state. The writers above are the only things that create those
 files, and each commits what it writes in one atomic step. The try-it run above
 creates the ledger record only: `intent.md` appears when you first run
 `intent.py`, `order.json` when you first run `order.py`, and a session file when
-you first run `register.py`. All four are optional, and a project that has
-written none of them censuses clean. The census also reads input it does not own:
-the `--issue-state` map an adapter or the operator supplies, whose absence it
-reports as an unevaluated check. It recomputes everything from git history plus
-those files on every run: metrics are derived, never self-reported. The skills
-are the unit of product: an agent loads `skills/<skill>/SKILL.md`, which names
-the script to run, its flags and its exit codes. How to put the four core skills
-in front of your agents, and what an agent does from session start to close:
-[docs/ONBOARDING.md](docs/ONBOARDING.md).
+you first run `register.py`. All four are optional, and only a run that counted
+no row and skipped no check reads all-clear (`census: no findings; all checks
+passed`, `summary: clean; 0 finding(s); verdict ok`); the try-it run above does
+not: the always-reporting hygiene class leaves a first tree a warn row. The
+census also reads input it does not own: the `--issue-state` map an adapter or
+the operator supplies, whose absence it reports as an unevaluated check. It
+recomputes everything from git history plus those files, so metrics are derived,
+never self-reported. Each `skills/<skill>/SKILL.md` names its script, flags and
+exit codes; [docs/ONBOARDING.md](docs/ONBOARDING.md) covers the skills.
 
 ## Status
 

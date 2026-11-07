@@ -23,7 +23,10 @@ history. History violations are **reported** (below) and never rewritten here.
    names, and hostnames are only checked by the deny-list class. The pytest
    run above is not by itself proof the deny-list was active (a run with the
    deny-list absent or empty also passes); the authoritative pre-publish
-   check is the CLI directly:
+   check is the CLI directly (it is a wrapper over `src/noni/public_safety.py`,
+   so the `noni` package must be installed or importable on `PYTHONPATH`; the
+   *Install noni* section of
+   [Install noni](QUICKSTART.md#install-noni) owns the commands that do it:
 
    ```sh
    python scripts/public_safety.py

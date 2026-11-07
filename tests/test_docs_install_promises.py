@@ -1,293 +1,463 @@
-"""What the pages promise about *installing* noni, checked as text over the page set.
+"""The install precondition every page that prints a script command has to state.
 
-The install claims of ``tests/test_docs_promises.py``, kept apart from the deny-list,
-recipe and shim claims so each module stays under the 500-line cap in
-``tests/test_file_size_limit.py`` and each reads as one promise rather than four. The
-page set is shared rather than redeclared: ``tests/docs_promises.py`` owns where the
-docs tests look, and both modules read the same pages through it -- the reason
-``tests/readme_support.py`` holds the README's reading layer apart from its promises.
+The claim: a reader who copies ``scripts/claim.py --repo REPO --session-id SID`` out
+of a ``SKILL.md`` meets ``the noni package is not importable`` on a machine where noni
+was never installed, because every wrapper under ``skills/*/scripts/`` is a shim that
+imports the package and exits 3 when that import fails. So the pages that print such a
+command owe one sentence naming the precondition, and the link to the page that owns
+the install.
 
-Four claims, each the residue of a first run that failed on the docs alone:
+This is the third file the docs promise suite has grown on the same seam:
+``tests/test_docs_promises.py`` pins what the pages print, and split its install
+commands into ``tests/test_docs_install_commands.py``, the deny-list into
+``tests/test_docs_denylist_promises.py`` and the state route into
+``tests/test_docs_state_route_promises.py``, each under the 500-line cap in
+``tests/test_file_size_limit.py``. The install module keeps the claims about the
+commands no page may print; the claim here is about the *script* commands every page
+that prints them has to qualify, and the two share the subject -- installing noni --
+which is why the file carries this name rather than a new one.
 
-- **No page sends a reader to a package index.** ``pip install noni`` does not fail:
-  it installs somebody else's wheel and leaves a ``noni`` with no census in it, which
-  is worse than a message. A page that offers an install route must say the package is
-  unpublished and give the form that names this repository.
-- **No page installs into a system Python.** The quickstart's old line, ``python3 -m
-  pip install ./noni``, stops on a distribution that marks its interpreter
-  externally-managed (PEP 668) and leaves no ``noni`` on the path. The offenders here
-  are read from argv, not from the prose around it, and on the *base name* of the
-  runner: ``/usr/bin/pip``, ``$HOME/sys/bin/pip3`` and a bare ``pip3`` are the system
-  pip as plainly as ``pip`` is, so a gate that keyed on the unqualified word alone
-  would let the exact failure AC1 exists to prevent walk past it.
-- **The README does not print an install command.** It defers to the page that owns
-  the install, named by exact path, so one page rather than two has to stay in step
-  with the quickstart's golden install list.
-- **The offender shape itself is proven.** A gate that passes today on the page as it
-  stands is not evidence it fails tomorrow on a page rewritten to look compliant, so
-  the shapes it must refuse and the ones it must allow are asserted directly.
+The page set is shared rather than redeclared (``tests/docs_page_set.py``), so a page
+that joins the docs suite is gated the day it lands. The reading half lives in
+``tests/docs_precondition.py``.
+
+Four claims:
+
+- **Every page that prints a script command states the precondition and links the
+  install section**, per page rather than per fence: one sentence beside the first
+  command covers the commands after it, which is what the issue asks for.
+- **The reader is proven to see the commands.** The gate above is satisfied by the
+  absence of commands, so the reading half is exercised against each shape the real
+  pages print, in the fence tags the real pages use.
+- **The offender shape is proven on a planted page**, so the gate cannot rest on a
+  page set that quietly stopped matching the rule.
+- **The exempt page still carries the prose** the other pages link.
 """
 
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
-from docs_commands import block_commands, read
-from docs_page_set import ALL_PAGES, _label, bash_of
-from docs_promises import README
+import docs_precondition
+import pytest
+from _harness import _git, _init_repo
+from docs_commands import read
+from docs_page_set import ALL_PAGES, _label
+from docs_precondition import (
+    has_install_precondition,
+    quickstart_install_link,
+    script_entry_points,
+)
+from docs_promises import QUICKSTART, section_body
 
-# The install claim a page may not make as an *instruction*: a bare ``pip
-# install noni``, which resolves on the public index to a different project
-# entirely. Two shapes are legitimate and are excused by position rather than by
-# wording: an install that names a path or a URL after the package name, and a
-# mention of the bare command inside prose that is warning the reader away from
-# it -- the sentence that names the command to tell the reader it does not do
-# what they think. The second exemption is what keeps a truthful retraction from
-# being flagged as the claim it retracts.
-_BARE_PIP_INSTALL = re.compile(r"pip install noni\b(?![-/\w])")
+# The sentence the pages owe, as the gate reads it and as the fix writes it. Both
+# facts are required because the failure a reader meets names only one of them: a
+# wrapper whose package is missing says it is "not importable", and the route out is an
+# install. Held here so the planted page below and the real pages are measured against
+# one wording.
+# The anchor's page, spelled from the page that owns the link: the quickstart's own
+# path, then the anchor. Written this way so the sentence can be planted at any depth
+# under a tree, which is where the non-vacuity rows below put it -- see
+# ``_install_link_from`` for what each page's own directory has to contribute.
+_INSTALL_LINK = "[Install noni](docs/QUICKSTART.md#install-noni)"
+PRECONDITION_SENTENCE = (
+    "The wrappers under `skills/<skill>/scripts/` import the package, so it must be "
+    "installed, installed editable, or importable via `PYTHONPATH=<clone>/src`; the "
+    "commands are in the *Install noni* section of "
+    + _INSTALL_LINK + "."
+)
 
 
-def test_no_page_tells_a_reader_to_install_from_a_package_index() -> None:
-    """``pip install noni`` appears nowhere as an instruction.
+def _install_link_from(depth: int) -> str:
+    """The install link as a page in ``depth`` directories below the root must write it.
 
-    The command does not fail, which is the problem: it installs an unrelated
-    project's wheel, and the reader's ``noni census`` then names a module that
-    does not exist. Every page that offers an install route names the clone or
-    the git URL instead.
-
-    The exemption is per line, not per page, and it is earned: a line that
-    names the bare command has to say in the same breath that it is the wrong
-    command. ``fails``, ``not``, ``other`` and ``different`` are the words a
-    retraction carries, so a page that simply told the reader to run it is still
-    caught. A line that fails this test after a rewrite is a page that lost its
-    retraction, which is exactly the drift the check exists for.
+    The gate resolves a relative href against the linking page's own directory, so the
+    correct form is a function of where the page sits: a page in ``skills/x/`` (two
+    directories deep) needs ``../../docs/QUICKSTART.md``, a page at the root needs
+    ``docs/QUICKSTART.md``, and a page under a link farm's ``x/y/`` needs three. A page
+    that wrote the root form from ``skills/<skill>/references/`` aimed at
+    ``skills/<skill>/references/docs/QUICKSTART.md``, which is no page at all, and only
+    a resolver catches that.
     """
-    retracting = re.compile(r"\b(not|no |other|different|instead|avoid|never)\b", re.I)
-    offenders: list[tuple[str, str]] = []
+    return "[Install noni](" + "../" * depth + "docs/QUICKSTART.md#install-noni)"
+
+
+def _quickstart_tree(repo: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A committed ``docs/QUICKSTART.md`` carrying the anchor the links point at.
+
+    The planted tree plays the role of the repository for the tests that need a real
+    link target, so the page the gate treats as exempt is pointed at the plant for the
+    duration of the test and restored by the fixture. It is routed through
+    ``monkeypatch`` rather than a plain assignment because a bare module global leaks
+    into every later test in the session, which would hand the exemption to whichever
+    page happened to share the plant's path. The path is resolved the way the gate
+    resolves it, so a tree reached through a symlink still compares equal.
+    """
+    docs = repo / "docs"
+    docs.mkdir(parents=True, exist_ok=True)
+    page = docs / "QUICKSTART.md"
+    page.write_text("# Quickstart\n\n## Install noni\n\nbody\n", encoding="utf-8")
+    _commit_tree(repo)
+    quickstart = page.resolve() if page.is_file() else page
+    monkeypatch.setattr(docs_precondition, "QUICKSTART", quickstart)
+    return page
+
+
+# --- AC1: the sentence every page with a command owes ---------------------------
+
+def test_every_page_printing_a_script_command_states_the_install_promise() -> None:
+    """A script in command position buys a precondition sentence on the same page.
+
+    Per page rather than per fence: the issue asks for the sentence beside the first
+    command, and a page printing four verbs of one writer says the same thing about all
+    four. What the page owes is both facts (installed, or importable on ``PYTHONPATH``)
+    and the route to the install -- ``docs/QUICKSTART.md``'s *Install noni* section, by
+    anchor, so the link resolves against the heading that carries the prose rather than
+    against the top of the page.
+
+    A page with no command in it is not asserted: the reader proof below is what shows
+    a page set that stopped matching the rule cannot leave this green.
+    """
+    offenders: list[tuple[str, list[str]]] = []
+    unlinked: list[str] = []
     for path, text in ALL_PAGES:
-        for line in text.splitlines():
-            if not _BARE_PIP_INSTALL.search(line):
-                continue
-            if _BARE_PIP_INSTALL.search(line) and retracting.search(line):
-                continue
-            offenders.append((_label(path), line.strip()))
+        entry_points = sorted({name for name, _line in script_entry_points(text)})
+        if not entry_points:
+            continue
+        if not has_install_precondition(text):
+            offenders.append((_label(path), entry_points))
+        elif not quickstart_install_link(text, path=path):
+            unlinked.append(_label(path))
     assert not offenders, (
-        f"pages tell the reader to install from an index without retracting it: {offenders}")
+        f"pages print a script entry point without stating that the noni package "
+        f"must be installed or importable: {offenders}")
+    assert not unlinked, (
+        f"pages state the precondition without linking the section that owns the "
+        f"install (docs/QUICKSTART.md#install-noni): {unlinked}")
 
 
-def test_the_pages_that_install_noni_say_the_index_does_not_have_it() -> None:
-    """Whichever page carries an install command also says noni is unpublished.
+def test_the_quickstart_states_the_precondition_its_pages_link() -> None:
+    """The page every other page points at still says it.
 
-    Checked over the set rather than hard-coded to one page, so moving the
-    install prose cannot satisfy the README test and leave the claim unmade.
+    The quickstart's command fences belong to the golden list in
+    ``tests/quickstart_golden.py`` and are run by ``tests/test_quickstart.py``, so this
+    module does not gate them. What it does gate is the paragraph those links resolve
+    to: a page that sends a reader to *Install noni* for the precondition has to arrive
+    at a section that states it.
     """
-    carrying = [(path, text) for path, text in ALL_PAGES
-                if re.search(r"pip install[^\n]*\./noni|pip install[^\n]*git\+https", text)]
-    assert carrying, "no page gives an install form that names the repository"
-    missing = [_label(path) for path, text in carrying
-               if "not published" not in text.lower()
-               and "no package index" not in text.lower()
-               and "pypi" not in text.lower()]
-    assert not missing, f"pages give an install form without saying the index lacks noni: {missing}"
+    body = section_body(read(QUICKSTART), "Install noni")
+    assert has_install_precondition(body), (
+        "the Install noni section no longer states the precondition the skill pages "
+        "point a reader here for")
 
 
-def test_no_page_tells_a_reader_to_install_into_the_system_python() -> None:
-    """No page runs an installer against an interpreter the reader does not own.
+# --- the reader is proven to see what the gate refuses -------------------------
 
-    ``python3 -m pip install ./noni`` was the quickstart's install line, and on a
-    distribution that marks its system Python externally-managed (PEP 668) it stops
-    with no ``noni`` on the path: the first-run failure the pilot hit. The forms that
-    work name a tool that isolates the install (`uv tool install`) or a virtual
-    environment's own pip, so the shape of the offender here is any ``pip`` of noni --
-    a bare ``pip``/``pip3``, any ``python*`` carrying ``-m pip``, or an interpreter's
-    own ``bin/pip``. The check reads argv rather than the line, so rewording the prose
-    around the command does not clear it, and the runner is matched on its **base
-    name**: an absolute path (``/usr/bin/pip``, ``/usr/bin/python3.12 -m pip``) and an
-    expanded-variable path (``$HOME/sys/bin/pip``) name the system interpreter as
-    plainly as a bare ``pip`` does, so a gate that keyed on the unqualified word would
-    let the exact failure AC1 exists to prevent walk past it. What stays allowed is a
-    runner that names a virtual environment the reader made -- a path under a leading
-    dot (``.venv/bin/pip``) or one that says so (``$VIRTUAL_ENV/bin/pip``). Being
-    *unqualified* is not such a marker, so neither is ``/tmp``: a bare ``pip3`` in a
-    temp directory is still the interpreter on the reader's PATH.
+# Each row is a page that must produce a finding: the command shapes the real pages
+# carry, inside the fence tags the real pages use. Held as data because a reader that
+# matched one shape and missed the rest would leave the gate above green on a page set
+# that stopped matching the rule.
+_COMMAND_SHAPES: tuple[tuple[str, str, str], ...] = (
+    ("an untagged fence with the bare script form",
+     "```", "scripts/order.py --repo REPO add 7 --decision 2026-01-01-x"),
+    ("an untagged fence with the bash shim form",
+     "```", "bash scripts/census.sh <state-root>/noni/decisions"),
+    ("a bash-tagged fence with the interpreter form",
+     "```bash", "python3 skills/census/scripts/census.py --repo REPO"),
+    ("a command continued with a backslash",
+     "```", "scripts/decide.py --repo REPO --slug s \\"),
+    ("a script run from an expanded clone path",
+     "```", "<clone>/skills/census/scripts/census.py --repo ."),
+    ("a wrapper reached through a relative clone path",
+     "```", "python3 ../noni/skills/steering-ledger/scripts/decide.py --repo ."),
+    ("the module form, which names a package and not a script path",
+     "```bash", "PYTHONPATH=<clone>/src python3 -m noni census --repo ."),
+)
+
+
+@pytest.mark.parametrize("row", _COMMAND_SHAPES, ids=[row[0] for row in _COMMAND_SHAPES])
+def test_the_reader_finds_a_script_command_in_every_shape_the_pages_use(
+    row: tuple[str, str, str]
+) -> None:
+    """Every command shape the pages print is a finding for the reader.
+
+    The gate above is satisfied by the absence of commands, so the reading half needs
+    its own proof. The fence tags matter: every command fence under ``skills/`` is
+    untagged, so a reader that reused the suite's bash-only fence helper would find
+    nothing in those pages and report a clean documentation set.
     """
-    offenders: list[tuple[str, str]] = []
-    for path, text in ALL_PAGES:
-        for block in bash_of(text):
-            for argv in block_commands(block):
-                if system_python_install(argv):
-                    offenders.append((_label(path), " ".join(argv)))
-    assert not offenders, (
-        f"pages install noni into an interpreter the reader may not own, which a "
-        f"PEP 668 marker stops: {offenders}")
+    description, opener, command = row
+    text = f"# A page\n\n{description}\n\n{opener}\n{command}\n```\n"
+    found = script_entry_points(text)
+    if _MODULE_FORM.search(command):
+        # The one row the reader must find nothing in: ``-m`` names a module, so no
+        # file path is in command position and the page's own install sentence is the
+        # only thing the reader can check. Asserting the absence here is what keeps
+        # the row from being satisfied by the ``.py`` of a neighbouring path.
+        assert found == [], f"the reader read a module run as a script: {found}"
+        return
+    assert found, f"the reader missed {description}: {text!r}"
+    assert any(name.endswith((".py", ".sh")) for name, _line in found), (
+        f"the reader named no entry point for {description}: {found}")
+    assert all(name.endswith((".py", ".sh")) for name, _line in found), (
+        f"the reader named something that is not a script for {description}: {found}")
 
 
-# How a command reaches pip: a ``pip``/``pip3`` program of its own, an interpreter
-# asked to run the module, or an interpreter invoked as an installer directly. Each is
-# recognised on the program's base name -- ``/usr/bin/pip`` and ``$HOME/sys/bin/pip3``
-# are the system pip as surely as a bare ``pip`` is, and an unqualified word is not the
-# shape a PEP 668 box reaches its interpreter by.
-_PIP_BASENAME = re.compile(r"^pip\d*$")
-_PYTHON_BASENAME = re.compile(r"^python\d*(\.\d+)*$")
-
-# Words that mean "install this package" when a program is invoked with them, and the
-# wrappers that put the real program further along the same line.
-_INSTALL_WORDS = frozenset({"install", "install ./noni"})
-_WRAPPERS = frozenset({"sudo", "env", "command", "time"})
+# The console form the pages print beside the script form: an interpreter running the
+# package as a module. No script path is in command position, so the page that offers
+# only this form owes no script precondition.
+_MODULE_FORM = re.compile(r"\s-m\s")
 
 
-def _base_name(token: str) -> str:
-    """The program a path token names, with any directory or variable prefix gone."""
-    return token.rsplit("/", 1)[-1]
+def test_the_reader_does_not_read_prose_as_a_command() -> None:
+    """A script name in a sentence is not a run, so it owes no sentence.
 
-
-def _pip_runner(argv: list[str]) -> bool:
-    """True when the parsed command runs pip, under any runner.
-
-    A wrapper (``sudo``, ``env``) is skipped rather than excused: ``sudo pip install
-    ./noni`` is the system pip wearing a hat, and refusing to look past the wrapper
-    would let the most forceful form of the PEP 668 failure through the one gate meant
-    to stop it.
+    The pages discuss their writers in prose constantly (``scripts/decide.py`` is the
+    only writer; the claim reference names it again). A gate that charged every mention
+    would be satisfied only by pushing the prose into fences, which the fence censuses
+    in ``tests/test_onboarding.py`` and ``tests/test_quickstart.py`` refuse. So the
+    reader has to be narrow, and the narrowness is asserted rather than trusted: each
+    line below is a form a real page carries in running text.
     """
-    while argv and _base_name(argv[0]) in _WRAPPERS:
-        argv = [token for token in argv[1:] if token != "="]
-    if not argv:
-        return False
-    runner = _base_name(argv[0])
-    if _PIP_BASENAME.match(runner) is not None:
-        return True
-    if _PYTHON_BASENAME.match(runner) is None:
-        return False
-    # An interpreter reaches pip either as a module (``-m pip``) or directly
-    # (``python install ./noni``, which the gate refused before this rewrite and must
-    # go on refusing); either way the interpreter on the reader's PATH is the one that
-    # carries the marker.
-    return "pip" in argv[1:3] or any(token in _INSTALL_WORDS for token in argv[1:])
+    prose = (
+        "# A page\n\n"
+        "Records are written with `scripts/decide.py`, which is the only writer, and\n"
+        "`scripts/census.sh` is the ledger shim. The table lists `scripts/claim.py`.\n\n"
+        "- run it as `bash scripts/census.sh <dir>`, never under `python3`\n"
+    )
+    assert script_entry_points(prose) == [], script_entry_points(prose)
+    # And the console route is not a script command either: the page that shows
+    # `noni <verb>` has sent the reader to the installed command, which is the state
+    # the precondition exists to describe.
+    assert script_entry_points("# P\n\n```bash\nnoni order --repo REPO add 7\n```\n") == []
 
 
-def installs_noni(argv: list[str]) -> bool:
-    """True when one parsed command installs this project's package from the clone."""
-    return "install" in argv and "./noni" in argv
+# --- the offender shape is proven on a planted page ----------------------------
 
+def test_the_gate_refuses_a_command_page_with_no_sentence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pilot's page, planted: a bare script fence and no precondition anywhere.
 
-def _names_a_venv(argv: list[str]) -> bool:
-    """True when one of the command's path tokens sits inside a virtual environment.
+    Built in a throwaway repository rather than edited into a real page, so the
+    offender shape is asserted without touching the tree the other checks read. The
+    tree is committed because the size gate measures a worktree against
+    ``git ls-files``: an uncommitted plant is an offender for that gate, exactly as an
+    uncommitted scratch file would be. A ``docs/QUICKSTART.md`` carrying the anchor is
+    planted beside it so the link half has a real target to resolve to, and the
+    passing form of the link is the one ``skills/probe-skill/`` has to write -- two
+    directories below the root.
 
-    Two shapes say "the reader's own venv": a path beginning with a dot (``.venv``,
-    ``./.venv``, ``./noni/.venv``) and an assignment or expansion that says so
-    (``env=/tmp/v``, ``$env/bin/pip``, ``$VIRTUAL_ENV/bin/pip``). Both name a tree the
-    reader made and owns, which is the side of the PEP 668 line the page installs on.
-
-    The package argument is not a path token. It is ``./noni`` on every install form
-    the page offers, and reading it as one would exempt ``/usr/bin/pip install ./noni``
-    -- the very command AC1 exists to refuse -- so the operand is excluded before the
-    shapes are read.
+    The same page, carrying the sentence and the link, then has to pass: that half is
+    what shows the gate refuses the missing sentence rather than the page's subject. A
+    third state -- the sentence present, the link absent -- is reported by the gate's
+    second assertion, so the two failures stay distinguishable.
     """
-    return any(_venv_shape(token) for token in argv if token != _PACKAGE_OPERAND)
+    repo = _init_repo(tmp_path / "probe")
+    _quickstart_tree(repo, monkeypatch)
+    skill = repo / "skills" / "probe-skill"
+    skill.mkdir(parents=True)
+    command_page = (
+        "# Claiming\n\n"
+        "```\nscripts/claim.py --repo REPO --session-id SID --task TASK\n```\n\n"
+        "The writer appends one row and commits it.\n"
+    )
+    page = skill / "SKILL.md"
+    page.write_text(command_page, encoding="utf-8")
+    _commit_tree(repo)
+    assert _verdicts(repo)[0] == ["skills/probe-skill/SKILL.md"], (
+        "the gate let a bare script command through with no precondition on the page")
+
+    page.write_text(command_page.replace(
+        "The writer appends one row and commits it.",
+        PRECONDITION_SENTENCE.replace(_INSTALL_LINK, _install_link_from(2))),
+        encoding="utf-8")
+    assert _verdicts(repo) == ([], []), (
+        "the gate refuses a page that states the precondition and links the install")
+
+    page.write_text(command_page.replace(
+        "The writer appends one row and commits it.",
+        PRECONDITION_SENTENCE.replace(_INSTALL_LINK, "the quickstart")),
+        encoding="utf-8")
+    assert _verdicts(repo) == ([], ["skills/probe-skill/SKILL.md"]), (
+        "a page with the sentence and no link is not reported by the link assertion")
 
 
-# The operand every install form on the page names, and the only token exempt from the
-# venv shapes above.
-_PACKAGE_OPERAND = "./noni"
+def _verdicts(root: Path) -> tuple[list[str], list[str]]:
+    """The gate's two lists, built over a planted tree instead of ``ALL_PAGES``.
 
-
-def _venv_shape(token: str) -> bool:
-    """One token that places the command inside a virtual environment the reader made."""
-    return token.startswith(".") or "venv" in token.lower() \
-        or _ASSIGNMENT.match(token) is not None \
-        or _VENV_VARIABLE in token
-
-
-# ``env=/tmp/v`` (a variable the reader set for their own venv), as the page may print
-# it. An expansion of such a variable ($env, ${env}) counts the same way.
-_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
-_VENV_VARIABLE = "$VIRTUAL_ENV"
-
-
-def system_python_install(argv: list[str]) -> bool:
-    """One parsed command that installs noni with pip against a system interpreter.
-
-    Three conditions, all of which have to hold: it installs this package from the
-    clone, it reaches pip by one of the two forms, and nothing in the command names a
-    virtual environment the reader made. The last is what keeps the page's
-    ``.venv/bin/pip install ./noni`` a pass and ``/usr/bin/pip install ./noni`` a
-    failure, and it is deliberately about the path tokens rather than the runner
-    alone: a bare ``pip3`` is the system pip wherever the command happens to sit, so
-    an unqualified runner is never taken for a venv of its own.
+    The same three readers the page-set test calls, so the plant is evidence about that
+    gate and not about a second implementation of it. Labels are paths relative to the
+    tree the caller handed, the shape the real gate's labels take.
     """
-    return installs_noni(argv) and _pip_runner(argv) and not _names_a_venv(argv)
+    offenders: list[str] = []
+    unlinked: list[str] = []
+    for path in sorted(root.rglob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        if not script_entry_points(text):
+            continue
+        if not has_install_precondition(text):
+            offenders.append(str(path.relative_to(root)))
+        elif not quickstart_install_link(text, path=path):
+            unlinked.append(str(path.relative_to(root)))
+    return offenders, unlinked
 
 
-def test_the_system_python_gate_refuses_a_runner_written_as_a_path() -> None:
-    """The offender shape is proven on runners, not just on the page as it stands.
+def _commit_tree(repo: Path) -> None:
+    """Commit the planted tree so the size gate's listing sees exactly it."""
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "planted")
 
-    The original gate keyed on ``argv[0]`` alone, so ``/usr/bin/pip install ./noni``,
-    ``/usr/bin/python3.12 -m pip install ./noni`` and ``pip3 install ./noni`` each
-    cleared a page gate whose docstring claimed to cover "a ``python``, or an
-    interpreter's own ``bin/pip``": an absolute path is how a reader on a PEP 668
-    box reaches the interpreter the marker protects, so the class AC1 exists to stop
-    walked straight past it. Each row below is one argv the page might print; the
-    first set must be refused and the second accepted, so a gate that broadened or
-    narrowed its own shape reddens here rather than silently losing a form.
+
+def test_the_promise_survives_a_rewrap_and_dies_on_a_dropped_fact() -> None:
+    """The reader compares words across wraps, so the pages stay writable.
+
+    Every page under ``skills/`` is wrapped at ~80 columns and the reference pages
+    rewrap constantly. A reader that matched the sentence as one literal would make a
+    reflow of the docs a red test, and the cheapest way out of that is a shorter
+    sentence that drops a fact. So the sentence is planted here broken onto its own
+    line at every word and has to read as stated -- and each fact, dropped on its own,
+    has to read as not stated. Without the second half the reader could be satisfied by
+    a page that kept the install and lost the importability.
     """
-    refused = [
-        ["pip", "install", "./noni"],
-        ["pip3", "install", "./noni"],
-        ["/usr/bin/pip", "install", "./noni"],
-        ["/usr/bin/python3", "-m", "pip", "install", "./noni"],
-        ["/usr/bin/python3.12", "-m", "pip", "install", "./noni"],
-        ["$HOME/sys/bin/pip", "install", "./noni"],
-        ["${PREFIX}/bin/python3", "-m", "pip", "install", "./noni"],
-        ["/tmp/pip", "install", "./noni"],
-        ["python", "install", "./noni"],
-        ["/usr/bin/python3.13", "install", "./noni"],
-        ["sudo", "pip", "install", "./noni"],
-        ["sudo", "/usr/bin/pip3", "install", "./noni"],
-    ]
-    for argv in refused:
-        assert system_python_install(argv), (
-            f"the page gate would let a reader run {' '.join(argv)}, which is a pip "
-            "against an interpreter they do not own")
-    accepted = [
-        ["uv", "tool", "install", "./noni"],
-        [".venv/bin/pip", "install", "./noni"],
-        ["./.venv/bin/pip", "install", "./noni"],
-        [".venv/bin/python", "-m", "pip", "install", "./noni"],
-        ["./noni/.venv/bin/pip", "install", "./noni"],
-        ["env=/tmp/nv $env/bin/pip", "install", "./noni"],
-        ["$VIRTUAL_ENV/bin/pip", "install", "./noni"],
-        ["python3", "-m", "venv", ".venv"],
-        ["sudo", "uv", "tool", "install", "./noni"],
-    ]
-    for argv in accepted:
-        assert not system_python_install(argv), (
-            f"the page gate refuses {' '.join(argv)}, which installs into a virtual "
-            "environment the reader made -- the form the quickstart recommends")
+    assert has_install_precondition(PRECONDITION_SENTENCE.replace(" ", "\n")), (
+        "the reader needs the sentence on one line, which makes rewrapping the docs a "
+        "failure and invites a page to shorten the sentence instead")
+    for fact in ("installed", "importable"):
+        dropped = " ".join(word for word in PRECONDITION_SENTENCE.split()
+                           if fact not in word)
+        assert not has_install_precondition(dropped), (
+            f"a sentence with no {fact} still reads as the precondition")
+    assert quickstart_install_link(PRECONDITION_SENTENCE)
+    assert not quickstart_install_link(
+        PRECONDITION_SENTENCE.replace("#install-noni", "")), (
+        "a sentence that names the quickstart without the install anchor counts as the "
+        "link")
 
 
-def test_the_readme_defers_the_install_to_the_quickstart() -> None:
-    """The README points at the page that owns the install, and prints no command itself.
+# --- the link half is proven on the shapes a page can carry it wrong ------------
 
-    AC3's testable half, read from the page rather than from the quickstart: the
-    pointer names ``docs/QUICKSTART.md`` by exact path, names the *Install noni*
-    section it defers to, and keeps the tool name of that section's primary form
-    (`uv tool install`) in the same paragraph, so a reader of the README is told which
-    install they are being sent to read before they follow the link. The README prints
-    no install command of its own: that is what keeps one page, not two, in step with
-    the golden install list, and the assertion below is what holds it there. The one
-    install-shaped string the page may carry is the retraction sentence ``pip install
-    noni`` names as the wrong command, already held to its retraction by the
-    package-index gate above.
+# Each row is a page state that must NOT satisfy the link gate, with the reason the
+# gate owes the reader. The real pages got all three wrong at once when the sentence
+# landed: nine pages wrote the root-relative form of the href, which resolves inside
+# ``skills/<skill>/references/`` to a file that has never existed, and the words were
+# present as well, so a gate that looked for the words was green.
+@pytest.mark.parametrize("form", (
+    pytest.param("wrong-base", id="a link whose base is the repo root, not the page"),
+    pytest.param("inline-code", id="the target spelled as inline code, not a link"),
+    pytest.param("no-anchor", id="a link to the page with no section anchor"),
+))
+def test_the_link_gate_refuses_a_link_the_reader_cannot_follow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, form: str
+) -> None:
+    """Each wrong shape of the install link is a finding, not a pass.
+
+    Planted one directory deep (``skills/probe-skill/references/``) next to a
+    ``docs/QUICKSTART.md`` that carries the anchor, so the only thing deciding the
+    verdict is the href: the file exists, the anchor exists, the sentence exists.
     """
-    readme = read(README)
-    assert "docs/QUICKSTART.md" in readme, "the README no longer names the quickstart"
-    assert "Install noni" in readme, (
-        "the README's install prose no longer points at the section that owns it")
-    assert "uv tool install" in readme, (
-        "the README's install pointer names no install form, so a reader cannot tell "
-        "what the page they are sent to will tell them to run")
-    printed = [argv for block in bash_of(readme)
-               for argv in block_commands(block) if installs_noni(argv)]
-    assert not printed, (
-        f"the README prints an install command, so it is a second page to keep in "
-        f"step with the quickstart: {printed}")
+    repo = _init_repo(tmp_path / "probe")
+    _quickstart_tree(repo, monkeypatch)
+    page_dir = repo / "skills" / "probe-skill" / "references"
+    page_dir.mkdir(parents=True)
+    sentence = PRECONDITION_SENTENCE.replace(_INSTALL_LINK, {
+        # The form every real page carried: written for the root, resolved from here.
+        "wrong-base": _INSTALL_LINK,
+        # The promise named in the reader's vocabulary but not linked: nothing to follow.
+        "inline-code": "`docs/QUICKSTART.md#install-noni`",
+        # The right file, the wrong section: lands on the top of a long page.
+        "no-anchor": "[docs/QUICKSTART.md](../../../docs/QUICKSTART.md)",
+    }[form])
+    page = page_dir / "claim.md"
+    page.write_text("# Claiming\n\n" + sentence + "\n", encoding="utf-8")
+    _commit_tree(repo)
+    assert not quickstart_install_link(page.read_text(encoding="utf-8"), path=page), (
+        f"the gate accepted {form}, which leaves the reader no link to follow")
+
+
+def test_the_link_gate_accepts_the_form_each_page_depth_has_to_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The resolved form passes at the depth it was written for, and only there.
+
+    The positive half of the row above, and the reason the depth is a parameter rather
+    than a constant: a gate that only ever saw the root form would accept a reference
+    page that links nothing and refuse one that links correctly.
+
+    The exemption for the quickstart's own path has to be switched off here: depth 0
+    plants its page in ``docs/``, the same directory the quickstart itself sits in, and
+    a fixture whose subject is other pages' links must not be answered by the rule for
+    one page. The exempt page itself is asserted on its own below, where the plant is
+    the exempt page rather than a neighbour of it.
+    """
+    repo = _init_repo(tmp_path / "probe")
+    _quickstart_tree(repo, monkeypatch)
+    monkeypatch.setattr(docs_precondition, "QUICKSTART", Path("/__no_such_page__.md"))
+    for depth in (0, 1, 2, 3):
+        page_dir = repo
+        for part in ("a", "b", "c")[:depth]:
+            page_dir = page_dir / part
+        page_dir.mkdir(parents=True, exist_ok=True)
+        page = page_dir / "page.md"
+        page.write_text(PRECONDITION_SENTENCE.replace(_INSTALL_LINK,
+                                                      _install_link_from(depth)),
+                        encoding="utf-8")
+        assert quickstart_install_link(page.read_text(encoding="utf-8"), path=page), (
+            f"the gate refuses the correct link from depth {depth}, so a page has no "
+            f"form it can write to satisfy it: {page}")
+        if depth:
+            # The same bytes one level up resolve to a directory that holds no
+            # quickstart, which is the mistake the real pages made in reverse.
+            shallow = page_dir.parent / "shallow.md"
+            shallow.write_text(PRECONDITION_SENTENCE.replace(_INSTALL_LINK,
+                                                             _install_link_from(depth)),
+                               encoding="utf-8")
+            assert not quickstart_install_link(shallow.read_text(encoding="utf-8"),
+                                               path=shallow), (
+                f"a link written for depth {depth} passes from its parent, so the gate "
+                "is not resolving hrefs against the page's own directory")
+
+
+def test_the_link_gate_needs_the_anchor_to_be_a_heading_in_the_target(
+    tmp_path: Path
+) -> None:
+    """A target file without the heading is not the section the reader was sent to.
+
+    The anchor is the half of the link that survives a page rewrite least well: rename
+    the heading and every link on every page points at the top of the document. The
+    gate reads the target, so a heading rename that orphans the links turns the pages
+    red rather than the reader's browser.
+    """
+    repo = _init_repo(tmp_path / "probe")
+    docs = repo / "docs"
+    docs.mkdir(parents=True)
+    (docs / "QUICKSTART.md").write_text("# Quickstart\n\n## Getting it\n\nbody\n",
+                                        encoding="utf-8")
+    _commit_tree(repo)
+    page = repo / "page.md"
+    page.write_text(PRECONDITION_SENTENCE, encoding="utf-8")
+    assert not quickstart_install_link(page.read_text(encoding="utf-8"), path=page), (
+        "a link whose anchor matches no heading in the target counts as the promise")
+
+
+def test_the_link_gate_resolves_a_link_that_points_at_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The quickstart stays exempt, and the exemption is about that page alone.
+
+    The exemption exists because the page cannot link the section it is standing in.
+    A second page named QUICKSTART.md, or the quickstart judged at another path, must
+    not inherit it, or one mis-named file would silence the gate over the whole set.
+    """
+    repo = _init_repo(tmp_path / "probe")
+    _quickstart_tree(repo, monkeypatch)
+    quickstart = repo / "docs" / "QUICKSTART.md"
+    assert quickstart_install_link("no link at all", path=quickstart), (
+        "the quickstart is charged for a link it cannot write")
+    lookalike = repo / "skills" / "QUICKSTART.md"
+    lookalike.parent.mkdir(parents=True)
+    lookalike.write_text("# Quickstart\n\nnothing here\n", encoding="utf-8")
+    assert not quickstart_install_link("no link at all", path=lookalike), (
+        "a page that merely shares the quickstart's file name is exempt from the "
+        "link")

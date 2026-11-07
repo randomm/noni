@@ -15,6 +15,11 @@ colon) is malformed; the census flags it (exit 32).
 
 ## Making a claim
 
+`claim.py` is a wrapper: it imports the `noni` package, which must be installed
+or importable on `PYTHONPATH` before it runs (the *Install noni* section of
+[docs/QUICKSTART.md](../../../docs/QUICKSTART.md#install-noni)); `noni claim` is the same
+code once it is.
+
 ```
 scripts/claim.py --repo REPO --session-id SID --task TASK [--branch BRANCH]
                  [--push] [--no-commit]

@@ -5,12 +5,15 @@ description: Run the unified noni census — a single read-only script that chec
 
 # census
 
-**Mission:** one entry point that runs every noni protocol check and returns
-an honest exit code. The census is the arbiter: it reads git history plus the
-committed files under `noni/`, flags violations, and reports. It never writes
-anything — running it leaves `git status --porcelain` empty.
+**Mission:** one entry point that runs every noni protocol check and returns an honest
+exit code. The census is the arbiter: it reads git history plus the committed files
+under `noni/`, flags violations, and reports. It writes no file.
 
 ## The entry point
+
+The census is a wrapper that imports the `noni` package, so it must be installed or
+importable to run (`noni census` is the same code); [Install
+noni](../../docs/QUICKSTART.md#install-noni) owns the install commands.
 
 ```
 python3 skills/census/scripts/census.py [options]
@@ -149,12 +152,11 @@ One `finding` record per violation, followed by exactly one `summary` record:
  "counts": {"session-double": 1}}
 ```
 
-Every `finding` row names the `artifact` path it derives from. Both output
-modes (--json and human-readable) sort rows by the same key —
-`(artifact, check, subject)` — so the row order is identical across modes
-and reproducible across runs (see `_finding_sort_key`). No metric reads a
-value from an agent-authored
-field; every value comes from git history, file existence, or file byte size.
+Every `finding` row names the `artifact` path it derives from. Both output modes
+(--json and human-readable) sort rows by the same key — `(artifact, check,
+subject)` — so the row order is identical across modes and reproducible across runs
+(see `_finding_sort_key`). No metric reads a value from an agent-authored field;
+every value comes from git history, file existence, or file byte size.
 
 ### The hygiene artifact namespace
 
@@ -365,8 +367,8 @@ substitute for running `scripts/public_safety.py` before publishing.
 
 ## Rules
 
-- **Read-only.** The census never writes, mutates, or creates any file.
-  Running it leaves `git status --porcelain` empty.
+- **Read-only.** The census never writes, mutates, or creates any file. Running it
+  leaves `git status --porcelain` empty.
 - **One arbiter.** `noni census` (``census.py``) is the only entry point that
   enforces, and the page you are reading is the only exit-code reference. The
   two per-artifact shell entry points (`skills/steering-ledger/scripts/census.sh`

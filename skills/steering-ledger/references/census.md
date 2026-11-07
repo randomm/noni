@@ -29,6 +29,12 @@ agent's — the census does not check and does not claim to (see
 
 ## Usage
 
+This shim is bash and parses its own arguments, but it still runs the package:
+the census it launches imports the `noni` package, which must be installed or
+importable on `PYTHONPATH`, and a run without it names that on one line and exits
+3 (the *Install noni* section of
+[docs/QUICKSTART.md](../../../docs/QUICKSTART.md#install-noni) owns the commands).
+
 ```
 bash scripts/census.sh <state-root>/noni/decisions   the decisions census
 bash scripts/census.sh --help        the wrapper's own help

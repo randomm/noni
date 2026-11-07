@@ -26,6 +26,11 @@ honest exit code. Output goes to stdout only (no writes under `noni/census/`).
 
 ## Usage
 
+The shim parses its own arguments in bash, but the census it runs imports the
+`noni` package, which must be installed or importable on `PYTHONPATH`; without it
+the run names that on one line and exits 3 (the *Install noni* section of
+[docs/QUICKSTART.md](../../../docs/QUICKSTART.md#install-noni) owns the commands).
+
 ```
 bash scripts/census-sessions.sh <state-root>/noni/sessions   the sessions census
 bash scripts/census-sessions.sh --help        the wrapper's own help

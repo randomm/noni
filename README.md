@@ -67,14 +67,14 @@ python3 ../noni/skills/census/scripts/census.py --repo .
 Run these from a commit of noni you trust: no release or tag exists yet, so pin
 a commit, and remember they run noni's scripts.
 
-Installing is the other route, and the same code either way. There is no PyPI
-package: `pip install noni` buys a different project's wheel. Install from the
-clone you just made with `uv tool install`, or inside a clean virtual environment:
-the commands are the *Install noni* section of
-[docs/QUICKSTART.md](docs/QUICKSTART.md), and neither runs `pip` against a system
-Python, which current distributions refuse outright. One `noni` command then
-replaces a path per tool (`noni census`, `decide`, `register`, `claim`, `release`,
-`close`, `order`, `intent`), printing the same bytes as the scripts above.
+Installing is the other route, and the same code either way. Those scripts import
+the `noni` package, so it must be installed or importable for them to run: see the
+*Install noni* section of [docs/QUICKSTART.md](docs/QUICKSTART.md#install-noni),
+which installs it with `uv tool install` or in a clean virtual environment. There
+is no PyPI package, so every install route names this repository, and none runs
+`pip` against a system Python, which current distributions refuse. One `noni`
+command then replaces a path per tool (`census`, `decide`, `register`, `claim`,
+`release`, `close`, `order`, `intent`), printing the same bytes as the scripts.
 
 The census is read-only: it never writes, so `git status --porcelain` is empty.
 Read the result. A run with rows ends with the line

@@ -387,9 +387,6 @@ substitute for running `scripts/public_safety.py` before publishing.
   does not have.
 - **Time from `--now`.** All time-based checks use `--now` when given (for
   reproducible output in tests) and the current UTC time otherwise.
-- **No self-reported numbers.** Every metric in `--json` mode names the
-  artifact path it derives from; no value comes from a number written inside
-  an agent-authored file.
 - **No project content in the skill.** The census script carries no
   machine-local paths, operator names, or project-specific vocabulary. A row
   built from someone else's exception text is bounded and stripped of absolute

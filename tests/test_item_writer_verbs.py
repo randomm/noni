@@ -319,6 +319,30 @@ def test_list_prints_the_store_newest_first_and_writes_nothing(tmp_path):
     assert _git(tree, "status", "--porcelain").stdout.strip() == ""
 
 
+def test_the_list_line_is_the_documented_bytes(tmp_path):
+    """The row format of #124, pinned as bytes: five fixed fields, then the title.
+
+    A field the item does not carry prints ``-`` rather than dropping out, so a
+    reader cuts every row by field number whatever the store holds. The three shapes
+    below are the three the store can write: a ``promoted`` item with both optional
+    fields, a bare ``candidate`` with neither, and a ``dropped`` item citing a record
+    and no issue.
+    """
+    tree = repo(tmp_path)
+    seed_item(tree, {"schema": "noni.item/1", "id": "a-promoted", "title": "Cache census",
+                     "status": "promoted", "created": FRESH, "issue": 3,
+                     "decision": "2026-10-01-ship"})
+    seed_item(tree, {"schema": "noni.item/1", "id": "b-candidate", "title": "Plain idea",
+                     "status": "candidate", "created": OLD})
+    seed_item(tree, {"schema": "noni.item/1", "id": "c-dropped", "title": "Dead idea",
+                     "status": "dropped", "created": OLD, "decision": "2026-10-02-no",
+                     "why": "superseded"})
+    lines = run_item(tree, "list").stdout.splitlines()
+    assert f"a-promoted promoted issue=3 decision=2026-10-01-ship created={FRESH} Cache census" in lines, lines
+    assert f"b-candidate candidate issue=- decision=- created={OLD} Plain idea" in lines, lines
+    assert f"c-dropped dropped issue=- decision=2026-10-02-no created={OLD} Dead idea" in lines, lines
+
+
 def test_a_store_that_is_absent_lists_empty_rather_than_failing(tmp_path):
     """The store is optional, and so is the store's absence in every reader."""
     tree = repo(tmp_path)

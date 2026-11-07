@@ -384,3 +384,48 @@ def test_a_malformed_created_never_goes_stale(tmp_path):
     tree = repo(tmp_path, "stale-malformed-created")
     _item(tree, created="yesterday")
     assert _findings(tree, "--only", "item-stale") == []
+
+
+def test_a_document_nested_past_the_bound_is_a_row_and_not_a_crash(tmp_path):
+    """The item read obeys the strict JSON rule, and its ``RecursionError`` arm is live.
+
+    The ordering group's premise test (``tests/test_census_ordering_recursion.py``)
+    proves the same thing there: the ordinary decoder gives up on a deep document
+    before this product's depth bound is consulted on some interpreters, so the arm
+    that catches ``RecursionError`` is reachable and not decorative. The premise is
+    asserted here rather than trusted from next door, because the item reader is a
+    separate call site and a change to one does not carry to the other.
+
+    The document is past ``census_json.MAX_DEPTH`` and inside the interpreter's own
+    recursion budget, so on every supported version it is the bound that answers. The
+    answer this group must give is a row saying the file is unreadable, never a
+    traceback: an arbiter that crashes answers nothing, and a report that never prints
+    is the same lie as one that prints "clean".
+    """
+    import json
+    import sys
+
+    from noni import census_json
+
+    inside = census_json.MAX_DEPTH * 2
+    budget = sys.getrecursionlimit()
+    assert inside > census_json.MAX_DEPTH, (
+        f"{inside} levels is not past the bound of {census_json.MAX_DEPTH}")
+    assert inside < budget, (
+        f"{inside} levels is not inside the recursion budget of {budget}")
+    deep = "[" * inside + "1" + "]" * inside
+    assert json.loads(deep), "the standard reader must still build this document"
+
+    tree = repo(tmp_path, "item-deep-nesting")
+    # The control, planted first: a shallow document the census cannot parse proves
+    # the same message, so without this row the deep one would only show that some
+    # reader refused something.
+    _raw(tree, "unparseable.json", json.dumps({"schema": "noni.item/1",
+                                               "id": "unparseable",
+                                               "title": "ok"}) + " oops")
+    _raw(tree, "deep.json", json.dumps({"schema": "noni.item/1",
+                                        "id": "deep", "junk": json.loads(deep)}))
+    rows = _findings(tree, "--only", "item-malformed")
+    assert sorted(row["subject"] for row in rows) == [
+        "deep", "unparseable"], rows
+    assert all("not JSON the census can read" in row["message"] for row in rows), rows

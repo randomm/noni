@@ -194,26 +194,29 @@ def listing_bodies(repo: Path, report, exit_io: int) -> tuple[list[dict] | None,
 
 
 def listing_line(body: dict) -> str:
-    """One line of ``list``: the id, its status, its title, then what it cites.
+    """One line of ``list``, in the bytes the contract of #124 states.
 
-    Every free text goes through the package's one renderer before it reaches the
-    terminal, because a title and a reason are operator input: a value carrying a
-    control character cannot split a line of the listing, and a value of any length
-    cannot make a row longer than the bound.
+    ``<id> <status> issue=<n|-> decision=<id|-> created=<stamp> <title>``: five fixed
+    fields in that order, so a reader can cut the line by field number, and a field
+    the item does not carry prints as ``-`` rather than dropping out (a row that
+    shifted its columns when an optional key was missing would make every reader
+    guess). The title comes last and unlabelled because it is the one field that may
+    hold a space, and the title is what goes through the package's one renderer: an
+    operator's text, so a control character cannot split a line and a length cannot
+    crowd the row out. The two bounds are the schema's own, so a row is never longer
+    than the widest item the store can hold.
     """
-    detail = [f"created={body['created']}"]
     # ``.get`` rather than ``[]``: a document that omits an optional key it does not
     # owe is well-formed (``itemschema.problems`` accepts it, and it is the shape an
     # ``add`` writes), and a listing that walked into a KeyError over one would turn
     # the store's own readability on whether a writer happened to print the key.
-    if body.get("issue") is not None:
-        detail.append(f"issue=#{body['issue']}")
-    if body.get("decision") is not None:
-        detail.append(f"decision={body['decision']}")
-    if body.get("why") is not None:
-        detail.append(f"why={safe_text(body['why'])}")
-    return (f"  {body['id']} [{body['status']}] {safe_text(body['title'])} "
-            + " ".join(detail))
+    issue = body.get("issue")
+    decision = body.get("decision")
+    return (f"{body['id']} {body['status']} "
+            f"issue={issue if issue is not None else '-'} "
+            f"decision={decision if decision is not None else '-'} "
+            f"created={body['created']} "
+            f"{safe_text(body['title'], itemschema.TITLE_MAX)}")
 
 
 def read_item(path: Path, item_id: str, report, exit_io: int, exit_refusal: int):

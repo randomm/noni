@@ -227,18 +227,20 @@ classes that report their own absence:
   stats as a directory and cannot be listed earns exactly one `session-deleted`
   `cannot-tell` row — the class the deletion check already uses for its
   cannot-tells — marked whole-artifact, with the register's name in `subject`,
-  `artifact` and its message, under the naming rule the ledger bullet above
-  states (root-relative `noni/sessions` when the census could root it, the
-  last segment for an out-of-tree `--sessions` override), and the `OSError` text
-  in the message, bounded and stripped of machine-local paths. It is a warn at
-  exit 0 and a failure at 44 under `--strict`, and the group adds no other row:
-  the read answered nothing, so no file was seen, no
+  `artifact` and its message, under the same naming rule the ledger bullet
+  above states (root-relative `noni/sessions` when the census could root it,
+  the last segment for an out-of-tree `--sessions` override, and the path as
+  given in the identifier fields for a relative override it could not root),
+  and the `OSError` text in the message, bounded and stripped of machine-local
+  paths. It is a warn at exit 0 and a failure at 44 under `--strict`, and the
+  group adds no other row: the read answered nothing, so no file was seen, no
   claim was compared, and the git-backed deletion question is not put either.
   The register is listed with an explicit `iterdir`, never `glob`, which
   swallows the readdir `OSError`, and read once per run, whatever the filter
-  names, so the gate that opens the group and the rows it reports
-  are the answer of that one readdir. A `noni/sessions/` that is simply absent
-  stays clean: no sessions registered is a real state, not a failed read.
+  names, so the gate that opens the group and the rows it reports are the
+  answer of that one readdir. A `noni/sessions/` that is simply absent stays
+  what it always was: clean, because no sessions registered is a real state and
+  not a failed read.
 - **`hygiene` (50)** always reports under `noni census`, a clean tree included
   (the per-artifact wrappers run one group each and report no hygiene row). When
   the deny-list class is not active (its file is `absent`, `corrupt`, or present
@@ -286,26 +288,26 @@ classes that report their own absence:
   {}` and no way to tell "nothing closed" from "the question was not asked". A
   recipe that produces the file with a tracker command line and `jq` is in
   `docs/QUICKSTART.md`.
-  A missing `noni/direction/order.json` adds no ordering row at all: the ordering
-  layer is optional, so an attached project that has never ordered anything
-  censuses clean.
+  A missing `noni/direction/order.json` is not a finding at all, the ordering
+  layer being optional, so an attached project that has never ordered anything
+  adds no ordering row to its census.
 - **`intent` (51) reports the file, and the commit that wrote it.** The class
   reads `noni/direction/intent.md` once and asks two questions of it: is it the
   artifact its writer writes (four sections in order, one stamp line, under the
   cap), and did the last commit that touched it cite a decision the ledger holds.
-    A missing file adds no row: standing intent is optional, as the ordering layer
-  is, and a project that has never written one censuses clean. The severity split
-  is the ordinary one: a shape or citation the census could read and disapprove of
-  is a failure, and anything it could not read (unreadable bytes, the decision
+  A missing file adds no row: standing intent is optional, exactly as the
+  ordering layer is, and a project that has never written one adds no intent row.
+  The severity split is the ordinary one: a shape or citation the census could
+  read and disapprove of is a failure, and anything it could not read (a symlink
+  at the intent path, unreadable bytes, a record it could not open, the decision
   record the citation names standing as a symlink, a directory or any other
   non-regular path, the ledger directory or the directory above it being a
   symlink, or a file no commit ever touched) is a `cannot-tell` warn that
-  `--strict` promotes to 51. A cited
-  record is classified before it is opened and then opened with `O_NOFOLLOW`, so a
-  link is refused rather than followed and no byte of an outside file decides the
-  verdict. The row is marked whole-artifact, so a `--only` filter that named no
-  intent class still shows it: a run that could not read the intent never reports
-  itself clean.
+  `--strict` promotes to 51. A cited record is classified before it is opened and
+  then opened with `O_NOFOLLOW`, so a link is refused rather than followed and no
+  byte of an outside file decides the verdict. The row is marked whole-artifact,
+  so a `--only` filter that named no intent class still shows it: a run that could
+  not read the intent never reports itself clean.
 - **A read the group could not make is reported, never skipped.** An
   `--issue-state` file that does not parse, and a decision ledger whose listing
   faults while an entry cites a decision, each add one row marked whole-artifact:

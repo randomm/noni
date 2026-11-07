@@ -12,7 +12,10 @@ Records are written with `scripts/decide.py`. It is the only writer: it derives
 the fields it can derive, refuses the shapes the census would reject, and lands
 both files in one commit. Read `SKILL.md` for the flags and the exit codes.
 
-To correct record `A`, run the writer with `--supersedes "A"`:
+To correct record `A`, run the writer with `--supersedes "A"` (the `noni` package
+must be installed or importable on `PYTHONPATH` for it to run -- the *Install
+noni* section of
+[docs/QUICKSTART.md](docs/QUICKSTART.md#install-noni)):
 
 ```
 scripts/decide.py --repo REPO --slug SLUG --scope SCOPE --asked-by ROLE \

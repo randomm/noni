@@ -21,6 +21,12 @@ census does not check and does not claim to (see
 
 ## Usage
 
+This shim is bash and reads its arguments itself, so it runs with nothing
+installed. The writers whose output it audits are Python wrappers, and each of
+them imports the `noni` package, which must be installed or importable on
+`PYTHONPATH` (the *Install noni* section of
+[docs/QUICKSTART.md](docs/QUICKSTART.md#install-noni)).
+
 ```
 bash scripts/census.sh <state-root>/noni/decisions   the decisions census
 bash scripts/census.sh --sessions <state-root>/noni/sessions  the sessions census

@@ -5,12 +5,16 @@ description: Run the unified noni census — a single read-only script that chec
 
 # census
 
-**Mission:** one entry point that runs every noni protocol check and returns
-an honest exit code. The census is the arbiter: it reads git history plus the
+**Mission:** one entry point that runs every noni protocol check and returns an
+honest exit code. The census is the arbiter: it reads git history plus the
 committed files under `noni/`, flags violations, and reports. It never writes
 anything — running it leaves `git status --porcelain` empty.
 
 ## The entry point
+
+The census is a wrapper: it imports the `noni` package, which must be installed or
+importable on `PYTHONPATH` to run (`noni census` is the same code once it is; the
+*Install noni* section of `docs/QUICKSTART.md#install-noni` owns the commands).
 
 ```
 python3 skills/census/scripts/census.py [options]
@@ -58,19 +62,17 @@ directory, is a usage error (exit 2) before any check runs.
 | `intent` | 51 | `noni/direction/intent.md` is there and is not the artifact: a `## Purpose` / `## Principles` / `## Never` / `## Ask first` heading missing, repeated or out of order, the `Last-confirmed:` line absent or repeated, or the file past its line cap; or the last commit that touched it is not an `intent: <decision-id>` headline naming a record the ledger holds (`uncited`). The `cannot-tell` row for a file this run could not read, for a cited decision record that is a symlink or any other non-regular path, for a ledger directory reached through a symlink, or for a file no commit touched, is a warn (fail under `--strict`); an absent file adds no row at all |
 | `hygiene` | 50 | a tracked file fails the public-repo hygiene scan (machine-local home path, secret shape, active deny-list entry), or the scan/deny-list did not run (warn by default; fail under `--strict`) |
 
-The `warn` classes are reported either way and never move the exit code on
-their own: a run whose only findings are warnings exits 0, and `--strict`
-promotes them to failures at their own codes. `ledger-empty` adds rows in the
-states where no decision record can be read — no `noni/`, `noni/` not a
-directory, a symlink, `noni/` present without a `decisions/` directory, or a
-`decisions/` directory holding no `*.json` record. It never weakens a
-malformed-record failure: a record that is bad JSON or violates the schema
-keeps its `ledger-record` exit 10. A recordless ledger is a state, not a fault:
-a freshly attached project whose `noni/decisions/` has no records yet censuses
-clean at exit 0, because nothing has been steered yet and there is nothing to
-contradict. The shim agrees with that verdict on that
-directory (see the Rules below), so a freshly attached tree reads the same way to
-either entry point.
+The `warn` classes are reported either way and never move the exit code on their
+own: a run whose only findings are warnings exits 0, and `--strict` promotes them to
+failures at their own codes. `ledger-empty` adds rows in the states where no decision
+record can be read — no `noni/`, `noni/` not a directory, a symlink, `noni/` present
+without a `decisions/` directory, or a `decisions/` directory holding no `*.json`
+record. It never weakens a malformed-record failure: a record that is bad JSON or
+violates the schema keeps its `ledger-record` exit 10. A recordless ledger is a state,
+not a fault: a freshly attached project whose `noni/decisions/` has no records yet
+censuses clean at exit 0, because nothing has been steered yet and there is nothing to
+contradict. The shim agrees with that verdict on that directory (see the Rules below),
+so a freshly attached tree reads the same way to either entry point.
 
 When several classes fire at once the lowest code wins; stderr names every
 class that fired.
@@ -150,12 +152,11 @@ One `finding` record per violation, followed by exactly one `summary` record:
  "counts": {"session-double": 1}}
 ```
 
-Every `finding` row names the `artifact` path it derives from. Both output
-modes (--json and human-readable) sort rows by the same key —
-`(artifact, check, subject)` — so the row order is identical across modes
-and reproducible across runs (see `_finding_sort_key`). No metric reads a
-value from an agent-authored
-field; every value comes from git history, file existence, or file byte size.
+Every `finding` row names the `artifact` path it derives from. Both output modes
+(--json and human-readable) sort rows by the same key — `(artifact, check,
+subject)` — so the row order is identical across modes and reproducible across runs
+(see `_finding_sort_key`). No metric reads a value from an agent-authored field;
+every value comes from git history, file existence, or file byte size.
 
 ### The hygiene artifact namespace
 

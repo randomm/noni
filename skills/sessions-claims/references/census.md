@@ -9,6 +9,12 @@ never under `python3` (the interpreter it needs is the one it execs itself, the
 
 ## Usage
 
+Unlike the writers, this census reads its own arguments and needs nothing
+installed; where a sessions-claims wrapper does run, it imports the `noni`
+package, which must be installed or importable on `PYTHONPATH` (the *Install
+noni* section of
+[docs/QUICKSTART.md](docs/QUICKSTART.md#install-noni)).
+
 ```
 bash scripts/census-sessions.sh <state-root>/noni/sessions
 

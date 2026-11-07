@@ -97,6 +97,7 @@ import sys
 from pathlib import Path
 
 from . import (
+    item_cli,
     item_guard,
     item_reads,
     item_write,
@@ -130,11 +131,6 @@ EXIT_IO: int = 3
 EXIT_REFUSAL: int = 4
 
 
-# The verbs the writer owns, in the order every document lists them. One tuple so the
-# unknown-verb refusal, the missing-verb hint and the usage line cannot name three
-# different sets.
-VERBS: tuple[str, ...] = ("add", "list", "drop", "promote")
-
 # The directories this run reads or writes, in the order the guard walks them:
 # ``noni`` itself first (a link there hides every path beneath it from ``lstat``),
 # then the store this writer owns, then the ledger a dropped item cites. The wording,
@@ -142,72 +138,6 @@ VERBS: tuple[str, ...] = ("add", "list", "drop", "promote")
 # :func:`_refuse_linked_state`.
 _GUARDED_DIRS: tuple[str, ...] = ("noni", itemschema.ITEM_DIR,
                                   orderstate.DECISIONS_DIR)
-
-# The flags each verb owns, spelled once so the refusal that names the verb a flag
-# belongs to and the parser's own declaration cannot drift apart.
-_FLAG_OWNER = {"--title": "add", "--decision": "drop", "--why": "drop",
-               "--issue": "promote"}
-
-# The verb list the missing-subcommand hint prints, spelled once from ``VERBS``.
-_VERBS_JOINED = ", ".join(VERBS)
-
-# The usage line, spelled once and handed to argparse as ``usage=``.
-#
-# argparse composes a usage line as ``optionals + positionals``, unconditionally, so
-# with ``--repo`` required and the flags declared before the verbs, ``item.py --help``
-# would render ``... [--no-commit] subcommand [id]`` and bury the one word the caller
-# has to choose. ``order.py`` and ``intent.py`` carry the same decision, the reasoning
-# and the Python 3.14 history behind it: a literal is the only public way to put the
-# verb first, and a formatter subclass that called argparse's private formatters died
-# on 3.14 (issue #98). The flag block is the parser's own declaration, in declaration
-# order, with the metavar argparse prints for each, and the flag-set parity of
-# ``tests/test_item_writer_docs.py`` compares the two: a flag added to the parser
-# belongs here too.
-_USAGE = (f"{labels.ITEM} --repo REPO subcommand [id]"
-          " [--title TITLE] [--decision ID] [--why REASON] [--issue N]"
-          " [--now ISO-8601] [--no-commit] [-h]")
-
-# The missing-positional message argparse composes for a required positional, and the
-# line argparse prints above it. argparse turns this refusal into usage-plus-error
-# itself, so the verbs are added to *that* pair rather than to the message text.
-_MISSING_SUBCOMMAND = "the following arguments are required: subcommand"
-
-
-class _VerbedParser(argparse.ArgumentParser):
-    """The parser of a one-verb writer, naming the verbs when the verb is missing.
-
-    ``item.py --repo R`` with no verb got argparse's own refusal, which names the slot
-    (``subcommand``) and not the four words that fill it: only an *invalid* verb
-    reached the fix line that named them, so the commonest mistake printed the least
-    useful answer (issue #98, the same refusal ``order.py`` and ``intent.py`` close).
-    This parser keeps argparse's own refusal and adds the verbs to it, so the usage
-    line, the wording and the exit code are unchanged and one more line names the
-    accepted verbs. The parser shape is deliberately untouched: ``add_subparsers`` or
-    ``choices=`` would move the verb out of the usage line and take the refusal off
-    the path the pinned wording stands for.
-    """
-
-    def error(self, message: str):
-        if _MISSING_SUBCOMMAND in message:
-            self.print_usage(sys.stderr)
-            print(f"{self.prog}: {message}", file=sys.stderr)
-            print(f"{self.prog}: fix: choose from: {_missing_verb_hint()}",
-                  file=sys.stderr)
-            raise SystemExit(EXIT_USAGE)
-        super().error(message)
-
-
-def _missing_verb_hint() -> str:
-    """The verb list the missing-subcommand hint prints.
-
-    Joined with the same "or" the unknown-verb refusal above uses -- one sentence for
-    one set, so the two refusals of the same mistake cannot answer it twice.
-    """
-    *first, last = VERBS
-    if len(first) == 1:
-        return f"{first[0]} or {last}"
-    return f"{', '.join(first)} or {last}"
-
 
 def _digests(data: bytes) -> str:
     """A short stable digest for a commit subject; never a path, never file bytes."""
@@ -314,11 +244,11 @@ def _state_root(args: argparse.Namespace, verb: str) -> Path | None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = _VerbedParser(
+    parser = item_cli.VerbedParser(
         prog=labels.ITEM,
         description="File one idea as its own committed record "
                     f"({itemschema.ITEM_DIR}/<id>.json) and commit it.",
-        usage=_USAGE,
+        usage=item_cli.USAGE,
     )
     parser.add_argument("--repo", required=True, help="repository root")
     parser.add_argument("subcommand", help="add, list, drop or promote")
@@ -343,15 +273,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     subcommand = args.subcommand
-    if subcommand not in VERBS:
+    if subcommand not in item_cli.VERBS:
         return _fail(EXIT_USAGE, f"subcommand {subcommand!r} is not one of "
-                     + ", ".join(VERBS),
+                     + ", ".join(item_cli.VERBS),
                      f"{labels.ITEM} --repo REPO add ID --title TITLE | list | "
                      "drop ID --decision ID --why REASON | promote ID")
     # A flag that means nothing for the verb it was passed with is a usage error, not
     # a hint the run quietly ignores: --why is the dropped item's reason and no other
     # verb carries one, and a --title on drop would edit an item whose record closed.
-    for flag, owner in _FLAG_OWNER.items():
+    for flag, owner in item_cli.FLAG_OWNER.items():
         dest = flag.lstrip("-")
         if getattr(args, dest) is not None and subcommand != owner:
             return _fail(EXIT_USAGE, f"{flag} belongs to {owner}, not {subcommand}",

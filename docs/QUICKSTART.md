@@ -258,8 +258,8 @@ run.
 Run it without `--strict`, and gate the build on these two sets, which are the
 census's own classes split by their default severity:
 
-- **fail the build** on 10, 12, 15, 20, 30, 31, 32, 51, 52, 53 and 54;
-- **report without failing** on 40, 41, 42, 43, 44, 45, 46, 50, 55, 56 and 57.
+- **fail the build** on 10, 12, 15, 20, 30, 31, 32, 51, 52, 53, 54 and 55;
+- **report without failing** on 40, 41, 42, 43, 44, 45, 46, 50, 56 and 57.
 
 `skills/census/SKILL.md` owns that table with the class names beside each code.
 A warning never moves the exit code on its own, so a first CI run on a tree with

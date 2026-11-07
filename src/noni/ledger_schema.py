@@ -1,12 +1,12 @@
-"""The record schema shared by noni's two censuses and its decision writer.
+"""The record schema shared by noni's census and its decision writer.
 
-``census_ledger_checks.py`` owns the ``ledger-record`` pass and ``census.sh`` its
-jq twin; both read the field sets and the two rules declared here, and
+``census_ledger_checks.py`` owns the ``ledger-record`` pass; both it and
+``decide.py`` read the field sets and the two rules declared here, and
 ``decide.py`` holds the writer to the same rules before a record is committed:
 the flag check in ``_decide_flags.refuse_name`` and the supersede-target check in
 ``targetschema.refuse_target_fields`` ask the predicates below rather than keeping
-a copy of the shape. One owner for the vocabulary is what keeps a writer, a Python
-census and a jq program from drifting apart in silence -- the symptom of a drift is
+a copy of the shape. One owner for the vocabulary is what keeps a writer and the
+census from drifting apart in silence -- the symptom of a drift is
 a record the writer happily committed and the census then reports at exit 10.
 
 Nothing here prints, exits or appends a finding: these are the sets and the
@@ -19,8 +19,7 @@ import json
 import re
 
 # The eight required ledger fields, in the order the writer renders them. This is
-# the closed required set: a record missing one is a ``ledger-record`` failure in
-# both censuses.
+# the closed required set: a record missing one is a ``ledger-record`` failure.
 REQUIRED_LEDGER_FIELDS = (
     "id",
     "date",
@@ -47,13 +46,12 @@ OPTIONAL_LEDGER_FIELDS = ("source", "decided_by", "on_behalf_of", "single_option
 
 # The two attribution names, typed as ``asked_by`` is typed (a non-empty string)
 # plus the one rule that makes them reportable: the value is one line, so it cannot
-# smuggle a second line into a report or a log line. Both censuses check these
-# shapes (here and the jq program in
-# ``skills/steering-ledger/scripts/census.sh``) and nothing more -- the census
+# smuggle a second line into a report or a log line. The census checks these
+# shapes (here, as the predicate below) and nothing more -- the census
 # never verifies an identity, and no signature or forge check lives here. The
 # pairing (``on_behalf_of`` without ``decided_by``) is the writer's rule alone: a
 # hand-edited record carrying one name and not the other is well formed, and
-# neither census refuses it.
+# the census does not refuse it.
 NAME_LINE_FIELDS = ("decided_by", "on_behalf_of")
 
 # The option bounds. Both censuses and the writer agree on these: 2-4 options per
@@ -76,7 +74,7 @@ SINGLE_OPTION_MARKER = "single_option"
 # (file, group, record) json escapes, and are listed alongside for the
 # hand-edited record: ``str.splitlines`` -- the documented basis of this rule --
 # breaks a line on all ten, so a value carrying one of them is not one line
-# however it was written. Shared by both censuses and the writer so the four of
+# however it was written. Shared by the census and the writer so the four of
 # them never disagree on what a line is.
 LINE_BREAKS = ("\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85",
                "\u2028", "\u2029")
@@ -88,10 +86,8 @@ LINE_BREAKS = ("\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85",
 # name made of one of those is not blank to this rule -- the four breaks among
 # them (U+001C-U+001E, U+0085, U+2028, U+2029 and the rest of ``LINE_BREAKS``) are
 # refused as more than one line, never as a blank, and the others name somebody.
-# The census mirrors this set in jq: the blank class of ``line_free`` in
-# ``skills/steering-ledger/scripts/census-schema.jq`` reads the same four
-# characters, so a hand-edited record holding a blank name is refused by both
-# entry points and not only at the flag.
+# The census reads the same four through this set, so a hand-edited record holding
+# a blank name is refused by the census and not only at the flag.
 BLANKS = (" ", "\t", "\v", "\f")
 
 # A UTC ISO-8601 second-resolution timestamp (the record date shape).
@@ -104,11 +100,11 @@ def is_single_line(value: object) -> bool:
     """Whether ``value`` is the shape the census accepts for a name field: a
     string that is neither blank nor more than one line.
 
-    Two rules, one predicate, so a writer, two censuses and the supersede-target
+    Two rules, one predicate, so a writer, the census and the supersede-target
     read cannot drift on either. Blankness is folded in here rather than kept as
     a separate check the caller has to remember: a name that is only whitespace
     names nobody, so it is refused wherever the shape is asked -- at the flag
-    (exit 2), at the supersede target (exit 4) and in both censuses (exit 10).
+    (exit 2), at the supersede target (exit 4) and in the census (exit 10).
     The line rule is ``LINE_BREAKS``, which is ``str.splitlines`` read out as a
     set, so a value carrying one of the ten is two lines even when json holds it
     as one string.
@@ -127,12 +123,11 @@ def is_non_empty_string(value: object) -> bool:
     return isinstance(value, str) and bool(value)
 
 
-# --- the shape of one record, as both censuses check it ----------------------
+# --- the shape of one record, as the census and the writer check it ----------
 #
 # The problem list these helpers build is what census.py's ``ledger-record`` class
-# reports and what the jq twin in ``skills/steering-ledger/scripts/census.sh``
-# mirrors, so the wording is part of the contract: one problem names one field and
-# nothing else, and a rewording is a golden-fixture change in two places at once.
+# reports, so the wording is part of the contract: one problem names one field and
+# nothing else, and a rewording is a golden-fixture change at once.
 # ``census_ledger_checks`` composes the rows; these helpers answer questions about
 # fields and never append to anything.
 
@@ -143,7 +138,7 @@ def validate_source(record: dict) -> list[str]:
     ``source`` is the one optional field that is itself an object, so its keys are a
     closed set of their own: an extra key would ride into a report on a provenance
     nobody asked for. A JSON integer is a number with no fractional part and no
-    exponent, which is what census.sh checks with ``is_int`` and this checks with
+    exponent, which is what this checks with
     ``isinstance(int)`` plus not-``bool``, because Python calls ``True`` an ``int``
     and json's ``true`` is not a number the census accepts.
 
@@ -248,9 +243,9 @@ def validate_questions(record: dict) -> list[str]:
         # The marker must be earned by at least one question of the record it is
         # written on: a record marked single-option while every question holds 2-4
         # options was not written by --single-option (the writer refuses that shape
-        # at the flag), so it is reported rather than believed. census.sh mirrors
-        # this on the same two facts (the marker read as the true literal, and the
-        # one-option count).
+        # at the flag), so it is reported rather than believed. Both facts it rests
+        # on are read from the record itself: the marker as the true literal, and
+        # the one-option count.
         problems.append(f"{SINGLE_OPTION_MARKER} is set but no question has exactly "
                         f"one option: a one-option question is what the marker means")
     return problems

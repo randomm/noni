@@ -9,8 +9,8 @@ The schema is:
 
 A question object is: id (string), text (string), options (array of 2-4
 strings), answer (string or null — an open question carries `"answer": null`,
-the form scripts/steering-ledger/scripts/decide.py writes and both censuses
-accept).
+the form scripts/steering-ledger/scripts/decide.py writes and the census
+accepts).
 
 The tests use the committed golden fixtures:
   decision-valid.json               — one complete minimal record, the baseline
@@ -55,8 +55,9 @@ def _run_census_on_record(tmp_path: Path, record: dict, fname: str = "test-recor
 
     Uses the unified census (skills/census/scripts/census.py) — the canonical
     entry point that owns the full schema validation including the new
-    optional source field. The per-epic census.sh shim (E1) does not validate
-    source; the unified census is the arbiter the tests target.
+    optional source field. The ledger shim runs this same census, and
+    ``_run_census_sh_on_record`` drives it where the point is that the older
+    path answers alike.
 
     Returns (exit_code, all_output, all_output) where all_output is the
     combined stdout+stderr (the finding lines go to stdout in the unified
@@ -78,14 +79,16 @@ def _run_census_on_record(tmp_path: Path, record: dict, fname: str = "test-recor
 
 
 def _run_census_sh_on_record(tmp_path: Path, record: dict, fname: str = "test-record.json") -> tuple[int, str, str]:
-    """Write a single record to a ledger dir and run the per-epic census.sh
-    (the steering-ledger E1 entry point) on it. census.sh validates the same
-    closed field set as the unified census, including the optional source
-    field, so the two arbiter implementations stay in lockstep. The ledger
-    dir is not a git tree, so attribution and the post-commit-edit check skip
-    and a clean record exits 0."""
-    import os
+    """Write a single record to a ledger dir and run the ledger shim
+    (``skills/steering-ledger/scripts/census.sh``) on it.
 
+    The shim is a thin wrapper over the unified census restricted to the ledger
+    group, so this is the same arbiter reached by the older path the skill
+    documents: it validates the same closed field set, including the optional
+    ``source`` field, because it runs the same record pass. The ledger dir is
+    not a git tree, so attribution and the post-commit-edit check skip and a
+    clean record exits 0.
+    """
     ledger = tmp_path / "decisions"
     ledger.mkdir(parents=True)
     (ledger / fname).write_text(json.dumps(record, indent=2))
@@ -93,7 +96,7 @@ def _run_census_sh_on_record(tmp_path: Path, record: dict, fname: str = "test-re
         ["bash", str(CENSUS_SH), str(ledger)],
         capture_output=True,
         text=True,
-        env=dict(os.environ),
+        env=subprocess_env(),
         timeout=60,
     )
     combined = proc.stdout + "\n" + proc.stderr
@@ -225,17 +228,24 @@ def test_source_non_int_fields_fail(tmp_path):
 
 
 def test_integral_float_source_fails_in_both_entry_points(tmp_path):
-    """source.issue_number = 42.0 (an integral float) is rejected by BOTH the
-    unified census (isinstance(int) + not bool) and the census.sh shim (the
-    JSON-integer text-form check): the two entry points agree on every
-    source shape."""
+    """source.issue_number = 42.0 (an integral float) is refused by both entry
+    points, and the row names the field: the wrapper and the census answer alike
+    because the wrapper runs the census's own record pass.
+
+    The wording asserted here is the census's ("must be an integer"), not the
+    shim's old ``10:integral-float`` label, which belonged to the jq program that
+    no longer exists. Both halves still matter: an integral float must not pass as
+    an integer, and the row must name the field rather than report the code alone.
+    """
     rec = json.loads(json.dumps(_fixture("decision-valid.json")))
     rec["source"] = {"issue_number": 42.0, "comment_id": 9102.0}
     code, out, err = _run_census_on_record(tmp_path, rec)
     assert code == 10, f"census.py: expected exit 10 for integral-float source, got {code}\nstderr: {err}"
     code_sh, out_sh, err_sh = _run_census_sh_on_record(tmp_path, rec)
     assert code_sh == 10, f"census.sh: expected exit 10 for integral-float source, got {code_sh}\n{err_sh}"
-    assert "integral" in (err_sh + out_sh).lower()
+    for label, text in (("census.py", out + err), ("census.sh", out_sh + err_sh)):
+        assert "issue_number" in text, f"{label}: the row must name the field: {text}"
+        assert "comment_id" in text, f"{label}: both halves are wrong, both are named: {text}"
 
 
 def test_integral_float_source_rejects_only_the_float_shape(tmp_path):

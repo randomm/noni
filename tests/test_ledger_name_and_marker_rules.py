@@ -1,8 +1,8 @@
-"""The name rules and the single-option marker, through all three entry points.
+"""The name rules and the single-option marker, through every entry point.
 
-Both are rules the four readers of the ledger schema must answer alike, which is
+Both are rules the readers of the ledger schema must answer alike, which is
 the only reason they are worth a test apiece: ``decide.py`` refuses at the flag,
-``census.py``'s record pass reports, ``census.sh``'s jq program reports, and
+``census.py``'s record pass reports, and
 ``targetschema`` refuses a supersede target carrying either. A rule one of them
 drops is a record the writer committed and an arbiter then refused -- or, the
 worse direction, a record every arbiter calls clean that the rule was written to
@@ -20,7 +20,12 @@ with it set any question may hold one option, and at least one question of the
 record must, so a marker no question carries a one option for says something the
 record does not show.
 
-The closed key set, and the parity of the two programs' field lists, are in
+The parity assertions here used to run against a second arbiter -- the jq program
+beside ``census.sh``, which declared the same rules in a second language. That
+program is deleted (issue #99) and the wrapper runs the census instead, so the
+tests that parsed its class literals and its key list went with it, and what is
+left is behavioural: every entry point refuses the same values and names the
+field it refused. The closed key set is in
 ``tests/test_ledger_closed_key_set.py``; the launchers are shared from
 ``tests/ledger_schema_fixtures.py``.
 """
@@ -32,20 +37,14 @@ import subprocess
 from pathlib import Path
 
 from _harness import REPO, subprocess_env
-from ledger_class_support import (
-    _comment_above,
-    _decode_jq_class,
-    _line_free_classes,
-    _names_strip_as_basis,
-)
+from ledger_class_support import _comment_above, _names_strip_as_basis
 from ledger_schema_fixtures import (
     CENSUS_SH,
-    SCHEMA_JQ,
     _assert_both_clean,
     _assert_both_refuse,
-    _assert_sh_names_the_schema_fault,
     _baseline,
     _ledger,
+    no_package_env,
 )
 
 # Each of the three separators json escapes and str.splitlines breaks a line on.
@@ -55,9 +54,8 @@ FILE_GROUP_RECORD = ("\x1c", "\x1d", "\x1e")
 RAW_SEPARATORS = ("\x85", "\u2028", "\u2029")
 # A name made of nothing but a character the blank rule refuses: the four of
 # ``ledger_schema.BLANKS`` (space, tab, U+000B, U+000C), each alone and each
-# doubled, plus the empty string. The blank-class parity test below compares
-# BLANKS itself against the shipped jq class, so these five spellings exercise
-# the rule and do not restate the set.
+# doubled, plus the empty string. The comment test below reads BLANKS's own
+# wording, so these five spellings exercise the rule and do not restate the set.
 BLANKS = ("", "   ", "\t", " \t ", "\x0b\x0c")
 # A name an operator would actually type: spaces, a dot, a digit.
 ORDINARY = "Dr. A. Reyes"
@@ -95,114 +93,41 @@ def test_the_line_break_set_is_the_documented_splitlines_basis():
             f"U+{ord(char):04X} is in the set but is not a splitlines break")
 
 
-def test_the_jq_line_class_names_every_break_the_python_set_names():
-    """The jq program's line class is the same ten characters, so the two censuses
-    cannot disagree about a name the way the key-count rule once let them.
-
-    The class is parsed out of the shipped ``line_free`` rather than retyped: the
-    assertion is about the shipped bytes, and a copy here would drift with them.
-    It is decoded, not scanned: the file spells every member as a two-character
-    escape, so the reading this replaced named nothing but the ``\\n`` and ``\\r``
-    that happen to sit in the class, added LF and CR from a raw-character fallback
-    it did not need, and compared no break against ``LINE_BREAKS``. The blank class
-    is checked the same way in the same breath: it is the other half of the
-    predicate, and a drift there is the same bug.
-    """
-    from noni.ledger_schema import BLANKS, LINE_BREAKS
-
-    blank_class, line_class = _line_free_classes(SCHEMA_JQ.read_text(encoding="utf-8"))
-    named_breaks = _decode_jq_class(line_class)
-    assert named_breaks == set(LINE_BREAKS), (
-        f"the jq line class and LINE_BREAKS differ: jq "
-        f"{sorted(ord(c) for c in named_breaks)} "
-        f"vs python {sorted(ord(c) for c in LINE_BREAKS)}")
-    # The blank class names four characters exactly -- space, tab, U+000B and
-    # U+000C -- which is BLANKS, not the wider class str.strip() removes.
-    named_blanks = _decode_jq_class(blank_class)
-    assert named_blanks == set(BLANKS), (
-        f"the jq blank class and BLANKS differ: jq "
-        f"{sorted(ord(c) for c in named_blanks)} "
-        f"vs python {sorted(ord(c) for c in BLANKS)}")
-
-
-def test_both_blank_rules_name_the_four_characters_and_not_str_strip():
-    """Both places that document the blank rule state the four characters, not
+def test_the_blank_rule_names_the_four_characters_and_not_str_strip():
+    """The place that documents the blank rule states the four characters, not
     ``str.strip()``.
 
     The set is four characters -- space, tab, U+000B, U+000C -- while
     ``str.strip()`` also removes U+001C-U+001F, U+0085, U+00A0, U+1680, the
     U+2000-U+200A run, U+202F, U+205F and U+3000. Naming the wider basis was the
-    bug: it described a rule neither census enforces (a name of nothing but U+00A0
-    is accepted by both), and the parity test above could not catch it because the
-    *code* was right and only the prose was wrong. So the prose is asserted the way
-    the class is: read off the shipped bytes, in the two places it is written -- the
-    ``BLANKS`` comment in ``noni/ledger_schema.py`` and the blank-class comment of
-    ``line_free`` in the jq program.
+    bug: it described a rule the census does not enforce (a name of nothing but
+    U+00A0 is accepted), and a parity test over the code alone could not catch it
+    because the *code* was right and only the prose was wrong. So the prose is
+    asserted the way the set is: read off the shipped bytes, in the one place it
+    is written -- the ``BLANKS`` comment in ``noni/ledger_schema.py``. The second
+    place that carried it was the jq program's ``line_free``, which no longer
+    exists.
     """
-    writer_comment = _comment_above((REPO / "src" / "noni" / "ledger_schema.py"
-                                     ).read_text(encoding="utf-8"), "BLANKS = (")
-    jq_comment = _comment_above(SCHEMA_JQ.read_text(encoding="utf-8"),
-                                "def line_free:")
-    for label, comment in (("ledger_schema.BLANKS", writer_comment),
-                           ("census-schema.jq line_free", jq_comment)):
-        assert "U+000B" in comment and "U+000C" in comment, (
-            f"{label}: the comment must name the four characters it refuses, "
-            f"not the wider str.strip() basis: {comment}")
-        stated = [line for line in comment.splitlines()
-                  if "str.strip" in line and not line.lstrip().startswith("# It is not")]
-        assert not any(_names_strip_as_basis(line) for line in stated), (
-            f"{label}: the comment still names str.strip() as the basis of the "
-            f"blank set, which is wider than the four characters: {comment}")
+    comment = _comment_above((REPO / "src" / "noni" / "ledger_schema.py"
+                              ).read_text(encoding="utf-8"), "BLANKS = (")
+    assert "U+000B" in comment and "U+000C" in comment, (
+        "ledger_schema.BLANKS: the comment must name the four characters it "
+        f"refuses, not the wider str.strip() basis: {comment}")
+    stated = [line for line in comment.splitlines()
+              if "str.strip" in line and not line.lstrip().startswith("# not")]
+    assert not any(_names_strip_as_basis(line) for line in stated), (
+        "ledger_schema.BLANKS: the comment still names str.strip() as the basis "
+        f"of the blank set, which is wider than the four characters: {comment}")
 
 
-def test_a_class_missing_a_break_fails_the_decoding_of_it(tmp_path):
-    """The parity test above can fail: drop one break from the shipped class and the
-    decoded set no longer equals ``LINE_BREAKS``.
+# --- the name rules, every entry point -------------------------------------
 
-    Without this the assertion is only as good as its own decoder, and the decoder
-    this replaced passed on the shipped file while comparing two characters out of
-    ten. Every break is dropped in turn, so one missing member anywhere in the class
-    is caught rather than the one member this test happened to name. The mutation is
-    on copies under ``tmp_path``; the shipped file is only ever read, so nothing here
-    can leave the schema short a break.
-    """
-    from noni.ledger_schema import LINE_BREAKS
-
-    shipped = SCHEMA_JQ.read_text(encoding="utf-8")
-    _blank, line_class = _line_free_classes(shipped)
-    assert _decode_jq_class(line_class) == set(LINE_BREAKS), (
-        "the shipped class already fails the parity test above")
-    checked = 0
-    for break_char in LINE_BREAKS:
-        # The class spells LF and CR with a backslash letter and the other eight
-        # with \uXXXX, which is the spelling the shipped bytes actually use -- the
-        # assert below catches a class that stopped spelling a break either way.
-        spelling = {"\n": "\\n", "\r": "\\r"}.get(
-            break_char, f"\\u{ord(break_char):04x}")
-        mutated = tmp_path / f"census-schema-{ord(break_char):04x}.jq"
-        mutated.write_text(shipped.replace(spelling, ""), encoding="utf-8")
-        assert mutated.read_text(encoding="utf-8") != shipped, (
-            f"the shipped class does not spell U+{ord(break_char):04X} as {spelling}, "
-            "so dropping it would mutate nothing")
-        checked += 1
-        _mut_blank, mut_line = _line_free_classes(mutated.read_text(encoding="utf-8"))
-        decoded = _decode_jq_class(mut_line)
-        assert break_char not in decoded and decoded != set(LINE_BREAKS), (
-            f"dropping {spelling} from the class left the decoded set unchanged: "
-            f"{sorted(ord(c) for c in decoded)}")
-    assert checked == len(LINE_BREAKS), (
-        f"only {checked} of {len(LINE_BREAKS)} breaks were mutated")
-
-
-# --- the name rules, three entry points -------------------------------------
-
-def test_all_three_entry_points_agree_on_every_break_and_blank(tmp_path):
-    """One table, three entry points: the writer's flag, census.py's record pass
-    and census.sh's jq program refuse the same values, and name the field they
-    refused.
+def test_every_entry_point_agrees_on_every_break_and_blank(tmp_path):
+    """One table, every entry point: the writer's flag and the census's record
+    pass refuse the same values, and name the field they refused.
 
     The three separators json escapes, the three it writes raw and the blanks each
-    go through all three, and ``ORDINARY`` is the positive control that keeps the
+    go through all of them, and ``ORDINARY`` is the positive control that keeps the
     rule from being tightened into a refusal of everything.
 
     ``refuse_name`` is driven with the census's own predicate -- which is what
@@ -235,9 +160,10 @@ def test_all_three_entry_points_agree_on_every_break_and_blank(tmp_path):
                              is_single_line, {}, False) == 2, (
             f"{label}: flag_refusals accepted it")
 
-        # 2. Both censuses. The row must name the field either way, which is the
-        # agreement that matters; census.py's in-process message is asserted
-        # verbatim in test_the_record_pass_names_the_field_and_the_reason.
+        # 2. The census, through both routes to it: the shim in a subprocess and
+        # the unified census directly. The row must name the field either way,
+        # which is the agreement that matters; census.py's in-process message is
+        # asserted verbatim in test_the_record_pass_names_the_field_and_the_reason.
         record = _baseline()
         record["id"] = f"2026-10-04-name-{index}"
         record["decided_by"] = name
@@ -283,16 +209,15 @@ def test_the_writer_refuses_a_break_the_census_predicate_names():
         "the helper kept its own copy of the line-break set instead of the argument")
 
 
-# --- the marker, three entry points -----------------------------------------
+# --- the marker, every entry point -----------------------------------------
 
 def test_the_record_pass_names_the_field_and_the_reason():
     """census.py's own record pass reports a blank or broken name as one row that
     names the field, in the wording its other name rules use.
 
-    Asserted in process rather than through the report, because the report is where
-    the two censuses' wordings legitimately differ (census.sh reports the questions
-    and name groups with one fixed message each): the predicate's own output is the
-    thing the three entry points have to agree on.
+    Asserted in process rather than through the report: the predicate's own output
+    is the thing every entry point has to agree on, and the report is where a row
+    adds the fix hint and the artifact around it.
     """
     from noni.census_ledger_checks import _validate_record
 
@@ -311,7 +236,7 @@ def test_the_record_pass_names_the_field_and_the_reason():
 
 def test_a_marker_no_question_earns_is_refused_by_both_censuses(tmp_path):
     """``single_option: true`` over an all-2-4-option record is a malformed record
-    to both censuses, naming the marker.
+    to both entry points, naming the marker.
 
     The marker says a question was asked with one option; a record that shows none
     does not say it. The writer refuses the flag combination at exit 2, so the
@@ -330,9 +255,8 @@ def test_a_one_option_question_without_the_marker_is_refused_by_both(tmp_path):
     """The other half of the same bound: the content does not relax it, only the
     marker does.
 
-    census.py names the marker in its row; census.sh reports the whole questions
-    group with one fixed message, so the code is what settles the refusal there and
-    the specific wording is asserted where it exists.
+    census.py names the marker in its row, so the specific wording is asserted
+    where it exists and the shared assertion settles the refusal on both routes.
     """
     record = _baseline()
     record["id"] = "2026-10-04-one-option-unmarked"
@@ -345,18 +269,18 @@ def test_a_one_option_question_without_the_marker_is_refused_by_both(tmp_path):
 
 def test_a_scalar_question_entry_is_refused_by_both_and_named(tmp_path):
     """A ``questions`` array holding a bare value -- ``5``, ``"a"``, ``true`` -- is
-    refused by both censuses at exit 10, each naming the shape.
+    refused by both entry points at exit 10, each naming the shape.
 
-    The regression is the blank diagnostic: every ``has()`` in the shipped jq
-    program faults on a number, a string or a boolean, jq exits 5, and census.sh
-    (which discards jq's stderr) printed ``schema violation:  (10:schema)`` -- the
-    exit code right and the reason named by nothing. census.py has always called it
-    "question entry is not an object", the wording the AC names, so the shim's row
-    is compared against it through the same shared assertion.
+    The regression is the blank diagnostic. The deleted jq program faulted on a
+    number, a string or a boolean (every ``has()`` in it reads a key of a
+    non-object, jq exits 5) and the shim, which discarded jq's stderr, printed
+    ``schema violation:  (10:schema)`` -- the exit code right and the reason named
+    by nothing. census.py has always called it "question entry is not an object",
+    the wording the AC names, so both routes are now pinned to that one wording.
 
-    The marker is planted on two of the three cases: ``marker_earned`` reads
-    ``.options`` of every item once the marker is set, so a guard sitting only in
-    the questions rule leaves the fault live on the marked record.
+    The marker is planted on two of the three cases: the marker's own count reads
+    ``options`` of every item, so a guard sitting only in the questions rule left
+    the fault live on the marked record.
     """
     for index, scalar in enumerate((5, "a", True)):
         record = _baseline()
@@ -368,14 +292,11 @@ def test_a_scalar_question_entry_is_refused_by_both_and_named(tmp_path):
         label = f"a questions array holding {scalar!r}"
         _assert_both_refuse(tmp_path, record, "question entry is not an object",
                             label, subdir=f"scalar-{index}")
-        _assert_sh_names_the_schema_fault(tmp_path, record,
-                                          "question entry is not an object", label,
-                                          subdir=f"scalar-sh-{index}")
 
 
 def test_an_earned_marker_over_mixed_questions_is_clean_in_both(tmp_path):
     """The per-record marker over the per-question bound: a marked record mixing a
-    one-option question with a 2-4-option one is valid in both censuses.
+    one-option question with a 2-4-option one is valid in both entry points.
 
     This is what makes the rule per record rather than per question -- judged
     question by question, the 2-4 question of this record would have to be refused
@@ -394,7 +315,7 @@ def test_an_earned_marker_over_mixed_questions_is_clean_in_both(tmp_path):
 
 def test_a_malformed_marker_value_is_refused_by_both(tmp_path):
     """``single_option: false`` (or a string) is a malformed marker, not a relaxed
-    bound: both censuses refuse it and name it, so a record cannot buy the
+    bound: both entry points refuse it and name it, so a record cannot buy the
     relaxation with a truthy value of the wrong type.
     """
     for value in (False, "true", 1):
@@ -437,35 +358,43 @@ def test_the_writer_refuses_a_marker_no_question_earns(tmp_path):
     assert earned.returncode == 0, earned.stderr
 
 
-# --- census.sh's exit-3 sub-class -------------------------------------------
+# --- the wrapper's own exit-3 -----------------------------------------------
 
-def _run_sh_from(script: Path, ledger: Path) -> tuple[int, str]:
-    """census.sh at an arbitrary path over ``ledger``: the orphan-sibling case."""
+def _run_sh_from(script: Path, ledger: Path,
+                 env: dict | None = None) -> tuple[int, str]:
+    """census.sh at an arbitrary path over ``ledger``, in a chosen environment."""
     proc = subprocess.run(["bash", str(script), str(ledger)],
                           capture_output=True, text=True,
-                          env=subprocess_env(), timeout=120)
+                          env=env if env is not None else subprocess_env(),
+                          timeout=120)
     return proc.returncode, proc.stdout + proc.stderr
 
 
-def test_census_sh_exits_three_when_the_schema_program_is_missing(tmp_path):
-    """census.sh copied WITHOUT its sibling census-schema.jq exits 3 carrying the
-    ``3:schema-program-missing`` marker, on a ledger that would otherwise read clean.
+def test_census_sh_exits_three_when_the_package_is_not_importable(tmp_path):
+    """The wrapper's one refusal of its own: no importable package is exit 3.
 
-    The sub-class is documented in four places (the script's own header, the
-    package's ``shim_help.CENSUS_SH_HELP``, ``references/census.md`` and the usage
-    fixture), and this is the run those documents describe: without the program
-    there is no schema to apply, and a census that read the directory and printed
-    only a header row would be reporting a clean it never established.
+    The wrapper carries no rules, so the only fault it can raise on its own is the
+    one about its interpreter and its package: a missing interpreter or an
+    unimportable ``noni`` is named on one plain line and exits 3, the census's own
+    code for a tool the reading machine does not have. The sub-class this test used
+    to pin was ``3:schema-program-missing``, the sibling ``census-schema.jq``
+    having gone with the second arbiter; what the wrapper still cannot do is run,
+    and this is the run that says so rather than printing a traceback or reporting
+    a clean it never established.
     """
-    scripts = tmp_path / "scripts"
-    scripts.mkdir()
-    ledger = _ledger(tmp_path / "orphan-ledger", _baseline())
-    (scripts / "census.sh").write_text(CENSUS_SH.read_text(encoding="utf-8"),
-                                       encoding="utf-8")
-    assert not (scripts / "census-schema.jq").exists(), (
-        "the fixture copied the schema program, so it proves nothing")
-    code, out = _run_sh_from(scripts / "census.sh", ledger)
-    assert code == 3, f"expected exit 3 for a missing schema program, got {code}:\n{out}"
-    assert "3:schema-program-missing" in out, out
-    assert "id\tdate\tby\tstatus\tlive\tsupersedes" not in out, (
-        f"a census that could not apply a schema printed a report: {out}")
+    ledger = _ledger(tmp_path / "no-import-ledger", _baseline())
+    # A ``python3`` that cannot import the package. Overwriting PYTHONPATH alone
+    # is not enough: an installed ``noni`` is reached by a ``.pth`` in the venv's
+    # ``site-packages``, which PYTHONPATH cannot hide (that is what CI does, and
+    # what made this test pass for the wrong reason until issue #99). So the
+    # interpreter the wrapper names is a stub starting the real one ``-S -I``,
+    # with the empty PYTHONPATH as the second route closed. The wrapper still
+    # resolves a real interpreter, so this is the package half of the refusal and
+    # not the interpreter half (which tests/test_sessions_census_exits.py pins).
+    env = no_package_env(tmp_path, "no-import")
+    code, out = _run_sh_from(CENSUS_SH, ledger, env)
+    assert code == 3, f"expected 3 with no importable package, got {code}:\n{out}"
+    assert "not importable" in out, out
+    assert "Traceback" not in out, f"a traceback is not a diagnostic: {out}"
+    assert "summary:" not in out, (
+        f"a census that could not load printed a report: {out}")

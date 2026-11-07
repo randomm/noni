@@ -1,38 +1,36 @@
-"""The closed record key set, and the two programs that must declare it alike.
+"""The closed record key set, stated as the rule that replaced the key count.
 
-The regression these fixtures pin: ``census.sh``'s closed set was a key COUNT, not
-a set test. It accepted a junk key beside a real optional field (nine keys: the
-eight required plus ``source``, and one name nobody declared for free), and it
-accepted 10-, 11- and 12-key records carrying any names at all. ``origin/main``
+The regression these fixtures pin: the second arbiter's closed set was a key
+COUNT, not a set test. It accepted a junk key beside a real optional field (nine
+keys: the eight required plus ``source``, and one name nobody declared for free),
+and it accepted 10-, 11- and 12-key records carrying any names at all. ``origin/main``
 answered exit 10 on every one of those shapes, and ``census.py`` -- which tested
 membership rather than counting -- refused them throughout. So the symptom was a
 record the writer committed and one of its two arbiters then reported at exit 10
 while the other called it clean.
 
-Two assertions, one per direction of the same contract:
+The second arbiter is gone (issue #99): ``census.sh`` is a thin wrapper over the
+unified census, so the parity assertion that compared the jq program's key
+literal against ``REQUIRED_LEDGER_FIELDS`` plus ``OPTIONAL_LEDGER_FIELDS`` has no
+second literal to read, and it is deleted with the program. What the fixtures
+still prove is the behaviour: every golden fixture (one per key count, each
+carrying junk keys) earns exit 10 from both the wrapper and the census it runs,
+and a record whose keys are all declared stays clean at twelve.
 
-- every golden fixture (one per key count, each carrying junk keys) earns exit 10
-  from BOTH entry points, so tightening one program alone cannot pass; and
-- the jq program's own key literal equals ``REQUIRED_LEDGER_FIELDS`` plus
-  ``OPTIONAL_LEDGER_FIELDS``, parsed out of the program's text rather than retyped
-  here -- a copy in the test would drift along with a drift it should catch.
-
-The name rules and the marker rules, asserted through all three entry points, are
-in ``tests/test_ledger_name_and_marker_rules.py``. The shared launchers are in
+The name rules and the marker rules, asserted through every entry point, are in
+``tests/test_ledger_name_and_marker_rules.py``. The shared launchers are in
 ``tests/ledger_schema_fixtures.py``.
 """
 
 from __future__ import annotations
 
 import json
-import re
 
 from _harness import REPO
 from ledger_schema_fixtures import (
     EXPECTED_KEYS,
     FIXTURES,
     JUNK_FIXTURES,
-    SCHEMA_JQ,
     _assert_both_clean,
     _assert_both_refuse,
     _fixture,
@@ -42,7 +40,7 @@ from ledger_schema_fixtures import (
 
 def test_each_junk_key_fixture_is_refused_by_both_censuses(tmp_path):
     """One golden fixture per key count (9, 10, 11, 12), each carrying junk keys,
-    each refused with exit 10 by census.sh AND census.py, naming the junk key.
+    each refused with exit 10 by the shim AND the census, naming the junk key.
 
     The counts are asserted too, since the count is the regression: a fixture that
     drifted to a different number of keys would stop being the shape the count rule
@@ -83,7 +81,7 @@ def test_the_closed_set_is_a_set_and_not_a_count(tmp_path):
 
 def test_a_record_missing_a_required_field_is_still_reported(tmp_path):
     """The required-key check survived the rewrite: a record missing one of the
-    eight says which one it is missing, from both censuses.
+    eight says which one it is missing, from both entry points.
 
     The closed set and the required set are two tests, and a record can fail
     either alone; collapsing them into one would let a record missing three fields
@@ -94,66 +92,31 @@ def test_a_record_missing_a_required_field_is_still_reported(tmp_path):
     _assert_both_refuse(tmp_path, record, "supersedes", "a missing required field")
 
 
-# --- the two programs declare one schema ------------------------------------
+def test_the_schema_field_sets_are_the_only_declaration_of_the_set():
+    """The field sets live in ``ledger_schema`` and nowhere else a census reads.
 
-def _jq_closed_set_literal() -> list[str]:
-    """The closed-set keys, read out of the jq program's own text.
-
-    Parsed from the ``closed8`` definition rather than hard-coded here: a copy in
-    the test would drift alongside a drift in the program, which is the failure
-    this assertion exists to catch. Returns the keys in the program's own order.
-    """
-    text = SCHEMA_JQ.read_text(encoding="utf-8")
-    definition = re.search(r"def closed8:.*?== 0\);", text, re.S)
-    assert definition, "closed8 no longer holds the bracketed key literal to parse"
-    # The FIRST non-empty bracketed list inside closed8 is the closed set: the only
-    # other bracket pair in the definition is the `keys_unsorted // []` default.
-    bracket = re.search(r"\[([^\]]+)\]", definition.group(0), re.S)
-    assert bracket, "closed8 no longer holds a non-empty bracketed key literal"
-    return re.findall(r'"([^"]+)"', bracket.group(1))
-
-
-def test_the_jq_closed_set_literal_is_the_python_schema_exactly():
-    """The jq program's closed set IS ``REQUIRED_LEDGER_FIELDS`` plus
-    ``OPTIONAL_LEDGER_FIELDS``: same names, same order, no extras on either side.
-
-    Two programs, one schema: the jq file is what census.sh reads and the Python
-    tuples are what census.py reads. A field added to one and not the other means
-    the writer commits a record one arbiter calls unknown, which is the drift no
-    behavioural test would notice until a ledger could not be read.
+    The parity this test used to run was behavioural in one direction only: the
+    second arbiter declared the twelve names in its own literal, and a copy in a
+    program the census never ran is what the comparison caught. With that program
+    deleted, the assertion that still means something is that the set has one
+    owner — the census's record pass and the writer both read these two tuples
+    rather than keeping a list of their own.
     """
     from noni import ledger_schema
-
-    declared = list(ledger_schema.REQUIRED_LEDGER_FIELDS) + \
-        list(ledger_schema.OPTIONAL_LEDGER_FIELDS)
-    literal = _jq_closed_set_literal()
-    assert literal == declared, (
-        "the jq closed set and the Python schema have drifted apart:\n"
-        f"  jq:     {literal}\n  python: {declared}"
+    from noni.census_ledger_checks import (
+        OPTIONAL_LEDGER_FIELDS,
+        REQUIRED_LEDGER_FIELDS,
     )
-    assert len(literal) == len(set(literal)) == len(declared), literal
-    # The required eight are the first eight, so a reader of either side reads the
-    # same list in the same order.
-    assert literal[:len(ledger_schema.REQUIRED_LEDGER_FIELDS)] == \
-        list(ledger_schema.REQUIRED_LEDGER_FIELDS)
 
-
-def test_a_field_added_to_the_python_schema_alone_would_be_caught():
-    """The parity assertion bites: a name in the Python sets and not the jq
-    literal is reported, not silently accepted.
-
-    Stated as the negative case so a reader can see what the comparison above
-    fails on, and built from the shipped source rather than a patched module, so
-    the assertion is proved on the same code path it governs.
-    """
-    from noni import ledger_schema
-
-    literal = set(_jq_closed_set_literal())
-    declared = set(ledger_schema.REQUIRED_LEDGER_FIELDS) | \
-        set(ledger_schema.OPTIONAL_LEDGER_FIELDS)
-    assert literal == declared
-    assert (declared | {"a_field_jq_does_not_know"}) != literal
-    assert (literal | {"a_field_python_does_not_know"}) != declared
+    assert REQUIRED_LEDGER_FIELDS == ledger_schema.REQUIRED_LEDGER_FIELDS
+    assert OPTIONAL_LEDGER_FIELDS == ledger_schema.OPTIONAL_LEDGER_FIELDS
+    declared = (set(ledger_schema.REQUIRED_LEDGER_FIELDS)
+                | set(ledger_schema.OPTIONAL_LEDGER_FIELDS))
+    assert len(declared) == 12, sorted(declared)
+    # No third copy: the record pass names the sets it validates by importing
+    # them, so a name added to the schema alone changes the census too.
+    assert set(ledger_schema.REQUIRED_LEDGER_FIELDS) & \
+        set(ledger_schema.OPTIONAL_LEDGER_FIELDS) == set()
 
 
 # --- the renderer and the totals --------------------------------------------
@@ -214,39 +177,14 @@ def test_validate_source_is_total_and_the_caller_asks_it_anyway():
     assert _validate_record({**record, "source": None}) == []
 
 
-# --- census.sh's exit-3 sub-class -------------------------------------------
+def test_the_golden_fixtures_the_suite_reads_are_all_present():
+    """The fixture set these tests plant from exists on disk, by name.
 
-def test_the_schema_program_is_shipped_and_measured_by_the_size_gate():
-    """The .jq file is counted as shipped content of the skill, and stays under the
-    source line cap.
-
-    census.sh reads the program by path, so a skill pack that shipped the script
-    without the program is a census that exits 3 on every run -- the failure
-    ``test_census_sh_exits_three_when_the_schema_program_is_missing`` plants
-    deliberately and this one keeps from happening by accident. The cap itself is
-    the repository's rule (AGENTS.md), enforced by
-    ``tests/test_file_size_limit.py``: the assertion here is that the .jq file is
-    measured by that gate rather than exempted for its suffix. The fixture
-    directory is asserted alongside the program, since the golden records above are
-    the other half of what makes the schema testable.
+    Every refusal above is only as good as the fixture it loads, and a fixture
+    deleted or renamed out of ``tests/fixtures/`` would otherwise turn a loop over
+    the shapes into a loop over nothing that still ends green.
     """
-    assert SCHEMA_JQ.is_file(), f"{SCHEMA_JQ} is not shipped"
-    shipped = {p.name for p in SCHEMA_JQ.parent.iterdir()}
-    assert {"census.sh", "census-schema.jq", "decide.py"} <= shipped, shipped
     for name in list(JUNK_FIXTURES) + ["decision-valid-all-optional-fields.json",
                                        "decision-valid.json"]:
         assert (FIXTURES / name).is_file(), f"the golden fixture {name} is missing"
-
-    # Imported inside the test: the size gate lives beside this file on pytest's
-    # bare-import path, the same route every test module here uses for the harness,
-    # and importing it at module top would pull a test module's deps into every
-    # collection of this one.
-    from test_file_size_limit import _limit_for
-
-    rel = "skills/steering-ledger/scripts/census-schema.jq"
-    cap = _limit_for(rel, REPO / rel)
-    assert cap is not None, (
-        "the size gate exempts census-schema.jq, so the program the census reads "
-        "could grow past the source cap unmeasured")
-    lines = len(SCHEMA_JQ.read_text(encoding="utf-8").splitlines())
-    assert lines <= cap, f"census-schema.jq is {lines} lines; the cap is {cap}"
+    assert REPO.is_dir()

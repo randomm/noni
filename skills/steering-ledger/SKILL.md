@@ -1,6 +1,6 @@
 ---
 name: steering-ledger
-description: Record, attribute and replay operator product-direction decisions as dated, git-committed ledger files under noni/decisions/. Use when an operator steers the direction of an attached project (answers a multiple-choice question or confirms a free-chat candidate record), when a later session or fresh clone needs to replay prior decisions, or when validating the ledger's schema and provenance via the unified census (skills/census/scripts/census.py; the single-artifact script census.sh remains a compatible shim). Do NOT use for general code work, CI, or task tracking — this skill owns only the decision-record format, the two steer modes, the supersede chain, and the census that holds the invariants.
+description: Record, attribute and replay operator product-direction decisions as dated, git-committed ledger files under noni/decisions/. Use when an operator steers the direction of an attached project (answers a multiple-choice question or confirms a free-chat candidate record), when a later session or fresh clone needs to replay prior decisions, or when validating the ledger's schema and provenance via the unified census (skills/census/scripts/census.py; the ledger shim census.sh is a thin wrapper over it). Do NOT use for general code work, CI, or task tracking — this skill owns only the decision-record format, the two steer modes, the supersede chain, and the census that holds the invariants.
 ---
 
 # steering-ledger
@@ -18,9 +18,9 @@ open, records nothing, and commits nothing.
 The record is the commit. A ping, a comment, or a chat message is a hint; the
 committed file is the truth. `noni census` (the unified census,
 `skills/census/scripts/census.py`) is the enforcement mechanism for what git and
-the files can prove; `scripts/census.sh` beside it is the ledger shim (with its
-`--sessions` dispatch to the sessions-claims twin), kept compatible for callers
-that already run it. Every invariant it enforces is
+the files can prove; `scripts/census.sh` beside it is the ledger shim — a thin
+wrapper that runs that same census over the ledger group and returns its exit
+code, kept so the path older pages print still runs. Every invariant it enforces is
 a script with an honest exit code or a census check that catches the
 violation. Prose states the protocol; the census holds the line where git
 gives it the evidence. What git cannot prove — that an answer was the
@@ -167,47 +167,48 @@ the anti-fabrication rule (the agent never answers for the operator) are in
 
 ## Census
 
-`scripts/census.sh <state-root>/noni/decisions` is read-only,
-jq-based, and it exits with an honest code. It is the ledger shim, not the
-enforcer — `noni census` (the unified census, `skills/census/scripts/census.py`,
-documented in `skills/census/SKILL.md`) is the entry point that enforces. It is a
+`scripts/census.sh <state-root>/noni/decisions` is read-only and exits with an
+honest code. It is the ledger shim, not the enforcer and not a second arbiter:
+it is a thin wrapper that runs `noni census` (the unified census,
+`skills/census/scripts/census.py`) over the ledger group — `ledger-record`,
+`ledger-edited` and `ledger-chain` — and returns the census's own exit code. It
+has no schema, no jq and no exit-code table of its own; the census is the single
+arbiter of every rule and `skills/census/SKILL.md` is the single exit-code
+reference for it. It runs the ledger group and nothing else, so it reports no
+`hygiene`, `ordering-*` or `intent` row — `noni census` is the whole picture. It is a
 bash script: run it as `bash
 scripts/census.sh <dir>` or, since it carries its executable bit and its bash
 shebang, as `scripts/census.sh <dir>`. Why no interpreter may stand in front of
 it is in `references/census.md`. Its one argument is the ledger directory of the
 state root (`--repo` plus `noni/decisions`): there is no current-directory
-default, so a run with no argument is the usage error `2`.
+default, so a run with no argument is the usage error `2`. Beyond the directory
+it takes `--json`, `--strict` and `--now` (the `--now VALUE` and `--now=VALUE`
+forms) and nothing else — `--strict` is the route that promotes the ledger
+group's warn classes, `ledger-empty` among them. Every other option is refused
+with `2` without running the census, so filters and anything else need
+`noni census`.
 
-| code | meaning |
-|---|---|
-| `0` | clean — every record valid, chain intact |
-| `2` | usage: no ledger directory was given (the state root is named by the caller, never by the cwd) |
-| `3` | jq not found on the reading machine, or the schema program `scripts/census-schema.jq` is missing (`3:schema-program-missing`) |
-| `10` | a record is missing or malformed, or the ledger is unusable (missing dir, bad filename, a directory that could not be enumerated, unreadable git tree) |
-| `12` | a record was edited after commit (supersede instead) |
-| `20` | the supersede chain is broken (dangling, duplicate, orphan, cycle, or a chain resolving to zero or more than one live record) |
+A `decisions/` directory that holds no `*.json` record is not a failure: the
+census reports it as the `ledger-empty` warn at exit 0 and promotes it to 42
+under `--strict`, so a freshly attached tree censuses clean here exactly as it
+does under `noni census`. That is the one answer the entry points were found to
+disagree about, and it is settled by running the same census both ways.
 
-A `decisions/` directory that holds no `*.json` record is none of the above: the
-shim names it `(42:ledger-empty)` on stderr and exits 0. That is the unified
-census's `ledger-empty` warn, which it also reports at exit 0 and promotes to 42
-under `--strict` — a code this shim has no flag for — so the two entry points
-agree on a freshly attached tree. `skills/census/SKILL.md` documents
-the unified census's own side of that contract, including the three classes this
-shim does not have.
+When several invariant classes fail at once, the lowest code wins and stderr
+names every class that fired; the rules and the codes are the census's, in
+`skills/census/SKILL.md`. The census does not check operator confirmation: it
+cannot see whether the operator confirmed an answer, so it never claims to
+(below).
 
-When several invariant classes fail at once, the lowest code wins
-(`10 < 12 < 20`); the stderr message says whether the higher-numbered checks
-were skipped. The census does not check operator confirmation: it cannot see
-whether the operator confirmed an answer, so it never claims to (below).
+How to read the report — the rows the ledger group prints and what each check
+reads — is in `references/census.md`.
 
-The exit-code contract and how to read the report are in `references/census.md`.
-
-The census also dispatches the sessions check: `bash census.sh --sessions
-<state-root>/noni/sessions` reaches into the sibling `sessions-claims` skill via
-the relative path `../../sessions-claims/scripts/census-sessions.sh`. That is a
-documented dependency: with no override, `sessions-claims` must be installed at
-the expected relative path. Set `NONI_SESSIONS_CENSUS` to an absolute path to
-point the dispatch at a separately installed copy or an adapter.
+The sessions register has its own entry point in its own skill,
+`skills/sessions-claims/scripts/census-sessions.sh`; it is the same kind of
+wrapper over the same census, and this script no longer dispatches to it. A
+command line that still types the retired form (`census.sh --sessions DIR`) is
+refused with this script's own usage code, naming the option and pointing at the
+entry point that runs the register.
 
 ## Rules
 

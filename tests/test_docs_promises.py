@@ -34,6 +34,7 @@ page that drifts fails and the product that renames fails, in the same place.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 from docs_commands import block_commands, fenced_blocks, read
@@ -44,6 +45,7 @@ from docs_promises import (
     PUBLISHING,
     QUICKSTART,
     README,
+    REPO,
     SKILL_PAGES,
     STATE_DIR,
 )
@@ -63,8 +65,8 @@ def _command_lines(path: object, text: str) -> list[str]:
 def test_no_doc_page_runs_a_shell_script_under_python() -> None:
     """No page names an interpreter in front of a ``.sh`` entry point.
 
-    The two shims are bash (``census.sh`` needs jq, ``census-sessions.sh``
-    execs ``NONI_PYTHON`` itself). Running either under ``python3`` dies on a
+    The two shims are bash (``census.sh`` and ``census-sessions.sh`` both resolve
+    ``NONI_PYTHON`` themselves). Running either under ``python3`` dies on a
     brace before any check runs, so the reader gets a traceback where the page
     promised an exit code.
     """
@@ -120,6 +122,64 @@ def test_the_sessions_shim_exit_3_row_names_its_own_interpreter() -> None:
     assert not offenders, (
         f"pages table the sessions shim's exit codes without naming NONI_PYTHON, "
         f"which is the interpreter exit 3 is about: {offenders}")
+
+
+# --- the per-artifact wrappers report one group, not the whole census -------
+
+# The one sentence each wrapper page owes about what it does not report. Kept as
+# data here so the page text and the test that pins it cannot drift apart, and so
+# a page that drops the qualifier (or reworded it into "runs everything") fails
+# rather than reading plausibly.
+_WRAPPER_SCOPE_SENTENCE = (
+    "reports no `hygiene`, `ordering-*` or `intent` row \u2014 `noni census` "
+    "is the whole picture")
+
+# Each wrapper page, with the group it does run: the qualifier is only true of a
+# page that names its own group, so the test checks both halves of the sentence.
+_WRAPPER_SCOPE_PAGES: tuple[tuple[Path, str], ...] = (
+    (REPO / "skills" / "steering-ledger" / "SKILL.md", "ledger group"),
+    (REPO / "skills" / "sessions-claims" / "references" / "census.md",
+     "session group"),
+    (REPO / "skills" / "sessions-claims" / "SKILL.md", "session group"),
+)
+
+
+@pytest.mark.parametrize("page,group", _WRAPPER_SCOPE_PAGES,
+                         ids=("steering-ledger", "sessions-claims-census",
+                              "sessions-claims"))
+def test_each_wrapper_page_scopes_its_report_to_its_own_group(page: Path,
+                                                              group: str) -> None:
+    """Each per-artifact wrapper page says, in one sentence, that it reports only
+    its own group and that `noni census` is the whole picture.
+
+    The product ruling is that the two wrappers run one check group each (ledger,
+    sessions) and never a `hygiene`, `ordering-*` or `intent` row. A reader who
+    took a clean wrapper run for a clean census would ship an unhygienic state
+    tree, so the page that advertises the wrapper owes the qualifier next to the
+    promise that it is 'the same census'. Matched on whitespace-collapsed text:
+    the sentence is one sentence, and where it wraps is the page's business.
+    """
+    text = read(page)
+    assert _WRAPPER_SCOPE_SENTENCE in " ".join(text.split()), (
+        f"{page} must state, in one sentence, that the wrapper reports only its "
+        f"own group and that `noni census` is the whole picture (expected "
+        f"{_WRAPPER_SCOPE_SENTENCE!r}, page wrapping ignored)")
+    assert group in text, f"{page} never names the {group!r} it runs"
+
+
+def test_the_census_page_qualifies_its_hygiene_always_reports_claim() -> None:
+    """`hygiene` always reports under `noni census`, not under the wrappers, and
+    the census page says which of the two the promise is about.
+
+    The sentence used to read 'always reports' with no subject, which is read as
+    a property of every entry point — including the two wrappers that filter to
+    one group and print no hygiene row at all.
+    """
+    text = read(REPO / "skills" / "census" / "SKILL.md")
+    line = next((line for line in text.splitlines() if "always reports" in line), "")
+    assert "`noni census`" in line, (
+        f"the hygiene 'always reports' claim must be qualified to the whole "
+        f"census, not the per-artifact wrappers: {line!r}")
 
 
 # --- AC3: the deny-list is named where a reader meets --strict --------------

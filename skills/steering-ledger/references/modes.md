@@ -8,7 +8,7 @@ distils; the operator answers and confirms. Never answer for the operator.
 
 The agent asks **1-4 questions**, each with **2-4 options**, and a free-text
 escape hatch is always offered. The bounds are the ones the writer enforces and
-both censuses check: a record outside 1-4 questions is refused, and so is a
+the census checks: a record outside 1-4 questions is refused, and so is a
 question holding fewer than two options — except where `--single-option` earns
 the marker, which lowers that bound to one.
 

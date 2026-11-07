@@ -13,22 +13,16 @@ What is pinned, and why:
   ``tests/test_skill_scrub.py``;
 - every path either page names exists in this repository, which is what stops
   the page drifting from the tree;
-- the try-it block runs for real, in the topology the page sells: the scripts
-  come from a clone of noni (this checkout stands in for it) and ``--repo .``
-  names a separate scratch repository, and the block produces the documented
-  outcome: one committed record, a census that ends clean on its last line
-  with its hygiene scan actually run, and a tree still clean afterwards; a
-  second case plants one malformed record and asserts the documented failing
-  verdict instead;
+- the try-it block runs for real, in the topology the page sells: one committed
+  record, a census ending clean on its last line with its hygiene scan actually
+  run, and a tree still clean afterwards; a second case plants one malformed
+  record and asserts the documented failing verdict instead;
 - the README links CONTRIBUTING.md, and CONTRIBUTING.md still carries the gate
   commands the CI workflow runs, so the move of that block cannot be a loss.
 
 The hygiene and public-safety classes themselves are tested elsewhere; here the
-README only has to stay clean enough for them.
-
-The reading layer — fenced-block parsing, command extraction, the clone
-topology, the path and hygiene helpers — lives in ``tests/readme_support.py``
-and ``tests/readme_tryit.py``; this file holds the promises.
+README only has to stay clean enough for them. Each script the page hands a
+reader is pinned to its skill directory at the foot of this file.
 """
 
 from __future__ import annotations
@@ -483,9 +477,18 @@ def test_the_try_it_census_reports_a_failure_it_found(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.parametrize("tool", ("decide.py", "census.py"))
-def test_the_try_it_scripts_are_where_the_readme_says(tool: str) -> None:
-    """The two scripts the page hands a reader are in the skill directories the
-    page implies (skills/<skill>/scripts/), where a clone checks them out."""
-    matches = sorted(p.name for p in (REPO / "skills").glob(f"*/scripts/{tool}"))
-    assert matches == [tool], f"expected exactly one {tool} under skills/, found {matches}"
+@pytest.mark.parametrize("tool,where", (
+    ("decide.py", "steering-ledger"),
+    ("census.py", "steering-ledger"),
+))
+def test_the_try_it_scripts_are_where_the_readme_says(tool: str, where: str) -> None:
+    """Each script the page hands a reader sits in the skill directory the page
+    implies, where a clone checks it out.
+
+    ``census.py`` is the case worth naming: the ledger wrapper and the unified
+    census's own script share the name, one per directory
+    (``skills/census/scripts/census.py`` is the arbiter), so the check is the
+    location the page sells and not uniqueness of the name under ``skills/``.
+    """
+    assert (REPO / "skills" / where / "scripts" / tool).is_file(), (
+        f"skills/{where}/scripts/{tool} is missing")

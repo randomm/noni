@@ -115,12 +115,15 @@ def test_two_clones_double_claim_census_flags(tmp_path, run_sessions_census):
 
 
     # The census on clone A's sessions dir must exit 30 naming the task.
-    code, out, err = run_sessions_census(clone_a / "noni" / "sessions")
+    code, out, err = run_sessions_census(clone_a / "noni" / "sessions",
+                                         extra=("--json",))
     assert code == 30, f"expected exit 30, got {code}\nstdout: {out}\nstderr: {err}"
     # NDJSON rows on stdout must name the offending task.
-    rows = [json.loads(line) for line in out.strip().splitlines() if line.strip()]
-    double_rows = [r for r in rows if r.get("type") == "double-claim"]
-    assert any(r["task"] == "#42" for r in double_rows), f"no double-claim row naming #42: {rows}"
+    rows = [json.loads(line) for line in out.strip().splitlines()
+            if line.strip().startswith("{")]
+    double_rows = [r for r in rows if r.get("check") == "session-double"]
+    assert any(r.get("subject") == "#42" or "#42" in str(r.get("message", ""))
+               for r in double_rows), f"no session-double row naming #42: {rows}"
 
 
 def test_register_allocates_distinct_files(tmp_path):

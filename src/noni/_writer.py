@@ -242,7 +242,7 @@ def success_line(label: str, record_paths: list[str],
     """The one line a successful run prints, naming caller-cwd paths (#77, AC2).
 
     ``--no-commit`` says committing them is the caller's job (the census reads the
-    working tree, so an edited target is census.sh exit 12) and names what the second
+    working tree, so an edited target is the census's exit 12) and names what the second
     path now holds, so an operator who aborts knows to restore the target as well as
     delete the new record.
     """

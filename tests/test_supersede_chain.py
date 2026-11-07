@@ -29,8 +29,65 @@ def _load(name: str) -> dict:
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
 
 
+def _rows(out: str) -> list[dict]:
+    """The NDJSON rows of a census run driven through the ledger wrapper.
+
+    The unified census prints its human table by default and the machine rows
+    only under ``--json``, so a test that wants the rows asks for them. The
+    shim's own per-record table -- one line per record with a ``live`` column --
+    went with the second arbiter (issue #99): a clean chain earns no row at all,
+    so "which records are live" is answered here by the absence of a chain
+    refusal rather than by a column.
+    """
+    return [json.loads(line) for line in out.splitlines()
+            if line.strip().startswith("{")]
+
+
+def _chain_rows(out: str) -> list[dict]:
+    """The ``ledger-chain`` rows of a run."""
+    return [r for r in _rows(out) if r.get("check") == "ledger-chain"]
+
+
+def _live_records(ledger: Path) -> set[str]:
+    """The record ids the census holds live, by the census's own two answers.
+
+    A clean census prints no row for a clean record -- a whole clean ledger is one
+    summary row with nothing beside it, the shape the exit-code contract pins --
+    and the chain class speaks up only to refuse a count, at code 20. So "which
+    records are live" is answered from the two answers the census does give, both
+    taken from the product's own functions over the ledger the run just censused:
+    the record set ``check_ledger_records`` parsed, and the rows
+    ``check_ledger_chain`` wrote -- a record no chain row names, and whose
+    ``status`` the chain rule itself does not read as superseded, is a record the
+    census holds live. That is the same reading the rule uses for its own
+    single-live-per-chain count, and the same one the shim's old per-record
+    ``live`` column printed. No verdict is taken from a record's bytes on disk.
+    """
+    from noni import census as _c
+
+    findings: list[dict] = []
+    valid, _unparseable = _c._check_ledger_records(
+        ledger, ledger.parent, findings, _c._ledger_probe(ledger),
+        row=_c._row, file_kind=_c._file_kind, rel_to_root=_c._rel_to_root,
+        ledger_name=_c._ledger_name)
+    # No git is handed over: the chain rule reads the records, not history.
+    _c._check_ledger_chain(valid, ledger, ledger.parent, findings,
+                           row=_c._row, rel_to_root=_c._rel_to_root,
+                           ledger_name=_c._ledger_name)
+    refused = {f["subject"] for f in findings if f["check"] == "ledger-chain"}
+    return {obj["id"] for _rid, _path, obj in valid
+            if obj["id"] not in refused
+            and obj.get("status") != "superseded"}
+
+
 def test_chain_resolves_to_one_live_record(tmp_path, run_census):
-    """The r1 -> r2 -> r3 chain resolves to exactly one live record (r3)."""
+    """The r1 -> r2 -> r3 chain resolves to exactly one live record (r3).
+
+    The chain answers "exactly one" by refusing every other count (20), so a run
+    with no chain row over this ledger is the chain reporting one live record per
+    chain; the record the census holds live is named by the probe below, which
+    asks the census's own chain check and not the file on disk.
+    """
     r1, r2, r3 = _load("2026-10-01-r1.json"), _load("2026-10-10-r2.json"), _load("2026-10-22-r3.json")
 
     repo = tmp_path / "repo"
@@ -51,17 +108,14 @@ def test_chain_resolves_to_one_live_record(tmp_path, run_census):
     _git(repo, "add", "noni/decisions/2026-10-22-r3.json")
     _git(repo, "commit", "-q", "--allow-empty", "-m", "r3")
 
-    code, out, err = run_census(ledger)
+    code, out, err = run_census(ledger, env=None)
     assert code == 0, f"expected exit 0 for a valid chain, got {code}\nstderr: {err}"
-
-    # The report shows r3 as live (status=decided), r1 and r2 as not live
-    lines = out.strip().split("\n")
-    # header + 3 records
-    assert len(lines) == 4, f"expected 4 lines (header + 3 records), got: {out}"
-    live_records = [line for line in lines[1:] if line.split("\t")[4] == "yes"]
-    assert len(live_records) == 1, f"expected 1 live record, got {len(live_records)}"
-    live_id = live_records[0].split("\t")[0]
-    assert live_id == "2026-10-22-r3", f"expected r3 to be live, got {live_id}"
+    _code, json_out, _err = run_census(ledger, extra=("--json",))
+    assert _chain_rows(json_out) == [], (
+        f"a valid chain must raise no chain row: {_chain_rows(json_out)}")
+    assert _live_records(ledger) == {"2026-10-22-r3"}, (
+        "the census must hold exactly one record of this chain live, and it must "
+        "be r3")
 
 
 def test_superseded_record_bytes_unchanged(tmp_path):
@@ -126,12 +180,14 @@ def test_detached_record_is_separate_chain(tmp_path, run_census):
 
     code, out, err = run_census(ledger)
     assert code == 0, f"expected exit 0, got {code}\nstderr: {err}"
-
-    lines = out.strip().split("\n")
-    live_records = [line for line in lines[1:] if line.split("\t")[4] == "yes"]
-    assert len(live_records) == 2, f"expected 2 live records (r3 and r4), got {len(live_records)}"
-    live_ids = {line.split("\t")[0] for line in live_records}
-    assert "2026-10-25-r4-detached" in live_ids, f"r4 should be live, live records: {live_ids}"
+    _code, json_out, _err = run_census(ledger, extra=("--json",))
+    assert _chain_rows(json_out) == [], (
+        f"two separate chains, each with one live record, raise no chain row: "
+        f"{_chain_rows(json_out)}")
+    assert _live_records(ledger) == {"2026-10-22-r3", "2026-10-25-r4-detached"}, (
+        "the census must hold two records live, one per chain: the r3 of the "
+        "supersede chain and the detached r4 root, which is the file committed as "
+        "2026-10-25-r4.json and carries the id 2026-10-25-r4-detached")
 
 
 def test_supersedes_with_earlier_date_is_allowed(tmp_path, run_census):
@@ -216,7 +272,7 @@ def test_zero_live_chain_refused(tmp_path, run_census):
 
     code, out, err = run_census(ledger)
     assert code == 20, f"expected exit 20 for zero-live chain, got {code}\nstderr: {err}"
-    assert "zero-live" in err, f"expected 'zero-live' in stderr, got: {err}"
+    assert "zero-live" in out, f"expected 'zero-live' in the report: {out}"
 
 
 def test_multi_live_chain_refused(tmp_path, run_census):
@@ -258,7 +314,7 @@ def test_multi_live_chain_refused(tmp_path, run_census):
 
     code, out, err = run_census(ledger)
     assert code == 20, f"expected exit 20 for multi-live chain, got {code}\nstderr: {err}"
-    assert "multi-live" in err, f"expected 'multi-live' in stderr, got: {err}"
+    assert "multi-live" in out, f"expected 'multi-live' in the report, got: {out}"
 
 
 def test_duplicate_supersedes_refused(tmp_path, run_census):
@@ -315,4 +371,4 @@ def test_duplicate_supersedes_refused(tmp_path, run_census):
 
     code, out, err = run_census(ledger)
     assert code == 20, f"expected exit 20 for duplicate supersedes, got {code}\nstderr: {err}"
-    assert "duplicate" in err.lower(), f"expected 'duplicate' in stderr, got: {err}"
+    assert "duplicate" in out.lower(), f"expected 'duplicate' in the report, got: {out}"

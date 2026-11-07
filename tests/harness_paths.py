@@ -62,9 +62,9 @@ PRODUCT_MODULES = (
     "src/noni/census_cli.py",
     "src/noni/census_run.py",
     "src/noni/census_report.py",
-    "src/noni/census_sessions.py",
     "src/noni/census_sessions_checks.py",
     "src/noni/census_sessions_probe.py",
+    "src/noni/census_wrapper.py",
     "src/noni/census_text.py",
     "src/noni/claim.py",
     "src/noni/cli.py",
@@ -84,6 +84,7 @@ PRODUCT_MODULES = (
     "src/noni/public_safety_io.py",
     "src/noni/register.py",
     "src/noni/shim_help.py",
+    "src/noni/wrapper_bash.py",
     "src/noni/targetschema.py",
 )
 
@@ -122,9 +123,9 @@ INTENT = DIRECTION_SKILL / "intent.py"
 CENSUS = CENSUS_SKILL / "census.py"
 
 # The seven tools the ``noni`` command dispatches: subcommand -> the wrapper that
-# must produce the same bytes. The sessions census has no subcommand of its own
-# (it is the shim's --sessions dispatch), so it is compared through its wrapper
-# against the package module directly.
+# must produce the same bytes. The two shell census entry points are the other
+# half of the wrapper surface: each is compared against the package route in
+# tests/test_console_routes.py, so the paths are pinned here as well.
 TOOL_WRAPPERS: tuple[tuple[str, Path], ...] = (
     ("census", CENSUS),
     ("register", REGISTER),

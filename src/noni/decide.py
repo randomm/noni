@@ -109,8 +109,8 @@ EXIT_COLLISION: int = 4
 EXIT_COMMIT_FAILED: int = 5
 
 # A slug is half the record id and half its filename, so it is held to what the
-# census accepts as a plain path segment (census.sh reports a basename outside
-# ^[A-Za-z0-9._-]+\.json$ as 10:bad-name). Dashes only: the split is not ambiguous.
+# census accepts as a plain path segment (`ledger-record` reports a basename outside
+# ^[A-Za-z0-9._-]+\.json$). Dashes only: the split is not ambiguous.
 SLUG_RE = re.compile(r"[a-z0-9-]+")
 ID_RE = re.compile(r"\d{4}-\d{2}-\d{2}-[a-z0-9-]+")
 
@@ -129,7 +129,7 @@ STATUSES = (STATUS_DECIDED, STATUS_OPEN, STATUS_SUPERSEDED)
 # and its declined-``lstat`` rule live in :mod:`noni._decide_flags`.
 _GUARDED_DIRS: tuple[str, ...] = ("noni", orderstate.DECISIONS_DIR)
 
-# The field order both censuses document; json.dump keeps it. The three names
+# The field order the census documents; json.dump keeps it. The three names
 # after ``source`` are optional and appended last, so a record that carries none
 # of them keeps the eight fields in the order the supersede canonical-form rule
 # compares a target's committed bytes against. Their shapes are the census's
@@ -477,7 +477,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.no_commit:
         # The census reads the working tree, so these files read as uncommitted (an
-        # edited target is census.sh exit 12): the line names both paths, says that
+        # edited target is the census's exit 12): the line names both paths, says that
         # committing them is the caller's job, and says what the second path now
         # holds, so an operator who aborts the run knows to restore the target as
         # well as delete the new record.

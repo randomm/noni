@@ -27,9 +27,8 @@ import pytest
 from _harness import _git_env_with_identity, _git_ok
 from session_git_support import _repo
 
-from noni import _session_git, gitenv
+from noni import _session_git, census_sessions_checks, gitenv
 from noni import census as census_mod
-from noni import census_sessions as census_sessions_mod
 
 
 @pytest.fixture(autouse=True)
@@ -209,7 +208,7 @@ def test_terminal_statuses_equal_the_census_inactive_sets():
     without the others is this test's failure, and the bug it catches is a
     closed session still counted in the double-claim check."""
     assert _session_git.TERMINAL_STATUSES == frozenset(
-        census_sessions_mod._INACTIVE_STATUSES)
+        census_sessions_checks._constants().INACTIVE_STATUSES)
     assert _session_git.TERMINAL_STATUSES == frozenset(census_mod.INACTIVE_STATUSES)
 
 

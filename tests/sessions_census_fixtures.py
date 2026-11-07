@@ -126,11 +126,14 @@ def _routes(cwd: Path, target: Path | None) -> list[list[str]]:
     """Every entry point for one sessions census of ``target`` (None = no argument).
 
     ``target`` is passed as one argv entry (or omitted entirely) so the routes
-    differ only in how they reach the same core.
+    differ only in how they reach the same core: the in-place ``.py`` the skills
+    sell, and the bash wrapper beside it that execs it. The third route this list
+    used to carry -- ``census.sh --sessions`` -- was the ledger shim's dispatch to
+    a second sessions parser; the parser and the flag are both gone (issue #99),
+    and the ledger wrapper now runs the ledger group alone.
     """
     arg = [str(target)] if target is not None else []
     return [
         [sys.executable, str(WRAPPER), *arg],
         ["bash", str(SHIM), *arg],
-        ["bash", str(CENSUS_SH), "--sessions", *arg],
     ]

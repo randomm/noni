@@ -40,32 +40,42 @@ def test_no_shipped_entry_point_carries_a_cwd_relative_state_default():
     """The census's cwd-relative defaults are gone from every entry point, and
     a new one cannot quietly reintroduce one.
 
-    Three sites used to resolve state from wherever the run sat: the package
-    module defaulted to ``Path("noni/sessions")``, the sessions shim to the
-    same relative path, and the steering-ledger shim to ``"."``. A default of
-    that shape is not a convenience here -- it is a verdict on a tree the
-    caller never named, reported in the same bytes as a verdict on the state
-    root. This pins the absence of the shape itself, on top of the behavioural
-    tests above that pin the refusal.
+    Three sites used to resolve state from wherever the run sat: the package's
+    standalone sessions parser defaulted to ``Path("noni/sessions")``, the
+    sessions shim to the same relative path, and the steering-ledger shim to
+    ``"."``. A default of that shape is not a convenience here -- it is a verdict
+    on a tree the caller never named, reported in the same bytes as a verdict on
+    the state root. This pins the absence of the shape itself, on top of the
+    behavioural tests above that pin the refusal.
+
+    The parser is deleted (issue #99) and the wrappers no longer name a path at
+    all -- they hand the one directory they were given to the package -- so the
+    check is that each shipped entry point is still there and still carries none
+    of the defaults.
     """
     sites = {
-        "src/noni/census_sessions.py": ['Path("noni/sessions")',
-                                        "Path('noni/sessions')"],
         "skills/sessions-claims/scripts/census-sessions.sh":
             ['SESSIONS_DIR="noni/sessions"', 'SESSIONS_DIR="."',
              'SESSIONS_DIR="$PWD'],
+        "skills/sessions-claims/scripts/census-sessions.py":
+            ['Path("noni/sessions")', "Path('noni/sessions')"],
         "skills/steering-ledger/scripts/census.sh": ['LEDGER_DIR="."',
                                                      'LEDGER_DIR="./"',
                                                      'LEDGER_DIR="$PWD"'],
+        "src/noni/census_wrapper.py": ['Path("noni/sessions")',
+                                       "Path('noni/sessions')",
+                                       'Path("noni/decisions")'],
     }
     for rel, banned in sites.items():
-        source = (REPO / rel).read_text(encoding="utf-8")
+        path = REPO / rel
+        assert path.is_file(), f"{rel} is no longer a shipped entry point"
+        source = path.read_text(encoding="utf-8")
         for needle in banned:
             assert needle not in source, f"{rel} still defaults state to {needle!r}"
 
 
 def test_no_route_writes_anything_under_the_cwd(tmp_path):
-    """All three routes, pointed at the state root from a foreign cwd, leave it
+    """Every route, pointed at the state root from a foreign cwd, leaves it
     empty: the census is read-only, and a cwd it cannot read from is the one
     place it must not end up having touched.
 

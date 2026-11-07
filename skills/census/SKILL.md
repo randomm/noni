@@ -60,15 +60,15 @@ directory, is a usage error (exit 2) before any check runs.
 
 The `warn` classes are reported either way and never move the exit code on their
 own: a run whose only findings are warnings exits 0, and `--strict` promotes them
-to failures at their own codes. `ledger-empty` adds rows in the states where no
-decision record can be read — no `noni/`, `noni/` not a directory, a symlink,
-`noni/` present without a `decisions/` directory, or a `decisions/` directory
-holding no `*.json` record. It never weakens a malformed-record failure: a record
-that is bad JSON or violates the schema keeps its `ledger-record` exit 10. A
-recordless ledger is a state, not a fault: a freshly attached project whose
-`noni/decisions/` has no records yet censuses clean at exit 0, because nothing has
-been steered yet. The ledger wrapper runs this census over that directory, so a
-freshly attached tree reads the same way to either entry point.
+at their own codes. `ledger-empty` adds rows where no record can be read: no
+`noni/`, `noni/` not a directory, a symlink, `noni/` present without a
+`decisions/` directory, or a `decisions/` directory holding no `*.json` record. It
+never weakens a malformed-record failure: a record that is bad JSON or violates
+the schema keeps its `ledger-record` exit 10. A
+recordless ledger is a state, not a fault: a fresh project whose `noni/decisions/`
+has no records yet exits 0 clean, nothing having been steered yet and nothing to
+contradict. The ledger wrapper runs this census over that directory, so a fresh
+attached tree reads the same way to either entry point.
 
 When several classes fire at once the lowest code wins; stderr names every
 class that fired.
@@ -106,7 +106,8 @@ distinguish "truly stalled" from "history unavailable" without escalating.
 Human mode prints one line per finding (`check`, its `WARN`/`FAIL` tag, its
 subject and message, then the fix hint), then any `note:` line, then the summary
 line. One note is printed first of all, ahead of the headline and every row: on a
-`--repo` holding no `noni/` directory, the run says `note: no noni/ directory
+`--repo` holding no `noni/` directory — what a caller gets by pointing `--repo` at
+a code repository instead of a state root — the run says `note: no noni/ directory
 was found under --repo <path>` before rows that would otherwise read as a project
 that has not steered yet (a no-`noni/` tree is just a `ledger-empty` warn beside an
 inactive `deny-list`). It is a note, not a row: no check class, no row kind and no
@@ -124,10 +125,10 @@ keyed to what the run found:
 So the all-clear banner and the word `clean` are reserved for a report that
 carried nothing at all: a run whose only findings are warnings names how many it
 counted instead of calling itself `clean`, and a run that skipped a check names
-that class instead of claiming every check passed. The warn count is the number of
-rows whose own severity is `warn`, read off the same field as the `WARN` tag beside
-each row, so a cannot-verify or cannot-tell row of a fail class counts as the
-warning it prints as; under `--strict` a promoted row reads `FAIL` and leaves that
+that class instead of claiming every check passed. The warn count is the number
+of rows whose own severity is `warn`, read off the same field as the `WARN` tag
+beside each row, so a cannot-verify or cannot-tell row of a fail class (warn by
+default, escalated by `--strict`) is counted as the warning it prints as; under `--strict` a promoted row reads `FAIL` and leaves that
 count, and the exit code it earns is what the summary line says instead. The
 summary line's tail, `verdict ok` / `verdict fail`, is the machine-readable half
 and is keyed on the exit code alone: it stays the last line of stdout for a CI step
@@ -154,9 +155,9 @@ field; every value comes from git history, file existence, or file byte size.
 
 ### The hygiene artifact namespace
 
-`hygiene` rows live in two artifact namespaces, decided by `subject`, which is
-therefore the machine-readable discriminator: branch on it rather than matching
-message prose:
+`hygiene` rows live in two artifact namespaces, and which one applies is decided
+by `subject`, which is therefore the machine-readable discriminator — consumers
+should branch on it rather than matching message prose:
 
 | `subject` | meaning | `artifact` |
 |---|---|---|
@@ -176,14 +177,15 @@ violation of an unexpected shape is reported verbatim instead of split.
 
 A probe that cannot read its input (unreadable file, symlink, non-UTF-8 bytes,
 git failure on a real repo) is recorded as a `probe` finding (warn) or a
-`session-stalled` cannot-tell finding (warn). It is **never** silently skipped,
-and it is **never** reported as clean. Under `--strict` it becomes a failure
-(exit 41) and the run is never reported clean. The same rule extends to the
-classes that report their own absence:
+`session-stalled` cannot-tell finding (warn). It is **never** silently skipped and
+**never** reported as clean. Under `--strict` it becomes a failure (exit 41) and
+the run is never reported clean.
+
+The same rule extends to the classes that report their own absence:
 
 - **`ledger-empty` (42)** reports the ledger that has no record to arbitrate.
-  "No `noni/` at all" is exactly one row carrying the state word `absent`, not
-  the silent clean it used to be: a census that says nothing here cannot tell
+  "No `noni/` at all" is exactly one row carrying the state word `absent` — not
+  the silent clean it used to be, because a census saying nothing here cannot tell
   "nothing to census" apart from "the ledger went missing". `empty` names
   the other no-record trees: `noni/` present with no `decisions/` directory, and
   a `decisions/` directory that holds no `*.json` record — a freshly attached
@@ -200,19 +202,19 @@ classes that report their own absence:
   `ledger-empty` warn at exit 0, the second the cannot-tell row below. When the
   deletion check cannot put its question to git at all (no git tree, or a
   history read that could not answer) and the ledger reads as `empty`, the run
-  adds a `ledger-edited` `cannot-tell` row saying the check could not run: it is
-  the only signal that committed records were deleted, so a silent one would let
-  a gutted ledger read as a plain no-ledger warning. It is a warn by default
-  (exit 0) and a failure at 12 under `--strict`.
+  adds a `ledger-edited` `cannot-tell` row saying the check could not run: the
+  deletion check is the only signal that committed records were deleted, so a
+  silent one would let a gutted ledger read as a plain no-ledger warning. It is a
+  warn by default (exit 0) and a failure at 12 under `--strict`.
 - **An unreadable ledger is never `empty`.** The census lists `decisions/` with
   an explicit `iterdir`, through one listing helper that the probe, the record
   pass and the ordering group all use, because `glob` swallows the `OSError` a
   readdir raises and yields nothing — which would let a directory the run could
   not read report the same exit 0 warn as a project that has never steered
-  anything. The ledger is classified once per run: that one probe decides
-  whether the group reports at all and answers the rows, so two reads of one
-  directory cannot disagree about it. Because the listing is shared, a faulted
-  listing is reported by both groups that read it — the ledger
+  anything. The ledger is classified once per run: the run decides from that one
+  probe whether the group reports at all, and the same probe answers the rows, so
+  two reads cannot disagree about one directory. Because the listing is shared, a
+  faulted listing is reported by both groups that read it — the ledger
   group's row below, and the ordering group's row that names the citation check
   it could not perform.
 
@@ -222,8 +224,8 @@ classes that report their own absence:
   both carry the ledger's name and whose message carries the `OSError` text,
   bounded and stripped of machine-local paths. That name is the last-segment
   rule stated once below, and it is the rule for every row of the ledger group
-  that names the ledger. It is a warn at exit 0 and a failure at 12 under
-  `--strict`.
+  that names the ledger, not only this one. It is a warn at exit 0, and a failure
+  at 12 under `--strict`.
 - **An unreadable `noni/sessions/` is never clean.** A `noni/sessions/` that
   stats as a directory and cannot be listed earns exactly one `session-deleted`
   `cannot-tell` row — the class the deletion check already uses for its
@@ -235,13 +237,12 @@ classes that report their own absence:
   and the `OSError` text in the message, bounded and stripped of machine-local
   paths. It is a warn at exit 0 and a failure at 44 under `--strict`, and the
   group adds no other row: the read answered nothing, so no file was seen, no
-  claim was compared, and the git-backed deletion question is not put either.
-  The register is listed with an explicit `iterdir`, never `glob`, which
-  swallows the readdir `OSError`, and read once per run, whatever the filter
-  names, so the gate that opens the group and the rows it reports are the
-  answer of that one readdir. A `noni/sessions/` that is simply absent stays
-  what it always was: clean, because no sessions registered is a real state and
-  not a failed read.
+  claim was compared and the git-backed deletion question is not put either. The
+  register is listed with an explicit `iterdir`, never `glob`, which swallows the
+  readdir `OSError`. The register is read once per run, whatever the filter names,
+  so the gate that opens the group and the rows it reports are that one readdir's
+  answer. A `noni/sessions/` that is simply absent stays what it always was:
+  clean, because no sessions registered is a real state and not a failed read.
 - **`hygiene` (50)** always reports under `noni census`, a clean tree included
   (the per-artifact wrappers run one group each and report no hygiene row). When
   the deny-list class is not active (its file is `absent`, `corrupt`, or present
@@ -251,17 +252,18 @@ classes that report their own absence:
   one row saying the scan did not run. Neither is ever reported as hygiene-clean,
   and no scanner failure can take the census down: every finding the run already
   collected is still reported. The scan runs in-process over the census's own git
-  tree — the `--ledger` / `--sessions` overrides never re-target it. The file that
-  switches the deny-list half on is `.noni-scrub-denylist`, one entry per line,
-  kept at the root of the tree being audited (so `<project>/.noni-scrub-denylist`,
-  or `.noni-scrub-denylist` at the state root `--repo` names), and
-  `NONI_SCRUB_DENYLIST` names another file when the tree carries no default of its
-  own. Blank lines and `#` comments are not entries, so a file holding only those
-  reads as `present but empty` and leaves the class inactive: it needs at least one
-  usable entry. It stays untracked by design — the names it guards must not be
-  committed — which is why `--strict` fails on a freshly attached tree and why
-  `docs/PUBLISHING.md` step 1 runs `scripts/public_safety.py` rather than trusting
-  a clean census.
+  tree — the `--ledger` / `--sessions` overrides never re-target it.
+
+  The file that switches the deny-list half on is `.noni-scrub-denylist`, one
+  entry per line, kept at the root of the tree being audited (so
+  `<project>/.noni-scrub-denylist`, or `.noni-scrub-denylist` at the state root
+  `--repo` names), and `NONI_SCRUB_DENYLIST` names another file when the tree
+  carries no default of its own. Blank lines and `#` comments are not entries, so
+  a file holding only those reads as `present but empty` and leaves the class
+  inactive: it needs at least one usable entry. It stays untracked by design — the
+  names it guards must not be committed — which is why `--strict` fails on a
+  freshly attached tree and why `docs/PUBLISHING.md` step 1 runs
+  `scripts/public_safety.py` rather than trusting a clean census.
 - **The deletion classes report what they could not check.** A
   `--sessions`/`--ledger` override that points outside the audited git tree
   switches off the append-only question for that group; both say so in a
@@ -280,18 +282,17 @@ classes that report their own absence:
   never contacts a tracker, and there is no third adapter seam for it. Two
   states follow from that. An entry whose issue the map does not mention gets a
   `cannot-tell` row of the same class rather than silence, so a partial map cannot
-  read as "every ordered issue is open"; it is a warn by default and
-  `--strict` promotes it to 46. When `--issue-state` was not given at all,
-  the class is not evaluated: the run names the class and the reason in both
+  read as "every ordered issue is open"; it is a warn by default and `--strict`
+  promotes it to 46. And when `--issue-state` was not given at all the
+  class is not evaluated: the run names the class and the reason in both
   modes. Human-readable mode prints one `note:` line saying so; `--json` mode
   prints no `note:` line at all and carries the same sentence on the one summary
   record's `not_evaluated` list, so a machine consumer is not left with `"counts":
   {}` and no way to tell "nothing closed" from "the question was not asked". A
   recipe that produces the file with a tracker command line and `jq` is in
-  `docs/QUICKSTART.md`.
-  A missing `noni/direction/order.json` is not a finding at all, the ordering
-  layer being optional, so an attached project that has never ordered anything
-  adds no ordering row to its census.
+  `docs/QUICKSTART.md`. A missing `noni/direction/order.json` is not a finding at
+  all — the ordering layer is optional — so an attached project that has never
+  ordered anything adds no ordering row to its census.
 - **`intent` (51) reports the file, and the commit that wrote it.** The class
   reads `noni/direction/intent.md` once and asks two questions of it: is it the
   artifact its writer writes (four sections in order, one stamp line, under the
@@ -358,8 +359,7 @@ report clean when the deny-list class is inactive and exits 2. The census
 reports the same condition as a `hygiene` warn that leaves the process at exit
 0. Both read the deny-list through `public_safety.load_denylist` and its one
 precedence (the untracked default file inside the tree being audited, which is
-also gitignored, then `NONI_SCRUB_DENYLIST`), so the two entry points never
-agree
+gitignored, then `NONI_SCRUB_DENYLIST`), so the two entry points never disagree
 about whether the deny-list half ran — but a clean census exit 50 is not a
 substitute for running `scripts/public_safety.py` before publishing.
 
@@ -376,24 +376,25 @@ substitute for running `scripts/public_safety.py` before publishing.
   this census restricted to its group — the ledger shim (`census.sh`) to
   `ledger-record`, `ledger-edited` and `ledger-chain`, the sessions shim
   (`census-sessions.sh`) to the session group. Neither carries a schema, a rule or
-  an exit-code table of its own, so neither can disagree with this one, and `jq`
-  is not a prerequisite of either. They are reached through `bash` or their own
+  an exit-code table of its own, so neither can disagree with this one, and `jq` is
+  not a prerequisite of either. They are reached through `bash` or their own
   executable bit, never under `python3`: the interpreter a wrapper needs is the one
   it execs itself (`NONI_PYTHON`, `python3` by default), and running the script
   under an interpreter hands the reader a syntax error before any check runs. A
   wrapper whose interpreter is missing or whose package will not import says so on
-  one plain line and exits 3, the census's own code for a missing tool.
+  one plain line and exits 3, the census's own code for a tool the reading machine
+  does not have.
 - **Time from `--now`.** All time-based checks use `--now` when given (for
   reproducible output in tests) and the current UTC time otherwise.
 - **No self-reported numbers.** Every metric in `--json` mode names the
   artifact path it derives from; no value comes from a number written inside
   an agent-authored file.
 - **No project content in the skill.** The census script carries no
-  machine-local paths, operator names, or project-specific vocabulary; a row
+  machine-local paths, operator names, or project-specific vocabulary. A row
   built from someone else's exception text is bounded and stripped of absolute
   paths for the same reason.
 - **Read-only git.** Every git call the census makes pins the host's git
   config away (`GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` to the null device,
   `-c protocol.ext.allow=never -c core.hooksPath=/dev/null` on the command
-  line), so an audited repository cannot turn a read into execution
+  line), so a repository being audited cannot turn a read into execution
   through `core.hooksPath` or an external protocol helper.

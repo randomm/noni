@@ -254,6 +254,26 @@ def test_a_bad_date_exits_two(tmp_path):
     assert _porcelain(repo, "noni/decisions") == ""
 
 
+def test_a_supersede_with_a_malformed_date_exits_two(tmp_path):
+    """Removing the date comparison left the calendar rule untouched: a --date
+    that is not a real day is refused as usage (exit 2) even with --supersedes."""
+    repo = _baseline_repo(tmp_path)
+    for bad in ("2026-13-01", "not-a-date"):
+        proc = _run(
+            repo,
+            "--slug", "scheduler",
+            "--date", bad,
+            *BASE, *QUESTION, *OPTIONS, *ANSWERED,
+            "--supersedes", BASELINE_ID,
+        )
+        assert proc.returncode == 2, f"--date {bad}: {proc.stderr}"
+        assert "--date" in proc.stderr
+    assert _porcelain(repo, "noni/decisions") == ""
+    assert sorted(p.name for p in (repo / "noni" / "decisions").glob("*.json")) == [
+        f"{BASELINE_ID}.json"
+    ]
+
+
 # --- the state-root refusal, and the first record that stays open to it ------
 #
 # The state a caller actually arrives at is a committed code repository passed as

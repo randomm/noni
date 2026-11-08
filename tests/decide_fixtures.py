@@ -43,6 +43,10 @@ BASELINE_ID = "2026-10-01-baseline"
 BASELINE_DATE = "2026-10-01T10:00:00Z"
 NEW_DATE = "2026-10-26"
 NEW_ID = f"{NEW_DATE}-scheduler"
+# A day beside NEW_DATE, for the supersede tests that name an explicit date other
+# than the baseline's or the run's own: a new constant rather than a reassigned
+# NEW_DATE, so no other decide test moves off its pinned day.
+OTHER_DATE = "2026-11-05"
 
 # One question, two options: the smallest shape both censuses accept. Flags are
 # kept as lists so each test reads as the command line it runs.
@@ -349,13 +353,18 @@ def _no_identity_env(tmp_path: Path) -> dict:
     }
 
 
-def _supersede(repo: Path, target_id: str,
-               env: dict | None = None) -> subprocess.CompletedProcess[str]:
-    """The standard supersede of ``target_id``, for the hardening tests."""
+def _supersede(repo: Path, target_id: str, env: dict | None = None,
+               date: str | None = None) -> subprocess.CompletedProcess[str]:
+    """The standard supersede of ``target_id``, for the hardening tests.
+
+    ``date`` is the run's ``--date`` and defaults to the baseline's own day,
+    which is the day every hardening assertion derives its new record's id
+    from; a caller that wants a cross-day supersede names one.
+    """
     return _run(
         repo,
         "--slug", "scheduler",
-        "--date", BASELINE_ID[:10],
+        "--date", date or BASELINE_ID[:10],
         *BASE, *QUESTION, *OPTIONS, *ANSWERED,
         "--supersedes", target_id,
         env=env,

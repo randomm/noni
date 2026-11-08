@@ -20,8 +20,11 @@ noni* section of
 ```
 scripts/decide.py --repo REPO --slug SLUG --scope SCOPE --asked-by ROLE \
   --question ID=TEXT [--option ID=OPTION]... --answer ID=ANSWER... \
-  --date <A's date> --supersedes A
+  [--date YYYY-MM-DD] --supersedes A
 ```
+
+`--date` is optional and names any valid day: `B` carries the day of the
+correction, not the day of `A`.
 
 The writer produces `B`, a new record with:
 

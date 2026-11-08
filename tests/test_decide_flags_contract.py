@@ -61,8 +61,8 @@ def test_the_helper_refuses_through_the_callers_printer_and_code():
     assert _decide_flags.parse_questions(["q1=a", "q1=b"], fail=fail,
                                          exit_usage=decide.EXIT_USAGE)[1] == decide.EXIT_USAGE
     assert _decide_flags.check_supersede("2026-10-01-x", None,
-                                         [("q1", "text")], [], fail=fail,
-                                         exit_usage=decide.EXIT_USAGE) == decide.EXIT_USAGE
+                                         [("q1", "text")], [("q1", "a")], fail=fail,
+                                         exit_usage=decide.EXIT_USAGE) is None
     assert _decide_flags.check_supersede("2026-10-01-x", "2026-10-01",
                                          [("q1", "text")], [], fail=fail,
                                          exit_usage=decide.EXIT_USAGE) == decide.EXIT_USAGE

@@ -15,8 +15,9 @@ census's own predicate the caller hands in, and ``--on-behalf-of``
 is refused without ``--decided-by``; and a supersede is refused while any question
 is unanswered. :func:`build_record_flags` is the whole assembly in one call -- the
 slug, the date, the questions, the option/answer pairing against the ids asked, the
-two name flags, the marker's one-option requirement and the supersede rules, in the
-order the refusals need -- and the record-shape rules it reads stay the schema's,
+two name flags, the marker's one-option requirement and the one rule a supersede adds
+over any other record, in the order the refusals need. The record-shape rules it reads
+stay the schema's,
 handed in as arguments, so a shape the census reports cannot be accepted here.
 The caller keeps its printer, its usage code, its two patterns and the schema calls
 it resolves; nothing here imports from decide.py.
@@ -175,8 +176,7 @@ def build_record_flags(args: RecordFlags, *, fail: Fail, exit_usage: int,
     against the ids ``--question`` asked -- then the two name flags and the marker,
     which read the options each question will actually carry. The supersede rules
     come last because they read the answers: a declined steer is an open chain-root
-    record and never a supersede, and a supersede without ``--date`` has no place in
-    the chain it corrects.
+    record and never a supersede.
 
     The rules stay the census's or the schema's wherever one exists: ``build_questions``
     and ``unanswered_ids`` are the record schema's, handed in so a shape the census
@@ -274,7 +274,9 @@ def check_supersede(supersedes: str | None, date: str | None,
 
     A declined steer is an open chain-root record, never a supersede: an
     unanswered question would leave the chain with no live answer (census exit
-    20), so this is a usage error and not a ledger state.
+    20), so this is a usage error and not a ledger state. The date is no rule
+    here: a supersede carries the run's own ``--date``, exactly as any other
+    record does.
     """
     answered_ids = {oid for oid, _value in answers}
     unanswered = [qid for qid, _text in questions if qid not in answered_ids]
@@ -287,13 +289,6 @@ def check_supersede(supersedes: str | None, date: str | None,
             "answer every question with --answer ID=<answer>, or record the "
             "decline as an open chain-root record without --supersedes",
         )
-    if date is None:
-        # A supersede carries the date of the record it replaces, so without
-        # --date there is nothing to place it in the chain it corrects.
-        return fail(exit_usage,
-                    "--supersedes needs --date: a supersede carries the date of "
-                    "the record it replaces",
-                    "pass the target's date, e.g. --date 2026-10-26")
     return None
 
 
@@ -302,13 +297,11 @@ def check_supersede(supersedes: str | None, date: str | None,
 Printer = Callable[[int, str, str], int]
 
 # The two lines the collision refusal prints, spelled once. The record id is unique
-# across the ledger because the id IS the filename, so the repair is always another
-# slug, and a supersede has its own rule for the date it carries (see the writer's
-# --supersedes refusals) -- which the hint restates so one refusal names both the
-# rule and the way to satisfy it.
+# across the ledger because the id IS the filename, and the id is built from --date
+# and --slug, so the only repair the writer can offer is another slug -- which is
+# what the hint says, so one refusal names both the rule and the way to satisfy it.
 _TAKEN_HEADLINE = "{path} already exists; record ids are unique across the ledger"
-_TAKEN_HINT = ("choose a slug nobody has taken; a supersede keeps the --date of the "
-               "record it replaces and differs by its slug")
+_TAKEN_HINT = "choose a slug nobody has taken"
 
 
 def refuse_linked_state(printer: Printer, code: int, repo: Path,

@@ -18,18 +18,34 @@ from decide_fixtures import (
     NEW_DATE,
     NEW_ID,
     OPTIONS,
+    OTHER_DATE,
     QUESTION,
     _assert_both_censuses_clean,
     _baseline_repo,
     _commit_tree,
     _decide,
     _head_paths,
+    _pin_identity,
     _porcelain,
     _read,
     _record_json,
     _record_path,
     _run,
 )
+
+
+def _between(text: str, start: str, end: str | None = None) -> str:
+    """The token ``text`` carries between two of its own literals.
+
+    Splitting on a separator the surrounding prose also contains (a path carries
+    ``/``) would cut the token short, so the caller names its bounds and the helper
+    takes what lies between them.
+    """
+    assert start in text, f"{start!r} not in {text!r}"
+    tail = text.split(start, 1)[1]
+    if end is not None:
+        tail = tail.split(end, 1)[0]
+    return tail.strip()
 
 
 def test_supersede_writes_both_paths_in_one_commit(tmp_path):
@@ -217,15 +233,118 @@ def test_supersede_of_a_locally_modified_target_exits_four(tmp_path):
     assert not _record_path(repo, f"{BASELINE_ID[:10]}-scheduler").exists()
 
 
-def test_supersede_needs_the_targets_date(tmp_path):
-    """A supersede carries the date of the record it replaces, so a --date from
-    another day is refused rather than writing a record outside the chain."""
+def test_a_supersede_dated_later_than_its_target_is_written(tmp_path):
+    """A correction made on a later day carries that day: the chain, not the
+    date, is what orders the ledger, so the run is accepted and writes the new
+    record beside its target with the target's status flipped."""
     repo = _baseline_repo(tmp_path)
-    proc = _decide(repo, *ANSWERED, "--supersedes", BASELINE_ID)
-    assert proc.returncode == 4, proc.stderr
-    assert BASELINE_ID[:10] in proc.stderr, proc.stderr
-    assert not _record_path(repo, NEW_ID).exists()
+    proc = _run(
+        repo,
+        "--slug", "scheduler",
+        "--date", OTHER_DATE,
+        *BASE, *QUESTION, *OPTIONS, *ANSWERED,
+        "--supersedes", BASELINE_ID,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+    new_id = f"{OTHER_DATE}-scheduler"
+    assert _read(repo, BASELINE_ID)["status"] == "superseded"
+    new = _read(repo, new_id)
+    assert new["supersedes"] == BASELINE_ID
+    assert new["date"] == f"{OTHER_DATE}T00:00:00Z"
+    subject = _git_e2(repo, "log", "-1", "--format=%s").stdout.strip()
+    assert subject == f"steering: supersede {BASELINE_ID} with {new_id}"
+    assert set(_head_paths(repo)) == {f"noni/decisions/{new_id}.json",
+                                     f"noni/decisions/{BASELINE_ID}.json"}
+    assert _porcelain(repo) == ""
+    _assert_both_censuses_clean(repo, "a supersede dated later than its target")
+
+
+def test_a_supersede_dated_earlier_than_its_target_is_written(tmp_path):
+    """A correction dated before the record it replaces is not a violation: the
+    writer does not compare the two days, so the run writes like any other."""
+    repo = _baseline_repo(tmp_path)
+    proc = _run(
+        repo,
+        "--slug", "scheduler",
+        "--date", "2026-09-15",
+        *BASE, *QUESTION, *OPTIONS, *ANSWERED,
+        "--supersedes", BASELINE_ID,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+    new_id = "2026-09-15-scheduler"
+    assert _read(repo, BASELINE_ID)["status"] == "superseded"
+    assert _read(repo, new_id)["supersedes"] == BASELINE_ID
+    assert _porcelain(repo) == ""
+    _assert_both_censuses_clean(repo, "a supersede dated before its target")
+
+
+def test_a_supersede_without_a_date_takes_todays_day(tmp_path):
+    """Without --date a supersede is dated as any other record is, by the run's
+    own UTC day, and lands beside the target it flips."""
+    repo = _baseline_repo(tmp_path)
+    _pin_identity(repo, "Replay")
+    proc = run_decide(
+        repo,
+        "--slug", "scheduler", *BASE, *QUESTION, *OPTIONS, *ANSWERED,
+        "--supersedes", BASELINE_ID,
+    )
+    assert proc.returncode == 0, proc.stderr
+    # The day the writer stamped is read off its own `wrote` line rather than
+    # recomputed here: the two must agree, and a clock crossing midnight UTC
+    # between this process and the writer must not make the expectation wrong.
+    wrote = [line for line in proc.stdout.splitlines() if "wrote " in line]
+    assert len(wrote) == 1, proc.stdout
+    # The new record is the path named first; the target follows it (AC2 order).
+    new_rel = _between(wrote[0], "wrote ").split(",")[0].rsplit("/", 1)[-1]
+    assert new_rel.endswith("-scheduler.json"), proc.stdout
+    new_id = new_rel[: -len(".json")]
+    assert _read(repo, new_id)["supersedes"] == BASELINE_ID
+    assert _read(repo, BASELINE_ID)["status"] == "superseded"
     assert _porcelain(repo, "noni/decisions") == ""
+    _assert_both_censuses_clean(repo, "a supersede with no --date")
+
+
+def test_a_same_day_same_slug_supersede_still_collides(tmp_path):
+    """A supersede whose id equals its target's is refused (exit 4) through the
+    collision path: ids are unique because the id IS the filename, and the
+    refusal names the record path rather than the date."""
+    repo = _baseline_repo(tmp_path)
+    proc = _run(
+        repo,
+        "--slug", "baseline",
+        "--date", BASELINE_ID[:10],
+        *BASE, *QUESTION, *OPTIONS, *ANSWERED,
+        "--supersedes", BASELINE_ID,
+    )
+    assert proc.returncode == 4, proc.stderr
+    assert "already exists" in proc.stderr, proc.stderr
+    assert "slug" in proc.stderr, proc.stderr
+    assert _porcelain(repo, "noni/decisions") == ""
+    assert sorted(p.name for p in (repo / "noni" / "decisions").glob("*.json")) == [
+        f"{BASELINE_ID}.json"
+    ]
+
+
+def test_a_supersede_with_a_malformed_date_exits_two(tmp_path):
+    """Removing the date comparison left the calendar rule untouched: a --date
+    that is not a real day is refused as usage (exit 2) even with --supersedes."""
+    repo = _baseline_repo(tmp_path)
+    for bad in ("2026-13-01", "not-a-date"):
+        proc = _run(
+            repo,
+            "--slug", "scheduler",
+            "--date", bad,
+            *BASE, *QUESTION, *OPTIONS, *ANSWERED,
+            "--supersedes", BASELINE_ID,
+        )
+        assert proc.returncode == 2, f"--date {bad}: {proc.stderr}"
+        assert "--date" in proc.stderr
+    assert _porcelain(repo, "noni/decisions") == ""
+    assert sorted(p.name for p in (repo / "noni" / "decisions").glob("*.json")) == [
+        f"{BASELINE_ID}.json"
+    ]
 
 
 # --- refusals: input, identity, collision -------------------------------------

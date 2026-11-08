@@ -56,24 +56,19 @@ def _intent_present(intent: Path) -> bool:
     return kind != "absent"
 
 
-def _items_present(items: Path, given: bool) -> bool:
+def _store_listable(probe) -> bool:
     """Whether the store's one readdir is owed, for the group's filter gate.
 
-    Two answers, and the second is the whole of the ``--items`` ruling: a store the
-    caller named with ``--items`` is owed a read whatever stands at it, because a
-    path the caller pointed the census at and this run cannot read is a finding
-    (``item-unlistable``), while a default path that is simply absent is the state of
-    a project that has never filed an idea and is not a finding at all. So the flag
-    decides, and an absent default answers False without a classification -- no row
-    can come from it either way, and a filtered run of a project with no store pays
-    nothing for the read it can be shown to need.
+    The probe already answered the two states the gate asks about, so the gate reads the
+    probe rather than classifying the path a second time: a fault is a read the run owes
+    (``item-unlistable`` is the row that names it), and a listing that named nothing is
+    the state of a project that has never filed an idea -- no row can come of it either
+    way, so a filtered run of an empty store pays nothing for the read.
 
-    A ``--items`` path that is a symlink or a plain file is also owed the read: the
-    probe classifies it and the group words the row, so the gate asks nothing of its
-    own about the shape and never reaches a verdict the group has not stated.
+    Asking the probe rather than ``Path`` is the same rule the intent gate obeys: the
+    classification is the census's, taken once, and a gate that re-derived it with
+    ``Path.exists`` would follow the symlink whose cannot-tell row the group exists to
+    keep and would propagate the ``OSError`` of a parent it cannot traverse.
     """
-    if given:
-        return True
-    return _census()._file_kind(items, kind="dir")[0] != "absent"
-
+    return probe.fault is not None or bool(probe.names)
 

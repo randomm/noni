@@ -17,7 +17,6 @@ value, and the caller words its own refusal.
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 from . import itemschema, labels, orderschema, orderstate
@@ -42,7 +41,6 @@ def order_cites_item(repo: Path, item_id: str) -> tuple[bool, str]:
     ``confirmed`` and nothing else, so today nothing cites an item and the honest
     answer is the empty scan. The day the order gains the field, the scan already
     asks the right question and only the order's schema changes.
-
     The path is classified with ``orderstate.file_kind`` first, the way every other
     read of this family asks, and only the one state "no file" answers "no entry cites
     it": a plain file, a directory or a file whose bytes this run cannot read is no
@@ -51,14 +49,12 @@ def order_cites_item(repo: Path, item_id: str) -> tuple[bool, str]:
     that read an order citing nothing, which is the failure this read exists to make
     impossible. The three states are therefore named here one at a time.
 
-    Reads are lenient about one thing a *writer* is not, and the leniency is the whole
-    reason this is a read of its own rather than a call to ``orderstate.read_order``: an
-    entry carrying the ``item`` key the current entry schema does not name is read, not
-    skipped. That key arrives with sub-issue 2's order artifact, and a scan that applied
-    today's entry rules would report "no entry cites it" for the very entries whose
-    citation this refusal exists to catch -- a clean exit through an entry the reader
-    silently dropped. ``_order_bytes_are_artifact`` says exactly how far that leniency
-    reaches.
+    This is a read of its own rather than a call to ``orderstate.read_order`` because
+    the two answer different questions: the writer's read answers "may this run write
+    over the order" and refuses what it would not itself write, while this one answers
+    "does any entry cite this item", and the states it has to keep apart (absent,
+    unreadable, not the artifact) are three answers to *that* question rather than two
+    to the writer's.
     """
     path = repo / orderschema.ORDER_REL
     kind, _why = orderstate.file_kind(path)
@@ -70,135 +66,38 @@ def order_cites_item(repo: Path, item_id: str) -> tuple[bool, str]:
         raw = path.read_bytes()
     except OSError:
         return False, "io"
-    if not _order_bytes_are_artifact(raw):
-        return False, "malformed"
-    entries = _order_entries_from(raw)
+    entries = _order_entries_if_artifact(raw)
     if entries is None:
         return False, "malformed"
     return (any(entry.get("item") == item_id for entry in entries), "read")
 
 
-def _order_bytes_are_artifact(raw: bytes) -> bool:
-    """Whether ``raw`` holds an order this run can vouch for, byte for byte.
+def _order_entries_if_artifact(raw: bytes) -> list | None:
+    """The entries of ``raw``, or None unless it is the artifact in canonical form.
 
     Three questions, each asked of the owner that already answers it: the strict reader
     for the bytes no noni writer emits (non-finite numbers, a duplicate key, a nesting
     past the bound), ``orderschema.problems`` for the document's shape, and
     ``orderstate.render`` for the canonical form. All three because ``promote`` owes the
-    same codes ``order.py`` owes for the same defects, and asked of the reader's own
-    path rather than a shared strictness flag: "not the artifact" and "no artifact" are
-    two codes and a reader must not collapse them.
-
-    One rule is read with the entry schema's leniency rather than the writer's strictness:
-    the ``item`` key. It is the field sub-issue 2 adds to ``noni.order/2``, and the whole
-    point of this scan is that an entry carrying it today is still scanned, not dropped
-    (see :func:`order_cites_item`). So the entry-level check is ``problems`` minus that
-    one report; every other complaint the entry schema makes still refuses the file. The
-    canonical comparison is made against the bytes of *this* document, entries and all,
-    rather than of the writer's projection: ``orderschema.order_bytes`` drops ``item``
-    on its way to the bytes, so a citing entry compared against that projection is never
-    canonical and every ``/2`` order would be refused as malformed.
+    same codes ``order.py`` owes for the same defects, and none of them relaxed here: an
+    order whose entries carry a key today's schema does not name -- the ``item`` field
+    ``noni.order/2`` brings -- is simply *not* a ``noni.order/1`` artifact, so it is
+    refused as a malformed order naming the order path, exactly as ``order.py`` refuses
+    those bytes today. Until that artifact lands nothing on disk cites an item, and the
+    scan above is the ready answer for the day it does.
     """
     try:
         value = orderschema.load_json_checked(raw)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError):
-        return False
-    if not isinstance(value, dict):
-        return False
-    found = orderschema.problems(value)
-    if [problem for problem in found
-            if not _is_item_field_report(problem)]:
-        return False
-    rendered = orderstate.render({"schema": value["schema"],
-                                  "entries": _entry_projections(raw)})
-    return not isinstance(rendered, orderstate.RenderRefused) \
-        and _canonical_bytes_match(rendered, raw)
-
-
-# The two shapes one citing entry makes of the artifact, and the two questions they are
-# the answer to.
-#
-# ``orderschema.order_bytes`` renders an entry as its three fields and nothing else, so
-# the bytes of an entry that also carries ``item`` are never the bytes that renderer
-# produces. Both halves of that fact have to be handled together or ``/2`` is simply
-# unreadable: the shape rule has to forgive the one complaint about that key, and the
-# byte comparison has to be made against the artifact *with* the key restored rather than
-# against the projection it renders.
-_ITEM_FIELD_REPORT = re.compile(r"^entry \d+ has unknown field\(s\): ")
-
-
-def _is_item_field_report(problem: str) -> bool:
-    """Whether ``problem`` is the entry schema's complaint about the ``item`` key alone.
-
-    Asked of the report's text and matched to the field name, so the leniency covers one
-    key and nothing else: an entry with two unknown fields, one of them ``item``, still
-    refuses the file. The shape is ``orderschema``'s own wording for that report; a
-    second unknown field lands in the same joined list and fails this match.
-    """
-    match = _ITEM_FIELD_REPORT.match(problem)
-    return bool(match) and problem[match.end():] == orderschema.ITEM_FIELD
-
-
-def _canonical_bytes_match(rendered: bytes, raw: bytes) -> bool:
-    """Whether ``raw`` is the canonical text of the document ``rendered`` came from.
-
-    A file is canonical when its bytes are what the writer would have written for the
-    document it holds -- with one allowance: the ``item`` key, which sits where the
-    writer puts nothing because today's artifact has no such field. So the comparison is
-    made after that key is taken back out of the file's bytes, and only an entry that
-    carries it alone accounts for the difference. A file whose bytes differ any other way
-    (key order, indent, spacing, an added or dropped key that is not ``item``) is not
-    canonical and is refused: a promote must not rewrite an item on the strength of an
-    order no writer produced.
-    """
-    if rendered == raw:
-        return True
-    return _strip_item_field(raw) == rendered
-
-
-def _strip_item_field(raw: bytes) -> bytes:
-    """``raw`` with a lone ``item`` key removed from each entry, leaving the rest.
-
-    Not a re-render: the point is to ask whether the file's *own* bytes are canonical
-    once the one key the writer cannot write is set aside, so a file that also has a bad
-    indent or a reordered key stays different from what the writer produces and is
-    refused. Text surgery rather than a parse-and-dump for the same reason: a parse
-    cannot tell "canonical bytes" from "any bytes of the same value".
-    """
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        return b""
-    stripped = re.sub(r",\s*\"item\"\s*:\s*(?:\"[^\"\\]*(?:\\.[^\"\\]*)*\"|"
-                      r"null|true|false|-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)", "", text)
-    return stripped.encode("utf-8")
-
-
-def _entry_projections(raw: bytes) -> list:
-    """Each entry of ``raw`` reduced to the three fields the order writer writes.
-
-    A projection of the document the file holds, taken field by field with ``.get`` so
-    an entry missing one of the three renders as ``null`` (and is refused by
-    ``orderschema.problems`` a line earlier) instead of raising here: the reader answers
-    with a code and never with an exception. An entry carrying a key outside the three
-    is reduced to them, because the entry-level check is the artifact's rules minus the
-    item field this scan exists to read.
-    """
-    entries = _order_entries_from(raw) or []
-    return [{field: entry.get(field)
-             for field in ("issue", "decision", "confirmed")} for entry in entries]
-
-
-def _order_entries_from(raw: bytes) -> list | None:
-    """The entry list of a document already proven to be the artifact, or None."""
-    try:
-        value = orderschema.load_json_checked(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError):
         return None
-    entries = value.get("entries") if isinstance(value, dict) else None
-    if not isinstance(entries, list):
+    if not isinstance(value, dict) or orderschema.problems(value):
         return None
-    return [dict(entry) for entry in entries if isinstance(entry, dict)]
+    entries = [dict(entry) for entry in value["entries"]
+               if isinstance(entry, dict)]
+    rendered = orderstate.render(orderstate.body_of(value))
+    if isinstance(rendered, orderstate.RenderRefused) or rendered != raw:
+        return None
+    return entries
 
 
 def store_listing(repo: Path, report, exit_io: int) -> tuple[list[Path] | None, int | None]:

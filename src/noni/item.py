@@ -34,7 +34,9 @@ Exit codes:
     0  the item was written (and committed unless --no-commit), or listed
     2  invalid input: an argparse failure, a subcommand outside add/list/drop/promote,
        a missing --title on add, a missing --issue on promote, --decision or --why
-       passed to a verb that does not own them, an id that is not lowercase letters, digits and dashes (or ends in
+       passed to a verb that does not own them, an id outside the ruled set of lowercase
+       letters, digits, dots, underscores and dashes that opens with a letter or a digit
+       (or ends in
        .json), a --title or --why that is blank or more than one line or past its
        length limit, an --issue that is not a positive integer, a --now that is not a
        valid UTC ISO-8601 timestamp, a --repo that is not a directory, or a noni/ or
@@ -275,7 +277,7 @@ def main(argv: list[str] | None = None) -> int:
     subcommand = args.subcommand
     if subcommand not in item_cli.VERBS:
         return _fail(EXIT_USAGE, f"subcommand {subcommand!r} is not one of "
-                     + ", ".join(item_cli.VERBS),
+                     + item_cli.VERBS_JOINED,
                      f"{labels.ITEM} --repo REPO add ID --title TITLE | list | "
                      "drop ID --decision ID --why REASON | promote ID")
     # A flag that means nothing for the verb it was passed with is a usage error, not
@@ -293,7 +295,8 @@ def main(argv: list[str] | None = None) -> int:
                      f"{labels.ITEM} --repo REPO {subcommand} my-idea")
     if not itemschema.is_item_id(args.id):
         return _fail(EXIT_USAGE, f"id {args.id!r} is not an item id",
-                     "an item id is lowercase letters, digits and dashes, and does "
+                     "an item id is lowercase letters, digits, dots, underscores and "
+                     "dashes, opens with a letter or a digit, and does "
                      "not end in .json")
     repo = _state_root(args, subcommand)
     if repo is None:

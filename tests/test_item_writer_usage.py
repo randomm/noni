@@ -77,6 +77,11 @@ def test_an_id_that_is_not_a_slug_is_refused_by_the_command_line(tmp_path):
 
     The same shape refused in a *file* is exit 4 (``item-malformed``'s writer twin);
     refused on the command line it is 2, because nothing on disk is wrong.
+
+    The list is the shapes outside the ruled set of #124 (a dot, an underscore and a
+    dash inside the name are inside it, so ``idea.dot`` -- an id with a dot in the
+    middle -- is legal and is not one of these; ``idea.`` is, for the trailing dot the
+    filesystem hides).
     """
     tree = repo(tmp_path)
     # Each case gets its own tree and puts the id last: ``--`` would swallow the flags
@@ -86,7 +91,7 @@ def test_an_id_that_is_not_a_slug_is_refused_by_the_command_line(tmp_path):
     # miniature -- argparse reads it as a flag and refuses it with its own sentence,
     # which is a second correct answer to the mistake and not the one pinned here; the
     # shape is covered as a *file* by the census and the artifact suites.
-    for bad in ("Idea One", "idea/0001", "idea-0001.json", "idea.dot", "i" * 81, ""):
+    for bad in ("Idea One", "idea/0001", "idea-0001.json", "idea.", "i" * 81, ""):
         case = repo(tmp_path, f"id-{abs(hash(bad))}")
         proc = run_item(case, "add", "x", "--title", "t", "--now", NOW)  # placeholder
         proc = run_item(case, "add", bad, "--title", "t", "--now", NOW) if bad else \

@@ -37,6 +37,7 @@ def _check_items(
     items: Path, ledger: Path, order: Path, root: Path, now: datetime,
     item_stale_after: timedelta, strict: bool, findings: list[dict], probe,
     ledger_names: tuple[str, ...] | None,
+    ledger_records: dict[str, dict] | None = None,
 ) -> None:
     """The items group, run by the module beside the census.
 
@@ -56,6 +57,7 @@ def _check_items(
                        findings,
                        listed=probe.names, fault=probe.fault,
                        ledger_names=ledger_names,
+                       ledger_records=ledger_records,
                        row=census._row,
                        rel_to_root=census._rel_to_root,
                        file_kind=census._file_kind,

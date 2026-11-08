@@ -11,11 +11,10 @@ only a genuinely absent artifact is "no order"; a symlink, a directory, a device
 file this run cannot read is exit 3; bytes that do not parse or are not the artifact are
 exit 4; and an entry that cites the item is exit 4 naming the order path.
 
-The citing entry is a ``noni.order/1`` document carrying the ``item`` key the order's own
-schema does not name yet: the reader is deliberately lenient about that one key (sub-issue
-2 adds it), and an order this lenient about the field it scans is refused as a malformed
-artifact rather than used, so the citation cases pair the key with an order the writer
-would accept.
+The citing entry is a ``noni.order/2`` shape -- an entry carrying the ``item`` key the
+``/1`` entry schema does not name. Sub-issue 2 (#123) owns that artifact; to this ticket's
+reader such a file is simply not a canonical ``/1`` order, so it is refused exit 4 naming
+the order path, which is the ruled behaviour until #123 lands.
 """
 
 from __future__ import annotations
@@ -44,10 +43,10 @@ UNCITED = {"issue": 7, "decision": BASELINE_ID, "confirmed": FRESH}
 def _order_text(entries):
     """The artifact's canonical bytes for ``entries``.
 
-    The writer's own renderer, so these tests ask about the artifact rather than about
-    the indent a fixture happened to choose: a non-canonical file is a *malformed*
-    order to this reader (exit 4), and a test that meant "an order citing this item"
-    has to hand over an order that is one.
+    The writer's own shape, so these tests ask about the artifact rather than about the
+    indent a fixture happened to choose: a non-canonical file is a *malformed* order to
+    this reader (exit 4), and a test that meant "an order citing this item" has to hand
+    over the bytes the ``/1`` writer produces.
     """
     return order_bytes(entries)
 
@@ -198,16 +197,26 @@ def test_promote_refuses_a_malformed_order_at_exit_four(tmp_path):
 
 
 def test_promote_refuses_an_order_entry_that_cites_the_item(tmp_path):
-    """The ruling's own case: exit 4, and the refusal names the order path."""
-    tree = _candidate(tmp_path, "order-cites")
-    _seed_order_text(tree, _order_text([CITED]))
-    proc = _promote(tree)
-    joined = proc.stdout + proc.stderr
-    assert proc.returncode == 4, joined
-    assert ORDER_REL in joined, joined
-    assert "idea-0001" in joined, joined
-    assert '"status": "candidate"' in item_path(tree, "idea-0001").read_text(
-        encoding="utf-8"), "the promote wrote despite the citation"
+    """An order whose entries cite an item is refused, naming the order path.
+
+    The citing shape is ``noni.order/2``'s, which this ticket does not own: today's
+    reader sees an entry carrying a key the ``/1`` entry schema does not name, which is
+    not an artifact it can vouch for, so the ruling's exit 4 (name the order path, say
+    the order is what has to change) is reached as a malformed order. Sub-issue 2 (#123)
+    replaces this refusal with the same-commit rewrite; what is pinned here is that the
+    citing file is *never* promoted through, whatever code the refusal carries.
+    """
+    for name, text in (("citing /1 entry", _order_text([CITED])),
+                       ("/2 schema", order_bytes([CITED], schema="noni.order/2"))):
+        tree = _candidate(tmp_path, f"order-{name}")
+        _seed_order_text(tree, text)
+        proc = _promote(tree)
+        joined = proc.stdout + proc.stderr
+        assert proc.returncode == 4, f"{name}: {proc.returncode} {joined}"
+        assert ORDER_REL in joined, f"{name}: names no artifact: {joined}"
+        assert "Traceback" not in joined, f"{name}: {joined}"
+        assert '"status": "candidate"' in item_path(tree, "idea-0001").read_text(
+            encoding="utf-8"), f"{name}: the promote wrote despite the citation"
 
 
 def test_promote_prompts_nothing_when_no_entry_cites_the_item(tmp_path):

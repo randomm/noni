@@ -39,7 +39,11 @@ FLAG_OWNER = {"--title": "add", "--decision": "drop", "--why": "drop",
 # ``Exit codes:`` block, the parser's refusal and this number together.
 _USAGE_EXIT = 2
 
-# The verb list the missing-subcommand hint prints, spelled once from ``VERBS``.
+# The verb list every refusal of the verb slot prints, spelled once from ``VERBS`` and
+# read by both of them: the writer's unknown-verb line and this parser's missing-verb
+# line. Two spellings of one list is how the same mistake comes to answer itself twice
+# with two different sets, so the constant has a test beside it (``tests/
+# test_item_writer_usage.py`` asserts both refusals name the same four words).
 VERBS_JOINED = ", ".join(VERBS)
 
 # The usage line, spelled once and handed to argparse as ``usage=``.
@@ -82,19 +86,8 @@ class VerbedParser(argparse.ArgumentParser):
         if MISSING_SUBCOMMAND in message:
             self.print_usage(sys.stderr)
             print(f"{self.prog}: {message}", file=sys.stderr)
-            print(f"{self.prog}: fix: choose from: {missing_verb_hint()}",
+            print(f"{self.prog}: fix: choose from: {VERBS_JOINED}",
                   file=sys.stderr)
             raise SystemExit(_USAGE_EXIT)
         super().error(message)
 
-
-def missing_verb_hint() -> str:
-    """The verb list the missing-subcommand hint prints.
-
-    Joined with the same "or" the unknown-verb refusal above uses -- one sentence for
-    one set, so the two refusals of the same mistake cannot answer it twice.
-    """
-    *first, last = VERBS
-    if len(first) == 1:
-        return f"{first[0]} or {last}"
-    return f"{', '.join(first)} or {last}"

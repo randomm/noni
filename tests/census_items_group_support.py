@@ -65,7 +65,15 @@ def raw(tree: Path, name: str, text: str) -> Path:
 
 def record(tree: Path, record_id: str, status: str = "decided",
            supersedes: str | None = None) -> Path:
-    """One ledger record as the census reads it: a JSON document under noni/decisions."""
+    """One ledger record as the census reads it: a JSON document under noni/decisions.
+
+    ``supersedes`` is the decision this record replaced -- the direction every reader of
+    the ledger reads the field in, ``decide.py`` and ``orderstate._successor`` included.
+    A fixture that wants the chain a superseded record actually sits on (the record that
+    killed it, which is what the census's own successor question answers from) passes the
+    pair the other way round: the replacing record names the replaced one, so a chain
+    ``a <- b <- c`` is written as ``b`` superseding ``a`` and ``c`` superseding ``b``.
+    """
     target = tree / "noni" / "decisions" / f"{record_id}.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps({

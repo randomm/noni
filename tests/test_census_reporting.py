@@ -414,13 +414,15 @@ class TestJsonMode:
 
 class TestCheckFilters:
     def test_list_prints_all_checks(self):
-        """``--list`` names every class the table holds, including the item group's.
+        """``--list`` names every class the table holds, pinned by hand.
 
-        The set is read from the table rather than written out here: a list that
-        enumerated the twelve direction and session classes by hand kept passing while
-        the item classes were missing from it, which is the opposite of what a listing
-        is for. What this test pins is the listing's contract -- every class, once each
-        -- and the contract test that names the classes themselves lives beside it.
+        The expected set is written out here and nowhere else on purpose. A version
+        that read it from ``census_report.CHECKS`` was a tautology: remove a class from
+        the table and the listing still matched it, which is the failure a listing test
+        exists to catch. The names below are the contract -- the direction and session
+        classes the census has always printed, plus the six the item group of #124
+        declares. A class may only join or leave this set together with the row that
+        documents it.
         """
         import io
         from contextlib import redirect_stdout
@@ -431,14 +433,17 @@ class TestCheckFilters:
             rc = census_mod.main(["--list"])
         assert rc == 0
         lines = out.getvalue().strip().splitlines()
-        from noni import census_report
-        assert set(lines) == set(census_report.CHECKS), f"got {lines}"
-        assert len(lines) == len(set(lines)), "a class was listed twice"
-        # The names the epic promises, present rather than merely counted.
-        for name in ("item-malformed", "item-dropped-in-order",
+        expected = {"ledger-record", "ledger-edited", "ledger-chain",
+                     "session-double", "session-claim", "session-malformed",
+                     "session-stalled", "probe",
+                     "ledger-empty", "session-same-identity", "session-deleted",
+                     "hygiene", "intent",
+                     "ordering-malformed", "ordering-stale", "ordering-closed",
+                     "item-malformed", "item-dropped-in-order",
                      "item-promoted-without-issue", "item-reference-unresolved",
-                     "item-stale", "item-unlistable"):
-            assert name in lines, f"{name} is not listed"
+                     "item-stale", "item-unlistable"}
+        assert set(lines) == expected, f"got {lines}"
+        assert len(lines) == len(set(lines)), "a class was listed twice"
 
     def test_only_session_double(self, tmp_path):
         """--only session-double skips ledger checks."""

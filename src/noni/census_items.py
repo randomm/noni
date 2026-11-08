@@ -132,6 +132,7 @@ def check_items(
     item_stale_after: timedelta, strict: bool, findings: list[dict], *,
     listed: tuple[Path, ...] | None, fault: str | None,
     ledger_names: tuple[str, ...] | None,
+    ledger_records: dict[str, dict] | None = None,
     row: Callable[..., dict], rel_to_root: Callable[[Path, Path], str],
     file_kind: Callable[..., tuple[str, str | None]],
     read_record: Callable[[Path], tuple[bytes | None, OSError | None]],
@@ -232,7 +233,7 @@ def check_items(
         return
     _check_citations(scan.bodies, ledger, ledger_names, add, rel_store,
                      read_record=read_record, load_json_strict=load_json_strict,
-                     clipped=clipped)
+                     clipped=clipped, records=ledger_records)
     _check_status_and_issue(scan.bodies, order, add, rel_store,
                             file_kind=file_kind, read_record=read_record,
                             load_json_strict=load_json_strict, clipped=clipped)

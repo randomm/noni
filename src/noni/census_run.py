@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 
 from . import census_intent as _intent
 from . import census_items_gate as _items_gate
+from . import census_items_ledger_reads as _ledger_reads
 from . import census_items_run as _items_run
 from . import census_json as _census_json
 from . import census_ordering as _ordering
@@ -435,30 +436,33 @@ def _run(argv: list[str] | None = None) -> int:
     # path override the ledger, sessions, ordering and intent groups have.
     #
     # The gate is the store's own probe, taken here before the group is gated on its
-    # answer so the gate and the rows are one readdir (the sessions group's rule).
-    # The probe decides the entry, exactly as the sessions group's fault does above:
-    # a store this run could not list is owed its ``item-unlistable`` row whatever the
-    # filter named, because that row is the probe-honesty one ``keep`` never drops and
-    # a gate that asked the filter first would stop the read that produces it. The
-    # filter itself is applied by ``keep`` after the group has run, which is what lets
-    # a run that asked for one class of the group still read every file of the store:
-    # the six classes share one read, and a filter that selected the rows could not
-    # also select the files that row's own finding depends on. An absent store is no
-    # ground to enter on: it is the state of a project that has never filed an idea,
-    # and the group adds no row for it -- which is why an absent ``--items`` path is
-    # silence and a present-but-unreadable one is a row, the distinction ``items_given``
-    # carries to the group.
+    # answer so the gate and the rows are one readdir (the sessions group's rule), and
+    # the probe alone decides the entry -- exactly as the sessions group's fault does
+    # above. Two states let the group run and both are needed:
+    #
+    # - a store this run could not list is owed its ``item-unlistable`` row whatever
+    #   the filter named, because that row is the probe-honesty one ``keep`` never
+    #   drops and a gate that asked the filter first would stop the read that produces
+    #   it. This is also the whole of the ``--items`` ruling: a path the caller named
+    #   and this run cannot read is a finding, while a default path that is simply
+    #   absent is the state of a project that never filed an idea and is no finding at
+    #   all. Neither question is asked of the flag here -- the probe answers both, so
+    #   the gate and the rows cannot disagree about what stands at the path.
+    # - a store with something in it is worth reading for the six classes that share
+    #   one read. The filter is applied by ``keep`` after the group has run, which is
+    #   what lets a run that asked for one class still read every file of the store: a
+    #   filter that selected the rows could not also select the files that a row's own
+    #   finding depends on.
+    #
+    # An empty store is no ground to enter on at all: an absent path lists as empty and
+    # so does the directory the last cleaned-out item left behind, and neither has a row
+    # to give -- which keeps a project that filed no idea, or holds an empty store, free
+    # of a read it can be shown to need.
     items_probe = census._items_listing(items)
-    # A store this run could not list is owed its ``item-unlistable`` row whatever the
-    # filter named, because that row is the probe-honesty one ``keep`` never drops and
-    # a gate that asked the filter first would stop the read that produces it. A store
-    # with nothing in it is no ground to enter on at all: an absent path lists as empty
-    # and so does the directory the last cleaned-out item left behind, and neither has
-    # a row to give, which is what keeps a project that filed no idea -- or holds an
-    # empty store -- free of a read it can be shown to need.
-    if items_probe.fault is not None or items_probe.names:
+    if _items_gate._store_listable(items_probe):
         _items_run._check_items(items, ledger, ordering, root, now, item_stale_after,
-                     args.strict, findings, items_probe, ledger_probe.names)
+                     args.strict, findings, items_probe, ledger_probe.names,
+                     ledger_records=_ledger_reads.shared_map(ledger, ledger_probe))
         findings[:] = keep(findings)
 
     # hygiene is its own check group: it scans the tracked files of the census's

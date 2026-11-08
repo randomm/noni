@@ -68,10 +68,18 @@ WHY_MAX = 280
 TITLE_MAX = 200
 
 # An item id is what ``item.py`` builds a path from, so it is refused before any
-# path is built: lowercase letters, digits and dashes, opening with a letter or a
-# digit, and at most ``ID_MAX`` of them. The two suffix rules beside the regex are in
-# :func:`is_item_id`.
-ID_RE = re.compile(r"[a-z0-9][a-z0-9-]*")
+# path is built: lowercase letters, digits, dots, underscores and dashes, opening with a
+# letter or a digit, and at most 80 characters of them -- the bound the pattern states
+# with its own repeat count and ``ID_MAX`` states as a number, one ruling said once per
+# owner. The two suffix rules beside the regex are in :func:`is_item_id`.
+#
+# A dot and an underscore are inside the ruled set although no writer of this project
+# puts one in an id: the id is a name the operator types, and the ruling on #124 chose
+# the wider set rather than a slug. Nothing about the path depends on the difference --
+# a name is still one component, still matched to its file's stem, still refused before
+# a path is built -- and the pattern places no rule on what follows a dot, so ``a..b`` is
+# in the set it names.
+ID_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,79}")
 
 # The longest id the writer names a file for, in code points. The bound is not a
 # filesystem limit (a modern one takes 255) but a listing one: an id is what a census

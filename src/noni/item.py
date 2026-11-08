@@ -376,6 +376,12 @@ def _run_drop(repo: Path, args: argparse.Namespace, stamp: str) -> int:
                                     "the reason", _fail, EXIT_USAGE)
     if refused is not None:
         return refused
+    # The store is asked before the item: a verb that rewrites one file inside
+    # ``noni/items/`` may not act on a store it cannot enumerate, and the item read
+    # alone would not have noticed (see ``item_reads.store_is_readable``).
+    unlistable = item_reads.store_is_readable(repo, _fail, EXIT_IO)
+    if unlistable is not None:
+        return unlistable
     existing, code = item_reads.read_item(repo / itemschema.item_rel(args.id),
                                           args.id, _fail, EXIT_IO, EXIT_REFUSAL)
     if code is not None:
@@ -421,6 +427,11 @@ def _run_promote(repo: Path, args: argparse.Namespace, stamp: str) -> int:
                      "that became an issue, and one that names none was promoted to "
                      "nothing", "name the issue it became, e.g. --issue 42, or leave "
                      "it a candidate until an issue is filed for it")
+    # The store before the item, for the reason ``drop`` gives above: this verb rewrites
+    # a record of a store this run may have to refuse to open.
+    unlistable = item_reads.store_is_readable(repo, _fail, EXIT_IO)
+    if unlistable is not None:
+        return unlistable
     existing, code = item_reads.read_item(repo / itemschema.item_rel(args.id),
                                           args.id, _fail, EXIT_IO, EXIT_REFUSAL)
     if code is not None:

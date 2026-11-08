@@ -351,6 +351,7 @@ def _supersede_in_process(repo: Path, write_fails_on: str | None, staged_target:
                           target_id: str | None = None,
                           render_observer: Callable[[str], None] | None = None,
                           call_observer: Callable[[str, tuple[str, ...]], None] | None = None,
+                          date: str | None = None,
                           ) -> subprocess.CompletedProcess[str]:
     """The in-process supersede, with this run's injections.
 
@@ -359,14 +360,15 @@ def _supersede_in_process(repo: Path, write_fails_on: str | None, staged_target:
     process, so the write-failure and probe-failure tests drive the writer
     in-process, and a second ``--date`` appended here would be overridden by the
     one ``_decide_in_process`` already passed rather than selecting the baseline's
-    day. ``target_id`` names the record to supersede and defaults to the baseline:
+    day. ``date`` overrides that day for a caller that means a cross-day supersede.
+    ``target_id`` names the record to supersede and defaults to the baseline:
     a fixture that planted its own target must name it, or the run supersedes a
     different record and proves nothing about the one under test. ``write_fails_on``,
     ``failures``, ``render_observer`` and ``call_observer`` are the seams it passes
     through.
     """
     return _decide_in_process(
-        repo, "--date", BASELINE_ID[:10], *ANSWERED,
+        repo, "--date", date or BASELINE_ID[:10], *ANSWERED,
         "--supersedes", target_id or BASELINE_ID,
         env={**_identity_env(), **(env or {})}, write_fails_on=write_fails_on,
         failures=failures, staged_target=staged_target, monkeypatch=monkeypatch,

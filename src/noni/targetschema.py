@@ -49,11 +49,11 @@ def refuse_target_fields(record: dict, target_id: str,
     it must describe every byte it moves: every field the census types is asked here,
     not just the two the flip reads directly.
 
-    ``date`` is sliced to its first ten characters to compare against the run's
-    --date, so a value that is not a string would either raise TypeError mid-run or
-    slice a null to ``''`` and be reported as "dated another day" -- which tells the
-    operator to pass a date the record does not carry in the form the census
-    requires. ``questions`` is what the record answers, and a flip that copied
+    ``date`` is one of the fields the census types, and the status flip copies every
+    byte it does not change: a value that is not a string would be written back as a
+    value the census refuses, so the operator is told to repair the record before the
+    run rather than handed a ledger the census reports afterwards. ``questions`` is
+    what the record answers, and a flip that copied
     anything other than a non-empty list of objects each with a string ``id`` and an
     ``answer`` that is a string or null would be repairing the ledger by accident.
 

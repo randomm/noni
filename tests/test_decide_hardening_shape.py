@@ -46,12 +46,12 @@ from decide_hardening_fixtures import (
 
 
 def test_hardening_a_target_with_a_non_string_date_refuses_with_four(tmp_path):
-    """A target whose ``date`` is not a string is refused (exit 4), never sliced.
+    """A target whose ``date`` is not a string is refused (exit 4), never copied.
 
-    The chain check took ``target_record.get("date", "")[:10]``, so an integer
-    date raised TypeError inside the writer and a null one sliced to ``''`` and
-    was reported as "dated another day", sending the operator to retype a --date
-    the record does not carry in the form the census requires.
+    The status flip copies the record to rewrite one field, so a ``date`` the
+    census does not type -- an integer, or a null -- would go back out as bytes
+    the census reports afterwards: an exit 10 on a record the operator cannot
+    see the shape of. The writer refuses the target instead of rewriting it.
     """
     for label, value in (("int", "20261001"), ("null", "null")):
         target_id = f"{BASELINE_ID[:10]}-date-{label}"
@@ -412,7 +412,7 @@ def test_hardening_docs_state_the_refusals_the_code_performs(tmp_path):
             block[current] += " " + line.strip()
     four = block[4].lower()
     for condition in ("missing", "already superseded", "untracked", "locally modified",
-                      "canonical", "another day", "outside decided, open or superseded"):
+                      "canonical", "outside decided, open or superseded"):
         assert condition in four, f"docstring's exit 4 omits {condition!r}: {block[4]}"
     three = block[3].lower()
     assert "is not a git work tree" in three

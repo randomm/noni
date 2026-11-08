@@ -41,7 +41,7 @@ checked when present.
 | field | type | rules |
 |---|---|---|
 | `id` | string | `YYYY-MM-DD-<slug>`; unique across the ledger; equals the filename stem. `decide.py` builds it from `--date` and `--slug`, and the slug is held to `[a-z0-9-]+` so the name stays a plain path segment (`ledger-record` reports anything else) |
-| `date` | string | UTC ISO-8601. `decide.py` writes `<--date or today, UTC>T00:00:00Z`; a supersede carries the date of the record it replaces, so the chain, the filename stem and replay order stay in step |
+| `date` | string | UTC ISO-8601. `decide.py` writes `<--date or today, UTC>T00:00:00Z`, for a supersede as for any other record: the chain, not the date, is what orders the ledger |
 | `asked_by` | string | the agent role or session that asked |
 | `questions` | array | 1-4 question objects (see below) |
 | `by` | string | git author of the record's commit (see Attribution) |

@@ -29,6 +29,7 @@ from decide_fixtures import (
     _decide,
     _forced_commit_failure,
     _head_paths,
+    _pin_identity,
     _porcelain,
     _read,
     _record_json,
@@ -247,18 +248,36 @@ def test_a_supersede_target_id_that_is_not_an_id_exits_two(tmp_path):
     assert _porcelain(repo, "noni/decisions") == ""
 
 
-def test_a_supersede_without_a_date_exits_two(tmp_path):
-    """The chain's date is the target's date; without --date there is nothing
-    to match it against, so the run asks for it instead of inventing one."""
+def test_a_supersede_without_a_date_writes_todays_record(tmp_path):
+    """A supersede is dated like any other record: with no --date the run's own
+    UTC day names it, so a correction made later no longer has to carry the old day.
+
+    The run is made with --no-commit so the fixture can name the day it commits
+    under: a plain commit would carry the wall-clock day the censuses cannot be
+    pinned to, which is every census call in this suite's rule."""
     repo = _baseline_repo(tmp_path)
+    _pin_identity(repo, "Replay")
     proc = run_decide(
         repo,
         "--slug", "scheduler", *BASE, *QUESTION, *OPTIONS, *ANSWERED,
         "--supersedes", BASELINE_ID,
+        "--no-commit",
     )
-    assert proc.returncode == 2, proc.stderr
-    assert "--date" in proc.stderr
-    assert _porcelain(repo, "noni/decisions") == ""
+    assert proc.returncode == 0, proc.stderr
+    # The new id comes off the writer's own `wrote` line (the record is named
+    # first, the target second), not off a clock read in this process: the two
+    # cannot disagree, not even across midnight UTC.
+    wrote = [line for line in proc.stdout.splitlines() if "wrote " in line]
+    assert len(wrote) == 1, proc.stdout
+    new_rel = wrote[0].split("wrote ", 1)[1].split(",")[0]
+    new_id = new_rel.rsplit("/", 1)[-1][: -len(".json")]
+    assert new_id.endswith("-scheduler"), proc.stdout
+    assert (repo / "noni" / "decisions" / f"{new_id}.json").is_file()
+    assert _read(repo, new_id)["supersedes"] == BASELINE_ID
+    assert _read(repo, BASELINE_ID)["status"] == "superseded"
+    _git(repo, "add", "-A", "noni/decisions")
+    git_pin_date(repo, f"{new_id[:10]}T00:00:00Z", "commit", "-q", "-m", "handoff")
+    _assert_both_censuses_clean(repo, "committing a no-date supersede by hand")
 
 
 def test_the_ledger_directory_is_created_for_the_first_record(tmp_path):

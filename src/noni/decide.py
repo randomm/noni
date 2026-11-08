@@ -8,9 +8,10 @@ supplied: all questions answered is ``decided``, any unanswered question is
 ``superseded``. There is no --status flag.
 
 ``id`` is ``<date>-<slug>``, so a record's filename stays a plain path segment, and
-``--date`` (default: today, UTC) is the day that names it. A supersede carries the
-date of the record it replaces, so chain and filename stay in step, and the slug
-keeps the two files apart. A supersede target is read from the working tree, must be
+``--date`` (default: today, UTC) is the day that names it. A supersede carries its own
+``--date`` like any other record: the chain is what orders the ledger, so the day is
+any valid date and the slug keeps the two files apart. A supersede target is read from
+the working tree, must be
 tracked and committed, and must be byte-identical to ``git show HEAD:<path>``; only
 its ``status`` changes, and it is written with the same atomic replace as the new
 record. Both paths go in one ``--only`` commit, so a run writes nothing else.
@@ -43,7 +44,7 @@ Exit codes:
        anything (file, directory or symlink), or the target is missing, already
        superseded, untracked, locally modified, not a regular file at its path
        (symlink, directory or device), not readable at all, not in the writer's
-       canonical form, dated another day than --date, or carries a field the census
+       canonical form, or carries a field the census
        does not type as a string (including decided_by and on_behalf_of, which the
        census types as non-empty single-line strings), a status outside decided,
        open or superseded,
@@ -387,7 +388,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="the operator's answer for question ID (repeatable; with no "
                         "--answer the question is written open as \"answer\": null)")
     parser.add_argument("--date", default=None, metavar="YYYY-MM-DD",
-                        help="record date (default: today, UTC); --supersedes requires it")
+                        help="record date (default: today, UTC)")
     parser.add_argument("--decided-by", default=None, metavar="WHO",
                         help="who made the decision, when that is not the commit "
                         "author (a login or pseudonym, never an empty string)")
@@ -445,7 +446,7 @@ def main(argv: list[str] | None = None) -> int:
     target_rel: str | None = None
     if args.supersedes is not None:
         target, target_rel, refusal = _writer.supersede_target(
-            _load_target, labels.DECIDE, repo, ledger, args.supersedes, date_part)
+            _load_target, labels.DECIDE, repo, ledger, args.supersedes)
         if isinstance(refusal, int):
             return refusal  # a git probe on the target hung; the refusal is printed
         if refusal is not None:

@@ -116,10 +116,10 @@ def _decide_date(project: Path) -> str:
 def _with_date(argv: list[str], day: str) -> list[str]:
     """``argv`` with ``--date`` inserted where the writer wants it.
 
-    ``--supersedes`` refuses without an explicit ``--date`` naming the target's own
-    day (a supersede that dated another day would cut the record out of the chain it
-    corrects), and the flag has to sit beside the other option flags rather than
-    after the repeatables.
+    A supersede names its own day, so the two runs of a supersede pair are given
+    the same ``--date`` here to make the second one's id land on the first one's
+    filename; the flag has to sit beside the other option flags rather than after
+    the repeatables.
     """
     argv = list(argv)
     at = argv.index("--question")

@@ -195,19 +195,18 @@ def ledger_name(repo: Path, ledger: Path, date_part: str,
 
 def supersede_target(load: Callable[[Path, Path, str],
                                     "tuple[Path, dict, bytes] | tuple[str, str] | int"],
-                     label: str, repo: Path, ledger: Path, supersedes: str | None,
-                     date_part: str) -> tuple[tuple[Path, dict, bytes] | None,
-                                               str | None, tuple[str, str] | None]:
+                     label: str, repo: Path, ledger: Path,
+                     supersedes: str | None) -> tuple[tuple[Path, dict, bytes] | None,
+                                                       str | None,
+                                                       tuple[str, str] | None]:
     """The ``(target, target_rel, refusal)`` a ``--supersedes`` run will rewrite.
 
     ``(None, None, None)`` when the run supersedes nothing. ``load`` is the caller's
     target reader (it holds the writer's renderer, which is what the canonical-form
     comparison needs), so this helper owns only the sequencing: a refusal the reader
-    hands back is passed through for the caller to word, and the one rule layered on
-    top is the date. Chain position, filename stem and census replay order all read
-    the target's date, so a supersede dated another day cuts itself out of the chain
-    it corrects -- and a target whose ``date`` is not a string was already refused by
-    the reader, so the slice below is total.
+    hands back is passed through for the caller to word. The run's own ``--date``
+    enters nowhere here: the supersede chain is what orders the ledger, so a
+    correction may carry any valid date, later or earlier than its target's.
     """
     if supersedes is None:
         return None, None, None
@@ -216,12 +215,6 @@ def supersede_target(load: Callable[[Path, Path, str],
         return None, None, found  # type: ignore[return-value]
     target_path, target_record, target_committed = found
     target_rel = target_path.relative_to(repo).as_posix()
-    if target_record.get("date", "")[:10] != date_part:
-        return None, None, (
-            f"--date {date_part} is not the date of the record being superseded "
-            f"({target_record.get('date')!r})",
-            "a supersede carries the date of the record it replaces: pass --date "
-            f"{str(target_record.get('date', ''))[:10]}")
     return (target_path, target_record, target_committed), target_rel, None
 
 

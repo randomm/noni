@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Callable
 
 from . import census_ledger as _ledger
 from . import census_text as _text
+from . import ledger_level as _level
 from . import ledger_schema as _schema
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, nothing imported at runtime
@@ -76,7 +77,7 @@ LEDGER_EMPTY_MESSAGES: dict[str, str | None] = {
 }
 
 
-def _validate_record(obj: object) -> list[str]:
+def _validate_record(obj: object, level: int | None = None) -> list[str]:
     """Schema-check a parsed decision record; return the list of problems
     (empty = valid). Mirrors the required-field shape of the steering-ledger
     record, including the closed-set rule (the required eight plus the four
@@ -86,7 +87,17 @@ def _validate_record(obj: object) -> list[str]:
     The field groups whose wording is long enough to deserve
     its own function are the helpers in ``ledger_schema``; what is left here is
     the one-line set and type checks, so every problem still names its field and
-    nothing else and the reporter turns one malformed value into one row."""
+    nothing else and the reporter turns one malformed value into one row.
+
+    ``level`` is the level this census runs at -- :data:`noni.ledger_level
+    .LEDGER_SCHEMA_LEVEL` at every call site, never a number this module keeps --
+    and it is used for one thing only: an unknown field is what a record from a
+    newer writer looks like to an older census, so the row that reports one appends
+    the cause and the fix (:func:`noni.ledger_level.unknown_field_cause`). The
+    "unknown field(s)" sentence itself is untouched, so a caller that matched the
+    fault keeps matching it. None is the level of a caller that has none to give,
+    and answers no hint.
+    """
     if not isinstance(obj, dict):
         return ["record is not a JSON object"]
     problems: list[str] = []
@@ -97,6 +108,11 @@ def _validate_record(obj: object) -> list[str]:
              if k not in REQUIRED_LEDGER_FIELDS and k not in OPTIONAL_LEDGER_FIELDS]
     if extra:
         problems.append("unknown field(s): " + ", ".join(sorted(extra)))
+        if level is not None:
+            # The cause beside the fault: the same row now says why a field nobody
+            # declared turns up in a ledger, which is the fact the pilot's CI took
+            # three hours to arrive at.
+            problems.append(_level.unknown_field_cause(level))
     problems.extend(_schema.validate_source(obj))
     problems.extend(_schema.validate_date(obj))
     problems.extend(_schema.validate_questions(obj))
@@ -364,7 +380,7 @@ def check_ledger_records(ledger: Path, root: Path, findings: list[dict],
             add("ledger-record", record_name, record_name, "record is not valid JSON")
             unparseable.append((record_name, path))
             continue
-        problems = _validate_record(obj)
+        problems = _validate_record(obj, level=_level.LEDGER_SCHEMA_LEVEL)
         if problems:
             subject = obj.get("id", record_name) if isinstance(obj, dict) else record_name
             add("ledger-record", subject, record_name, "; ".join(problems))

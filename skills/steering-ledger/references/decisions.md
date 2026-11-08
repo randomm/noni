@@ -143,6 +143,49 @@ The three rules that keep this honest without pretending to verify anyone:
   `decide.py` refuses `--on-behalf-of` without `--decided-by`, and a record
   hand-edited to carry one name alone stays well formed.
 
+## The schema level, and a writer newer than the census
+
+The field list above is one closed set, and the census knows it by number: the
+writer declares a **ledger schema level**, and an attached project can commit the
+level its census runs at:
+
+```json
+// noni/direction/census-level.json
+{ "schema_level": 1 }
+```
+
+The file is a sibling of `decisions/`, never inside it, so the census never reads
+it as a record. Whoever pins the census for a project commits it, with the number
+that census's own code declares. It is the project's statement about its own pin,
+so the writer reads it and never creates it.
+
+A `decide.py` run asks one question of that file before it writes anything, and
+the question is a single integer comparison: is the writer's level greater than
+the declared one? Three answers:
+
+| the tree | what happens |
+|---|---|
+| no declaration file | the ordinary project. Writes and censuses exactly as it did before the file existed; nothing new is printed and the census reports nothing |
+| declared level at or above the writer's | the pair is in step, or the project's census is newer than its writer. The record is written |
+| declared level below the writer's | **exit 4** — the run refuses, naming both levels, the file, and the fix in both directions: upgrade the census pin to this noni, or run the writer at the commit that census was pinned at |
+| the file is not readable JSON, is not an object, or holds no integer level | **exit 2** — a file the run cannot read says nothing about the census it was meant to describe, so the run refuses rather than writing on the uncertainty. `0` is a readable answer (a census predating the first declared set) and takes exit 4, not exit 2 |
+
+The drift this closes is the one that costs a day: a project pins one noni commit
+for its CI census and runs a newer one locally, and on the day the newer writer
+emits a field the pinned census does not declare, the record commits cleanly and
+the census refuses it hours later in a red run. The refusal moves that moment to
+the write.
+
+The census says the same fact from its side. A record carrying a field the census
+does not declare is still a `ledger-record` exit 10 naming the field, and its row
+now adds why: an unknown field is what a record from a newer writer looks like to
+an older census, and the row quotes the level this census runs at and names the
+upgrade that clears it.
+
+Bumping the writer's level is part of the change that changes the closed set: a
+field added to the optional list without a bump is a record a pinned census refuses
+with nothing said at the writer, which is the bug the number exists to close.
+
 ## Ordering and the supersede chain
 
 Replay order is **supersede-chain order first, `date` only as a tie-break.** The

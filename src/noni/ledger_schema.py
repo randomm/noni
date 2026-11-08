@@ -9,8 +9,12 @@ a copy of the shape. One owner for the vocabulary is what keeps a writer and the
 census from drifting apart in silence -- the symptom of a drift is
 a record the writer happily committed and the census then reports at exit 10.
 
-Nothing here prints, exits or appends a finding: these are the sets and the
-predicates, and each caller words its own refusal.
+The level this schema is at, the path an attached project declares its census's
+level at, and the reader of that declaration live in ``ledger_level.py`` beside
+this file: the schema is the vocabulary and that module is the one number drawn
+from it, and both are named by the writer and the census alike rather than by
+either one. Nothing here prints, exits or appends a finding: these are the sets
+and the predicates, and each caller words its own refusal.
 """
 
 from __future__ import annotations

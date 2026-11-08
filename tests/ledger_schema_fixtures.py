@@ -65,6 +65,23 @@ EXPECTED_KEYS = {name: 9 + index for index, name in enumerate(JUNK_FIXTURES)}
 # fields, copied so a test can add one field and ask about that one field.
 BASELINE_FIXTURE = "decision-valid.json"
 
+# The field a record carries when the point is that a census older than the writer
+# does not declare it: what a newer writer emits and a pinned census then refuses.
+# Not in the closed set, by design -- see ``tests/test_ledger_schema_level_skew.py``.
+SKEW_FIELD = "decided_by_next_era"
+
+
+def _with_skew_field(record: dict, value: str = "future-writer") -> dict:
+    """``record`` plus one field no census at an older level declares.
+
+    The shape a writer ahead of its pinned census produces: same eight fields, one
+    extra key. It is the fixture side of the drift, so the census half of the
+    contract (the row that names the cause) and the writer half (the refusal before
+    the write) are asked about one and the same record.
+    """
+    record[SKEW_FIELD] = value
+    return record
+
 
 def isolated_python_stub(tmp_path: Path, name: str) -> Path:
     """A ``python3`` that cannot import ``noni``, on a PATH of its own.

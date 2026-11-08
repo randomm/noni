@@ -139,7 +139,7 @@ def test_package_files_present():
         "census_text.py", "census_wrapper.py",
         "claim.py", "cli.py",
         "decide.py", "gitenv.py", "gitwrite.py", "intent.py", "intentschema.py",
-        "labels.py", "order.py",
+        "labels.py", "ledger_level.py", "order.py",
         "order_gitwrite.py",
         "orderschema.py", "orderstate.py", "public_safety.py",
         # The allowlist reader and the two modules the scan was split along are shipped

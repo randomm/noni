@@ -90,16 +90,14 @@ from .ledger_schema import is_single_line
 # are an ordinary package import: inside an installed wheel there is no sibling
 # file to load by path, and no directory of the package ever goes on ``sys.path``,
 # so a ``gitwrite.py`` earlier on some path still cannot be trusted as this
-# writer's mechanics. The constants below are re-exported because the writer's
-# contract names them.
+# writer's mechanics. ``_git`` and ``_write_atomic`` are the two names the writer's
+# tests replace to inject a fault no flag produces; every other call goes straight
+# to ``gitwrite``. The constants are re-exported: the writer's contract names them.
 GIT_TIMEOUT = gitwrite.GIT_TIMEOUT
 GIT_TIMEOUT_RC = gitwrite.GIT_TIMEOUT_RC
 FAIL_COMMIT_ENV_VAR = gitwrite.FAIL_COMMIT_ENV_VAR
 _git = gitwrite.run_git
 _write_atomic = gitwrite.write_atomic
-_load_committed_target = gitwrite.load_committed_target
-_rollback = gitwrite.rollback
-_undone = gitwrite.undo_wording
 
 # Every return path names one of these; the 'Exit codes:' block above carries
 # exactly this set (tests/test_decide_docs.py pins them together).
@@ -309,10 +307,11 @@ def _refuse_unwritten(repo: Path, rels: list[str], target_rel: str | None,
     os.replace never half-writes, so a failed path holds what it held before this
     run; the refusal names what the undo could not do rather than call the tree clean.
     """
-    unredone = _rollback(repo, rels, target_rel, record_rel, committed_bytes)
+    unredone = gitwrite.rollback(repo, rels, target_rel, record_rel, committed_bytes)
     detail = _written(exc, "the record could not be written")
     if unredone is not None:
-        return _fail(EXIT_COMMIT_FAILED, *_undone(detail, str(unredone), str(exc), rels))
+        return _fail(EXIT_COMMIT_FAILED,
+                     *gitwrite.undo_wording(detail, str(unredone), str(exc), rels))
     return _fail(EXIT_COMMIT_FAILED, detail,
                  f"check that {ledger} is writable, then re-run {labels.DECIDE}")
 
@@ -336,8 +335,8 @@ def _load_target(repo: Path, ledger: Path,
     a value the renderer cannot name is a refusal.
     """
     path = ledger / f"{target_id}.json"
-    found = _load_committed_target(labels.DECIDE, repo, path, target_id,
-                                   _render, STATUS_SUPERSEDED, STATUSES)
+    found = gitwrite.load_committed_target(labels.DECIDE, repo, path, target_id,
+                                           _render, STATUS_SUPERSEDED, STATUSES)
     return found if isinstance(found, int) or not isinstance(found[0], bytes) else (
         path, found[1], found[0])
 
@@ -433,6 +432,14 @@ def main(argv: list[str] | None = None) -> int:
                                                     args.no_commit)
     if no_state is not None:
         return no_state
+    # The census-level question before the allocation, so a run the declaration
+    # refuses never leaves a ``noni/`` behind in a tree it may not write to, and
+    # before the target reads: a supersede of a record the pinned census would
+    # refuse is refused too.
+    skewed = _decide_state_root.refuse_schema_level_skew(_fail, EXIT_USAGE,
+                                                        EXIT_COLLISION, repo)
+    if skewed is not None:
+        return skewed
     opened = _open_ledger(repo, ledger)
     if opened is not None:
         return opened

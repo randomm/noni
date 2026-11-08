@@ -55,6 +55,7 @@ PRODUCT_MODULES = (
     "src/noni/census_json.py",
     "src/noni/census_ledger_checks.py",
     "src/noni/ledger_schema.py",
+    "src/noni/ledger_level.py",
     "src/noni/_writer.py",
     "src/noni/census_ledger_edited.py",
     "src/noni/census_ledger.py",

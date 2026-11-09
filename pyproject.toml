@@ -141,6 +141,7 @@ include = [
     "src/noni/brief.py",
     "src/noni/brief_intent.py",
     "src/noni/brief_items.py",
+    "src/noni/brief_page.py",
     "src/noni/close.py",
     "src/noni/release.py",
     "src/noni/census.py",

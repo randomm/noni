@@ -31,6 +31,12 @@ from brief_support import (
 
 from noni import brief as brief_module
 
+# The title of an idea that lives outside the tree. A symlink planted into the state root points
+# at a file holding it, and the assertion of every such case is that this string never reaches
+# stdout: a listing that read through the link would print the outside content and the case fails
+# on the one line that makes it about the link rather than about a store that holds nothing.
+OUTSIDE_TITLE = "Idea that lives outside the tree"
+
 
 def test_brief_intent_absent_prints_not_readable(tmp_path: Path) -> None:
     root = plant_brief_tree(tmp_path)
@@ -209,6 +215,58 @@ def test_brief_a_title_that_would_make_one_file_two_rows_is_dropped(tmp_path: Pa
                     encoding="utf-8")
     rows = candidate_rows(run_brief(root, "--now", NOW)[1])
     assert not any(row.startswith("idea-0003 ") for row in rows)
+    assert len(rows) == brief_module.TOP_CANDIDATES
+
+
+def test_brief_a_symlinked_store_is_not_read_through(tmp_path: Path) -> None:
+    """A store that is a link out of the tree contributes nothing, and its bytes stay unseen.
+
+    The listing classifies ``noni/items/`` with the lstat of :func:`noni.orderstate.file_kind`,
+    the way :mod:`noni.item_reads` classifies every path it opens. ``Path.is_file`` follows a
+    link and answers True for the file at its far end, so a store that is a link to a directory
+    elsewhere would have been listed and printed as though the tree held those ideas.
+    """
+    root = plant_brief_tree(tmp_path)
+    outside = tmp_path / "outside-store"
+    outside.mkdir()
+    smuggled = item_path(root, "idea-0001").read_text(encoding="utf-8")
+    (outside / "idea-0099.json").write_text(
+        smuggled.replace("idea-0001", "idea-0099")
+        .replace("Cache the census result", OUTSIDE_TITLE), encoding="utf-8")
+    shutil.rmtree(root / ITEMS_REL)
+    (root / ITEMS_REL).symlink_to(outside)
+    code, out, err = run_brief(root, "--now", NOW)
+    assert code == 0
+    assert err == ""
+    assert candidate_rows(out) == []
+    assert OUTSIDE_TITLE not in out
+
+
+def test_brief_a_symlinked_item_is_not_read_through(tmp_path: Path) -> None:
+    """One item file that is a link out of the tree is no row, and its text never prints.
+
+    The sibling of the case above: the directory and the file are classified apart, so a tree
+    whose store is a plain directory holding one link must lose that row and nothing else. The
+    other nine ideas are still listed, which is what separates "this file is not a candidate"
+    from "this store could not be read".
+    """
+    root = plant_brief_tree(tmp_path)
+    outside = tmp_path / "outside-item.json"
+    smuggled = item_path(root, "idea-0001").read_text(encoding="utf-8")
+    outside.write_text(smuggled.replace("idea-0001", "idea-0001")
+                       .replace("Cache the census result", OUTSIDE_TITLE),
+                       encoding="utf-8")
+    item_path(root, "idea-0001").unlink()
+    item_path(root, "idea-0001").symlink_to(outside)
+    code, out, err = run_brief(root, "--now", NOW)
+    assert code == 0
+    assert err == ""
+    rows = candidate_rows(out)
+    assert OUTSIDE_TITLE not in out
+    assert not any(row.startswith("idea-0001 ") for row in rows)
+    # The block still prints its ten rows because it never ran out of ideas: the store holds
+    # eleven readable candidates once this one is refused, and the cap -- not the refusal -- is
+    # what stops the block at ten. The assertion above is the one about the link.
     assert len(rows) == brief_module.TOP_CANDIDATES
 
 

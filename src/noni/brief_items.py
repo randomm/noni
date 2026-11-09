@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import itemschema, orderschema
+from . import itemschema, orderschema, orderstate
 
 # The one suffix this listing opens a file for. The store names its files ``<id>.json``
 # through :func:`noni.itemschema.item_rel` and refuses an id carrying the suffix, so the
@@ -41,13 +41,24 @@ def candidates(store: Path) -> list[dict]:
     nothing either: the id is what the row prints, and printing an idea under a name its own
     file denies it is the one harm this listing could do.
 
-    Two filters run before any file is opened, both of them the listing's rather than the
+    Three filters run before any file is opened, all three the listing's rather than the
     store's. A directory is not an item and is never opened: the reader that followed one would
     report the same word for ``noni/items/notes.md`` and for a subdirectory called ``x.json``,
     and a listing of ideas that read a directory's bytes was never a listing. The suffix is
     asked of the store's own constant for the same reason the census's items group asks it:
     the store's files are named ``<id>.json`` by the writer, so anything else is not one of
     them, and reading a file the listing then refuses is work a screen should not do.
+
+    The third asks what the path *is*, through :func:`noni.orderstate.file_kind`, which is the
+    ``lstat`` every other reader of this family asks first (``item_reads.scan_item``,
+    ``brief_intent._read_lines``). ``Path.is_file`` follows a link and answers True for the file
+    at its far end, so a store that is a link to a directory elsewhere, or one item file that is
+    a link out of the tree, would have been listed and printed as an idea this tree holds. The
+    brief promises to read only the state root it was pointed at, and an idea is text somebody
+    wrote: bytes from outside the tree have no business on this screen. A link is therefore not
+    a candidate, and neither a link whose target is gone nor one whose target is a fine item file
+    is told apart -- one answer for every non-regular entry, which is what the listing needs and
+    what the census's items group words on the arbiter's side.
 
     The sort is over ``(created, id)`` and reversed, so a tie on the stamp has one answer: the
     id breaks it, which is the field of an item that is unique within the store by rule, and so
@@ -60,8 +71,13 @@ def candidates(store: Path) -> list[dict]:
         # A declined listing is the state the census's ``item-unlistable`` class exists
         # to word; here it is the empty listing, which prints the block's header alone.
         return []
+    if not _is_store_directory(store):
+        # A store that is a link is not a store this listing opens: ``iterdir`` followed the
+        # link and the names it returned belong to a directory outside the state root, whose
+        # ideas the brief must not print as this tree's. The census's items group words it.
+        return []
     named = [path for path in paths
-             if path.suffix == ITEM_SUFFIX and path.is_file()]
+             if path.suffix == ITEM_SUFFIX and _is_regular_file(path)]
     bodies = [body for body in (_candidate_body(path) for path in named)
               if body is not None]
     return sorted(bodies, key=lambda body: (body["created"], body["id"]),
@@ -88,6 +104,32 @@ def candidate_title(root: Path, item_id: str) -> str | None:
         return None
     title = value.get("title")
     return title if isinstance(title, str) else None
+
+
+def _is_store_directory(store: Path) -> bool:
+    """Whether ``store`` is the store's own directory rather than a link standing in for one.
+
+    Asked of the directory itself, once, before any of the names the listing returned is opened.
+    A link whose target is a directory is listed by ``iterdir`` exactly as a directory is, so a
+    classification of the entries alone would print the ideas of whichever directory the link
+    names: an ``lstat`` of the store is what says the container is the tree's own.
+    """
+    kind, _why = orderstate.file_kind(store)
+    return kind == "dir"
+
+
+def _is_regular_file(path: Path) -> bool:
+    """Whether ``path`` is a plain file this listing may open: never a link, never a directory.
+
+    The one question :func:`noni.orderstate.file_kind` answers with four states, asked here for
+    the one state the listing can use. ``regular`` is the only yes: ``absent`` is a name the
+    directory returned a moment ago and cannot now be met, ``dir`` is a subdirectory of the
+    store, and ``refusal`` is a symlink or anything else the filesystem calls a name but not a
+    file. The classification is an ``lstat``, so the answer is about the entry in the store and
+    not about whatever sits at the end of a link.
+    """
+    kind, _why = orderstate.file_kind(path)
+    return kind == "regular"
 
 
 def _candidate_body(path: Path) -> dict | None:

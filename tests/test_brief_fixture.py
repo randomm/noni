@@ -160,7 +160,7 @@ def test_brief_fixture_unpacks_as_a_repository_the_census_can_read(tmp_path: Pat
     tree = tmp_path / "tree"
     tree.mkdir()
     with tarfile.open(ARCHIVE) as archive:
-        archive.extractall(tree)
+        archive.extractall(tree, filter="data")
 
     fsck = _git(tree, "fsck", "--no-dangling")
     assert fsck.returncode == 0, fsck.stderr

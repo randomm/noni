@@ -83,8 +83,16 @@ def census_summary(root: Path, now: str = NOW) -> str:
 
 
 def candidate_rows(out: str) -> list[str]:
-    """The ``candidates`` block's body lines."""
-    return stripped(sections(out), brief_module.CANDIDATES_HEADER)
+    """The ``candidates`` block's body lines, the tool's own accounting line excepted.
+
+    A block that withheld a line of foreign text closes with its own ``dropped: N line(s)`` line, and
+    that line is the tool's arithmetic rather than one of the store's ideas: left among the rows it
+    would make every case that asks how many candidates printed a case about the count too. It is read
+    by :func:`dropped_line` (``test_brief_limits.py``) and by nothing else here. The prefix is the
+    tool's own constant, spelled at the top of this file the way the headers are.
+    """
+    return [row for row in stripped(sections(out), brief_module.CANDIDATES_HEADER)
+            if not row.startswith(DROPPED_PREFIX)]
 
 
 

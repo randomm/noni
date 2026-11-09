@@ -46,17 +46,6 @@ from harness_runners import run_noni, subprocess_env
 # path would keep passing after the tree moved and then assert about a file nothing reads.
 FIXTURE = REPO / "tests" / "fixtures" / "brief.tar"
 
-# The fixture tree's layout, as the tar names it and as the planted copy finds it. Spelled
-# once so a reader of this file can see what the committed fixture holds without unpacking it.
-FIXTURE_LAYOUT = {
-    # The record the order's eleven entries and the intent file's own citation commit name.
-    "noni/decisions/2026-10-01-brief.json": "one decided record, the whole tree's provenance",
-    "noni/direction/order.json": "eleven entries, the fourth citing an item (noni.order/2)",
-    "noni/direction/intent.md": "four sections, one stamp, a 25-line Purpose body",
-    "noni/items/idea-0001.json": "twelve candidates; two pairs share a created stamp",
-}
-
-
 # The record id the fixture's order and intent both cite, so one committed record holds
 # the whole tree's provenance and the census reports no ``intent`` row for it.
 RECORD_ID = "2026-10-01-brief"
@@ -147,14 +136,6 @@ PURPOSE_LINES: tuple[str, ...] = (
     "What is not required is not built.",
 )
 
-# The subject of the commit :func:`commit_at` makes, and the register file's path. The
-# census's ``intent`` class reads the subject of the last commit that touched the intent file,
-# so a case adding a commit must leave that subject alone; the register file's name is the
-# shape the sessions census allocates (a date and six hex digits), which
-# :mod:`noni.census_sessions_checks` refuses anything else as ``session-malformed``.
-STALL_COMMIT_SUBJECT = "session activity"
-SESSION_REL = "noni/sessions/2026-10-20-abcdef.md"
-
 # The state-root paths the brief reads, spelled once for the cases that plant one of them.
 INTENT_REL = "noni/direction/intent.md"
 ORDER_REL = "noni/direction/order.json"
@@ -193,9 +174,44 @@ def plant_brief_tree(tmp_path: Path, name: str = "repo") -> Path:
         shutil.rmtree(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(FIXTURE) as archive:
-        archive.extractall(target)
+        archive.extractall(target, filter="data")
     (target / ".git").rename(target / ".git-brief")
     return target
+
+
+def write_order_entries(root: Path, entries: list[dict]) -> None:
+    """Replace the ordering artifact with ``entries``, in the version they are entries of.
+
+    Written through the writer's own renderer rather than as hand-typed JSON: the brief refuses
+    an order the writer would render differently, so a case that composed its own bytes would
+    reach the block's "not readable" answer instead of the row it meant to test. The version is
+    derived from the entries themselves, which is what makes an ``item`` entry a ``/2`` document
+    and a list of issues a ``/1`` one, exactly as ``order.py`` decides.
+    """
+    from noni import orderschema
+
+    schema = (orderschema.ORDER_SCHEMA_V2
+              if orderschema.has_item_entry(entries) else orderschema.ORDER_SCHEMA)
+    order_path(root).write_bytes(orderschema.order_bytes(
+        {"schema": schema, "entries": entries}))
+
+
+def write_item(root: Path, item_id: str, title: str, created: str,
+               status: str | None = None) -> Path:
+    """One item file of the store, written in the bytes the store's own writer writes.
+
+    Used by the cases that need an item the fixture does not carry -- a title holding a control
+    byte, an id at the length the schema's bound allows -- rather than by editing one of the
+    fixture's twelve. The bytes come from :func:`noni.itemschema.item_bytes` so the file is what
+    a real store holds and the listing has no reason to refuse it for a reason of its own.
+    """
+    from noni import itemschema
+
+    body = itemschema.entry(item_id, title, status or itemschema.STATUS_CANDIDATE, created)
+    path = item_path(root, item_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(itemschema.item_bytes(body))
+    return path
 
 
 def item_path(root: Path, item_id: str) -> Path:

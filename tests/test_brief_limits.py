@@ -34,6 +34,7 @@ from brief_support import (
 )
 
 from noni import brief as brief_module
+from noni import orderschema
 
 
 def test_brief_purpose_is_clipped_at_the_cap_with_an_ellipsis(tmp_path: Path) -> None:
@@ -100,13 +101,15 @@ def test_brief_the_candidate_block_holds_at_most_ten_rows(tmp_path: Path) -> Non
     assert itemschema.STATUS_CANDIDATE in rows[0]
 
 
-def test_brief_a_refused_row_does_not_cost_the_block_a_row(tmp_path: Path) -> None:
-    """Fifteen candidates of which five read badly still print ten rows.
+def test_brief_a_refused_row_is_counted_and_the_block_holds_ten_rows(tmp_path: Path) -> None:
+    """Fifteen candidates of which five read badly still print ten rows, and say five went missing.
 
     The cap counts rows that were printed, not files that were read: a listing that counted
     the refusals would show fewer ideas than the store holds, for a reason the reader cannot
     see. The five newest ideas are given titles the page refuses, and the block still shows
-    the ten freshest rows it could build.
+    the ten freshest rows it could build. The refusals the block met on the way to those ten are
+    the number its own count line carries, so a reader who sees ten ideas knows five of the
+    store's ideas were refused rather than absent.
     """
     root = plant_brief_tree(tmp_path)
     template = item_path(root, "idea-0001").read_bytes().decode("utf-8")
@@ -122,11 +125,12 @@ def test_brief_a_refused_row_does_not_cost_the_block_a_row(tmp_path: Path) -> No
     assert len(rows) == brief_module.TOP_CANDIDATES
     assert not any(row.split()[0].startswith("idea-001") and int(row.split()[0][5:]) >= 13
                    for row in rows)
+    # The count line is the block's own, printed under its header rather than at the foot of the
+    # page, and it names the five refusals the block met before it filled its ten rows.
+    assert f"{DROPPED_PREFIX}5 line(s)" in out
 
 
 def test_brief_a_hundred_order_entries_render_ten(tmp_path: Path) -> None:
-    from noni import orderschema
-
     root = plant_brief_tree(tmp_path)
     entries = [orderschema.entry(issue=number, decision=RECORD_ID,
                                  confirmed="2026-10-26T00:00:00Z")
@@ -146,8 +150,6 @@ def test_brief_the_page_never_exceeds_the_cap(tmp_path: Path) -> None:
     lines, 10 order rows, 10 candidate rows, two separators, one verdict -- so the case
     follows a change to a cap instead of pinning a number nobody chose.
     """
-    from noni import orderschema
-
     root = plant_brief_tree(tmp_path)
     entries = [orderschema.entry(issue=number, decision=RECORD_ID,
                                  confirmed="2026-10-26T00:00:00Z")

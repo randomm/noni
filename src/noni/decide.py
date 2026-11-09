@@ -21,7 +21,7 @@ Usage:
               --question ID=TEXT [--option ID=OPTION]... [--answer ID=ANSWER]...
               [--date YYYY-MM-DD] [--source-issue N --source-comment N]
               [--decided-by WHO] [--on-behalf-of WHO] [--single-option]
-              [--supersedes ID] [--no-commit]
+              [--why REASON] [--supersedes ID] [--no-commit]
 
 Exit codes:
     0  the record was written (and committed unless --no-commit)
@@ -29,7 +29,8 @@ Exit codes:
        already starting with a date (the writer adds it), a malformed --date,
        --question, --option or --answer, a source id that is not a positive
        integer, a question outside 1-4 or 2-4 options, an empty --decided-by or
-       --on-behalf-of, --on-behalf-of without --decided-by, a question with one
+       --on-behalf-of, --on-behalf-of without --decided-by, an empty, multi-line or
+       over-long --why, a question with one
        option when --single-option was not given, --single-option when no question
        of the record has one option, or --supersedes with an unanswered question
     3  a git or identity problem: --repo is not a git work tree, git config
@@ -46,7 +47,8 @@ Exit codes:
        (symlink, directory or device), not readable at all, not in the writer's
        canonical form, or carries a field the census
        does not type as a string (including decided_by and on_behalf_of, which the
-       census types as non-empty single-line strings), a status outside decided,
+       census types as non-empty single-line strings, and why, which it types as one
+       of those within the rationale bound), a status outside decided,
        open or superseded,
        questions that are not a non-empty list of objects each with a string id
        and a string-or-null answer, or a number JSON cannot hold (NaN, Infinity or
@@ -86,13 +88,12 @@ from . import _decide_flags, _decide_state_root, _writer, gitwrite, labels, orde
 from . import ledger_schema as _schema
 from .ledger_schema import is_single_line
 
-# The git helper and the atomic writer live beside this file in the package and
-# are an ordinary package import: inside an installed wheel there is no sibling
-# file to load by path, and no directory of the package ever goes on ``sys.path``,
-# so a ``gitwrite.py`` earlier on some path still cannot be trusted as this
+# The git helper and the atomic writer are an ordinary package import: inside an
+# installed wheel there is no sibling file to load by path, and no directory of the
+# package goes on ``sys.path``, so a lookalike earlier on some path cannot become this
 # writer's mechanics. ``_git`` and ``_write_atomic`` are the two names the writer's
-# tests replace to inject a fault no flag produces; every other call goes straight
-# to ``gitwrite``. The constants are re-exported: the writer's contract names them.
+# tests replace to inject a fault no flag produces; the constants are re-exported
+# because the writer's contract names them.
 GIT_TIMEOUT = gitwrite.GIT_TIMEOUT
 GIT_TIMEOUT_RC = gitwrite.GIT_TIMEOUT_RC
 FAIL_COMMIT_ENV_VAR = gitwrite.FAIL_COMMIT_ENV_VAR
@@ -108,8 +109,7 @@ EXIT_COLLISION: int = 4
 EXIT_COMMIT_FAILED: int = 5
 
 # A slug is half the record id and half its filename, so it is held to what the
-# census accepts as a plain path segment (`ledger-record` reports a basename outside
-# ^[A-Za-z0-9._-]+\.json$). Dashes only: the split is not ambiguous.
+# census accepts as a plain path segment. Dashes only: the split is not ambiguous.
 SLUG_RE = re.compile(r"[a-z0-9-]+")
 ID_RE = re.compile(r"\d{4}-\d{2}-\d{2}-[a-z0-9-]+")
 
@@ -120,23 +120,31 @@ STATUS_OPEN = "open"
 STATUS_SUPERSEDED = "superseded"
 STATUSES = (STATUS_DECIDED, STATUS_OPEN, STATUS_SUPERSEDED)
 
-# The directories this run reads or writes: ``noni`` itself first (a link there
-# hides the ledger beneath it from ``lstat``), then the ledger the record is written
-# into and the target of a supersede is read from. Spelled from
-# :data:`noni.orderstate.DECISIONS_DIR` rather than from the ``repo / "noni" /
-# "decisions"`` join below, so the guard and the ledger are one spelling; the walk
-# and its declined-``lstat`` rule live in :mod:`noni._decide_flags`.
+# ``noni`` first (a link there hides the ledger beneath it from ``lstat``), then the
+# ledger; the walk and its declined-``lstat`` rule live in :mod:`noni._decide_flags`.
 _GUARDED_DIRS: tuple[str, ...] = ("noni", orderstate.DECISIONS_DIR)
 
-# The field order the census documents; json.dump keeps it. The three names
-# after ``source`` are optional and appended last, so a record that carries none
-# of them keeps the eight fields in the order the supersede canonical-form rule
-# compares a target's committed bytes against. Their shapes are the census's
-# (``ledger_schema``): the two names are non-empty single-line strings and
-# ``single_option`` is the JSON true literal that lets a question hold one option.
+# The field order the census documents; json.dump keeps it. The names after
+# ``source`` are optional and appended last, so a record that carries none of them
+# keeps the eight fields in the order the supersede canonical-form rule compares a
+# target's committed bytes against. Their shapes are the census's, in
+# ``ledger_schema``: the two names are non-empty single-line strings,
+# ``single_option`` is the JSON true literal that lets a question hold one option, and
+# ``why`` (_schema.WHY_FIELD) is one line within the rationale bound.
 FIELD_ORDER = ("id", "date", "asked_by", "questions", "by",
                "scope", "status", "supersedes", "source",
-               "decided_by", "on_behalf_of", "single_option")
+               "decided_by", "on_behalf_of", "single_option", _schema.WHY_FIELD)
+
+
+def _why_max() -> int:
+    """The rationale bound this writer holds --why to, read from the schema.
+
+    Never a number spelled in this file: :mod:`noni.itemschema` owns the bound and a
+    second literal is how a writer, the census and the help line come to state three
+    different limits. Asked through a function so the help text and the refusal read
+    one answer.
+    """
+    return _schema.why_max()
 
 
 def _fail(code: int, message: str, hint: str | None = None) -> int:
@@ -162,15 +170,9 @@ def _render(record: dict) -> str:
 
 
 def _source_provenance(issue: int | None, comment: int | None) -> dict | None | int:
-    """The record's ``source`` object, ``None`` for none, or the refusal's exit code.
-    """
+    """The record's ``source`` object, ``None`` for none, or the refusal's exit code."""
     provenance, refusal = _schema.source_provenance(issue, comment)
     return _fail(EXIT_USAGE, *refusal) if refusal is not None else provenance
-
-
-def _written(exc: OSError, what: str) -> str:
-    """One 'could not be written' headline naming the OSError and its reason."""
-    return f"{what} ({exc.__class__.__name__}: {exc.strerror or exc})"
 
 
 def _path_is_taken(path: Path) -> bool:
@@ -187,9 +189,9 @@ def _name_flags(args: argparse.Namespace,
     """The single-flag usage refusals, worded in this writer's voice.
 
     :func:`noni._writer.flag_refusals` holds the rules; this seam hands it the
-    writer's printer and usage code, the census's ``is_single_line`` predicate and
-    each question's options, so a shape the census reports at exit 10 is refused at
-    the flag instead.
+    writer's printer and usage code, the census's ``is_single_line`` predicate, the
+    bounded predicate with the bound it counts to, and each question's options -- so a
+    shape the census reports at exit 10 is refused at the flag instead.
     """
     return _writer.flag_refusals(_fail, EXIT_USAGE,
                                  _decide_flags.refuse_name,
@@ -197,7 +199,10 @@ def _name_flags(args: argparse.Namespace,
                                  args.decided_by, args.on_behalf_of,
                                  is_single_line,
                                  options_by_question=options_by_question,
-                                 single_option=args.single_option)
+                                 single_option=args.single_option,
+                                 why=args.why,
+                                 bounded=_schema.is_bounded_single_line,
+                                 why_max=_why_max())
 
 
 def _pair_flags_to_questions(flag: str, pairs: list[tuple[str, str]],
@@ -205,7 +210,7 @@ def _pair_flags_to_questions(flag: str, pairs: list[tuple[str, str]],
     """The exit code printed when ``pairs`` names a question no ``--question`` asks.
 
     The rule is :func:`noni.ledger_schema.pair_refusal`, shared with the record schema
-    so an orphan id is refused the same way wherever it is found.
+    so an orphan id is refused one way wherever it is found.
     """
     refusal = _schema.pair_refusal(flag, pairs, seen)
     return None if refusal is None else _fail(EXIT_USAGE, *refusal)
@@ -236,9 +241,8 @@ def _parse_pairs(values: list[str], flag: str) -> tuple[list[tuple[str, str]], s
 def _open_ledger(repo: Path, ledger: Path) -> int | None:
     """The exit-5 refusal for a ledger directory that cannot be created, or None.
 
-    The allocation and its directory question are :func:`noni._writer.allocate_ledger`;
-    this seam gives its refusal this writer's exit code and voice, and hands the allocation
-    this writer's exit code and voice.
+    The allocation and its directory question are :func:`noni._decide_flags`; this seam
+    gives its refusal this writer's exit code and voice.
     """
     return _decide_flags.refuse_ledger_allocation(_fail, labels.DECIDE,
                                                   EXIT_COMMIT_FAILED, repo, ledger)
@@ -250,15 +254,15 @@ def _refuse_linked_state(repo: Path) -> int | None:
     :func:`noni._decide_flags.refuse_linked_state` walks the components and words the
     two lines; this seam pins the call to :data:`EXIT_GIT`, the code docs/PRODUCT.md 7
     gives ``decide`` for a wrong path. It runs in ``main()`` BEFORE :func:`_identity`,
-    so a linked tree is refused by noni rather than read through by the git probes:
-    exit 5 beside it stays the verdict for a ledger that could not be created.
+    so a linked tree is refused by noni and not read through by the git probes.
     """
     return _decide_flags.refuse_linked_state(_fail, EXIT_GIT, repo, _GUARDED_DIRS)
 
 
 def _identity(repo: Path) -> str | int:
-    """The tree's ``git config user.name``, or the exit code of the exit-3 refusal
-    printed: the two git probes are :func:`noni._writer.identity`.
+    """The tree's ``git config user.name``, or the printed refusal's exit code.
+
+    The two git probes are :func:`noni._writer.identity`.
     """
     by, refusal = _writer.identity(labels.DECIDE, _git, repo)
     if refusal is not None:
@@ -291,39 +295,11 @@ def _commit(repo: Path, rels: list[str], target_rel: str | None, record_rel: str
             committed_bytes: bytes | None, message: str) -> int | None:
     """Stage and commit exactly this run's paths, or the exit code of the refusal.
 
-    The two git steps and their rollback are :func:`noni._writer.stage_and_commit`;
-    this seam turns its refusal into this writer's exit 5.
+    The two git steps and their rollback are :func:`noni._writer.stage_and_commit`.
     """
     refusal = _writer.stage_and_commit(labels.DECIDE, repo, rels, message,
                                        target_rel, record_rel, committed_bytes)
     return None if refusal is None else _fail(EXIT_COMMIT_FAILED, *refusal)
-
-
-def _refuse_unwritten(repo: Path, rels: list[str], target_rel: str | None,
-                      record_rel: str, committed_bytes: bytes | None,
-                      ledger: Path, exc: OSError) -> int:
-    """Roll the run's paths back after a write that did not land, and refuse.
-
-    os.replace never half-writes, so a failed path holds what it held before this
-    run; the refusal names what the undo could not do rather than call the tree clean.
-    """
-    unredone = gitwrite.rollback(repo, rels, target_rel, record_rel, committed_bytes)
-    detail = _written(exc, "the record could not be written")
-    if unredone is not None:
-        return _fail(EXIT_COMMIT_FAILED,
-                     *gitwrite.undo_wording(detail, str(unredone), str(exc), rels))
-    return _fail(EXIT_COMMIT_FAILED, detail,
-                 f"check that {ledger} is writable, then re-run {labels.DECIDE}")
-
-
-def _refuse_taken_name(record_path: Path) -> int:
-    """The exit-4 refusal for a record name that is already spoken.
-
-    ``is_file()`` follows a link, so a symlink would have read as free and
-    ``os.replace`` would have written through it; the wording is
-    :mod:`noni._decide_flags`' and the code is this writer's.
-    """
-    return _decide_flags.refuse_taken_name(_fail, EXIT_COLLISION, record_path)
 
 
 def _load_target(repo: Path, ledger: Path,
@@ -331,14 +307,51 @@ def _load_target(repo: Path, ledger: Path,
     """A target as ``(path, record, committed_bytes)``, a refusal pair, or the exit
     code a probe refusal printed; nothing is written on refusal.
 
-    gitwrite holds the target's schema and the bytes compared against ``_render``, so
-    a value the renderer cannot name is a refusal.
+    gitwrite holds the target's schema and the bytes compared against ``_render``.
     """
     path = ledger / f"{target_id}.json"
     found = gitwrite.load_committed_target(labels.DECIDE, repo, path, target_id,
                                            _render, STATUS_SUPERSEDED, STATUSES)
     return found if isinstance(found, int) or not isinstance(found[0], bytes) else (
         path, found[1], found[0])
+
+
+def _build_record_flags(args: argparse.Namespace) -> tuple[str, list[dict], list[str]] | int:
+    """The flags that assemble the record: :func:`noni._decide_flags.build_record_flags`.
+
+    The rules, their order and their refusals are that module's; these seams hand it
+    this writer's printer, codes, patterns and schema calls, so the census's rules stay
+    the census's and one voice words every refusal.
+    """
+    return _decide_flags.build_record_flags(args, fail=_fail, exit_usage=EXIT_USAGE,
+                                            slug_re=SLUG_RE, id_re=ID_RE,
+                                            parse_pairs=_parse_pairs,
+                                            pair_refuse=_pair_flags_to_questions,
+                                            name_refuse=_name_flags,
+                                            build_questions=_schema.build_questions,
+                                            unanswered_ids=_schema.unanswered_ids)
+
+
+def _refuse_unwritten(repo: Path, rels: list[str], target_rel: str | None,
+                      record_rel: str, committed_bytes: bytes | None,
+                      ledger: Path, exc: OSError) -> int:
+    """Roll the run's paths back after a write that did not land, and refuse.
+
+    The undo and its wording are :func:`noni._writer.refuse_unwritten`; this seam hands
+    it this writer's printer, code, label and ledger path.
+    """
+    return _writer.refuse_unwritten(labels.DECIDE, ledger, _fail, EXIT_COMMIT_FAILED,
+                                    repo, rels, target_rel, record_rel, committed_bytes,
+                                    exc)
+
+
+def _refuse_taken_name(record_path: Path) -> int:
+    """The exit-4 refusal for a record name that is already spoken.
+
+    ``is_file()`` follows a link, so a link read as free and the replace wrote through
+    it; the wording is :mod:`noni._decide_flags`' and the code is this writer's.
+    """
+    return _decide_flags.refuse_taken_name(_fail, EXIT_COLLISION, record_path)
 
 
 def _validate_usage(args: argparse.Namespace) -> tuple[str, list[dict], list[str]] | int:
@@ -349,23 +362,6 @@ def _validate_usage(args: argparse.Namespace) -> tuple[str, list[dict], list[str
     after the options are known.
     """
     return _build_record_flags(args)
-
-
-def _build_record_flags(args: argparse.Namespace) -> tuple[str, list[dict], list[str]] | int:
-    """The flags that assemble the record: :func:`noni._decide_flags.build_record_flags`.
-
-    The rules, their order and their refusals are that module's; these seams hand it
-    this writer's printer and usage code, its two patterns, its pair and name
-    refusals, and the two schema calls the record's shape is judged by -- so the
-    census's rules stay the census's and one voice words every refusal.
-    """
-    return _decide_flags.build_record_flags(args, fail=_fail, exit_usage=EXIT_USAGE,
-                                            slug_re=SLUG_RE, id_re=ID_RE,
-                                            parse_pairs=_parse_pairs,
-                                            pair_refuse=_pair_flags_to_questions,
-                                            name_refuse=_name_flags,
-                                            build_questions=_schema.build_questions,
-                                            unanswered_ids=_schema.unanswered_ids)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -393,6 +389,9 @@ def main(argv: list[str] | None = None) -> int:
                         "author (a login or pseudonym, never an empty string)")
     parser.add_argument("--on-behalf-of", default=None, metavar="WHO",
                         help="the party the decision was made for (needs --decided-by)")
+    parser.add_argument("--why", default=None, metavar="REASON",
+                        help="the operator's one line of reason for the decision "
+                        f"(a non-empty single line of at most {_why_max()} characters)")
     parser.add_argument("--single-option", action="store_true",
                         help="record a decision with exactly one option per question, "
                         "so nothing has to be invented (the multiple-choice form "
@@ -469,7 +468,8 @@ def main(argv: list[str] | None = None) -> int:
                                  supersedes=args.supersedes, source=source,
                                  decided_by=args.decided_by,
                                  on_behalf_of=args.on_behalf_of,
-                                 single_option=args.single_option)
+                                 single_option=args.single_option,
+                                 why=args.why)
     rels, message = _schema.supersede_plan(args.supersedes, record_id, record_rel,
                                            target_rel)
     committed_bytes = None if target is None else target[2]

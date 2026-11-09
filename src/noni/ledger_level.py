@@ -10,8 +10,10 @@ writer is ahead of that number says so before it writes.
 ONE integer, and bumping it is part of the change that changes the closed set in
 ``ledger_schema``: a field added to ``OPTIONAL_LEDGER_FIELDS`` without a bump here
 is a record a pinned census refuses with nothing said at the writer, which is the
-bug this constant was introduced to close. 1 is the level of today's set (the
-required eight plus the four optional names).
+bug this constant was introduced to close. 2 is the level of today's set (the
+required eight plus the five optional names, ``why`` among them); 1 was the set of
+the required eight plus four, so a census pinned at 1 refuses a record that carries
+a rationale and this writer says so before it writes.
 
 "Newer" means exactly one comparison and no other: this writer's
 :data:`LEDGER_SCHEMA_LEVEL` is greater than the declared integer. No string
@@ -32,7 +34,7 @@ from .census_json import load_json_strict
 
 # The writer's own ledger schema level. See the module docstring for what bumping
 # it means and when.
-LEDGER_SCHEMA_LEVEL = 1
+LEDGER_SCHEMA_LEVEL = 2
 
 # The declaration's key, and the only value it may hold: an integer at or above
 # the first level, never a bool (Python calls ``True`` an ``int``, and json's

@@ -51,10 +51,28 @@ ORDER_SCHEMA = "noni.order/1"
 ORDER_SCHEMA_V2 = "noni.order/2"
 ORDER_SCHEMAS = (ORDER_SCHEMA, ORDER_SCHEMA_V2)
 ORDER_REQUIRED_FIELDS = ("schema", "entries")
-ORDER_ENTRY_FIELDS = ("issue", "decision", "confirmed")
+ORDER_ENTRY_FIELDS = ("issue", "decision", "confirmed", "why")
 # A ``/2`` entry names an item where a ``/1`` entry names an issue, and never both.
 ORDER_ITEM_FIELD = "item"
-ORDER_ENTRY_FIELDS_V2 = (ORDER_ITEM_FIELD, "issue", "decision", "confirmed")
+ORDER_ENTRY_FIELDS_V2 = (ORDER_ITEM_FIELD, "issue", "decision", "confirmed", "why")
+
+# The rationale bound and the two character sets of the ledger's single-line rule,
+# spelled here for the same reason the field lists above are: the census loads this
+# module by path and imports nothing from the writer's package, so these are copies of
+# the writer's, held to ``itemschema.WHY_MAX`` and to ``ledger_schema.LINE_BREAKS`` /
+# ``BLANKS`` by the shared shape table (``tests/ordering_shapes.py``). A value the
+# writer emits and this arbiter refuses -- or the other way round -- fails there and not
+# in the field, which is the drift these copies invite.
+WHY_MAX = 280
+# The ten characters ``str.splitlines`` breaks a line on, as a tuple for ``any``: the
+# writer's ``ledger_schema.LINE_BREAKS`` read out the same way. A value carrying one is
+# one JSON string and two lines, which is what the single-line rule refuses.
+LINE_BREAKS = ("\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85",
+               "\u2028", "\u2029")
+# The four characters a value made of nothing but which names nothing, as a plain
+# string for ``str.strip``: the writer's ``ledger_schema.BLANKS``. Wider whitespace
+# (U+00A0 and the like) is not blank to this rule and names somebody.
+WHY_BLANKS = " \t\v\f"
 
 # The two states an --issue-state map answers for one issue, plus the third
 # state a map cannot answer at all: an issue the file does not mention. The
@@ -98,16 +116,17 @@ def _entry_required(entry: dict, fields: tuple[str, ...],
     path and imports nothing from the writer's package), and the shape of a ``/2``
     entry is the one place a wrong copy makes the arbiter refuse what the writer just
     emitted. ``decision`` and ``confirmed`` every entry carries; the subject is the
-    field the entry itself chooses. Under ``/1`` the subject is always ``issue``, so
-    the ``item`` a ``/1`` entry carries is left out of the required list and the
-    unknown-field rule names it instead -- the honest description of a key that
-    version never declared.
+    field the entry itself chooses and ``why`` is the one field no entry owes. Under
+    ``/1`` the subject is always ``issue``, so the ``item`` a ``/1`` entry carries is
+    left out of the required list and the unknown-field rule names it instead -- the
+    honest description of a key that version never declared.
     """
+    owed = tuple(field for field in fields if field != "why")
     if schema != ORDER_SCHEMA_V2:
-        return fields
+        return owed
     if ORDER_ITEM_FIELD in entry:
-        return tuple(field for field in fields if field != "issue")
-    return tuple(field for field in fields if field != ORDER_ITEM_FIELD)
+        return tuple(field for field in owed if field != "issue")
+    return tuple(field for field in owed if field != ORDER_ITEM_FIELD)
 
 
 def _subject_problems(index: int, entry: dict, schema: object,
@@ -118,6 +137,39 @@ def _subject_problems(index: int, entry: dict, schema: object,
     if ("issue" in entry) == (ORDER_ITEM_FIELD in entry):
         problems.append(f"entry {index} names {ORDER_ITEM_FIELD} and issue: an entry "
                         "names exactly one of them")
+
+
+def _why_problems(entry: dict) -> list[str]:
+    """The census's copy of the rationale rule for one entry's ``why``.
+
+    The bound is spelled here because this file is loaded by path and imports nothing
+    from the writer's package -- the same reason the field lists are copies -- and it is
+    held to :data:`noni.itemschema.WHY_MAX` by the shared shape table, which reads the
+    number off the product. The shape is the ten ``LINE_BREAKS`` and the four
+    ``WHY_BLANKS`` above, both tabled there for the same reason; the bound counts code
+    points, so a value of combining marks or emoji is measured the way its author
+    measures it and not by its utf-8 length.
+
+    A non-string is refused by the shape arm: ``len`` is never asked of a number, a
+    boolean or a null, so a row is a finding and never a fault of this reader.
+    """
+    value = entry.get("why")
+    if not isinstance(value, str) or not value.strip(WHY_BLANKS) \
+            or any(char in value for char in LINE_BREAKS):
+        return ["why must be a non-empty single-line string"]
+    if len(value) > WHY_MAX:
+        return [f"why is {len(value)} characters, past the {WHY_MAX} limit"]
+    return []
+
+
+def _why_field_problems(index: int, entry: dict, problems: list[str]) -> None:
+    """The entry's rationale, if it carries one, appended to ``problems``.
+
+    One problem per bad value, worded as the arbiter words every other entry field --
+    "entry N why ..." -- so the row names the field a repair has to touch.
+    """
+    if "why" in entry:
+        problems.extend(f"entry {index} {problem}" for problem in _why_problems(entry))
 
 
 def _item_id_problems(index: int, entry: dict, problems: list[str]) -> None:
@@ -227,6 +279,7 @@ def _entry_problems(entries: list, problems: list[str], parse_iso, names_zone,
             problems.append(f"entry {index} has unknown field(s): " + ", ".join(junk))
         _subject_problems(index, entry, schema, problems)
         _item_id_problems(index, entry, problems)
+        _why_field_problems(index, entry, problems)
         issue = entry.get("issue")
         if "issue" in entry:
             if not isinstance(issue, int) or isinstance(issue, bool) or issue < 1:

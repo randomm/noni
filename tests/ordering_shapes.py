@@ -27,6 +27,8 @@ from pathlib import Path
 
 from _harness import ORDER, REPO, _git, git_pin_date, subprocess_env
 
+from noni.itemschema import WHY_MAX
+
 CENSUS = REPO / "skills" / "census" / "scripts" / "census.py"
 ORDER_REL = "noni/direction/order.json"
 NOW = "2026-10-27T12:00:00Z"
@@ -174,6 +176,31 @@ MALFORMED_SHAPES: dict[str, tuple[str, str]] = {
                               '"entries": []}', None),
     "a repeated entries key": ('{"schema": "noni.order/1", "entries": [], '
                                '"entries": []}', None),
+    # --- the optional ``why`` a run records with ``add --why`` ----------------------
+    # The rationale is the one optional field an entry may carry, so it is where the two
+    # rule sets are most likely to drift: each side holds its own copy of the rule (the
+    # writer asks the ledger's module, the arbiter keeps a local copy because it loads
+    # by path), and a ``why`` one side refuses is an artifact the other can write and
+    # nobody can repair. The good value is tabled as a clean shape below.
+    "why blank": (_entries(
+        '[{"issue": 1, "decision": "2026-10-01-baseline", '
+        '"confirmed": "2026-10-26T00:00:00Z", "why": ""}]'), "why"),
+    "why only spaces": (_entries(
+        '[{"issue": 1, "decision": "2026-10-01-baseline", '
+        '"confirmed": "2026-10-26T00:00:00Z", "why": "   "}]'), "why"),
+    "why two lines": (_entries(
+        '[{"issue": 1, "decision": "2026-10-01-baseline", '
+        '"confirmed": "2026-10-26T00:00:00Z", "why": "one\\ntwo"}]'), "why"),
+    "why past the bound": (_entries(
+        '[{"issue": 1, "decision": "2026-10-01-baseline", '
+        '"confirmed": "2026-10-26T00:00:00Z", "why": "' + "a" * (WHY_MAX + 1)
+        + '"}]'), "why"),
+    "why is not a string": (_entries(
+        '[{"issue": 1, "decision": "2026-10-01-baseline", '
+        '"confirmed": "2026-10-26T00:00:00Z", "why": 7}]'), "why"),
+    "why is null": (_entries(
+        '[{"issue": 1, "decision": "2026-10-01-baseline", '
+        '"confirmed": "2026-10-26T00:00:00Z", "why": null}]'), "why"),
     # --- the ``noni.order/2`` entries, where an entry may cite an item ------------
     # The whole ``/2`` set is tabled here rather than only in the item suites because
     # this table is what holds the two rule sets together: a ``/2`` file the writer
@@ -216,6 +243,18 @@ def _clean_shapes() -> dict[str, str]:
             '[{"item": "idea-0001", ' + _ENTRY_TAIL + '}, '
             '{"issue": 7, ' + _ENTRY_TAIL + '}]'),
         "a v2 file holding nothing": _entries_v2("[]"),
+        # An entry that carries the optional rationale, at the bound and inside it: the
+        # shape ``add --why`` emits, which neither side may call malformed -- a refusal
+        # here would be an order no verb can rewrite.
+        "an entry carrying a reason": _entries(
+            '[{"issue": 1, "decision": "2026-10-01-baseline", '
+            '"confirmed": "2026-10-26T00:00:00Z", "why": "the train leaves at six"}]'),
+        "an entry at the rationale bound": _entries(
+            '[{"issue": 1, "decision": "2026-10-01-baseline", '
+            '"confirmed": "2026-10-26T00:00:00Z", "why": "' + "a" * WHY_MAX
+            + '"}]'),
+        "a v2 entry citing an item and carrying a reason": _entries_v2(
+            '[{"item": "idea-0001", ' + _ENTRY_TAIL + ', "why": "filed, not scheduled"}]'),
     }
 
 

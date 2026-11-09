@@ -1,0 +1,22 @@
+{
+  "id": "2026-10-04-why",
+  "date": "2026-10-04T10:00:00Z",
+  "asked_by": "developer",
+  "questions": [
+    {
+      "id": "q1",
+      "text": "Which release carries the scheduler?",
+      "options": [
+        "the next train",
+        "the one after"
+      ],
+      "answer": "the next train"
+    }
+  ],
+  "by": "Operator",
+  "scope": "release ordering",
+  "status": "decided",
+  "supersedes": null,
+  "decided_by": "operator-ann",
+  "why": "the train leaves at six and nothing else is ready"
+}

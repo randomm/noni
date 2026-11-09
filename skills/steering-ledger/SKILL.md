@@ -58,7 +58,7 @@ scripts/decide.py --repo REPO --slug SLUG --scope SCOPE --asked-by ROLE
                   --question ID=TEXT [--option ID=OPTION]... [--answer ID=ANSWER]...
                   [--date YYYY-MM-DD] [--source-issue N --source-comment N]  # N positive
                   [--decided-by WHO] [--on-behalf-of WHO] [--single-option]
-                  [--supersedes ID] [--no-commit]
+                  [--why REASON] [--supersedes ID] [--no-commit]
 ```
 
 One command per steering act. The record's `id` is `<date>-<slug>`, its `by`
@@ -72,7 +72,7 @@ flags.
 | code | meaning |
 |---|---|
 | `0` | the record was written (and committed unless `--no-commit`) |
-| `2` | invalid input: an argparse failure, an empty or malformed `--slug`, a `--slug` that already starts with a date (the writer adds it), a malformed `--date`, a malformed `--question`/`--option`/`--answer`, a `--source-issue`/`--source-comment` that is not a positive integer, a question outside 1-4 or with outside 2-4 options, an empty or multi-line `--decided-by`/`--on-behalf-of`, `--on-behalf-of` without `--decided-by`, a question with one option when `--single-option` was not given, or `--supersedes` with an unanswered question |
+| `2` | invalid input: an argparse failure, an empty or malformed `--slug`, a `--slug` that already starts with a date (the writer adds it), a malformed `--date`, a malformed `--question`/`--option`/`--answer`, a `--source-issue`/`--source-comment` that is not a positive integer, a question outside 1-4 or with outside 2-4 options, an empty or multi-line `--decided-by`/`--on-behalf-of`, `--on-behalf-of` without `--decided-by`, an empty, multi-line or over-long `--why`, a question with one option when `--single-option` was not given, or `--supersedes` with an unanswered question |
 | `3` | git or identity: `--repo` is not a git work tree, `git config user.name` is not set (the hint names the command), a git probe timed out or failed for a reason that answered nothing, or a `noni/` or `noni/decisions/` that is not a directory this writer may read or write through (a symlink, a plain file, a socket or a device: every directory from the state root down to the ledger is asked of `lstat` before the git probes, the first read or the `mkdir`, so nothing is followed and nothing is written, and an absent ledger is admitted because the first record creates it; a `--repo` that is a directory holding no `noni/` is admitted on the same ground, because `decide` is the ledger's creator and its first record is what brings the tree into being — what makes such a run auditable rather than silent is that it is a real, reported commit that names the state root and the record it wrote, asked before the ledger is read) |
 | `4` | a collision or a bad supersede target: the record path exists as anything (a file, a directory or a symlink), or the target is missing, already superseded, untracked, locally modified, not a regular file at its path (a symlink, directory or device), not readable at all, not in the writer's canonical form, or carries a field the census does not type as a string (`id`, `asked_by`, `by`, `scope`, `date`; `supersedes` as a string or null; `decided_by` and `on_behalf_of` as non-empty single-line strings when present), a `status` outside `decided`, `open` or `superseded`, `questions` that are not a non-empty list of objects each with a string `id` and a string-or-null `answer`, or a number JSON cannot hold. A `git show` reporting the path is not in HEAD is this code, not `3` |
 | `5` | the commit failed: both paths are rolled back (index reset, target restored, new record removed), and anything the rollback could not do is named — a failed reset with the paths that may still be staged, or a path it could not restore |
@@ -106,7 +106,7 @@ that is the only field the writer touches.
 
 One JSON file per record under `noni/decisions/`, named `<id>.json`. The eight
 fields (in order), plus the optional fields (`source`, `decided_by`,
-`on_behalf_of`, `single_option`):
+`on_behalf_of`, `single_option`, `why`):
 
 | field | type | meaning |
 |---|---|---|
@@ -122,6 +122,7 @@ fields (in order), plus the optional fields (`source`, `decided_by`,
 | `decided_by` | string (optional) | who made the decision, when that is not the commit author: a login or pseudonym, never a personal-name requirement. Written by `--decided-by`; absent means the commit author decided, which is how every record written before this field stays valid. It never overrides `by` in the report (see Attribution) |
 | `on_behalf_of` | string (optional) | the party a delegated decision was made for, written by `--on-behalf-of`, which the writer refuses without `--decided-by` |
 | `single_option` | `true` (optional) | the marker `--single-option` writes to say a question was asked with one option on purpose, so nothing had to be invented. It is a per-record marker over a per-question bound: with it set, any question may carry one option, and at least one question of the record must. A one-option record without it is a schema violation, and a marker no question of the record carries one option is one too |
+| `why` | string (optional) | the operator's one line of reason for the decision, written by `--why`: a non-empty single line of at most 280 characters, counted in code points. The bound is shared with an order entry's `why` and the item store's reason field, so one number holds the product's rationales. Absent means no reason was recorded, which keeps every record written before the field valid |
 
 A `question` object is `{id, text, options, answer}`. `options` is an array of
 2-4 strings, or exactly one string for a question of a record that carries
@@ -154,6 +155,13 @@ Because agents commit under the operator's identity, `by` alone cannot say who
 in place of it: the report's `by` column keeps coming from git, and the census
 checks only that each value is a non-empty single line — it never verifies an
 identity. A record without `decided_by` still means the commit author decided.
+
+`--why <reason>` records the operator's own line of reason beside the attribution.
+It says nothing about who decided: it is the answer to why the decision went that way.
+The same one-line rule and the same 280-character bound hold for an order entry's
+reason. The writer refuses a blank, a multi-line or an over-long value at the flag
+(exit 2) and the census reports a hand-edited one at exit 10 naming `why`; a record
+with no `why` is not incomplete, it simply records no reason.
 
 ## Supersede
 

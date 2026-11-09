@@ -25,6 +25,10 @@ from typing import Callable, NamedTuple
 
 from . import item_reads, itemschema, orderschema, orderstate
 
+# The rationale's key, read from the artifact's schema so the flag's refusal names the
+# field the censuses name rather than a string this module spells.
+WHY_FIELD = orderschema.WHY_FIELD
+
 
 def subject_problems(issue_token: str | None,
                      item_token: str | None) -> tuple[str, str] | None:
@@ -121,7 +125,8 @@ class Planned(NamedTuple):
 
 def plan_add(repo: Path, entries: list, issue: int | None, item: str | None,
              decision: str, at: str | None, stamp: str, report, exit_io: int,
-             exit_usage: int, exit_refusal: int) -> Planned:
+             exit_usage: int, exit_refusal: int,
+             why: str | None = None) -> Planned:
     """The entries ``add`` writes, or the refusal naming why it writes none.
 
     Every question the verb owes is asked here, in the order whose remedies differ:
@@ -132,10 +137,20 @@ def plan_add(repo: Path, entries: list, issue: int | None, item: str | None,
     refused a bad position first would tell the operator about a position they were
     never going to fill.
 
+    ``why`` is the rationale the run may carry, and it is refused for its shape before
+    anything is read: a reason that is blank, multi-line or past the bound is the
+    caller's mistake and takes the usage code, exactly as a bad ``--item`` does. It
+    defaults to None because a run that names no reason writes the entry it always
+    wrote.
+
     ``entries`` is copied rather than mutated: the caller keeps the list it read for
     the lost-update comparison, and a plan that reached into it would move the very
     bytes the guard later compares.
     """
+    if why is not None:
+        refused = _why_refusal(why, report, exit_usage)
+        if refused is not None:
+            return Planned([], "", refused)
     listed = [entry for entry in entries]
     subject, refusal = _subject(repo, listed, issue, item, report, exit_io,
                                 exit_usage, exit_refusal)
@@ -151,20 +166,46 @@ def plan_add(repo: Path, entries: list, issue: int | None, item: str | None,
     position, problem = _position(at, len(listed) + 1, report, exit_usage)
     if problem is not None:
         return Planned([], "", problem)
-    listed.insert(position - 1, _new_entry(subject, decision, stamp))
+    listed.insert(position - 1, _new_entry(subject, decision, stamp, why))
     return Planned(listed, f"add {subject}", None)
 
 
-def _new_entry(subject: str | int, decision: str, stamp: str) -> dict:
+def _why_refusal(why: str, report, exit_usage: int) -> int | None:
+    """The exit-2 refusal for a ``--why`` that is not one bounded line, or None.
+
+    The ledger's rule, asked through the artifact's own schema (which is the ledger's
+    module read from this side): the same shape and the same bound a decision record's
+    rationale answers to, so one line of reason is one line wherever it is written and
+    the number keeps one owner. The problem string names the field, which is what both
+    censuses' rows name too.
+    """
+    problems = orderschema.why_problems({WHY_FIELD: why})
+    if not problems:
+        return None
+    headline = problems[0]
+    if "characters" in headline:
+        hint = f"shorten --why to at most {orderschema.why_max()} characters"
+    else:
+        hint = ("--why is one line of text: pass it without a newline and with "
+                "something in it")
+    return report(exit_usage, f"--why {why!r} is not a usable reason: {headline}", hint)
+
+
+def _new_entry(subject: str | int, decision: str, stamp: str,
+               why: str | None = None) -> dict:
     """The entry ``add`` places, spelled from its subject's own type.
 
     An id is a string and an issue number is an int, and that is the whole difference
     between the two shapes: the same call, the key chosen by the type, so a run can never
     write an entry that names both subjects or neither -- the pair the schema refuses.
+    ``why`` rides through unchanged: absent is the three-field entry the writer produced
+    before the field existed.
     """
     if isinstance(subject, str):
-        return orderschema.entry(item=subject, decision=decision, confirmed=stamp)
-    return orderschema.entry(issue=subject, decision=decision, confirmed=stamp)
+        return orderschema.entry(item=subject, decision=decision, confirmed=stamp,
+                                 why=why)
+    return orderschema.entry(issue=subject, decision=decision, confirmed=stamp,
+                             why=why)
 
 
 def _subject(repo: Path, entries: list, issue: int | None, item: str | None,

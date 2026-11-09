@@ -28,7 +28,7 @@ import json
 # The documented field order, read from the product's own declaration: the fixture's
 # one permitted reach into the module under test, because a fixture that restated the
 # order would keep passing when the schema's order changed.
-from noni.itemschema import ITEM_FIELDS
+from noni.itemschema import ITEM_FIELDS, TITLE_MAX, WHY_MAX
 
 # A created stamp inside the default 30-day window of the harness's NOW, and one well
 # outside it, so a shape that is otherwise well formed is never also reported stale.
@@ -126,7 +126,8 @@ def malformed_shapes() -> list[tuple[str, dict, str]]:
     rows.append(("title is multi-line", item_body(title="a\nb"), "title"))
     rows.append(("title is a CRLF break", item_body(title="a\r\nb"), "title"))
     rows.append(("title is a lone CR", item_body(title="a\rb"), "title"))
-    rows.append(("title is past its bound", item_body(title="x" * 201), "title"))
+    rows.append(("title is past its bound",
+                 item_body(title="x" * (TITLE_MAX + 1)), "title"))
     bad("status missing", drop("status"), "status")
     rows.append(("status is unknown", item_body(status="open"), "status"))
     bad("created missing", drop("created"), "created")
@@ -158,7 +159,7 @@ def malformed_shapes() -> list[tuple[str, dict, str]]:
         lambda body: (dropped(body), body.update({"why": "a\nb"})), "why")
     bad("dropped with a why past its bound",
         lambda body: (dropped(body),
-                      body.update({"why": "x" * 281})), "why")
+                      body.update({"why": "x" * (WHY_MAX + 1)})), "why")
     bad("dropped still naming an issue",
         lambda body: (dropped(body), body.update({"issue": 7})), "issue")
 

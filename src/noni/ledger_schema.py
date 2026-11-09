@@ -22,6 +22,8 @@ from __future__ import annotations
 import json
 import re
 
+from . import _why
+
 # The eight required ledger fields, in the order the writer renders them. This is
 # the closed required set: a record missing one is a ``ledger-record`` failure.
 REQUIRED_LEDGER_FIELDS = (
@@ -43,10 +45,13 @@ REQUIRED_LEDGER_FIELDS = (
 # made the decision, and the party it was made for (see ``NAME_LINE_FIELDS``).
 # ``single_option`` is the writer's marker that a one-option question was asked on
 # purpose rather than malformed; the bound it relaxes is stated at
-# ``OPTION_MIN_WITH_MARKER``. A record without any of them is the eight-field shape
+# ``OPTION_MIN_WITH_MARKER``. ``why`` is the operator's one line of reason for the
+# decision, written by ``decide.py --why`` and held to ``why_max()`` on top of the
+# single-line rule below. A record without any of them is the eight-field shape
 # and stays valid, which is what keeps every record written before these fields
 # existed censusable.
-OPTIONAL_LEDGER_FIELDS = ("source", "decided_by", "on_behalf_of", "single_option")
+OPTIONAL_LEDGER_FIELDS = ("source", "decided_by", "on_behalf_of", "single_option",
+                          "why")
 
 # The two attribution names, typed as ``asked_by`` is typed (a non-empty string)
 # plus the one rule that makes them reportable: the value is one line, so it cannot
@@ -115,6 +120,45 @@ def is_single_line(value: object) -> bool:
     """
     return (isinstance(value, str) and bool(value.strip("".join(BLANKS)))
             and not any(char in value for char in LINE_BREAKS))
+
+
+def why_problems(record: dict) -> list[str]:
+    """What ``record``'s ``why`` gets wrong, as problem strings naming the field.
+
+    The ledger's name for :func:`noni._why.why_problems`: the writer's flag, this
+    census group's record pass, the ordering census's entry pass and the
+    supersede-target read all ask one question of a rationale, so the wording is one
+    sentence wherever a bad ``why`` is refused. See that module for the two rules and
+    the bound's one owner.
+    """
+    return _why.why_problems(record)
+
+
+def is_bounded_single_line(value: object, maximum: int) -> bool:
+    """Whether ``value`` is one non-blank line of at most ``maximum`` code points.
+
+    The ledger's name for :func:`noni._why.is_bounded_single_line`, which is what a
+    writer's flag check asks when a free-text value carries a bound as well as a
+    shape rule. :func:`is_single_line` keeps its one-argument signature: the bound is
+    a separate check, so the two attribution name fields keep their current shape.
+    """
+    return _why.is_bounded_single_line(value, maximum)
+
+
+def why_max() -> int:
+    """The rationale bound, read from :data:`noni.itemschema.WHY_MAX`, the one owner.
+
+    Never spelled here nor anywhere else in the product: a second literal is how a
+    writer and the census come to disagree about a value one of them wrote, and how a
+    doc page comes to state a bound no code enforces.
+    """
+    return _why.why_max()
+
+
+# The key a rationale is written under, read from the module that states the rule:
+# the record's field, an order entry's field, and the name every refusal and every
+# census row prints for it.
+WHY_FIELD = _why.WHY_FIELD
 
 
 def is_non_empty_string(value: object) -> bool:
@@ -397,7 +441,8 @@ def source_provenance(issue: int | None,
 def record_body(*, record_id: str, date_part: str, asked_by: str, questions: list[dict],
                 by: str, scope: str, unanswered: list[str],
                 supersedes: str | None, source: dict | None, decided_by: str | None,
-                on_behalf_of: str | None, single_option: bool) -> dict:
+                on_behalf_of: str | None, single_option: bool,
+                why: str | None = None) -> dict:
     """The record as the writer renders it, in the order :func:`render` keeps.
 
     Each optional field is written only when its flag was given, so a run that
@@ -424,6 +469,8 @@ def record_body(*, record_id: str, date_part: str, asked_by: str, questions: lis
         record["on_behalf_of"] = on_behalf_of
     if single_option:
         record[SINGLE_OPTION_MARKER] = True
+    if why is not None:
+        record[WHY_FIELD] = why
     return record
 
 

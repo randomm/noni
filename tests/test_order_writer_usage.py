@@ -261,7 +261,12 @@ def test_a_position_outside_the_order_exits_two(tmp_path):
 
 def test_a_flag_passed_to_the_wrong_verb_exits_two(tmp_path):
     """A flag that means nothing for the verb it came with is a usage error, not
-    a hint the run quietly ignores: each of the three mis-placements is named."""
+    a hint the run quietly ignores: each of the three mis-placements is named.
+
+    ``--decision`` belongs to ``add`` and ``move`` and to nothing else (issue #134), so
+    the two verbs that neither place an entry nor re-cite one are driven here: a run
+    that handed ``remove`` or ``confirm`` a decision would otherwise be a command whose
+    extra flag answers nothing, silently."""
     repo = _repo(tmp_path)
     _seed(repo, _entry(1, BASELINE_ID))
     cases = [
@@ -269,11 +274,17 @@ def test_a_flag_passed_to_the_wrong_verb_exits_two(tmp_path):
         ("remove", "1", "--to", "1", "--now", NOW),
         ("confirm", "--at", "1", "--now", NOW),
         ("confirm", "1", "--decision", BASELINE_ID, "--now", NOW),
+        ("remove", "1", "--decision", BASELINE_ID, "--now", NOW),
+        ("confirm", "--decision", BASELINE_ID, "--now", NOW),
     ]
     for argv in cases:
         proc = _order(repo, *argv)
         assert proc.returncode == 2, f"{argv}: {proc.returncode} {proc.stderr}"
         assert "belongs to" in proc.stderr, f"{argv}: {proc.stderr}"
+    # The refusal names the verbs that do own the flag, so a reader is not sent to
+    # ``add`` alone when ``move`` answers the question too.
+    proc = _order(repo, "remove", "1", "--decision", BASELINE_ID, "--now", NOW)
+    assert "add and move own" in proc.stderr, proc.stderr
 
 
 def test_a_now_that_is_not_a_utc_timestamp_exits_two(tmp_path):

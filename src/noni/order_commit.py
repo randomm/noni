@@ -20,10 +20,23 @@ committed bytes the file never held, and the census reads the file.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from . import labels, orderschema
 from . import order_gitwrite as gitwrite
+
+
+def digest(data: bytes) -> str:
+    """The short stable digest one run's commit subject carries; never a path or bytes.
+
+    It belongs to the commit step because it names the bytes that step commits: the
+    subject is the line a reader of ``git log`` compares against the artifact, and the
+    value is taken over the rendered plan the writer handed here. It is not a checksum of
+    the file -- nothing verifies against it -- so it stays short and says only which plan
+    a commit carries.
+    """
+    return hashlib.sha1(data).hexdigest()[:7]
 
 
 def parent_refusal(repo: Path) -> tuple[str, str] | None:

@@ -41,6 +41,7 @@ from order_doc_readers import (
 __all__ = [
     "CENSUS", "ORDER", "REPO", "SKILL_DIR", "FIXTURE", "ORDER_REL", "NOW", "STAMP",
     "BASELINE_ID", "BASELINE_DATE", "SUPERSEDING_ID", "RIVAL_DATE", "SEED_STAMP",
+    "OTHER_ID",
     "ORDERING_CHECKS",
     "_schema_module", "_gitwrite_module", "_order_module", "_orderstate_module",
     "_order_path", "_read", "_issues", "_repo", "_record_json", "_commit_record",
@@ -62,6 +63,12 @@ STAMP = "2026-10-27T12:00:00Z"
 BASELINE_ID = "2026-10-01-baseline"
 BASELINE_DATE = "2026-10-01T10:00:00Z"
 SUPERSEDING_ID = "2026-10-20-scheduler"
+
+# A second live record, for the runs that change which record an entry cites
+# (``move --decision``). It is not in :func:`_repo`'s ledger: a test that wants it
+# commits it with :func:`_commit_record`, so a tree that never asks the question is
+# not quietly holding a record nobody asked for.
+OTHER_ID = "2026-10-10-alternative"
 
 # The stamp the rival writer of the race tests commits at, and the stamp its
 # losing opponent's baseline is seeded at. Both differ from ``NOW`` for the same

@@ -30,8 +30,10 @@ from order_fixtures import (
     BASELINE_ID,
     NOW,
     ORDER_REL,
+    OTHER_ID,
     STAMP,
     _assert_census_clean,
+    _commit_record,
     _committed_order,
     _entry,
     _gitwrite_module,
@@ -256,8 +258,13 @@ def _refused_by_a_rival_commit(tmp_path, name, *argv):
     artifact unmoved, nothing staged -- and no verb is covered by a loop over shapes
     it never drives: ``confirm`` here is the whole-order form, which restamps every
     entry and so is the verb with the largest blast radius if the guard missed it.
+
+    Every case writes: a ``--decision`` an entry already holds would take the writer's
+    no-change shortcut and return before the guard is reached, which is what the
+    ``move --decision`` row's :data:`order_fixtures.OTHER_ID` is there to avoid.
     """
-    repo = _repo(tmp_path, f"race-{name}")
+    repo = _repo(tmp_path, f"race-{name.replace(' ', '-')}")
+    _commit_record(repo, OTHER_ID, "decided", None)
     _seed(repo, _race_entry(11), _race_entry(22))
     _rival_raced(repo, (55, BASELINE_ID))
     # HEAD holds the rival's order and the file holds what this run read: the
@@ -292,6 +299,10 @@ def _refused_by_a_rival_commit(tmp_path, name, *argv):
 _WRITE_VERBS = [
     ("add", ("add", "44", "--at", "1", "--decision", BASELINE_ID)),
     ("move", ("move", "22", "--to", "1")),
+    # The same verb through its other write: a re-citation with no position (issue
+    # #134). It shares the writer's probe and its no-change shortcut, and a decision
+    # the entry does not already hold is what keeps it a write rather than a shortcut.
+    ("move --decision", ("move", "22", "--decision", OTHER_ID)),
     ("remove", ("remove", "22")),
     ("confirm", ("confirm",)),
 ]
@@ -317,7 +328,11 @@ def test_every_writing_verb_refuses_a_working_file_it_no_longer_recognises(
     the rival case, different wording: the file refusal names the file.
     """
     module = _order_module()
-    repo = _repo(tmp_path, f"filed-{name}")
+    repo = _repo(tmp_path, f"filed-{name.replace(' ', '-')}")
+    # The record the ``move --decision`` row passes must be a live one before the run
+    # starts: the citation is resolved before the plan and before the guard, and an id
+    # the ledger does not hold would refuse the run for the wrong reason.
+    _commit_record(repo, OTHER_ID, "decided", None)
     _seed(repo, _race_entry(11), _race_entry(22))
     head_before = _head(repo)
     committed_before = _committed_order(repo)

@@ -177,7 +177,7 @@ issue, then the flags that qualify it. `order.py --help` prints the same order.
 ```
 scripts/order.py --repo REPO add ISSUE --decision ID [--why REASON] [--at N] [--now ISO-8601] [--no-commit]
 scripts/order.py --repo REPO add --item ID --decision ID [--why REASON] [--at N] [--now ISO-8601] [--no-commit]
-scripts/order.py --repo REPO move ISSUE --to N [--now ISO-8601] [--no-commit]
+scripts/order.py --repo REPO move ISSUE [--to N] [--decision ID] [--now ISO-8601] [--no-commit]
 scripts/order.py --repo REPO remove ISSUE [--now ISO-8601] [--no-commit]
 scripts/order.py --repo REPO confirm [ISSUE] [--now ISO-8601] [--no-commit]
 ```
@@ -189,9 +189,18 @@ and confirmed timestamp it carries.
 `add` requires `--decision`: a position someone placed is a decision, and the id
 it names must be a file under `noni/decisions/` that is not superseded. `--at N`
 inserts at the 1-based position `N` of the list this run produces (the new
-length), and appends at the end when omitted. `move` requires `--to N` and
-restamps the moved entry, because a reorder is the operator confirming it again.
-`confirm` with an issue restamps that entry; without one it restamps every
+length), and appends at the end when omitted. `move` restamps the moved entry,
+because a reorder is the operator confirming it again, and needs `--to N` or
+`--decision ID`. `move` also takes `--decision ID`: it replaces the moved entry's
+decision with that id, resolved by the same live-record rule and the same exit codes as
+`add --decision` (exit 3 for an unreadable ledger, exit 4 for a record that is missing or
+superseded, with the hint naming its successor). With `--to` it changes the position and
+the decision in one run; without it the entry keeps its place, because the reason for a
+priority changed while the priority itself stood. `--to` is required only when
+`--decision` is absent, since a move of neither is nothing to write. The entry's
+`confirmed` is restamped either way: `confirm` is the separate verb that says a position
+stands, and re-citing a record is not that. `confirm` with an issue restamps that entry;
+without one it restamps every
 entry, which is how "the whole queue still stands" is said. `remove` is the only
 verb that shortens the list.
 
@@ -250,9 +259,9 @@ committed here", and the first order is written and committed.
 | code | meaning |
 |---|---|
 | `0` | the order was written (and committed unless `--no-commit`), or no byte of it needed changing |
-| `2` | invalid input: an argparse failure, a subcommand outside `add`/`move`/`remove`/`confirm`, an issue that is not a positive integer, a missing `--decision` on `add`, a `--to`/`--at` that is not a 1-based position of the resulting list, an empty, multi-line or over-long `--why` or a `--why` passed to a verb that is not `add`, a flag passed to the verb that does not own it, a `--now` that is not a valid UTC timestamp, a `--repo` that is not a directory, a `--repo` that is a directory holding no `noni/` at all (refused as not a noni state root: the path is named, the hint names `--repo`, and nothing is created: `move`/`remove`/`confirm` are refused, while `add` is admitted because its first entry creates `noni/direction`), or a `noni/`, `noni/direction/` or `noni/decisions/` that is not a plain path this writer may read or write through (a symlink, a plain file, a socket or a device: every directory from the state root down to it is asked of `lstat` before any read, write or `mkdir`, so nothing is followed and nothing is written, and an absent directory is admitted because the first `add` creates it) |
+| `2` | invalid input: an argparse failure, a subcommand outside `add`/`move`/`remove`/`confirm`, an issue that is not a positive integer, a missing `--decision` on `add`, a `move` that names neither `--to` nor `--decision`, a `--to`/`--at` that is not a 1-based position of the resulting list, an empty, multi-line or over-long `--why` or a `--why` passed to a verb that is not `add`, a flag passed to the verb that does not own it (`--decision` belongs to `add` and `move`), a `--now` that is not a valid UTC timestamp, a `--repo` that is not a directory, a `--repo` that is a directory holding no `noni/` at all (refused as not a noni state root: the path is named, the hint names `--repo`, and nothing is created: `move`/`remove`/`confirm` are refused, while `add` is admitted because its first entry creates `noni/direction`), or a `noni/`, `noni/direction/` or `noni/decisions/` that is not a plain path this writer may read or write through (a symlink, a plain file, a socket or a device: every directory from the state root down to it is asked of `lstat` before any read, write or `mkdir`, so nothing is followed and nothing is written, and an absent directory is admitted because the first `add` creates it) |
 | `3` | a path this writer needs could not be read or written, or a git call failed or timed out: the order file is not a regular file at its path, a decision record it must read is unreadable, the artifact could not be written, the commit step failed (the file is left written and named, never claimed as committed), or the freshness probe could not answer (a `git show` of the committed bytes that timed out or failed for a reason that told us nothing) |
-| `4` | what the order itself refuses: the issue is already listed (`add`), absent from the order (`move`, `remove`, `confirm`), no file under `noni/decisions/` carries the given `--decision` id, that record is superseded (the hint names its successor), the existing file is not the artifact this writer writes, or the committed order bytes changed since this run read them (`the order changed since it was read; re-run` -- re-run the same command, which re-plans against what the other writer committed). The file at the artifact's path changed instead (`the file changed since it was read; restore it or discard the change`): no re-run settles that one, so restore it (`git checkout HEAD -- noni/direction/order.json`) or discard the change, and re-running alone does not help |
+| `4` | what the order itself refuses: the issue is already listed (`add`), absent from the order (`move`, `remove`, `confirm`), no file under `noni/decisions/` carries the given `--decision` id (`add`, or `move` re-citing a record), that record is superseded (the hint names its successor), the existing file is not the artifact this writer writes, or the committed order bytes changed since this run read them (`the order changed since it was read; re-run` -- re-run the same command, which re-plans against what the other writer committed). The file at the artifact's path changed instead (`the file changed since it was read; restore it or discard the change`): no re-run settles that one, so restore it (`git checkout HEAD -- noni/direction/order.json`) or discard the change, and re-running alone does not help |
 
 `intent.py` publishes the same four codes for its one verb: `2` for an argparse
 failure, a subcommand outside `set`, a missing `--from` or `--decision`, a
@@ -338,7 +347,10 @@ The write itself goes to a temp file in its own directory and moves into place w
   writer's.
 - **A superseded record cannot set a position.** The refusal names the record
   that superseded it and shows the flag to pass. A chain that moved on again is
-  superseded by the newest of its links.
+  superseded by the newest of its links. The rule holds for `move --decision` just
+  as it does for `add`: a run that would cite a record the ledger has replaced is
+  refused before the position is taken, so no reorder leaves an entry resting on a
+  dead decision.
 - **An unreadable record is exit 3, not exit 4.** "I could not read it" and "it
   is not there" are different answers, and the caller fixes them differently.
 - **A non-regular path is refused, never followed.** A symlink, a directory or a

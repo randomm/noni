@@ -239,6 +239,23 @@ Results are recomputed on demand by the census (no `census/` directory). The
 census is read-only: running it leaves `git status --porcelain` empty. Trends,
 if ever wanted, are recomputed from git history.
 
+The brief is the other read-only tool, and the only one that answers a person
+rather than a check: `noni brief --repo DIR` prints four parts and exits — the
+standing intent's `Purpose`, the head of the order, the store's candidates
+newest first, and the census's own `summary:` line, echoed and never recomposed.
+It writes nothing, so running it leaves `git status --porcelain` empty too, and
+it prints the same bytes twice over one tree at one `--now`. It has no verdict of
+its own about a file it cannot read: a part whose artifact is absent prints empty,
+one whose artifact is there and unreadable prints `not readable`, and the census —
+run a moment later in the same command — is what words the fault. Its exit codes
+are the fail-closed pair: 0 whenever the page rendered, whatever it said about the
+tree, and 2 for a command line it will not act on (no `--repo`, a `--repo` that is
+not a directory, or an `--now` that is not a UTC instant), with the report on
+stdout and the refusal on stderr so a caller can tell the two apart by stream.
+The page is bounded: at most 20 lines of purpose, ten order entries, ten
+candidates and 200 lines in all, with the candidates the first thing the budget
+withholds.
+
 Metrics are derived, never self-reported: the census reads git history and
 these files. An adapter may additionally join its own run analytics to noni
 artifacts by issue number for outcome questions ("do steered runs park less,

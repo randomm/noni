@@ -25,6 +25,7 @@ which is what keeps a page from naming a vendor on a green CI run that skipped.
 from __future__ import annotations
 
 import re
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -181,11 +182,33 @@ DOC_CORE_FILES = sorted(
     p for p in (REPO / "docs").glob(DOC_PAGE_GLOB) if p.is_file()
 )
 
+# Suffixes no text check reads. ``.pyc`` was the only one until the brief fixture arrived as
+# a tar, which carries a packed git repository: its members are the text the checks are about
+# and the tar itself is bytes. ``fixture_texts`` below reads one or the other.
+BINARY_SUFFIXES = {".pyc", ".tar"}
+
 FIXTURE_FILES = sorted(
     p
     for p in FIXTURES.rglob("*")
-    if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc"
+    if p.is_file() and "__pycache__" not in p.parts and p.suffix not in BINARY_SUFFIXES
 )
+
+
+def fixture_texts(path):
+    """The ``(where, text)`` pairs a fixture file contributes to the text checks.
+
+    ``where`` names the member inside a tar and is ``""`` for a plain file, so a failure can
+    point at the path that actually holds the bytes.
+    """
+    if path.suffix == ".tar":
+        with tarfile.open(path) as archive:
+            for member in archive.getmembers():
+                if member.isfile() and "__pycache__" not in Path(member.name).parts:
+                    handle = archive.extractfile(member)
+                    assert handle is not None, f"{path}: member {member.name} vanished"
+                    yield member.name, handle.read().decode("utf-8")
+    else:
+        yield "", path.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("path", SKILL_CORE_FILES + DOC_CORE_FILES,
@@ -231,10 +254,11 @@ def test_fixtures_have_no_machine_local_paths(path):
     """The fixture set contains no machine-local paths (/home/<user>,
     /Users/<user>). The noni purity rule: no project-specific content, and the
     fixture set itself must be cloneable without a host dependency."""
-    text = path.read_text(encoding="utf-8")
-    for lineno, line in enumerate(text.splitlines(), 1):
-        for pattern, label in FORBIDDEN_PATHS:
-            assert not pattern.search(line), f"{path.relative_to(FIXTURES)}:{lineno}: {label}"
+    for member, text in fixture_texts(path):
+        location = path.relative_to(FIXTURES).as_posix() + (f":{member}" if member else "")
+        for lineno, line in enumerate(text.splitlines(), 1):
+            for pattern, label in FORBIDDEN_PATHS:
+                assert not pattern.search(line), f"{location}:{lineno}: {label}"
 
 
 def test_the_docs_page_set_and_the_docs_glob_agree():

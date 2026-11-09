@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -78,11 +79,40 @@ SKILL_FILES = sorted(
     if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc"
 )
 
+# Suffixes no text check reads. ``.pyc`` was the only one until the brief fixture arrived as
+# a tar; the tar itself is excluded because its members are what the checks read.
+BINARY_SUFFIXES = {".pyc", ".tar"}
+
 FIXTURE_FILES = sorted(
     p
     for p in FIXTURES.rglob("*")
-    if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc"
+    if p.is_file() and "__pycache__" not in p.parts and p.suffix not in BINARY_SUFFIXES
 )
+
+
+# A fixture whose members are checked instead of the file itself. The brief fixture is a
+# git repository, and a repository's own ``index`` and ``pack``/``idx`` files are binary:
+# they would be read as UTF-8 here and read as bytes by the check they exist to serve. The
+# repository travels as a tar so those files stay out of the index, and its members are the
+# text the check is about, so the members are what get read.
+TAR_FIXTURES = ("brief.tar",)
+
+
+def fixture_texts(path):
+    """The ``(where, text)`` pairs a fixture file contributes to the text checks.
+
+    ``where`` names the member inside a tar and is ``""`` for a plain file, so a failure can
+    point at the path that actually holds the bytes.
+    """
+    if path.name in TAR_FIXTURES:
+        with tarfile.open(path) as archive:
+            for member in archive.getmembers():
+                if member.isfile() and "__pycache__" not in Path(member.name).parts:
+                    handle = archive.extractfile(member)
+                    assert handle is not None, f"{path}: member {member.name} vanished"
+                    yield member.name, handle.read().decode("utf-8")
+    else:
+        yield "", path.read_text(encoding="utf-8")
 
 
 def test_skill_files_present():
@@ -170,15 +200,16 @@ def test_no_secrets_or_machine_local_paths_in_fixtures(path):
     """No fixture file contains a machine-local path, the operator's username,
     or a token-shaped string. This is the noni purity rule: no project-specific
     content, and the fixture set itself carries no machine-local path."""
-    text = path.read_text(encoding="utf-8")
-    for lineno, line in enumerate(text.splitlines(), 1):
-        for pattern, label in FORBIDDEN:
-            # Skip the operator-username check for fixtures that are supposed
-            # to carry a generic "Operator" name — the fixtures use "Operator"
-            # as a generic author name, not the real operator's username.
-            if "operator username" in label:
-                continue
-            assert not pattern.search(line), f"{path.relative_to(FIXTURES)}:{lineno}: {label}"
+    for member, text in fixture_texts(path):
+        location = path.relative_to(FIXTURES).as_posix() + (f":{member}" if member else "")
+        for lineno, line in enumerate(text.splitlines(), 1):
+            for pattern, label in FORBIDDEN:
+                # Skip the operator-username check for fixtures that are supposed
+                # to carry a generic "Operator" name — the fixtures use "Operator"
+                # as a generic author name, not the real operator's username.
+                if "operator username" in label:
+                    continue
+                assert not pattern.search(line), f"{location}:{lineno}: {label}"
 
 
 def test_skill_md_within_agents_size_limit():

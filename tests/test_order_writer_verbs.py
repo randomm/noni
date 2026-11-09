@@ -3,6 +3,9 @@
 Extracted from the order writer suite: the verbs that move an item along or
 read the artifact, as opposed to ``add``."""
 
+import os
+
+import pytest
 from _harness import (
     _git,
     _git_e2,
@@ -11,9 +14,12 @@ from order_fixtures import (
     BASELINE_ID,
     NOW,
     ORDER_REL,
+    OTHER_ID,
     SEED_STAMP,
     STAMP,
+    SUPERSEDING_ID,
     _assert_census_clean,
+    _commit_record,
     _entry,
     _head_paths,
     _issues,
@@ -26,6 +32,7 @@ from order_fixtures import (
     _repo,
     _seed,
     _spied_git,
+    _supersede_baseline,
 )
 from order_race_fixtures import REFUSAL, RIVAL_STAMP
 from order_rival_commit import _rival_commit
@@ -46,12 +53,191 @@ def test_move_replaces_the_entry_and_restamps_it(tmp_path):
     _assert_census_clean(repo, "move")
 
 
+def test_move_with_a_decision_keeps_every_position_and_takes_the_new_id(tmp_path):
+    """``move N --decision ID`` re-cites one entry and places nothing.
+
+    The pilot's case: the reason for an entry's priority changed, so the record that
+    set it is no longer the record the entry should cite. Position in the list IS the
+    order, so a re-citation that shuffled the queue would be a different operation --
+    and the entry the run did not touch keeps both its place and its own stamp.
+    """
+    repo = _repo(tmp_path)
+    _commit_record(repo, OTHER_ID, "decided", None)
+    _seed(repo, _entry(1, BASELINE_ID, "2026-10-01T00:00:00Z"),
+          _entry(2, BASELINE_ID, "2026-10-01T00:00:00Z"),
+          _entry(3, BASELINE_ID, "2026-10-01T00:00:00Z"))
+    proc = _order(repo, "move", "2", "--decision", OTHER_ID, "--now", NOW)
+    assert proc.returncode == 0, proc.stderr
+    entries = _read(repo)["entries"]
+    assert [e["issue"] for e in entries] == [1, 2, 3], entries
+    assert entries[1]["decision"] == OTHER_ID, entries[1]
+    assert entries[1]["confirmed"] == STAMP, entries[1]
+    assert entries[0]["decision"] == BASELINE_ID, entries[0]
+    assert entries[0]["confirmed"] == "2026-10-01T00:00:00Z", entries[0]
+    assert entries[2]["decision"] == BASELINE_ID, entries[2]
+    assert entries[2]["confirmed"] == "2026-10-01T00:00:00Z", entries[2]
+    _assert_census_clean(repo, "a decision-only move")
+
+
+def test_move_with_a_decision_and_to_changes_both_at_once(tmp_path):
+    """The one run does both things the pilot asked of it: new citation, new place.
+
+    ``--to`` ranges over the list this run produces, which the entry left behind --
+    the same bound a position-only move obeys, asserted here for the verb form that
+    also rewrites the decision.
+    """
+    repo = _repo(tmp_path)
+    _commit_record(repo, OTHER_ID, "decided", None)
+    _seed(repo, _entry(1, BASELINE_ID, "2026-10-01T00:00:00Z"),
+          _entry(2, BASELINE_ID, "2026-10-01T00:00:00Z"),
+          _entry(3, BASELINE_ID, "2026-10-01T00:00:00Z"))
+    proc = _order(repo, "move", "3", "--to", "1", "--decision", OTHER_ID, "--now", NOW)
+    assert proc.returncode == 0, proc.stderr
+    entries = _read(repo)["entries"]
+    assert [e["issue"] for e in entries] == [3, 1, 2], entries
+    assert entries[0]["decision"] == OTHER_ID, entries[0]
+    assert entries[0]["confirmed"] == STAMP, entries[0]
+    assert [e["decision"] for e in entries[1:]] == [BASELINE_ID, BASELINE_ID]
+    _assert_census_clean(repo, "a move that changed both")
+
+
+def test_move_refuses_a_decision_that_resolves_to_no_live_record(tmp_path):
+    """The same live-record rule ``add --decision`` obeys, on the same codes.
+
+    A position that rests on a superseded record is not a position the operator chose,
+    and the refusal names the successor the way add's does (exit 4); a ledger this run
+    could not look in is the environment's fault (exit 3), never read as an absence.
+    """
+    repo = _repo(tmp_path)
+    _commit_record(repo, OTHER_ID, "decided", None)
+    _seed(repo, _entry(1, BASELINE_ID), _entry(2, BASELINE_ID))
+    before = _order_path(repo).read_bytes()
+    # Read after the supersede, which is itself two commits: the three refusals below
+    # commit nothing, so HEAD has to still be this line when they are done, and a
+    # baseline taken before the supersede would name a commit the tree has left behind.
+    _supersede_baseline(repo)
+    head_before = _git_e2(repo, "rev-parse", "HEAD").stdout.strip()
+
+    proc = _order(repo, "move", "1", "--decision", "2026-10-09-ghost", "--now", NOW)
+    assert proc.returncode == 4, f"{proc.returncode}: {proc.stderr}"
+    assert "is in the ledger" in proc.stderr or "matches no record" in proc.stderr, \
+        proc.stderr
+
+    proc = _order(repo, "move", "1", "--decision", BASELINE_ID, "--now", NOW)
+    assert proc.returncode == 4, f"{proc.returncode}: {proc.stderr}"
+    assert SUPERSEDING_ID in proc.stderr, proc.stderr
+    assert f"--decision {SUPERSEDING_ID}" in proc.stderr, proc.stderr
+
+    # The ledger this run cannot read: the environment's code (3), never the exit-4
+    # sentence about a record nobody committed. Same shape as the add suite's unreadable
+    # record: a 000 record the read itself cannot open -- and the same caveat, that a
+    # reader who can read any mode cannot plant it. The id is already cited by no entry,
+    # so the only thing this run can answer with is the fault.
+    record = repo / "noni" / "decisions" / f"{OTHER_ID}.json"
+    record.chmod(0o000)
+    try:
+        proc = _order(repo, "move", "1", "--decision", OTHER_ID, "--now", NOW)
+        if proc.returncode != 3:  # pragma: no cover - root reads any mode
+            if os.geteuid() == 0:
+                pytest.skip("root reads any mode, so the ledger fault cannot be planted")
+            raise AssertionError(f"{proc.returncode}: {proc.stderr}")
+        assert "could not be read" in proc.stderr, proc.stderr
+        assert "is in the ledger" not in proc.stderr, proc.stderr
+    finally:
+        record.chmod(0o644)
+
+    assert _order_path(repo).read_bytes() == before, "a refused run rewrote the artifact"
+    assert _git_e2(repo, "rev-parse", "HEAD").stdout.strip() == head_before
+    assert _porcelain(repo) == "", _porcelain(repo)
+
+
+def test_move_with_a_decision_of_an_unlisted_issue_refuses_with_four(tmp_path):
+    """A subject the queue does not hold is refused the way move already refuses it.
+
+    The decision lookup must not turn a missing entry into a success or into a
+    different refusal: same code, same sentence, artifact byte-identical.
+    """
+    repo = _repo(tmp_path)
+    _commit_record(repo, OTHER_ID, "decided", None)
+    _seed(repo, _entry(1, BASELINE_ID))
+    before = _order_path(repo).read_bytes()
+    proc = _order(repo, "move", "99", "--decision", OTHER_ID, "--now", NOW)
+    assert proc.returncode == 4, f"{proc.returncode}: {proc.stderr}"
+    assert "not in the order" in proc.stderr, proc.stderr
+    assert _order_path(repo).read_bytes() == before
+
+
+def test_a_move_that_changes_no_byte_commits_nothing(tmp_path):
+    """Re-citing the record the entry already holds is a run with nothing to write.
+
+    The no-change shortcut ``confirm`` already obeys, driven by the verb that rewrites
+    a decision: no commit, no --allow-empty commit, HEAD unmoved and the tree clean.
+    """
+    repo = _repo(tmp_path)
+    _seed(repo, _entry(1, BASELINE_ID, STAMP), _entry(2, BASELINE_ID, STAMP))
+    head_before = _git_e2(repo, "rev-parse", "HEAD").stdout.strip()
+    before = _order_path(repo).read_bytes()
+    proc = _order(repo, "move", "1", "--decision", BASELINE_ID, "--now", NOW)
+    assert proc.returncode == 0, proc.stderr
+    assert "unchanged" in proc.stdout and "nothing to commit" in proc.stdout, proc.stdout
+    assert _order_path(repo).read_bytes() == before
+    assert _git_e2(repo, "rev-parse", "HEAD").stdout.strip() == head_before
+    assert _porcelain(repo) == "", _porcelain(repo)
+
+
+def _commit_subject(repo) -> str:
+    """The subject of HEAD's commit, for the runs that owe a legible log line."""
+    return _git_e2(repo, "log", "-1", "--format=%s").stdout.strip()
+
+
+def test_a_decision_only_move_commits_exactly_the_order_path(tmp_path):
+    """The commit of a re-citation carries one path, and a foreign staged file stays
+    staged, uncommitted and unstaged by this run.
+
+    The commit subject is the second half of the assertion: it is the line a reader of
+    ``git log`` works out what the run did from, so it names the verb, the subject and
+    the record the entry now cites, and ends in the digest the writer appends."""
+    repo = _repo(tmp_path)
+    _commit_record(repo, OTHER_ID, "decided", None)
+    _seed(repo, _entry(1, BASELINE_ID), _entry(2, BASELINE_ID))
+    (repo / "README.md").write_text("staged by someone else\n", encoding="utf-8")
+    _git(repo, "add", "README.md")
+    proc = _order(repo, "move", "1", "--decision", OTHER_ID, "--now", NOW)
+    assert proc.returncode == 0, proc.stderr
+    assert _head_paths(repo) == [ORDER_REL], _head_paths(repo)
+    assert _porcelain(repo) == "A  README.md", _porcelain(repo)
+    subject = _commit_subject(repo)
+    assert subject.startswith(f"direction: move 1 to decision {OTHER_ID} [")
+    assert subject.endswith("]"), subject
+    _assert_census_clean(repo, "a decision-only move that committed")
+
+
 def test_move_without_to_is_a_usage_error(tmp_path):
     repo = _repo(tmp_path)
     _seed(repo, _entry(1, BASELINE_ID))
     proc = _order(repo, "move", "1", "--now", NOW)
     assert proc.returncode == 2
     assert "--to" in proc.stderr
+
+
+def test_move_with_to_and_no_decision_restamps_the_moved_entry(tmp_path):
+    """The counter-case to the decision arm: ``--to`` alone keeps the old citation.
+
+    Without this, a move that rewrote the decision on every reorder would look like a
+    passing move. It is the same call with one flag missing, which is what makes the
+    pair a mutation test rather than two happy paths.
+    """
+    repo = _repo(tmp_path)
+    _commit_record(repo, OTHER_ID, "decided", None)
+    _seed(repo, _entry(1, BASELINE_ID, "2026-10-01T00:00:00Z"),
+          _entry(2, OTHER_ID, "2026-10-01T00:00:00Z"))
+    proc = _order(repo, "move", "2", "--to", "1", "--now", NOW)
+    assert proc.returncode == 0, proc.stderr
+    entries = _read(repo)["entries"]
+    assert [e["issue"] for e in entries] == [2, 1], entries
+    assert entries[0]["decision"] == OTHER_ID, entries[0]
+    assert entries[0]["confirmed"] == STAMP, entries[0]
+    _assert_census_clean(repo, "a position-only move")
 
 
 def test_move_of_an_unlisted_issue_refuses_with_four(tmp_path):
@@ -133,6 +319,25 @@ def test_every_run_prints_the_resulting_order_one_line_per_entry(tmp_path):
     # names it, and the line stays the operator's view of what the order rests on.
     assert f"decision={BASELINE_ID}" in proc.stdout, proc.stdout
     assert "confirmed=" in proc.stdout, proc.stdout
+    assert "decision=-" not in proc.stdout, proc.stdout
+
+
+def test_a_decision_move_prints_the_new_decision_for_the_moved_entry(tmp_path):
+    """The printed order is the operator's view of what the queue now rests on, so the
+    re-cited entry prints the record it now cites -- not the one it cited before.
+
+    The column is the only place a run tells the operator which record an entry names,
+    and a move that printed the old id while committing the new one would report the
+    order it read rather than the order it wrote."""
+    repo = _repo(tmp_path)
+    _commit_record(repo, OTHER_ID, "decided", None)
+    _seed(repo, _entry(1, BASELINE_ID), _entry(2, BASELINE_ID))
+    proc = _order(repo, "move", "1", "--decision", OTHER_ID, "--now", NOW)
+    assert proc.returncode == 0, proc.stderr
+    entry_lines = [line for line in proc.stdout.splitlines() if "decision=" in line]
+    assert len(entry_lines) == 2, proc.stdout
+    assert f"decision={OTHER_ID}" in entry_lines[0], entry_lines
+    assert f"decision={BASELINE_ID}" in entry_lines[1], entry_lines
     assert "decision=-" not in proc.stdout, proc.stdout
 
 

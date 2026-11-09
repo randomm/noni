@@ -21,9 +21,16 @@ idea the store has closed is refused without writing anything.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable, NamedTuple
+from typing import Callable
 
-from . import item_reads, itemschema, orderschema, orderstate
+from . import (
+    item_reads,
+    itemschema,
+    order_plan,
+    orderschema,
+    orderstate,
+)
+from .order_plan import Planned
 
 # The rationale's key, read from the artifact's schema so the flag's refusal names the
 # field the censuses name rather than a string this module spells.
@@ -107,20 +114,47 @@ def item_ordering_refusal(repo: Path, item_id: str, report: Callable[..., int],
     return None
 
 
-class Planned(NamedTuple):
-    """The entry ``add`` puts in the list, or the refusal naming why it puts nothing.
+def misplaced_flag(subcommand: str, at: str | None, to: str | None,
+                   decision: str | None,
+                   why: str | None) -> tuple[str, str] | None:
+    """The (headline, hint) refusal for a flag the verb does not own, or None.
 
-    ``entries`` is the list the writer renders -- the artifact's entries with the new
-    one inserted at ``position`` -- and ``verb`` is the word the run prints and commits
-    under (``add 7`` or ``add idea-0001``, the subject the entry names). ``refusal``
-    carries the code the caller returns unchanged and is set only when the first two
-    are empty, because the check that failed has already printed its two lines and
-    chosen between the environment's code and the order's own.
+    The owners, stated once: ``--at`` and ``--why`` belong to ``add``, ``--to`` to
+    ``move``, and ``--decision`` to both -- ``add`` sets the record a new position rests
+    on and ``move`` re-cites the record an entry rests on. Each arm says who does own the
+    flag, because the caller's mistake is a reasonable one and the fix is to name the verb
+    that answers it. A run whose only flag the verb does own is not a hint this writer may
+    quietly drop: the operator typed it, and dropping it loses what they typed.
     """
+    if subcommand != "add" and at is not None:
+        return (f"--at belongs to add, not {subcommand}",
+                f"to place an entry with {subcommand} pass --to N")
+    if subcommand != "move" and to is not None:
+        return (f"--to belongs to move, not {subcommand}",
+                "--to is only how move names a position")
+    if decision is not None and subcommand not in ("add", "move"):
+        return (f"--decision belongs to add, not {subcommand}",
+                "add and move own a decision: add sets the record a new position rests "
+                "on and move re-cites the record an entry rests on, while confirm "
+                "restamps what is there")
+    if why is not None and subcommand != "add":
+        return (f"--why belongs to add, not {subcommand}",
+                "only add records a reason; the other verbs answer to an entry that "
+                "already carries one")
+    return None
 
-    entries: list
-    verb: str
-    refusal: int | None
+
+def unknown_verb(subcommand: str, label: str) -> tuple[str, str]:
+    """The (headline, hint) refusal for a verb this writer does not own.
+
+    The two sentences name the set the writer accepts and give one line of the form to
+    copy, which is the same pair of answers the missing-verb hint gives; both live here
+    beside the verb list so neither can name a set the parser does not accept.
+    """
+    return (f"subcommand {subcommand!r} is not one of "
+            "add, move, remove or confirm",
+            f"{label} --repo REPO add ISSUE --decision ID | "
+            "move ISSUE [--to N] [--decision ID] | remove ISSUE | confirm [ISSUE]")
 
 
 def plan_add(repo: Path, entries: list, issue: int | None, item: str | None,
@@ -200,12 +234,12 @@ def _new_entry(subject: str | int, decision: str, stamp: str,
     write an entry that names both subjects or neither -- the pair the schema refuses.
     ``why`` rides through unchanged: absent is the three-field entry the writer produced
     before the field existed.
+
+    The same builder serves ``move --decision``, which rebuilds the entry it re-cites
+    rather than patching the one it read: two verbs spelling an entry from a subject is
+    two chances to write an entry the schema refuses.
     """
-    if isinstance(subject, str):
-        return orderschema.entry(item=subject, decision=decision, confirmed=stamp,
-                                 why=why)
-    return orderschema.entry(issue=subject, decision=decision, confirmed=stamp,
-                             why=why)
+    return order_plan.entry_for(subject, decision, stamp, why)
 
 
 def _subject(repo: Path, entries: list, issue: int | None, item: str | None,

@@ -8,7 +8,11 @@ exit code and the message stay decide.py's -- this module holds the reading of
 the flags and hands the caller either the pieces of a valid record or the code
 of the refusal it already printed.
 
-The rules themselves: ``--date`` is a real calendar day; one to four
+The rules themselves: ``--date`` is a real calendar day; a ``--slug`` may not
+already begin with a date (the writer prefixes the id with one itself, so a
+prefixed slug becomes a doubled-date record), which is one shape stated once as
+:data:`SLUG_DATE_PREFIX` and shared with :func:`noni._writer.flag_refusals` so the
+two slug validators cannot disagree; one to four
 ``--question`` flags, each ``ID=TEXT`` with distinct ids; the ``--decided-by`` /
 ``--on-behalf-of`` names are non-empty single-line strings, decided by the
 census's own predicate the caller hands in, and ``--on-behalf-of``
@@ -68,6 +72,16 @@ from . import _path_kind, _writer
 # against the calendar on top of the shape. Anchored, and used with fullmatch:
 # '$' alone also matches before a trailing newline.
 DATE_FLAG_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+# A slug may not begin with a date, because the record id is ``<date>-<slug>`` and
+# the writer supplies the date: ``2026-11-08-topic`` would become
+# ``<this run's date>-2026-11-08-topic``. Shape only, and its own pattern rather
+# than ``DATE_FLAG_RE`` or ``parse_date``: that pair belongs to ``--date`` and asks
+# the calendar, and a slug made of the wrong digits is a doubled id whatever the
+# calendar says. Digits, not ``\\d``, so a Unicode digit cannot pose as one. Shared
+# with :func:`noni._writer.flag_refusals`, the other slug validator, so the two
+# entry points refuse the same prefix.
+SLUG_DATE_PREFIX = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}-")
 
 # The refusal this module prints: decide.py's own printer and its usage code,
 # handed in by the caller so a refusal is worded and coded in one place. This
@@ -184,10 +198,10 @@ def build_record_flags(args: RecordFlags, *, fail: Fail, exit_usage: int,
     the record-id shape, which is spelled by the caller's ``id_re`` for the same
     reason.
     """
-    if not slug_re.fullmatch(args.slug):
-        return fail(exit_usage, f"slug {args.slug!r} is not a slug",
-                    "a slug is [a-z0-9-]+: lowercase letters, digits and dashes, no "
-                    "dots, slashes, spaces or uppercase")
+    refusal = refuse_slug(args.slug, fail=fail, exit_usage=exit_usage,
+                          slug_re=slug_re)
+    if refusal is not None:
+        return refusal
     date_part, refused = parse_date(args.date, fail=fail, exit_usage=exit_usage)
     if refused is not None:
         return refused
@@ -236,6 +250,42 @@ def build_record_flags(args: RecordFlags, *, fail: Fail, exit_usage: int,
                         f"--supersedes {args.supersedes!r} is not a record id",
                         "a record id is YYYY-MM-DD-<slug>, e.g. 2026-10-01-steer-order")
     return date_part, built, unanswered
+
+
+def refuse_slug(slug: str, *, fail: Fail, exit_usage: int,
+                slug_re: re.Pattern[str]) -> int | None:
+    """The exit code for a slug this writer may not build an id from, or None.
+
+    The one statement of both slug rules, shared with :func:`noni._writer.flag_refusals`
+    so the writer's second validator refuses what the first refuses: the character
+    rule (the census accepts only this set in a plain path segment) and, on top of
+    it, the date-prefix rule :data:`SLUG_DATE_PREFIX` spells. The character rule goes
+    first, because a slug holding a slash or a space is not a slug whatever it starts
+    with. The prefix refusal names the corrected slug -- the value with its date and
+    the following dash removed -- because that is the value the operator meant, and
+    the hint says why the writer will not take the dated form: it adds the date
+    itself. A slug that is only a date and its trailing dash has an empty remainder,
+    which the first rule refuses as not a slug, so that shape is shown no corrected
+    slug: there is nothing left to show. A bare date carries no trailing dash
+    and stays accepted.
+    """
+    if not slug_re.fullmatch(slug):
+        return fail(exit_usage, f"slug {slug!r} is not a slug",
+                    "a slug is [a-z0-9-]+: lowercase letters, digits and dashes, no "
+                    "dots, slashes, spaces or uppercase")
+    prefixed = SLUG_DATE_PREFIX.match(slug)
+    if prefixed:
+        # The writer prefixes the id with the date itself (ledger_name), so a slug
+        # that begins with a date becomes a record carrying two of them. Refused at
+        # the flag, before the name is built. Shape only: a date the calendar refuses
+        # is refused here too, because the doubled id is the fault either way. The
+        # hint shows the corrected slug, the value with its date prefix removed.
+        return fail(exit_usage,
+                    f"slug {slug!r} already starts with a date: the record id would "
+                    f"carry two",
+                    "the writer adds the date itself, so pass the slug without it, "
+                    f"as --slug {slug[prefixed.end():]}")
+    return None
 
 
 def refuse_name(flag: str, value: str | None, *, fail: Fail,

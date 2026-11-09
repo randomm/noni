@@ -40,7 +40,7 @@ checked when present.
 
 | field | type | rules |
 |---|---|---|
-| `id` | string | `YYYY-MM-DD-<slug>`; unique across the ledger; equals the filename stem. `decide.py` builds it from `--date` and `--slug`, and the slug is held to `[a-z0-9-]+` so the name stays a plain path segment (`ledger-record` reports anything else) |
+| `id` | string | `YYYY-MM-DD-<slug>`; unique across the ledger; equals the filename stem. `decide.py` builds it from `--date` and `--slug`, and the slug is held to `[a-z0-9-]+` so the name stays a plain path segment (`ledger-record` reports anything else). The writer adds the date, so a slug that already starts with one shaped `YYYY-MM-DD-` (`^[0-9]{4}-[0-9]{2}-[0-9]{2}-`, shape only: `2026-11-08-topic` and `2026-13-45-topic` alike) is refused at exit 2 before anything is written, and the refusal shows the slug without its date prefix (a slug that is only a date and its trailing dash has nothing left to show, so it takes the character rule); `topic-2026` and `v2026-11-08` are accepted, and so is a bare `2026-11-08`, which carries no trailing dash |
 | `date` | string | UTC ISO-8601. `decide.py` writes `<--date or today, UTC>T00:00:00Z`, for a supersede as for any other record: the chain, not the date, is what orders the ledger |
 | `asked_by` | string | the agent role or session that asked |
 | `questions` | array | 1-4 question objects (see below) |

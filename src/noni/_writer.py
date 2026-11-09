@@ -23,7 +23,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable
 
-from . import _path_kind, gitwrite
+from . import _decide_flags, _path_kind, gitwrite
 
 
 def allocate_ledger(label: str, repo: Path, ledger: Path) -> tuple[str, str] | None:
@@ -259,8 +259,12 @@ def flag_refusals(fail: Callable[[int, str, str | None], int], exit_usage: int,
 
     The rules, in the order they are refused: the slug is what the census accepts as
     a plain path segment (a basename outside that pattern is a ``10:bad-name`` row),
-    so it goes first because it decides the filename; then the two free-text ids no
-    report can name without characters; then the two attribution names, whose shape
+    so it goes first because it decides the filename, and with it the rule that the
+    slug may not already begin with a date: both slug rules are stated once in
+    :func:`noni._decide_flags.refuse_slug`, which this validator calls, so the two
+    validators cannot disagree; then the two
+    free-text ids no report can name without characters; then the two attribution
+    names, whose shape
     is the census's own predicate handed in as ``line_free`` so the writer refuses
     at the flag what the census would otherwise report at exit 10 after a commit;
     then the marker, which has to be earned by one of the record's questions.
@@ -275,10 +279,16 @@ def flag_refusals(fail: Callable[[int, str, str | None], int], exit_usage: int,
     and ``exit_usage`` are the caller's printer and code, so every
     refusal is worded in one voice.
     """
-    if not slug_re.fullmatch(slug):
-        return fail(exit_usage, f"slug {slug!r} is not a slug",
-                    "a slug is [a-z0-9-]+: lowercase letters, digits and dashes, no "
-                    "dots, slashes, spaces or uppercase")
+    # The two slug rules in one call. This validator guards a second entry point to
+    # the same writer, so it runs the first validator's rules rather than trust the
+    # caller to have run them: either half alone would let a date-prefixed slug reach
+    # :func:`ledger_name` and build a doubled id. The printer, the usage code and the
+    # character pattern come in as arguments, so the refusal is worded and coded in
+    # the caller's voice and the shape stays owned by one module.
+    refused = _decide_flags.refuse_slug(slug, fail=fail, exit_usage=exit_usage,
+                                        slug_re=slug_re)
+    if refused is not None:
+        return refused
     for flag, value, hint in (("--scope", scope,
                                "name the direction area, e.g. --scope 'release ordering'"),
                               ("--asked-by", asked_by,

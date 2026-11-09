@@ -25,13 +25,13 @@ Usage:
 
 Exit codes:
     0  the record was written (and committed unless --no-commit)
-    2  invalid input: an argparse failure, an empty or malformed slug, a
-       malformed --date, --question, --option or --answer, a source id that is
-       not a positive integer, a question outside 1-4 or 2-4 options, an empty
-       --decided-by or --on-behalf-of, --on-behalf-of without --decided-by, a
-       question with one option when --single-option was not given, --single-option
-       when no question of the record has one option, or
-       --supersedes with an unanswered question
+    2  invalid input: an argparse failure, an empty or malformed slug, a slug
+       already starting with a date (the writer adds it), a malformed --date,
+       --question, --option or --answer, a source id that is not a positive
+       integer, a question outside 1-4 or 2-4 options, an empty --decided-by or
+       --on-behalf-of, --on-behalf-of without --decided-by, a question with one
+       option when --single-option was not given, --single-option when no question
+       of the record has one option, or --supersedes with an unanswered question
     3  a git or identity problem: --repo is not a git work tree, git config
        user.name is not set (git config user.name <name>), a git probe timed
        out or failed for a reason that answered nothing, or a noni/ or

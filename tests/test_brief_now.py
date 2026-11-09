@@ -134,6 +134,8 @@ def test_brief_a_non_utc_offset_is_accepted_and_normalised(tmp_path: Path) -> No
     ["--repo", "x", "-n"],
     ["--repo", "x", "extra"],
     ["--verbose", "x"],
+    ["--rep", "x"],                          # an abbreviation of the repo flag the brief does not have
+    ["--repo", "x", "--no", NOW],           # an abbreviation of the now flag the brief does not have
 ])
 def test_brief_usage_errors_exit_two_with_no_output(argv: list[str],
                                                     capsys) -> None:

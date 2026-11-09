@@ -170,6 +170,7 @@ def main(argv: list[str] | None = None) -> int:
         prog=labels.BRIEF,
         description="Read-only brief: the standing intent's purpose, the top of the "
                     "order, and the census summary line.",
+        allow_abbrev=False,
     )
     parser.add_argument("--repo", required=True, metavar="DIR",
                         help="the state root whose direction is briefed (no default)")
@@ -291,25 +292,25 @@ def _drop(lines: list[str], owed: int) -> int:
 def _purpose_block(root: Path) -> list[str]:
     """The ``Purpose`` block: the intent's purpose body, clipped to 20 lines.
 
-    One header and the body, plus the ellipsis line when the body was longer than the cap.
-    An absent intent file, one whose sections do not validate and one this run cannot read
-    all print the header and :data:`NOT_READ`. Each printed line is the census's scrub of
-    the operator's own prose: a control byte cannot reach the terminal out of a file the
-    brief did not write, and a host path in a purpose statement prints as ``<path>`` here
+    One header and the body, plus the ellipsis line and the count line when the body ran
+    past the cap. An absent intent file, one whose sections do not validate and one this run
+    cannot read all print the header and :data:`NOT_READ`. Each printed line is the census's
+    scrub of the operator's own prose: a control byte cannot reach the terminal out of a file
+    the brief did not write, and a host path in a purpose statement prints as ``<path>`` here
     exactly as it would in a census row.
     """
     body = brief_intent.purpose_block(root / intentschema.INTENT_REL,
                                       PURPOSE_MAX_LINES)
     if body is None:
         return [PURPOSE_HEADER, NOT_READ]
-    lines, clipped = body
+    lines, cut = body
     kept, withheld = page_lines(lines, TEXT_LIMIT, PAGE_RESERVED)
-    if clipped:
+    if cut > 0:
         # The mark of a body longer than the cap, and the cap's own arithmetic: the lines past
         # the cap are withheld too, so a body of twenty-five at a cap of twenty owes five lines
         # as well as any its shape test refused. The mark itself is not counted -- it says a
         # line went missing rather than accounting for one.
-        withheld += len(lines) - PURPOSE_MAX_LINES
+        withheld += cut
         kept.append(ELLIPSIS)
     return close_block([PURPOSE_HEADER, *kept], withheld)
 

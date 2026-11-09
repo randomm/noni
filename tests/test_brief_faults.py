@@ -111,7 +111,7 @@ def test_brief_order_absent_prints_an_empty_top_block(tmp_path: Path) -> None:
     assert stripped(sections(out), brief_module.ORDER_HEADER) == []
     assert NOT_READ not in out
     assert len(stripped(sections(out), brief_module.PURPOSE_HEADER)) == \
-        brief_module.PURPOSE_MAX_LINES + 1
+        brief_module.PURPOSE_MAX_LINES + 2
 
 
 def test_brief_order_malformed_prints_not_readable(tmp_path: Path) -> None:

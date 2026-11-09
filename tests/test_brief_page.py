@@ -121,7 +121,7 @@ def test_brief_one_block_per_header_separated_by_one_blank_line(tmp_path: Path) 
     # body would add a second index, which is how this case tells a separator from content that
     # happens to be empty.
     assert [index for index, line in enumerate(out.splitlines())
-            if not line.strip()] == [22]
+            if not line.strip()] == [23]
     assert out.endswith("\n")
     assert not out.endswith("\n\n")
 
@@ -152,7 +152,7 @@ def test_brief_a_purpose_line_shaped_like_a_header_is_dropped(tmp_path: Path) ->
     # One statement refused. The ellipsis is the mark of the clip at the twenty-line cap and is
     # not itself one of the withheld lines the count speaks of.
     assert body[-2] == brief_module.ELLIPSIS
-    assert body[-1] == f"{DROPPED_PREFIX}1 line(s)"
+    assert body[-1] == f"{DROPPED_PREFIX}6 line(s)"
 
 
 def test_brief_a_citation_that_is_not_an_id_prints_the_citation_it_was_given(tmp_path: Path) -> None:

@@ -46,12 +46,30 @@ def test_brief_purpose_is_clipped_at_the_cap_with_an_ellipsis(tmp_path: Path) ->
     code, out, _ = run_brief(plant_brief_tree(tmp_path), "--now", NOW)
     assert code == 0
     body = stripped(sections(out), brief_module.PURPOSE_HEADER)
-    assert len(body) == brief_module.PURPOSE_MAX_LINES + 1
-    assert body[-1] == brief_module.ELLIPSIS
+    assert len(body) == brief_module.PURPOSE_MAX_LINES + 2
+    assert body[-2] == brief_module.ELLIPSIS
     assert body[0] == PURPOSE_LINES[0]
-    assert body[-2] == PURPOSE_LINES[brief_module.PURPOSE_MAX_LINES - 1]
+    assert body[-3] == PURPOSE_LINES[brief_module.PURPOSE_MAX_LINES - 1]
     # The head is kept and the tail is what goes: line 21 of the fixture's 25 is not printed.
     assert PURPOSE_LINES[brief_module.PURPOSE_MAX_LINES] not in body
+
+
+def test_brief_a_clipped_purpose_block_closes_with_the_lines_it_cut(tmp_path: Path) -> None:
+    """A clipped Purpose owes the lines it cut, and the block closes with that count.
+
+    The fixture's purpose body is twenty-five lines and the cap twenty, so the clip takes
+    five off the top of the body and the block owes them: the head stays, the ellipsis marks
+    the cut, and the count line names the five the reader does not see. The answer has to be
+    the number of lines cut and not only a yes-or-no about whether a clip happened, because
+    the number is what the screen and the sentence have to agree on.
+    """
+    root = plant_brief_tree(tmp_path)
+    out = run_brief(root, "--now", NOW)[1]
+    purpose = stripped(sections(out), brief_module.PURPOSE_HEADER)
+    dropped = [line for line in purpose if line.startswith(DROPPED_PREFIX)]
+    assert dropped == [f"{DROPPED_PREFIX}5 line(s)"]
+    assert len(purpose) == brief_module.PURPOSE_MAX_LINES + 2
+    assert purpose[-2] == brief_module.ELLIPSIS
 
 
 def test_brief_a_purpose_of_exactly_the_cap_prints_no_ellipsis(tmp_path: Path) -> None:
@@ -122,10 +140,10 @@ def test_brief_the_page_never_exceeds_the_cap(tmp_path: Path) -> None:
             .replace(CREATED_NEWEST, "2026-12-31T09:00:00Z"), encoding="utf-8")
     code, out, _ = run_brief(root, "--now", NOW)
     assert code == 0
-    expected = (2 + brief_module.PURPOSE_MAX_LINES + 1 + brief_module.TOP_ENTRIES
+    expected = (2 + brief_module.PURPOSE_MAX_LINES + 2 + brief_module.TOP_ENTRIES
                 + 1 + 1)
     assert len(out.splitlines()) == expected <= brief_module.BRIEF_MAX_LINES
-    assert DROPPED_PREFIX not in out
+    assert DROPPED_PREFIX in out
 
 
 def test_brief_the_budget_drops_order_entries_and_not_the_purpose(tmp_path: Path) -> None:
@@ -139,7 +157,7 @@ def test_brief_the_budget_drops_order_entries_and_not_the_purpose(tmp_path: Path
     root = plant_brief_tree(tmp_path)
     out = page_owed_lines(root, 3)
     assert len(rows(out, brief_module.ORDER_HEADER)) == TOP - 3
-    assert len(stripped(sections(out), brief_module.PURPOSE_HEADER)) == PURPOSE_MAX + 1
+    assert len(stripped(sections(out), brief_module.PURPOSE_HEADER)) == PURPOSE_MAX + 2
     assert dropped_of(out) == 3
 
 
@@ -160,7 +178,7 @@ def test_brief_a_dropped_block_takes_its_separator_with_it(tmp_path: Path) -> No
     out = page_owed_lines(root, TOP)
     assert rows(out, brief_module.ORDER_HEADER) == []
     # The purpose block pays nothing: its header, its twenty lines and the ellipsis all print.
-    assert len(stripped(sections(out), brief_module.PURPOSE_HEADER)) == PURPOSE_MAX + 1
+    assert len(stripped(sections(out), brief_module.PURPOSE_HEADER)) == PURPOSE_MAX + 2
     assert dropped_of(out) == TOP + 1
     # The verdict survives the deepest cut the content caps leave reachable.
     assert out.splitlines()[-1].startswith("summary:")

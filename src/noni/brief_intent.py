@@ -31,30 +31,30 @@ from .intentschema_headings import heading_rows
 PURPOSE_SECTION = intentschema.REQUIRED_SECTIONS[0]
 
 
-def purpose_block(path: Path, limit: int) -> tuple[list[str], bool] | None:
-    """The ``## Purpose`` body of ``path`` clipped to ``limit`` lines, or None.
+def purpose_block(path: Path, limit: int) -> tuple[list[str], int] | None:
+    """The ``## Purpose`` body of ``path`` clipped to ``limit`` lines, and the cut, or None.
 
     The clip happens here rather than at the call site so the ellipsis question is
     answered by the one function that can see both the body and the cap: an ellipsis is
     owed when the block the caller asked for is not the whole body, and a caller holding
     only a list it truncated cannot tell that from a body that was always that long.
     The two halves travel together because they are one fact -- these are the lines, and
-    this is whether a line was dropped -- and a caller that handled only one of them
-    would print a clipped body with no mark that it was clipped.
+    how many of the body's lines the cap took -- and a caller that handled only one of
+    them would print a clipped body with no mark that it was clipped.
 
     ``None`` is the answer for every state where there is no body to print (see this
     module's docstring for the list); a body empty after its blank lines are stripped is
-    ``([], False)``, which is a purpose of one line, not a fault.
+    ``([], 0)``, which is a purpose of one line, not a fault.
     """
     body = purpose_body(path)
     if body is None:
         return None
     # The two halves travel together because they are one fact. A caller holding a list it
     # truncated cannot tell a body of exactly ``limit`` lines from one of ``limit`` + 1 whose
-    # tail went missing, and the ellipsis is owed only by the second. The flag is computed from
+    # tail went missing, and the ellipsis is owed only by the second. The cut is computed from
     # the whole body, which is the only place the difference still exists, so a body of exactly
-    # the cap is not a clipped body and prints no mark.
-    return body[:limit], len(body) > limit
+    # the cap is not a clipped body and owes nothing.
+    return body[:limit], max(0, len(body) - limit)
 
 
 def purpose_body(path: Path) -> list[str] | None:

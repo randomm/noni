@@ -177,7 +177,7 @@ issue, then the flags that qualify it. `order.py --help` prints the same order.
 ```
 scripts/order.py --repo REPO add ISSUE --decision ID [--why REASON] [--at N] [--now ISO-8601] [--no-commit]
 scripts/order.py --repo REPO add --item ID --decision ID [--why REASON] [--at N] [--now ISO-8601] [--no-commit]
-scripts/order.py --repo REPO move ISSUE --to N [--now ISO-8601] [--no-commit]
+scripts/order.py --repo REPO move ISSUE [--to N] [--decision ID] [--now ISO-8601] [--no-commit]
 scripts/order.py --repo REPO remove ISSUE [--now ISO-8601] [--no-commit]
 scripts/order.py --repo REPO confirm [ISSUE] [--now ISO-8601] [--no-commit]
 ```
@@ -191,7 +191,13 @@ it names must be a file under `noni/decisions/` that is not superseded. `--at N`
 inserts at the 1-based position `N` of the list this run produces (the new
 length), and appends at the end when omitted. `move` requires `--to N` and
 restamps the moved entry, because a reorder is the operator confirming it again.
-`confirm` with an issue restamps that entry; without one it restamps every
+`move` also accepts `--decision ID`, which replaces the entry's citation with that
+record: an entry re-ranked under a new decision keeps its position and takes the id of
+the record that explains it, resolved by the same live-record rule as `add --decision`
+(exit 3 for an unreadable ledger, exit 4 for a record that is missing or superseded).
+Without `--to` the position is unchanged, and `confirmed` is still restamped, because
+re-citing a position is the operator answering for it. `confirm` with an issue
+restamps that entry; without one it restamps every
 entry, which is how "the whole queue still stands" is said. `remove` is the only
 verb that shortens the list.
 
@@ -199,7 +205,7 @@ verb that shortens the list.
 what makes a run -- and the census run that judges its staleness -- reproducible
 from the command line alone. A `--now` with no UTC offset is refused.
 
-`--why` belongs to `add` alone: `add --why REASON` records the reason for taking a position, and `move`, `remove` and `confirm` answer to an entry that already exists, so a run that hands one of them a reason is refused at the flag (exit 2) rather than dropping what the operator typed. The value is the ledger's one-line rule at the shared 280-character rationale bound: a blank, a padded, a multi-line or an over-long reason is refused the same way, on the same code, and nothing is written for a refusal. The number has one owner (`itemschema.WHY_MAX`), shared with a decision record's `why` and an item's reason, so a reason that fits in one fits everywhere.
+`--why` belongs to `add` alone: `add --why REASON` records the reason for taking a position, and `move`, `remove` and `confirm` answer to an entry that already exists, so a run that hands one of them a reason is refused at the flag (exit 2) rather than dropping what the operator typed. The value is the ledger's one-line rule at the shared 280-character rationale bound: a blank, a padded, a multi-line or an over-long reason is refused the same way, on the same code, and nothing is written for a refusal. The number has one owner (`itemschema.WHY_MAX`), shared with a decision record's `why` and an item's reason, so a reason that fits in one fits everywhere. `--decision` belongs to `add` and `move`: `remove` and `confirm` own nothing of it, and a run that hands one a citation is refused on the same code.
 
 `--no-commit` writes through the same validation chain and stops before git: no
 `git add`, no `git commit`, and one line on stdout saying the file is left
@@ -250,9 +256,9 @@ committed here", and the first order is written and committed.
 | code | meaning |
 |---|---|
 | `0` | the order was written (and committed unless `--no-commit`), or no byte of it needed changing |
-| `2` | invalid input: an argparse failure, a subcommand outside `add`/`move`/`remove`/`confirm`, an issue that is not a positive integer, a missing `--decision` on `add`, a `--to`/`--at` that is not a 1-based position of the resulting list, an empty, multi-line or over-long `--why` or a `--why` passed to a verb that is not `add`, a flag passed to the verb that does not own it, a `--now` that is not a valid UTC timestamp, a `--repo` that is not a directory, a `--repo` that is a directory holding no `noni/` at all (refused as not a noni state root: the path is named, the hint names `--repo`, and nothing is created: `move`/`remove`/`confirm` are refused, while `add` is admitted because its first entry creates `noni/direction`), or a `noni/`, `noni/direction/` or `noni/decisions/` that is not a plain path this writer may read or write through (a symlink, a plain file, a socket or a device: every directory from the state root down to it is asked of `lstat` before any read, write or `mkdir`, so nothing is followed and nothing is written, and an absent directory is admitted because the first `add` creates it) |
+| `2` | invalid input: an argparse failure, a subcommand outside `add`/`move`/`remove`/`confirm`, an issue that is not a positive integer, a missing `--decision` on `add`, a `--to`/`--at` that is not a 1-based position of the resulting list, an empty, multi-line or over-long `--why` or a `--why` passed to a verb that is not `add`, a `--decision` passed to `remove` or `confirm`, a flag passed to the verb that does not own it, a `--now` that is not a valid UTC timestamp, a `--repo` that is not a directory, a `--repo` that is a directory holding no `noni/` at all (refused as not a noni state root: the path is named, the hint names `--repo`, and nothing is created: `move`/`remove`/`confirm` are refused, while `add` is admitted because its first entry creates `noni/direction`), or a `noni/`, `noni/direction/` or `noni/decisions/` that is not a plain path this writer may read or write through (a symlink, a plain file, a socket or a device: every directory from the state root down to it is asked of `lstat` before any read, write or `mkdir`, so nothing is followed and nothing is written, and an absent directory is admitted because the first `add` creates it) |
 | `3` | a path this writer needs could not be read or written, or a git call failed or timed out: the order file is not a regular file at its path, a decision record it must read is unreadable, the artifact could not be written, the commit step failed (the file is left written and named, never claimed as committed), or the freshness probe could not answer (a `git show` of the committed bytes that timed out or failed for a reason that told us nothing) |
-| `4` | what the order itself refuses: the issue is already listed (`add`), absent from the order (`move`, `remove`, `confirm`), no file under `noni/decisions/` carries the given `--decision` id, that record is superseded (the hint names its successor), the existing file is not the artifact this writer writes, or the committed order bytes changed since this run read them (`the order changed since it was read; re-run` -- re-run the same command, which re-plans against what the other writer committed). The file at the artifact's path changed instead (`the file changed since it was read; restore it or discard the change`): no re-run settles that one, so restore it (`git checkout HEAD -- noni/direction/order.json`) or discard the change, and re-running alone does not help |
+| `4` | what the order itself refuses: the issue is already listed (`add`), absent from the order (`move`, `remove`, `confirm`), no file under `noni/decisions/` carries the given `--decision` id (`add`, or a `move` that re-cites an entry), that record is superseded (the hint names its successor), the existing file is not the artifact this writer writes, or the committed order bytes changed since this run read them (`the order changed since it was read; re-run` -- re-run the same command, which re-plans against what the other writer committed). The file at the artifact's path changed instead (`the file changed since it was read; restore it or discard the change`): no re-run settles that one, so restore it (`git checkout HEAD -- noni/direction/order.json`) or discard the change, and re-running alone does not help |
 
 `intent.py` publishes the same four codes for its one verb: `2` for an argparse
 failure, a subcommand outside `set`, a missing `--from` or `--decision`, a
@@ -338,7 +344,9 @@ The write itself goes to a temp file in its own directory and moves into place w
   writer's.
 - **A superseded record cannot set a position.** The refusal names the record
   that superseded it and shows the flag to pass. A chain that moved on again is
-  superseded by the newest of its links.
+  superseded by the newest of its links. The rule is the same whether the id
+  arrives on `add --decision` or on `move --decision`: a run that re-cites an entry
+  may not cite a record the ledger has retired.
 - **An unreadable record is exit 3, not exit 4.** "I could not read it" and "it
   is not there" are different answers, and the caller fixes them differently.
 - **A non-regular path is refused, never followed.** A symlink, a directory or a

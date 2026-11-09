@@ -269,6 +269,11 @@ def test_a_flag_passed_to_the_wrong_verb_exits_two(tmp_path):
         ("remove", "1", "--to", "1", "--now", NOW),
         ("confirm", "--at", "1", "--now", NOW),
         ("confirm", "1", "--decision", BASELINE_ID, "--now", NOW),
+        # ``--decision`` belongs to move as well as add since issue #134, so the
+        # two verbs left without it are the two that answer to an entry already
+        # listed: a run that handed one a citation is refused, not quietly ignored.
+        ("remove", "1", "--decision", BASELINE_ID, "--now", NOW),
+        ("confirm", "1", "--decision", BASELINE_ID, "--to", "1", "--now", NOW),
     ]
     for argv in cases:
         proc = _order(repo, *argv)

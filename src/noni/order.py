@@ -26,7 +26,12 @@ byte, and ``add --why REASON`` records the operator's one line of reason for the
 position. It is the same rule a decision record's rationale obeys: one non-blank
 line within the bound ``itemschema.WHY_MAX`` states, refused at the flag (exit 2) and
 reported by both censuses naming the field ``why``. A move or a confirm restamps an
-entry and never drops the reason it carries. A correction of the order
+entry and never drops the reason it carries. ``move`` may also take ``--decision ID``,
+which replaces the moved entry's citation with that record's id under the same
+live-record rule ``add`` obeys, so an entry re-ranked under a new decision keeps its
+position and carries the record that explains it. Without ``--to`` the position is
+unchanged, and ``confirmed`` is still restamped: a run that re-cites a position is the
+operator answering for it. A correction of the order
 is another run of this command, so the file keeps one owner.
 
 An entry may cite a filed idea instead of an issue: ``add --item ID`` writes an
@@ -40,7 +45,7 @@ does not use; both versions are read.
 Usage:
     order.py --repo REPO add ISSUE [--at N] [--decision ID] [--why REASON] [--now ISO-8601] [--no-commit]
     order.py --repo REPO add --item ID [--at N] --decision ID [--why REASON] [--now ISO-8601] [--no-commit]
-    order.py --repo REPO move ISSUE --to N [--now ISO-8601] [--no-commit]
+    order.py --repo REPO move ISSUE [--to N] [--decision ID] [--now ISO-8601] [--no-commit]
     order.py --repo REPO remove ISSUE [--now ISO-8601] [--no-commit]
     order.py --repo REPO confirm [ISSUE] [--now ISO-8601] [--no-commit]
 
@@ -49,8 +54,8 @@ Exit codes:
     2  invalid input: an argparse failure, a subcommand outside add/move/remove/confirm,
        an issue that is not a positive integer, a missing --decision on add, an add that
        names both an issue and --item or neither, an --item that is not an item id, an
-       empty, multi-line or over-long --why or a --why handed to a verb that is not
-       add, an --at or
+       empty, multi-line or over-long --why, a --why handed to a verb that is not
+       add, a --decision handed to remove or confirm, an --at or
        --to that is not a 1-based position of the resulting list, a flag passed to the
        verb that does not own it, --now that is not a valid ISO-8601 timestamp, a
        --repo that is not a directory, or a noni/, noni/direction or noni/decisions
@@ -67,7 +72,8 @@ Exit codes:
        timed out or failed for a reason that told us nothing)
     4  what the order itself refuses: the issue is already listed (add), absent from the
        order (move, remove, confirm), no file under noni/decisions/ carries the given
-       --decision id, the record it finds is superseded (the hint names its successor),
+       --decision id (add, or a move that re-cites an entry), the record it finds is
+       superseded (the hint names its successor),
        no item of that id is filed under noni/items/ or the one it finds is dropped
        (add --item),
        an entry of the existing file whose decision is null, blank or absent (the refusal
@@ -97,8 +103,9 @@ followed by noni/direction/order.json, spelled exactly the same with and without
 --no-commit.
 
 The artifact's shape lives in orderschema.py in the package, the git and
-atomic-write mechanics in order_gitwrite.py, and the reads of that state (the
-artifact, the ledger and its records) in orderstate.py. All three are package
+atomic-write mechanics in order_gitwrite.py, the reads of that state (the
+artifact, the ledger and its records) in orderstate.py, and the usage line and the
+verb parser in order_plan.py, beside the plans it parses to. All four are package
 imports: inside an installed wheel there is no sibling file to load by path, and
 no directory of the package ever goes on ``sys.path``, so no caller can put a
 lookalike ahead of them. This file owns the verbs, the exit codes, the plan and
@@ -107,7 +114,6 @@ the commit.
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import sys
 from pathlib import Path
@@ -151,72 +157,26 @@ VERBS: tuple[str, ...] = ("add", "move", "remove", "confirm")
 # walk live in the guard; see :func:`_refuse_linked_state`.
 _GUARDED_DIRS: tuple[str, ...] = ("noni", orderschema.ORDER_DIR, orderstate.DECISIONS_DIR)
 
-# The usage line, spelled once and handed to argparse as ``usage=``.
-#
-# argparse composes a usage line as ``optionals + positionals``, unconditionally, so
-# with ``--repo`` required and five flags declared before the verbs, ``order.py
-# --help`` rendered ``... [--no-commit] subcommand [issue]`` and buried the one word
-# the caller has to choose. The docstring's ``Usage:`` block and
-# ``skills/direction/SKILL.md`` both spell the verb first, and a help line that
-# contradicts the two texts a reader copies from is the bug (issue #77).
-#
-# A literal is the only public way to put the verb first. A formatter subclass used to
-# derive the line from argparse's private ``_format_usage`` and
-# ``_format_actions_usage``, and 3.14 removed the second: every usage print then died
-# with an ``AttributeError`` (issue #98). A literal keeps the rendering inside
-# argparse, which still prepends ``usage:`` and wraps at ``COLUMNS``.
-#
-# The flag block is the parser's own declaration, in declaration order, with the
-# metavar argparse prints for each, and it is compared against that declaration by
-# ``tests/test_order_writer_usage.py`` and the flag-set parity of
-# ``tests/test_order_writer_docs.py``: a flag added to the parser belongs here too.
-_USAGE = (f"{labels.ORDER} --repo REPO subcommand [issue]"
-          " [--at N] [--to N] [--decision ID] [--item ID] [--why REASON]"
-          " [--now ISO-8601] [--no-commit] [-h]")
-
-# The missing-positional message argparse composes for a required positional, and
-# the line argparse prints above it. argparse turns this refusal into usage-plus-
-# error itself, so the verbs are added to *that* pair rather than to the message
-# text: a subclass that re-raised it would print its own usage instead, and
-# ``first_usage_line`` reads the ``usage:`` line out of the refusal.
-_MISSING_SUBCOMMAND = "the following arguments are required: subcommand"
+# The usage line and the parser of the verb slot live in ``order_plan.py`` (which is
+# where ``add``'s plan already moved for the same size limit): both are decisions about
+# the command line rather than about the order, and the file whose docstring publishes
+# the codes stays the owner of the codes themselves.
+_USAGE = order_plan.USAGE
 
 
-class _VerbedParser(argparse.ArgumentParser):
-    """The parser of a one-verb writer, naming the verbs when the verb is missing.
+class _VerbedParser(order_plan.VerbedParser):
+    """The writer's parser: the verb parser of :mod:`noni.order_plan`, on this code.
 
-    ``order.py --repo R`` with no verb got argparse's own refusal, which names the
-    slot (``subcommand``) and not the four words that fill it: only an *invalid*
-    verb reached the fix line that named them, so the commonest mistake printed the
-    least useful answer (issue #98). This parser keeps argparse's own refusal and
-    adds the verbs to it, so the usage line, the wording and the exit code are
-    unchanged and one more line names the accepted verbs.
-
-    The parser shape is deliberately untouched: ``add_subparsers`` or ``choices=``
-    would name the verbs too, but both move the verb out of the usage line and take the
-    refusal off the path the pinned wording stands for.
+    A subclass rather than the shared class because the exit code and the verb list are
+    this writer's own, and handing them at every call site would be a second place to
+    get them wrong. The tests that run ``--help`` drive the class through ``main``, so
+    the parser the help prints is the parser this writer builds.
     """
 
-    def error(self, message: str):
-        if _MISSING_SUBCOMMAND in message:
-            self.print_usage(sys.stderr)
-            print(f"{self.prog}: {message}", file=sys.stderr)
-            print(f"{self.prog}: fix: choose from: {_missing_verb_hint()}",
-                  file=sys.stderr)
-            raise SystemExit(EXIT_USAGE)
-        super().error(message)
-
-
-def _missing_verb_hint() -> str:
-    """The verb list the missing-subcommand hint prints.
-
-    Joined with the same "or" the unknown-verb refusal uses, so the two refusals of
-    one mistake cannot answer it twice.
-    """
-    *first, last = VERBS
-    if len(first) == 1:
-        return f"{first[0]} or {last}"
-    return f"{', '.join(first)} or {last}"
+    def __init__(self, *args, **kwargs) -> None:
+        kwargs["verbs"] = VERBS
+        kwargs["usage_exit"] = EXIT_USAGE
+        super().__init__(*args, **kwargs)
 
 
 def _digests(data: bytes) -> str:
@@ -267,7 +227,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="position (1-based) to move the issue to")
     parser.add_argument("--decision", default=None, metavar="ID",
                         help="decision record id that set this entry's position "
-                             "(required for add)")
+                             "(required for add; move may take one to re-cite an "
+                             "entry it restamps)")
     parser.add_argument("--item", default=None, metavar="ID",
                         help="the id of a filed item to order instead of an issue "
                              "(add only; an entry naming an item makes the artifact "
@@ -299,9 +260,15 @@ def main(argv: list[str] | None = None) -> int:
     if subcommand != "move" and args.to is not None:
         return _fail(EXIT_USAGE, f"--to belongs to move, not {subcommand}",
                      "--to is only how move names a position")
-    if args.decision is not None and subcommand != "add":
-        return _fail(EXIT_USAGE, f"--decision belongs to add, not {subcommand}",
-                     "only add takes a position's decision; confirm restamps what is there")
+    if args.decision is not None and subcommand not in ("add", "move"):
+        # ``move`` owns the flag too since issue #134: an entry re-ranked under a new
+        # decision keeps its position and takes the new citation, resolved by the same
+        # live-record rule ``add`` obeys. ``remove`` and ``confirm`` still own nothing of
+        # it: one drops the entry and the other restamps what is there, so neither can
+        # answer for a citation the operator handed it.
+        return _fail(EXIT_USAGE, f"--decision belongs to add and move, not {subcommand}",
+                     "only add and move set a position's decision; confirm restamps "
+                     "what is there")
     if args.why is not None and subcommand != "add":
         # A reason belongs to the moment a position is taken. A verb that quietly
         # dropped one would lose what the operator typed, so the run is refused and
@@ -411,7 +378,8 @@ def main(argv: list[str] | None = None) -> int:
     elif subcommand == "move":
         assert subject is not None
         planned = order_plan.plan_move(entries, subject, args.to, stamp, _fail,
-                                       EXIT_USAGE, EXIT_REFUSAL)
+                                      EXIT_USAGE, EXIT_REFUSAL, repo=repo,
+                                      decision=args.decision, exit_io=EXIT_IO)
     elif subcommand == "remove":
         assert subject is not None
         planned = order_plan.plan_remove(entries, subject, _fail, EXIT_REFUSAL)

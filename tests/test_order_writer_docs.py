@@ -106,6 +106,34 @@ def test_both_usage_texts_put_the_verb_before_the_flags():
             f"{doc_line!r} vs {page_line!r}")
 
 
+def test_the_move_line_of_both_documents_carries_the_decision_flag():
+    """``move`` owns ``--decision`` (issue #134) and both usage texts say so.
+
+    The flag-set parity test above cannot catch this on its own: ``--decision`` is
+    already in the union of the five lines because ``add`` carries it, so a page that
+    never put it on the ``move`` line would still pass a set comparison. This reads the
+    one line of each document that carries the verb ``move`` and requires the flag to
+    sit there, in both, which is what the operator copying a line actually gets.
+    """
+    def move_line(lines: list[str]) -> str:
+        found = [line for line in lines
+                 if line.split()[line.split().index("REPO") + 1] == "move"]
+        assert len(found) == 1, f"expected one move line, got {found}"
+        return found[0]
+
+    doc = move_line(docstring_verb_lines())
+    page = move_line(skill_md_verb_lines())
+    for line, where in ((doc, "the docstring"), (page, "SKILL.md")):
+        assert "--decision ID" in line, f"{where} move line omits --decision: {line!r}"
+        assert "--to N" in line, f"{where} move line omits --to: {line!r}"
+    # The prose that says which verb owns the flag agrees with the line above it.
+    text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    assert "`move` also accepts `--decision ID`" in text, \
+        "SKILL.md does not say move accepts --decision"
+    assert "`--decision` belongs to `add` and `move`" in text, \
+        "SKILL.md does not say which verbs own --decision"
+
+
 def test_docstring_names_the_refusals_the_code_performs():
     """The table is what a caller predicts a run's exit code from, so each
     refusal the code actually performs is named in it."""

@@ -13,7 +13,10 @@ from order_fixtures import (
     ORDER_REL,
     SEED_STAMP,
     STAMP,
+    SUPERSEDING_ID,
     _assert_census_clean,
+    _canonical,
+    _commit_record,
     _entry,
     _head_paths,
     _issues,
@@ -26,6 +29,7 @@ from order_fixtures import (
     _repo,
     _seed,
     _spied_git,
+    _supersede_baseline,
 )
 from order_race_fixtures import REFUSAL, RIVAL_STAMP
 from order_rival_commit import _rival_commit
@@ -44,6 +48,179 @@ def test_move_replaces_the_entry_and_restamps_it(tmp_path):
     assert entries[0]["decision"] == BASELINE_ID, entries[0]
     assert entries[1]["confirmed"] == "2026-10-01T00:00:00Z", entries[1]
     _assert_census_clean(repo, "move")
+
+
+# --- move --decision: a reorder under a new decision --------------------------
+
+# A second live record, so a move has a decision to move *to* that is not the one
+# the seeded entry already carries. The fixture's baseline is committed and decided;
+# ``_commit_record`` gives the same shape under a second id.
+ALT_ID = "2026-10-15-repriority"
+
+
+def test_a_decision_only_move_keeps_every_position(tmp_path):
+    """``move N --decision ID`` with no ``--to`` changes one field and nothing else.
+
+    The case the pilot asked for: the reason for a position changed, so the entry
+    keeps its place in the queue and takes the new citation. Every other entry keeps
+    its position and its own stamp, and the reason one entry carries stays with that
+    entry (``why`` belongs to ``add`` alone, so it is asserted on the entry that owns it).
+    """
+    repo = _repo(tmp_path)
+    _commit_record(repo, ALT_ID, "decided", None)
+    _seed(repo, {**_entry(1, BASELINE_ID, "2026-10-01T00:00:00Z"), "why": "first"},
+          _entry(2, BASELINE_ID, "2026-10-01T00:00:00Z"),
+          _entry(3, BASELINE_ID, "2026-10-01T00:00:00Z"))
+    proc = _order(repo, "move", "2", "--decision", ALT_ID, "--now", NOW)
+    assert proc.returncode == 0, proc.stderr
+    entries = _read(repo)["entries"]
+    assert [e["issue"] for e in entries] == [1, 2, 3], entries
+    assert entries[1]["decision"] == ALT_ID, entries[1]
+    assert entries[1]["confirmed"] == STAMP, entries[1]
+    assert "why" not in entries[1], entries[1]
+    assert entries[0]["why"] == "first", entries[0]
+    assert entries[0]["decision"] == BASELINE_ID and entries[2]["decision"] == BASELINE_ID
+    assert entries[0]["confirmed"] == "2026-10-01T00:00:00Z"
+    assert entries[2]["confirmed"] == "2026-10-01T00:00:00Z"
+    # The committed bytes are the canonical render, not a patched copy of the old file.
+    assert _order_path(repo).read_text(encoding="utf-8") == _canonical(entries)
+    assert list(entries[0]) == ["issue", "decision", "confirmed", "why"], entries[0]
+    _assert_census_clean(repo, "a decision-only move")
+
+
+def test_a_decision_move_with_to_changes_both(tmp_path):
+    """``move N --decision ID --to P`` is one run that does both, and restamps once."""
+    repo = _repo(tmp_path)
+    _commit_record(repo, ALT_ID, "decided", None)
+    _seed(repo, {**_entry(1, BASELINE_ID, "2026-10-01T00:00:00Z"), "why": "first"},
+          {**_entry(2, BASELINE_ID, "2026-10-01T00:00:00Z"), "why": "second"},
+          _entry(3, BASELINE_ID, "2026-10-01T00:00:00Z"))
+    proc = _order(repo, "move", "3", "--decision", ALT_ID, "--to", "1", "--now", NOW)
+    assert proc.returncode == 0, proc.stderr
+    entries = _read(repo)["entries"]
+    assert [e["issue"] for e in entries] == [3, 1, 2], entries
+    assert entries[0]["decision"] == ALT_ID, entries[0]
+    assert entries[0]["confirmed"] == STAMP, entries[0]
+    assert entries[1]["confirmed"] == "2026-10-01T00:00:00Z", entries[1]
+    # The entry that carried a reason keeps it and stays in the documented key order.
+    assert list(entries[1]) == ["issue", "decision", "confirmed", "why"], entries[1]
+    assert entries[1]["why"] == "first", entries[1]
+    _assert_census_clean(repo, "a move that changed position and decision")
+
+
+def test_a_move_refuses_a_superseded_decision_and_names_its_successor(tmp_path):
+    """The citation rule is ``add``'s rule: exit 4, and the hint names the successor.
+
+    The contrast that makes the test worth having: with the chain moved past it, the
+    same command succeeds when it names the record that replaced the baseline, so the
+    refusal is about the citation and not about the verb.
+    """
+    repo = _repo(tmp_path)
+    _seed(repo, _entry(1, BASELINE_ID, "2026-10-01T00:00:00Z"),
+          _entry(2, SUPERSEDING_ID, "2026-10-01T00:00:00Z"))
+    _supersede_baseline(repo)
+    before = _order_path(repo).read_bytes()
+    proc = _order(repo, "move", "2", "--decision", BASELINE_ID, "--now", NOW)
+    assert proc.returncode == 4, proc.stderr
+    assert SUPERSEDING_ID in proc.stderr, proc.stderr
+    assert f"--decision {SUPERSEDING_ID}" in proc.stderr, proc.stderr
+    assert _order_path(repo).read_bytes() == before
+    assert _porcelain(repo, ORDER_REL) == ""
+    assert _order(repo, "move", "2", "--decision", SUPERSEDING_ID,
+                  "--now", NOW).returncode == 0
+
+
+def test_a_move_refuses_a_decision_that_matches_no_record(tmp_path):
+    repo = _repo(tmp_path)
+    _seed(repo, _entry(1, BASELINE_ID, "2026-10-01T00:00:00Z"))
+    before = _order_path(repo).read_bytes()
+    proc = _order(repo, "move", "1", "--decision", "2026-10-09-ghost", "--now", NOW)
+    assert proc.returncode == 4, proc.stderr
+    assert "matches no record" in proc.stderr or "is in the ledger" in proc.stderr, \
+        proc.stderr
+    assert _order_path(repo).read_bytes() == before
+
+
+def test_a_move_refuses_an_unreadable_record_with_three(tmp_path):
+    """"I could not read it" is exit 3 and not exit 4, for move as it is for add.
+
+    The environment's code and the order's code answer two different questions, and a
+    move that collapsed an unreadable ledger into "no record carries that id" would
+    send the operator to the ledger when the tree is what is wrong.
+    """
+    repo = _repo(tmp_path)
+    _seed(repo, _entry(1, BASELINE_ID, "2026-10-01T00:00:00Z"))
+    _commit_record(repo, ALT_ID, "decided", None)
+    record = repo / "noni" / "decisions" / f"{ALT_ID}.json"
+    record.unlink()
+    record.mkdir()
+    before = _order_path(repo).read_bytes()
+    proc = _order(repo, "move", "1", "--decision", ALT_ID, "--now", NOW)
+    assert proc.returncode == 3, proc.stderr
+    assert "not readable" in proc.stderr, proc.stderr
+    assert _order_path(repo).read_bytes() == before
+
+
+def test_a_move_refuses_an_absent_entry_before_reading_the_decision(tmp_path):
+    """The entry question is asked first, and the ledger is never opened for it.
+
+    The order of the refusals is what a caller acts on: an entry nobody listed is the
+    order's own problem and is fixed by ``add``, while a record the ledger does not hold
+    is fixed by naming another one. An empty ledger cannot tell those apart, because both
+    answer exit 4, so the probe is a ledger whose records cannot be read: the citation
+    question then answers exit 3, the environment's code for "I could not read it", so an
+    exit 4 naming the order can only have come from the entry refusal that ran ahead of
+    the lookup.
+    """
+    repo = _repo(tmp_path)
+    _seed(repo, _entry(1, BASELINE_ID))
+    _commit_record(repo, ALT_ID, "decided", None)
+    record = repo / "noni" / "decisions" / f"{ALT_ID}.json"
+    record.unlink()
+    record.mkdir()
+    before = _order_path(repo).read_bytes()
+    reached = _order(repo, "move", "1", "--decision", ALT_ID, "--now", NOW)
+    assert reached.returncode == 3, reached.stderr
+    assert "not readable" in reached.stderr, reached.stderr
+
+    proc = _order(repo, "move", "99", "--decision", ALT_ID, "--now", NOW)
+    assert proc.returncode == 4, proc.stderr
+    assert "is not in the order" in proc.stderr, proc.stderr
+    assert "readable" not in proc.stderr, proc.stderr
+    assert _order_path(repo).read_bytes() == before
+
+
+def test_a_move_that_changes_no_byte_commits_nothing(tmp_path):
+    """A run whose planned bytes are the file's bytes commits nothing.
+
+    The no-change shortcut already had a confirm test; this is the same rule reached
+    through ``--decision``: the entry already cites the record the run was handed, so
+    the only thing left to do is restamp a stamp the file already holds."""
+    repo = _repo(tmp_path)
+    _seed(repo, _entry(1, BASELINE_ID, STAMP))
+    head_before = _git_e2(repo, "rev-parse", "HEAD").stdout.strip()
+    before = _order_path(repo).read_bytes()
+    proc = _order(repo, "move", "1", "--decision", BASELINE_ID, "--now", NOW)
+    assert proc.returncode == 0, proc.stderr
+    assert "unchanged" in proc.stdout and "nothing to commit" in proc.stdout
+    assert _order_path(repo).read_bytes() == before
+    assert _git_e2(repo, "rev-parse", "HEAD").stdout.strip() == head_before
+    assert _porcelain(repo) == ""
+
+
+def test_a_decision_only_move_commits_exactly_the_order_path(tmp_path):
+    """One commit, one path, a clean tree: the run that changed only a citation is a
+    run over the artifact and nothing else."""
+    repo = _repo(tmp_path)
+    _commit_record(repo, ALT_ID, "decided", None)
+    _seed(repo, _entry(1, BASELINE_ID, "2026-10-01T00:00:00Z"))
+    proc = _order(repo, "move", "1", "--decision", ALT_ID, "--now", NOW)
+    assert proc.returncode == 0, proc.stderr
+    assert _head_paths(repo) == [ORDER_REL], _head_paths(repo)
+    assert _porcelain(repo) == ""
+    assert f"decision={ALT_ID}" in proc.stdout, proc.stdout
+    subject = _git_e2(repo, "log", "-1", "--format=%s").stdout.strip()
+    assert subject.startswith("direction: move 1 "), subject
 
 
 def test_move_without_to_is_a_usage_error(tmp_path):

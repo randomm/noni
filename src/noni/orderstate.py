@@ -151,8 +151,27 @@ def render(body: dict) -> bytes | RenderRefused:
 
 
 def body_of(value: dict) -> dict:
-    """The {schema, entries} mapping a parsed artifact holds, in canonical key order."""
+    """The {schema, entries} mapping a parsed artifact holds, in canonical key order.
+
+    The version travels with the body: the canonical comparison renders this back
+    through the version the file states, so a ``/2`` artifact is compared against
+    ``/2`` bytes and a ``/1`` one against ``/1``. Dropping the key here would make
+    every ``/2`` file a refusal, because the renderer would answer for the other
+    version.
+    """
     return {"schema": value["schema"], "entries": value["entries"]}
+
+
+def _artifact_hint(why: str) -> str:
+    """The 'repair the artifact' hint, naming the versions a repair may use.
+
+    Both versions are named because both are readable: telling the operator to
+    repair a file to ``noni.order/1`` when the file is a well-formed ``/2`` would
+    send them to change a field that is not the defect.
+    """
+    return (f"repair the file {why} (it must hold "
+            + " or ".join(repr(name) for name in orderschema.ORDER_SCHEMAS)
+            + ") or remove it and rebuild the order with order.py add")
 
 
 def read_order(path: Path) -> OrderOk | OrderRefused | OrderFaulted:
@@ -202,15 +221,12 @@ def read_order(path: Path) -> OrderOk | OrderRefused | OrderFaulted:
         # from the file reaches the operator.
         return OrderRefused(f"{orderschema.ORDER_REL} is not valid JSON this writer can "
                             "extend",
-                            f"repair the file (it must hold {orderschema.ORDER_SCHEMA}) "
-                            f"or remove it and rebuild the order with order.py add")
+                            _artifact_hint(""))
     found = orderschema.problems(value)
     if found:
         return OrderRefused(f"{orderschema.ORDER_REL} is not an order this writer writes: "
                             + "; ".join(found),
-                            f"repair the file to the documented shape "
-                            f"({orderschema.ORDER_SCHEMA}) or remove it and rebuild the "
-                            f"order with order.py add")
+                            _artifact_hint("to the documented shape"))
     # Render the parsed value and compare bytes: a file this writer did not
     # produce is refused rather than reformatted. A renderer that cannot render
     # its own validated output is the writer's own bug, not a property of the
@@ -437,14 +453,33 @@ def parse_index(raw: str, flag: str, count: int) -> tuple[int, tuple[str, str] |
 
 
 def print_order(entries: list[dict], label: str) -> None:
-    """The resulting order: one line per entry, position, issue, decision, confirmed.
+    """The resulting order: one line per entry, position, subject, decision, confirmed.
 
     ``label`` is the writer's program name (``noni.labels.ORDER``, passed in by
     ``order.py``), which the line opens: this module has no opinion on which
     command printed the order it just read.
+
+    The subject is the issue (``#7``) or, for an entry that cites an item instead,
+    the item id on its own (``idea-0001``): the ``#`` belongs to a tracker issue and
+    an item has none, and printing ``#None`` for the entry the operator most needs
+    to recognise would be worse than printing what it is. The columns stay in one
+    position either way, so a reader still cuts the line by field.
     """
     print(f"{label}: {orderschema.ORDER_REL} ({len(entries)} entr"
           f"{'y' if len(entries) == 1 else 'ies'})")
     for index, entry in enumerate(entries, 1):
-        print(f"{index:>{orderschema.POSITION_WIDTH}}. #{entry['issue']} "
+        print(f"{index:>{orderschema.POSITION_WIDTH}}. {_subject_of(entry)} "
               f"decision={entry['decision'] or '-'} confirmed={entry['confirmed']}")
+
+
+def _subject_of(entry: dict) -> str:
+    """What one printed line calls an entry: its issue, or the item it cites.
+
+    One rule for both writers of this line, so the print path and a refusal that
+    names an entry cannot spell the same subject two ways.
+    """
+    issue = orderschema.entry_issue(entry)
+    if issue is not None:
+        return f"#{issue}"
+    cited = orderschema.entry_item(entry)
+    return cited if cited is not None else "(unnamed entry)"

@@ -12,6 +12,12 @@ ledger.
 The census's strict reader is handed in at the call, as it is everywhere the census reads
 a committed file: what this arbiter can read is exactly what the ledger's writer can
 write, and a second copy of the reader's refusals is never born here.
+
+One rule of this class reads the queue rather than the ledger: an entry of
+``noni.order/2`` whose ``item`` names no file under the store. It sits here because it is
+the same defect as an unresolvable ``decision`` -- a reference that resolves to nothing --
+seen from the artifact that holds it, and one class reporting both is what lets an
+operator fix the reference however it was written (:func:`_dangling_order_items`).
 """
 
 from __future__ import annotations
@@ -24,7 +30,18 @@ from .census_items_names import (
     LEDGER_REL,
     RECORD_STATUSES,
     STATUS_SUPERSEDED,
+    STORE_SUBJECT,
 )
+
+# The subject and the artifact of a row about the *order's* side of class 55. A row
+# about one item file is keyed by the item's stem and rooted into the store; a row
+# about an entry of the order is about the order, so it names the order artifact and
+# takes the order's path as its subject, the way the ordering group's whole-artifact
+# rows name ``noni/direction/order.json``. Spelled here rather than imported from
+# ``census_ordering``: this package's groups never import each other, and the shared
+# shape table holds the two spellings to one string.
+ORDER_SUBJECT = "noni/direction/order.json"
+ORDER_ARTIFACT = ORDER_SUBJECT
 
 # One field of this module's own making, kept beside the two words the ledger holds. It
 # says whether the run opened the file and read them, or was handed the answer by a prior
@@ -224,6 +241,102 @@ def _ledger_json_names(ledger: Path, ledger_names) -> list[str]:
     if ledger_names is not None:
         return [name for name in ledger_names if name.endswith(".json")]
     return sorted(path.name for path in ledger.glob("*.json"))
+
+
+def _store_names(store: Path, *, file_kind, read_record, load_json_strict) -> set[str] | None:
+    """The ids the item store names, or ``None`` when this run cannot tell.
+
+    ``None`` is the blindness answer, and it is the only answer a run that could not
+    list ``noni/items/`` may give: a citation checked against a partial listing reports
+    a live idea as a reference to nothing, which is a verdict built out of this run's
+    own inability. A store that is simply not there answers the empty set -- that is a
+    project that filed no idea, which is a fact about the project and not a fault --
+    and an entry citing any id is then dangling.
+
+    ``file_kind`` is the census's classifier, asked of the directory as a directory
+    and of each file as a file; ``read_record`` is the census's open-time-safe reader
+    and the store is listed with ``Path.iterdir``, never ``glob`` (which swallows the
+    ``OSError`` a faulted readdir raises and would hand back the empty set -- the
+    verdict of a project that filed no idea -- for a store nobody could open). Every
+    document is parsed with the strict reader the whole group obeys.
+    """
+    kind, _problem = file_kind(store, "dir")
+    if kind == "absent":
+        return set()
+    if kind != "regular":
+        return None
+    try:
+        names = sorted(path for path in store.iterdir()
+                       if path.suffix == ".json")
+    except OSError:
+        # Any refusal to list a store that is there is blindness: the group may not
+        # answer "no such item" about a directory it could not open. The class object
+        # is named only so the except binds nothing unused.
+        return None
+    for path in names:
+        kind, _why = file_kind(path)
+        if kind != "regular":
+            return None
+        raw, fault = read_record(path)
+        if fault is not None or raw is None:
+            return None
+        try:
+            value = load_json_strict(raw)
+        except (UnicodeDecodeError, ValueError, RecursionError):
+            return None
+        if not isinstance(value, dict):
+            return None
+        if not isinstance(value.get("id"), str):
+            return None
+    return {path.stem for path in names}
+
+
+def _dangling_order_items(store: Path, entries, add, *,
+                          file_kind, read_record, load_json_strict,
+                          clipped) -> None:
+    """``item-reference-unresolved`` for an order entry whose ``item`` names no file.
+
+    The other half of class 55. The item file's ``decision`` is answered by
+    :func:`_check_citations`; this answers the order's side of the same contract -- a
+    citation must name something that exists -- and it belongs to the same class
+    because it is the same defect seen from the queue rather than the store: the
+    artifact holds a reference that resolves to nothing.
+
+    It is emphatically **not** routed through the ordering group's ``--issue-state``
+    cannot-tell arm. That arm answers for tracker issues, and only for issues the map
+    was asked about: a ``/2`` entry naming an item names no issue at all, so the
+    closed check has nothing to be silent about here, and the row is emitted from this
+    module with no severity override at all -- class 55's own severity, which is a
+    fail. A dangling item is not "the census could not tell whether this is work":
+    the store holds no such file, and that is a verdict the run reached by looking.
+    The one cannot-tell this function may emit is about its own reads (an order or a
+    store it could not open), and it is marked as such.
+
+    One entry may cite nothing (an issue entry): its ``item`` is asked with ``.get``,
+    so a ``/1`` file contributes no candidate and the class stays silent on it.
+    """
+    if not entries:
+        return
+    cited = {entry["item"] for entry in entries
+             if isinstance(entry.get("item"), str)}
+    if not cited:
+        return
+    held = _store_names(store, file_kind=file_kind, read_record=read_record,
+                        load_json_strict=load_json_strict)
+    if held is None:
+        # The order says an entry cites an idea and this run could not look in the
+        # store to say whether the idea is there: this run's blindness, a warn that
+        # --strict promotes, never a verdict on the project.
+        add(ITEM_REFERENCE_UNRESOLVED, ORDER_SUBJECT, ORDER_ARTIFACT,
+            clipped(f"cannot-tell: {ORDER_ARTIFACT} cites "
+                    f"{len(cited)} item(s) and the item store could not be read, "
+                    "so whether the citations name a file was not answered"),
+            severity="warn", whole_artifact=True)
+        return
+    for item_id in sorted(cited - held):
+        add(ITEM_REFERENCE_UNRESOLVED, ORDER_SUBJECT, ORDER_ARTIFACT,
+            clipped(f"unresolved: an entry of {ORDER_ARTIFACT} cites item "
+                    f"{item_id}, which no file under {STORE_SUBJECT}/ names"))
 
 
 def _check_citations(bodies, ledger: Path, ledger_names, add, rel_store: str, *,

@@ -73,6 +73,7 @@ for _alias, _pkg_name in (
     ("orderstate", "orderstate"),
     ("item", "item"),
     ("item_reads", "item_reads"),
+    ("item_reads_order", "item_reads_order"),
     ("itemschema", "itemschema"),
     ("item_write", "item_write"),
     ("public_safety", "public_safety"),

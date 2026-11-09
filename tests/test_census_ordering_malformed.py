@@ -26,6 +26,7 @@ from ordering_fixtures import (
     _seed,
     _state,
 )
+from ordering_shapes import CLEAN_SHAPES
 from ordering_shapes import MALFORMED_SHAPES as SHAPES
 
 BASELINE_ID = "2026-10-01-baseline"
@@ -56,11 +57,32 @@ def test_unparseable_bytes_are_a_finding_at_fifteen(tmp_path):
 
 
 def test_a_wrong_schema_is_a_finding(tmp_path):
-    repo = _repo(tmp_path)
+    """A schema neither version owns is a finding; ``noni.order/2`` is not.
+
+    ``/2`` was the wrong-schema case until item entries landed (#123): an entry may
+    now name an idea instead of an issue, and the version that carries it is a
+    version the census reads. The three shapes that remain are ones no writer emits.
+    """
+    for schema in ("noni.order/3", "noni.order/0", "orders/1"):
+        repo = _repo(tmp_path, schema.replace(".", "-").replace("/", "-"))
+        _order(repo, json.dumps({"schema": schema, "entries": []}))
+        code, rows, _out, _err = _run(repo)
+        assert code == 15, f"{schema}: {code} {rows}"
+        assert "noni.order/1" in rows[0]["message"], rows[0]
+
+
+def test_an_empty_order_of_the_item_version_is_clean(tmp_path):
+    """``noni.order/2`` is a version the census reads, not a defect.
+
+    The empty entries list is the state an operator reaches by removing everything;
+    the version marker alone is no finding, and the writer emits ``/2`` only when an
+    entry holds an item, so a ``/2`` file with no entries is one the writer produced
+    earlier and then emptied.
+    """
+    repo = _repo(tmp_path, "v2-empty")
     _order(repo, json.dumps({"schema": "noni.order/2", "entries": []}))
-    code, rows, _out, _err = _run(repo)
-    assert code == 15
-    assert "noni.order/1" in rows[0]["message"], rows[0]
+    code, _rows, _out, _err = _run(repo)
+    assert code == 0, f"a /2 order is read, not faulted: {code} {_rows}"
 
 
 def test_the_malformed_shapes_are_all_reported(tmp_path):
@@ -351,3 +373,34 @@ def test_a_blank_decision_is_malformed_so_the_writer_and_census_agree(tmp_path):
         assert code == 15, f"blank {blank!r}: exit {code} rows={rows} err={err}"
         assert [r["check"] for r in rows] == ["ordering-malformed"], rows
         assert "neither a record id nor null" in rows[0]["message"], rows[0]
+
+
+def test_a_file_the_writer_emits_is_never_the_file_this_class_faults(tmp_path):
+    """The other half of the writer/arbiter agreement, and the half a refusal table misses.
+
+    ``MALFORMED_SHAPES`` proves the two sides agree about what is *wrong*. It says
+    nothing about a shape one side refuses while the other calls clean -- which is the
+    direction that ruins an operator, because a ``/2`` file the census faults and no
+    verb can rewrite has no remedy at all: the writer will not touch it and the census
+    keeps reporting it. The clean table is the shared one
+    (``tests/ordering_shapes.py``), so the ``/2`` entry the writer emits is driven
+    through the arbiter here and cannot drift from it.
+    """
+    for index, (label, body) in enumerate(sorted(CLEAN_SHAPES.items())):
+        repo = _repo(tmp_path, f"clean-{index}")
+        _order(repo, body)
+        code, rows, out, err = _run(repo)
+        assert code == 0, f"{label}: exit {code} rows={rows} err={err}"
+        assert rows == [], f"{label}: {rows}"
+        # The writer's side of the same claim, on bytes it can be shown to have
+        # produced: a shape the arbiter faults and the writer also refuses is a shape
+        # no verb can repair, and the pair is only visible from both sides at once.
+        # (The canonical form is the writer's own contract and is tested there; these
+        # fixtures are spelled by hand, so a refusal naming the form is not drift.)
+        writer = subprocess.run(
+            [sys.executable, str(ORDER), "--repo", str(repo), "confirm", "--now", NOW],
+            capture_output=True, text=True, env=subprocess_env(), timeout=120)
+        assert writer.returncode in (0, 4), writer.returncode
+        assert "canonical form" in writer.stderr or writer.returncode == 0, (
+            f"{label}: the arbiter calls it clean and the writer refuses it for a "
+            f"shape reason: {writer.returncode} {writer.stdout}{writer.stderr}")

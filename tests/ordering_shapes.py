@@ -71,6 +71,21 @@ def _entries(raw_entries: str) -> str:
     return '{"schema": "noni.order/1", "entries": ' + raw_entries + "}"
 
 
+def _entries_v2(raw_entries: str) -> str:
+    """``_entries`` at the item version, for the shapes only ``/2`` can carry.
+
+    The version is the document's own claim about its entries' shape, so a ``/2``
+    shape has to be spelled as a ``/2`` document: an ``item`` inside a ``/1`` file is
+    a different defect (the unknown-field rule) and is tabled separately.
+    """
+    return '{"schema": "noni.order/2", "entries": ' + raw_entries + "}"
+
+
+# The two fields every entry has always carried, spelled once for the ``/2`` shapes so
+# a table row says what differs about the entry rather than repeating what does not.
+_ENTRY_TAIL = '"decision": "2026-10-01-baseline", "confirmed": "2026-10-26T00:00:00Z"'
+
+
 # The whole set both rule sets must agree on. A shape the census must report and
 # the writer must refuse, with the fragment each side's answer must carry.
 MALFORMED_SHAPES: dict[str, tuple[str, str]] = {
@@ -159,7 +174,49 @@ MALFORMED_SHAPES: dict[str, tuple[str, str]] = {
                               '"entries": []}', None),
     "a repeated entries key": ('{"schema": "noni.order/1", "entries": [], '
                                '"entries": []}', None),
+    # --- the ``noni.order/2`` entries, where an entry may cite an item ------------
+    # The whole ``/2`` set is tabled here rather than only in the item suites because
+    # this table is what holds the two rule sets together: a ``/2`` file the writer
+    # emits and the arbiter calls malformed is the drift these rows exist to catch,
+    # and it is exactly the bug a ``/2`` entry that owes *both* subjects produced.
+    "item listed twice": (_entries_v2(
+        '[{"item": "idea-0001", ' + _ENTRY_TAIL + '}, '
+        '{"item": "idea-0001", ' + _ENTRY_TAIL + '}]'),
+        "appears more than once"),
+    "item names both subjects": (_entries_v2(
+        '[{"item": "idea-0001", "issue": 7, ' + _ENTRY_TAIL + '}]'),
+        "exactly one"),
+    "item names neither subject": (_entries_v2(
+        '[{' + _ENTRY_TAIL + '}]'), "exactly one"),
+    "item is not an id": (_entries_v2(
+        '[{"item": "Not An Id", ' + _ENTRY_TAIL + '}]'), "is not an item id"),
+    "item ends in .json": (_entries_v2(
+        '[{"item": "idea-0001.json", ' + _ENTRY_TAIL + '}]'), "is not an item id"),
+    # The field its version never declared: the unknown-field rule, on both sides, and
+    # not the subject rule -- which is what keeps "the writer emits ``/2``" the only
+    # way a ``/2`` artifact ever appears.
+    "item inside a v1 document": (_entries(
+        '[{"item": "idea-0001", ' + _ENTRY_TAIL + '}]'), "unknown field"),
 }
+
+
+def _clean_shapes() -> dict[str, str]:
+    """Documents both rule sets must call clean, spelled as raw JSON text.
+
+    The other half of the agreement: a table of refusals only proves the two sides
+    agree about what is wrong. These are the shapes the writer emits and the arbiter
+    must never call ``ordering-malformed`` -- and the ``/2`` item entry is the shape
+    whose refusal by one side alone would make every queue of ideas a permanent
+    refusal, since no verb can rewrite a file it cannot re-render.
+    """
+    return {
+        "a v2 entry that cites an item": _entries_v2(
+            '[{"item": "idea-0001", ' + _ENTRY_TAIL + '}]'),
+        "a v2 file that mixes an item entry and an issue entry": _entries_v2(
+            '[{"item": "idea-0001", ' + _ENTRY_TAIL + '}, '
+            '{"issue": 7, ' + _ENTRY_TAIL + '}]'),
+        "a v2 file holding nothing": _entries_v2("[]"),
+    }
 
 
 def issue_state_shapes() -> dict[str, tuple[str, str]]:
@@ -247,3 +304,8 @@ def _deep_artifact(confirmed: str) -> str:
         raise TypeError("confirmed must be a timestamp string")
     return ('{"schema": "noni.order/1", "entries": [{"issue": 7, "decision": null, '
             '"confirmed": "' + confirmed + '", "x": ' + _deep() + "}]}")
+
+
+# The table, spelled as a value so a suite reads the set it drives rather than
+# calling a builder and wondering whether it is complete.
+CLEAN_SHAPES = _clean_shapes()

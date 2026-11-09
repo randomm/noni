@@ -52,7 +52,11 @@ from . import itemschema, orderschema
 # already had (shape here, references there). Imported last and after the constants it
 # reads, which is why it sits below the module's own declarations rather than beside
 # the package imports above.
-from .census_items_citations import _check_citations, _field
+from .census_items_citations import (
+    _check_citations,
+    _dangling_order_items,
+    _field,
+)
 from .census_items_names import (
     ITEM_CHECKS,
     ITEM_DROPPED_IN_ORDER,
@@ -227,21 +231,51 @@ def check_items(
         # ``ordering-closed`` rows are added whatever the ledger listing answered,
         # while the citation check is refused when the listing faulted.
         _check_status_and_issue(scan.bodies, None, add, rel_store,
-                                file_kind=file_kind, read_record=read_record,
-                                load_json_strict=load_json_strict, clipped=clipped)
+                                clipped=clipped)
         _check_stale(scan.bodies, now, item_stale_after, add, rel_store)
         return
     _check_citations(scan.bodies, ledger, ledger_names, add, rel_store,
                      read_record=read_record, load_json_strict=load_json_strict,
                      clipped=clipped, records=ledger_records)
-    _check_status_and_issue(scan.bodies, order, add, rel_store,
-                            file_kind=file_kind, read_record=read_record,
-                            load_json_strict=load_json_strict, clipped=clipped)
+    _check_order_reads(scan.bodies, order, add, items, rel_store,
+                       file_kind=file_kind, read_record=read_record,
+                       load_json_strict=load_json_strict, clipped=clipped,
+                       bounded=bounded, readers=readers)
     _check_stale(scan.bodies, now, item_stale_after, add, rel_store)
 
-def _check_status_and_issue(bodies, order: Path | None, add, rel_store: str, *,
-                            file_kind, read_record, load_json_strict,
-                            clipped) -> None:
+
+def _check_order_reads(bodies, order: Path, add, items: Path, rel_store: str, *,
+                       file_kind, read_record, load_json_strict, clipped,
+                       bounded, readers) -> None:
+    """The two classes that answer from the order artifact beside the store.
+
+    One read of ``noni/direction/order.json`` answers both: ``item-dropped-in-order``
+    (53), which asks whether the queue still holds an idea the store has killed, and
+    the order's half of ``item-reference-unresolved`` (55), which asks whether an
+    entry's ``item`` names a file the store holds at all. Both are questions about
+    what the run read, so both are refused together when the read failed -- and the
+    refusal is worded as blindness, never as the clean answer of a queue that cites
+    nothing.
+    """
+    scan = readers.order_scan(order, file_kind=file_kind,
+                              read_record=read_record,
+                              load_json=load_json_strict, bounded=bounded)
+    if scan.blind is not None:
+        # The order is there and this run could not hold its entries. Neither class
+        # may answer from a file it did not read, and the ordering group owns the
+        # only row a malformed order earns (``ordering-malformed``, on the group's
+        # own read of the same path), so this group reports nothing here rather than
+        # inventing a verdict or duplicating a neighbour's finding.
+        return
+    _check_status_and_issue(bodies, list(scan.entries), add, rel_store,
+                            clipped=clipped)
+    _dangling_order_items(items, list(scan.entries), add, file_kind=file_kind,
+                          read_record=read_record,
+                          load_json_strict=load_json_strict, clipped=clipped)
+
+
+def _check_status_and_issue(bodies, entries: list[dict] | None, add,
+                            rel_store: str, *, clipped) -> None:
     """``item-promoted-without-issue`` and ``item-dropped-in-order``.
 
 
@@ -261,11 +295,11 @@ def _check_status_and_issue(bodies, order: Path | None, add, rel_store: str, *,
     - ``item-dropped-in-order`` (53) is the one class that reads the order as well as
       the store, and asks the order-side question the ruling declares here and tests
       against item files only: an order entry that cites an idea the store has
-      dropped. The item entries sub-issue 2 adds to ``noni.order/2`` are what fill
-      this class in; against a ``noni.order/1`` file, whose entries name an issue and
-      a decision and nothing else, no entry can cite an item, so the class is declared,
-      documented and tested (its shape is pinned in
-      ``tests/test_census_items_group.py``) and reports nothing on a /1 order.
+      dropped. ``noni.order/2`` gives an entry its ``item`` field, so a
+      ``noni.order/1`` file -- whose entries name an issue and a decision and nothing
+      else -- contributes no citation and the class reports nothing on it, which is
+      the honest answer about a queue that cites no idea and not a pass. Its shape is
+      pinned in ``tests/test_census_items_group.py``.
 
 
     The order question is asked only when the order can be read at all. An order the
@@ -274,20 +308,14 @@ def _check_status_and_issue(bodies, order: Path | None, add, rel_store: str, *,
     order cites no item" -- the inversion the group's blindness rule exists to prevent.
     """
     # One read of the order answers both of its questions, and the run either holds
-    # that read or asks neither. ``order is None`` is the caller's way of saying a file
-    # of the store itself could not be opened: with the store unreadable this run has
-    # no standing to answer what the order owes it, so the two order questions are
-    # refused and the per-file question (was anything promoted to nothing) is still
-    # answered from the bodies this run did read.
-    held = None if order is None else _order_entries(
-        order, file_kind=file_kind, read_record=read_record,
-        load_json_strict=load_json_strict)
+    # that read or asks neither. ``entries`` is None when a file of the store itself
+    # could not be opened: with the store unreadable this run has no standing to
+    # answer what the order owes it, so the two order questions are refused and the
+    # per-file question (was anything promoted to nothing) is still answered from the
+    # bodies this run did read.
     ordered: set[int] = set()
     cited: set[str] = set()
-    if held is not None:
-        entries, readable = held
-        if not readable:
-            return
+    if entries is not None:
         ordered, cited = _held_issues(entries), _held_item_citations(entries)
     for stem, body in bodies:
         status, issue = _field(body, "status"), _field(body, "issue")
@@ -295,7 +323,7 @@ def _check_status_and_issue(bodies, order: Path | None, add, rel_store: str, *,
             add(ITEM_PROMOTED_WITHOUT_ISSUE, stem, f"{rel_store}/{stem}.json",
                 "promoted without an issue: the item is promoted and names no "
                 "issue, so it was promoted to nothing")
-        elif (status == STATUS_PROMOTED and issue is not None and held is not None
+        elif (status == STATUS_PROMOTED and issue is not None and entries is not None
               and issue not in ordered):
             add(ITEM_PROMOTED_WITHOUT_ISSUE, stem, f"{rel_store}/{stem}.json",
                 clipped(f"promoted without an issue: the item is promoted to "
@@ -308,42 +336,6 @@ def _check_status_and_issue(bodies, order: Path | None, add, rel_store: str, *,
             clipped(f"dropped in the order: an entry of "
                     f"{orderschema.ORDER_REL} cites item {stem}, which the store "
                     "has dropped"))
-
-
-def _order_entries(order: Path, *, file_kind, read_record,
-                   load_json_strict) -> tuple[list[dict], bool]:
-    """The order's entries, and whether this run holds them.
-    One read answers both questions this group asks of the order, which is the point
-    of the single reader: two readers of one path is how a run comes to ask the second
-    question of a file the first refused. ``(entries, True)`` is a read this run holds
-    (an absent artifact reads as an empty list, because a file that is not there
-    carries no entries); ``(anything, False)`` is blindness -- a path this run could
-    not open, or a document that is not an order at all -- and the caller answers
-    nothing from it.
-    The ``issue`` numbers and the ``item`` names are taken from the same entry list the
-    ordering group holds under its own classes, and a malformed entry is skipped rather
-    than fatal: an entry too broken to name an issue is the ordering group's
-    ``ordering-malformed`` row, not this group's, and the rest of the list still says
-    what the order holds.
-    """
-    kind, _problem = file_kind(order)
-    if kind == "absent":
-        return [], True
-    if kind != "regular":
-        return [], False
-    raw, fault = read_record(order)
-    if fault is not None or raw is None:
-        return [], False
-    try:
-        value = load_json_strict(raw)
-    except (UnicodeDecodeError, ValueError, RecursionError):
-        return [], False
-    if not isinstance(value, dict):
-        return [], False
-    entries = value.get("entries")
-    if not isinstance(entries, list):
-        return [], False
-    return [entry for entry in entries if isinstance(entry, dict)], True
 
 
 def _held_issues(entries: list[dict]) -> set[int]:

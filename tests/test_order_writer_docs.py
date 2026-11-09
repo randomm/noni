@@ -25,8 +25,14 @@ from order_doc_readers import (
     _skill_section,
 )
 from order_fixtures import (
+    BASELINE_ID,
     FIXTURE,
+    NOW,
     ORDERING_CHECKS,
+    _entry,
+    _order,
+    _repo,
+    _seed,
 )
 from order_usage_support import (
     VERBS,
@@ -59,6 +65,42 @@ def test_docstring_usage_flags_match_the_parser():
     assert documented == parser, f"Usage block {sorted(documented)} vs parser {sorted(parser)}"
     for forbidden in ("--push", "--strict", "--json"):
         assert forbidden not in parser, f"{forbidden} is out of scope for order.py"
+
+
+def test_the_move_line_names_the_decision_flag_and_the_parser_accepts_it(tmp_path):
+    """``move`` can re-cite an entry, and both texts say so (issue #134).
+
+    Three things, none of which the flag-set parity above can answer: the flag sits on
+    the *move* line of both documents (a page that put it on ``remove`` instead would
+    keep the sets equal), the rendered help names it too, and a run that passes it
+    without a position exits 0 rather than being refused for the missing ``--to`` that
+    issue #134 made optional.
+    """
+    for text, where in (("\n".join(docstring_verb_lines()), "the docstring"),
+                        ("\n".join(skill_md_verb_lines()), "SKILL.md")):
+        move_lines = [line for line in text.splitlines() if "--to N" in line]
+        assert len(move_lines) == 1, f"{where} prints {len(move_lines)} move lines"
+        assert "[--decision ID]" in move_lines[0], (
+            f"{where}'s move line does not name the decision flag: {move_lines[0]!r}")
+
+    help_run = _order(_repo(tmp_path), "--help")
+    assert help_run.returncode == 0, help_run.stderr
+    assert "[--decision ID]" in help_run.stdout, help_run.stdout
+
+    # Both forms run, in one tree: the re-citation alone (no position, so the entry keeps
+    # its place), then the compound form, which still names a position on the same line.
+    # ``_repo(tmp_path, ...)`` names its own subdir: the ``--help`` tree above already
+    # holds ``repo`` and :func:`_repo` commits into the path it is handed.
+    repo = _repo(tmp_path, "move-line")
+    proc = _order(repo, "move", "1", "--decision", BASELINE_ID, "--now", NOW)
+    assert proc.returncode == 4, f"{proc.returncode}: {proc.stderr}"
+    assert "not in the order" in proc.stderr, proc.stderr
+    _seed(repo, _entry(1, BASELINE_ID), _entry(2, BASELINE_ID))
+    proc = _order(repo, "move", "1", "--decision", BASELINE_ID, "--now", NOW)
+    assert proc.returncode == 0, f"{proc.returncode}: {proc.stderr}"
+    proc = _order(repo, "move", "2", "--to", "1", "--decision", BASELINE_ID,
+                  "--now", NOW)
+    assert proc.returncode == 0, f"{proc.returncode}: {proc.stderr}"
 
 
 def test_both_usage_texts_put_the_verb_before_the_flags():
@@ -135,6 +177,25 @@ FILE_REFUSAL = _order_probe.FILE_CHANGED
 # fixed by a re-run, a changed working file is not, and a page that named only the
 # first would send the operator re-running a command that refuses forever.
 FILE_REFUSAL = "the file changed since it was read; restore it or discard the change"
+
+
+def test_the_skill_exit_table_keeps_both_decision_sentences_for_move():
+    """The exit rows tell the truth about a run that cites a record from ``move``.
+
+    Both rows already carried their decision wording for ``add``, and neither may be
+    rewritten for the new verb: the 2 row still refuses a flag on a verb that does not
+    own it, and the 4 row still refuses a record the ledger does not hold or has
+    superseded. What the new flag changes is that a ``move`` can now meet them, so the
+    two rows are named here for the verb rather than inherited from ``add``.
+    """
+    row2 = next(line for line in _skill_section("The exit codes").splitlines()
+                if line.startswith("| `2` |"))
+    assert "missing `--decision` on `add`" in row2, row2
+    assert "verb that does not own it" in row2, row2
+    row4 = next(line for line in _skill_section("The exit codes").splitlines()
+                if line.startswith("| `4` |"))
+    assert "carries the given `--decision` id" in row4, row4
+    assert "superseded" in row4, row4
 
 
 def _flat(text: str) -> str:
@@ -225,6 +286,14 @@ def test_skill_md_documents_the_writer_within_the_line_cap():
         assert f"order.py {verb}" in text or f"`{verb}`" in text, f"SKILL.md omits {verb}"
     for flag in ("--decision", "--no-commit", "--now", "--at", "--to", "--why"):
         assert flag in text, f"SKILL.md omits {flag}"
+    # The sentence that documents the flag for the verb that gained it, read from the
+    # section a reader reaches for the verb itself rather than from the whole page:
+    # `--decision` already appears in the `add` paragraph and the exit table, so a bare
+    # `in text` could not tell a documented move flag from an undocumented one.
+    writing = _flat(_skill_section("Writing the order"))
+    assert "`move` also takes `--decision ID`" in writing, (
+        f"SKILL.md's Writing the order section does not document move's decision flag: "
+        f"{writing}")
     assert "noni/direction/order.json" in text and "noni.order/1" in text
     for code in (0, 2, 3, 4):
         assert f"| `{code}` |" in text, f"SKILL.md's exit table omits order.py code {code}"

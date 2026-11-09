@@ -29,6 +29,14 @@ reported by both censuses naming the field ``why``. A move or a confirm restamps
 entry and never drops the reason it carries. A correction of the order
 is another run of this command, so the file keeps one owner.
 
+``move`` owns the decision field as well as the position: ``move ISSUE --decision ID``
+replaces the entry's decision with ``ID`` and leaves its position alone, and with
+``--to`` it does both in one run. The record is resolved by the same live-record rule as
+``add --decision`` and on the same codes (exit 3 for an unreadable ledger, exit 4 for a
+record that is missing or superseded), the entry's ``confirmed`` is restamped as a move
+always restamps it, and a run that changes no byte commits nothing. ``--to`` is required
+only when ``--decision`` is absent: a move of neither is not a move.
+
 An entry may cite a filed idea instead of an issue: ``add --item ID`` writes an
 ``item`` entry, which is what makes the artifact ``noni.order/2``. The two subjects are
 exclusive -- an entry names one of them, never both and never neither -- and the id is
@@ -40,19 +48,20 @@ does not use; both versions are read.
 Usage:
     order.py --repo REPO add ISSUE [--at N] [--decision ID] [--why REASON] [--now ISO-8601] [--no-commit]
     order.py --repo REPO add --item ID [--at N] --decision ID [--why REASON] [--now ISO-8601] [--no-commit]
-    order.py --repo REPO move ISSUE --to N [--now ISO-8601] [--no-commit]
+    order.py --repo REPO move ISSUE [--to N] [--decision ID] [--now ISO-8601] [--no-commit]
     order.py --repo REPO remove ISSUE [--now ISO-8601] [--no-commit]
     order.py --repo REPO confirm [ISSUE] [--now ISO-8601] [--no-commit]
 
 Exit codes:
     0  the order was written (and committed unless --no-commit)
     2  invalid input: an argparse failure, a subcommand outside add/move/remove/confirm,
-       an issue that is not a positive integer, a missing --decision on add, an add that
+       an issue that is not a positive integer, a missing --decision on add, a move that
+       names neither --to nor --decision, an add that
        names both an issue and --item or neither, an --item that is not an item id, an
        empty, multi-line or over-long --why or a --why handed to a verb that is not
        add, an --at or
        --to that is not a 1-based position of the resulting list, a flag passed to the
-       verb that does not own it, --now that is not a valid ISO-8601 timestamp, a
+       verb that does not own it (--decision belongs to add and move), --now that is not a valid ISO-8601 timestamp, a
        --repo that is not a directory, or a noni/, noni/direction or noni/decisions
        directory -- every one from the state root down to the artifact -- that is not
        a plain path this writer may read or write through (a symlink, a plain file, a
@@ -67,7 +76,8 @@ Exit codes:
        timed out or failed for a reason that told us nothing)
     4  what the order itself refuses: the issue is already listed (add), absent from the
        order (move, remove, confirm), no file under noni/decisions/ carries the given
-       --decision id, the record it finds is superseded (the hint names its successor),
+       --decision id (add or move), the record it finds is superseded (the hint names its
+       successor),
        no item of that id is filed under noni/items/ or the one it finds is dropped
        (add --item),
        an entry of the existing file whose decision is null, blank or absent (the refusal
@@ -108,7 +118,6 @@ the commit.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import sys
 from pathlib import Path
 
@@ -151,34 +160,6 @@ VERBS: tuple[str, ...] = ("add", "move", "remove", "confirm")
 # walk live in the guard; see :func:`_refuse_linked_state`.
 _GUARDED_DIRS: tuple[str, ...] = ("noni", orderschema.ORDER_DIR, orderstate.DECISIONS_DIR)
 
-# The usage line, spelled once and handed to argparse as ``usage=``.
-#
-# argparse composes a usage line as ``optionals + positionals``, unconditionally, so
-# with ``--repo`` required and five flags declared before the verbs, ``order.py
-# --help`` rendered ``... [--no-commit] subcommand [issue]`` and buried the one word
-# the caller has to choose. The docstring's ``Usage:`` block and
-# ``skills/direction/SKILL.md`` both spell the verb first, and a help line that
-# contradicts the two texts a reader copies from is the bug (issue #77).
-#
-# A literal is the only public way to put the verb first. A formatter subclass used to
-# derive the line from argparse's private ``_format_usage`` and
-# ``_format_actions_usage``, and 3.14 removed the second: every usage print then died
-# with an ``AttributeError`` (issue #98). A literal keeps the rendering inside
-# argparse, which still prepends ``usage:`` and wraps at ``COLUMNS``.
-#
-# The flag block is the parser's own declaration, in declaration order, with the
-# metavar argparse prints for each, and it is compared against that declaration by
-# ``tests/test_order_writer_usage.py`` and the flag-set parity of
-# ``tests/test_order_writer_docs.py``: a flag added to the parser belongs here too.
-_USAGE = (f"{labels.ORDER} --repo REPO subcommand [issue]"
-          " [--at N] [--to N] [--decision ID] [--item ID] [--why REASON]"
-          " [--now ISO-8601] [--no-commit] [-h]")
-
-# The missing-positional message argparse composes for a required positional, and
-# the line argparse prints above it. argparse turns this refusal into usage-plus-
-# error itself, so the verbs are added to *that* pair rather than to the message
-# text: a subclass that re-raised it would print its own usage instead, and
-# ``first_usage_line`` reads the ``usage:`` line out of the refusal.
 _MISSING_SUBCOMMAND = "the following arguments are required: subcommand"
 
 
@@ -214,48 +195,148 @@ def _missing_verb_hint() -> str:
     one mistake cannot answer it twice.
     """
     *first, last = VERBS
-    if len(first) == 1:
-        return f"{first[0]} or {last}"
-    return f"{', '.join(first)} or {last}"
-
-
-def _digests(data: bytes) -> str:
-    """A short stable digest for a run message; never a path, never file bytes."""
-    return hashlib.sha1(data).hexdigest()[:7]
+    return f"{first[0]} or {last}" if len(first) == 1 \
+        else f"{', '.join(first)} or {last}"
 
 
 def _refuse_linked_state(repo: Path, verb: str) -> int | None:
     """The exit-2 refusal for a ``--repo`` this writer may not read or write, or None.
 
-    One seam for both ``noni/`` questions of :data:`_GUARDED_DIRS`, in the order and
-    with the wording :func:`noni._path_kind.refuse_state_root` owns. Only ``add`` is
-    admitted to the state-root question: it is this writer's one sanctioned creator,
-    while ``move``, ``remove`` and ``confirm`` create nothing legitimate and are
-    refused ahead of the reads that would otherwise answer "no decision record is in
-    the ledger". ``EXIT_USAGE`` is the code docs/PRODUCT.md 7 gives ``order`` for a
-    wrong path; the guard runs before the artifact read, the lookup and every mkdir.
+    One seam for both ``noni/`` questions of :data:`_GUARDED_DIRS`, in the order and with
+    the wording :func:`noni._path_kind.refuse_state_root` owns. Only ``add`` is admitted
+    to the state-root question: it is this writer's one sanctioned creator, while the
+    three rearranging verbs create nothing and are refused ahead of the reads that would
+    otherwise answer "no decision record is in the ledger". ``EXIT_USAGE`` is the code
+    docs/PRODUCT.md 7 gives ``order`` for a wrong path; the guard runs before the artifact
+    read, the lookup and every mkdir.
     """
     refused = _path_kind.refuse_state_root(repo, verb == "add", _GUARDED_DIRS)
     return None if refused is None else _fail(EXIT_USAGE, *refused)
 
 
-def _render(body: dict):
-    """The canonical bytes for ``body``, or the refusal naming why none exist.
+def _plan_move(repo: Path, entries: list, subject: int | str, to: str | None,
+               decision: str | None,
+               stamp: str) -> order_plan.Planned:
+    """The move's plan, called with this writer's codes and its own printer.
 
-    One call to the state module's renderer -- the same call ``orderstate.read_order``
-    makes when it compares a file it read against the form this writer writes, so the
-    two halves cannot drift apart on the canonical contract.
+    Codes and printer travel in as arguments the way ``orderstate`` takes them, so the one
+    table of exit codes stays in the file whose docstring publishes it. The move's own
+    questions -- which entry, what position, which record, and whether the ledger still
+    stands behind that record -- belong to :func:`noni.order_plan.plan_move`.
     """
-    return orderstate.render(body)
+    return order_plan.plan_move(repo, entries, subject, to, stamp, decision,
+                                _fail, EXIT_IO, EXIT_USAGE, EXIT_REFUSAL)
+
+
+# The one-line description argparse prints above the flag block, spelled here beside the
+# ``Usage:`` line it sits under and handed to the parser's builder.
+DESCRIPTION = ("Write the ordered list of issues the operator wants worked next "
+               "(noni/direction/order.json) and commit it.")
+
+
+def _subject_tokens(subcommand: str, issue_token: str | None,
+                    item: str | None, label: str,
+                    fail) -> tuple[int | str | None, int | str | int | None]:
+    """The verb's ``(issue, subject_or_code)``: the token the plan reaches by.
+
+    A positive integer in ASCII decimal digits, asked before the file is opened, so a
+    typo cannot decide which entry of a real order gets touched. ``confirm`` may omit it,
+    which means every entry at once. An ``--item`` names an entry for the three
+    rearranging verbs too, and then the token is the id: the type of ``subject`` tells the
+    plan which kind of entry to reach, so ``move 7`` cannot move an item's position. A
+    refused token leaves the exit code of the refusal ``fail`` already printed in the
+    second slot, which the caller returns.
+    """
+    if subcommand == "confirm" and issue_token is None and item is None:
+        return None, None
+    if subcommand != "add" and item is not None:
+        return None, item
+    if subcommand == "add" and item is not None:
+        return None, None
+    if issue_token is None:
+        return None, fail(EXIT_USAGE, f"{subcommand} needs an issue number",
+                          f"{label} --repo REPO {subcommand} 42")
+    if not orderstate.is_index_text(issue_token) or int(issue_token) < 1:
+        return None, fail(EXIT_USAGE,
+                          f"issue {issue_token!r} is not a positive integer",
+                          "name the issue by its number, e.g. 42")
+    return int(issue_token), int(issue_token)
+
+
+def _repo_refusals(repo: Path, repo_arg: str, verb: str,
+                   item: str | None) -> int | None:
+    """The exit-2 refusal for a ``--repo`` this run may not read or write, or None.
+
+    Three questions about the one path the caller passed, in this order, all before the
+    first read: that it is a directory at all; that the directories it leads to are plain
+    paths (:func:`_refuse_linked_state` gives the reason each is asked of ``lstat`` ahead
+    of the reads); and, for an ``add --item``, that the item store is too. A ``--repo``
+    naming no directory is the usage error every other flag mistake
+    takes -- not a missing order and not an absent decision -- and the message names the
+    argument as the caller passed it, the shape ``register.py``, ``close.py``, ``release.py``
+    and ``claim.py`` all take at the same step.
+    """
+    if not repo.is_dir():
+        return _fail(EXIT_USAGE, f"--repo {repo_arg} is not a directory",
+                     "pass the repository root that holds (or will hold) "
+                     "noni/direction/order.json")
+    linked = _refuse_linked_state(repo, verb)
+    if linked is not None:
+        return linked
+    if item is not None and verb == "add":
+        # The item store joins the guarded list only for a run that names one, so a
+        # store that is a link is refused as a bad ``--repo`` rather than reached
+        # through: the same walk, the same code and the same wording the writer already
+        # applies to ``noni`` and ``noni/direction``.
+        refused = _path_kind.refuse_state_root(repo, True,
+                                               (*_GUARDED_DIRS, itemschema.ITEM_DIR))
+        if refused is not None:
+            return _fail(EXIT_USAGE, *refused)
+    return None
+
+
+def _read_entries(order_path: Path):
+    """The entries a run plans from, and the bytes it read, or the code already printed.
+
+    Read once, before anything is written: a ``--no-commit`` run leaves its own bytes in
+    the working tree for the next run to read, and a plan built from entries this run has
+    already restamped would not be a plan at all. The second slot is the refusal's exit
+    code once ``fail`` has printed it; a list of entries is never an int.
+    """
+    read = orderstate.read_order(order_path)
+    if isinstance(read, orderstate.OrderFaulted):
+        return None, _fail(EXIT_IO, read.headline, read.hint)
+    if isinstance(read, orderstate.OrderRefused):
+        return None, _fail(EXIT_REFUSAL, read.headline, read.hint)
+    return [dict(entry) for entry in read.entries], read.before
+
+
+def _write_unchanged(entries: list, rendered: bytes, before: bytes | None) -> int | None:
+    """The success of a run whose plan needs no write, or None when it does.
+
+    ``rendered == before`` compares the bytes this run would write against the bytes it
+    read out of the file. The probe owns whether this run may write at all, and it runs
+    ABOVE this shortcut: a no-change run still commits its index entry when HEAD moved, so
+    a guard below the shortcut would let the one run shape that commits without planning
+    anything slip the lost-update check. This arm is therefore reached only once the guard
+    has said HEAD, the index and the file all still hold what this run read, which is
+    exactly when "unchanged" is a true sentence. --no-commit keeps its no-git contract and
+    #76's idempotent repeat on the file's bytes alone.
+    """
+    if before is None or rendered != before:
+        return None
+    orderstate.print_order(entries, labels.ORDER)
+    print(f"{labels.ORDER}: {orderschema.ORDER_REL} is unchanged; nothing to commit")
+    return EXIT_OK
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = _VerbedParser(
-        prog=labels.ORDER,
-        description="Write the ordered list of issues the operator wants worked next "
-                    "(noni/direction/order.json) and commit it.",
-        usage=_USAGE,
-    )
+    # The parser's declarations stay spelled here, beside the ``Usage:`` block they must
+    # match: the reader that pins the two together reads the ``add_argument`` calls out of
+    # ``main``. Building the parser is the add module's job, and this file's own parser
+    # class -- the answer to a missing verb -- is handed to it rather than imported there.
+    parser = order_plan.build_parser(_VerbedParser, order_plan.USAGE, labels.ORDER,
+                                      DESCRIPTION)
     parser.add_argument("--repo", required=True, help="repository root")
     parser.add_argument("subcommand", help="add, move, remove or confirm")
     parser.add_argument("issue", nargs="?", default=None,
@@ -267,7 +348,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="position (1-based) to move the issue to")
     parser.add_argument("--decision", default=None, metavar="ID",
                         help="decision record id that set this entry's position "
-                             "(required for add)")
+                             "(required for add; move replaces the entry's decision "
+                             "with it)")
     parser.add_argument("--item", default=None, metavar="ID",
                         help="the id of a filed item to order instead of an issue "
                              "(add only; an entry naming an item makes the artifact "
@@ -285,35 +367,19 @@ def main(argv: list[str] | None = None) -> int:
 
     subcommand = args.subcommand
     if subcommand not in VERBS:
-        return _fail(EXIT_USAGE, f"subcommand {subcommand!r} is not one of "
-                     "add, move, remove or confirm",
-                     f"{labels.ORDER} --repo REPO add ISSUE --decision ID | "
-                     "move ISSUE --to N | remove ISSUE | confirm [ISSUE]")
+        return _fail(EXIT_USAGE, *order_add.unknown_verb(subcommand, labels.ORDER))
 
-    # --at belongs to add and --to to move and nothing else: a flag that means
-    # nothing for the verb it was passed with is a usage error, not a hint the
-    # run quietly ignores.
-    if subcommand != "add" and args.at is not None:
-        return _fail(EXIT_USAGE, f"--at belongs to add, not {subcommand}",
-                     f"to place an entry with {subcommand} pass --to N")
-    if subcommand != "move" and args.to is not None:
-        return _fail(EXIT_USAGE, f"--to belongs to move, not {subcommand}",
-                     "--to is only how move names a position")
-    if args.decision is not None and subcommand != "add":
-        return _fail(EXIT_USAGE, f"--decision belongs to add, not {subcommand}",
-                     "only add takes a position's decision; confirm restamps what is there")
-    if args.why is not None and subcommand != "add":
-        # A reason belongs to the moment a position is taken. A verb that quietly
-        # dropped one would lose what the operator typed, so the run is refused and
-        # names the flag instead.
-        return _fail(EXIT_USAGE, f"--why belongs to add, not {subcommand}",
-                     "only add records a reason; the other verbs answer to an entry "
-                     "that already carries one")
+    # Every flag the verb was handed but does not own: a flag that means nothing for the
+    # verb it came with is a usage error, not a hint the run quietly ignores. The table of
+    # owners lives with the verb that owns most of them.
+    misplaced = order_add.misplaced_flag(subcommand, args.at, args.to,
+                                         args.decision, args.why)
+    if misplaced is not None:
+        return _fail(EXIT_USAGE, *misplaced)
 
 
-    # add names one subject and never two: an issue number or --item ID, asked of the
-    # two tokens before either is validated, so `add 7 --item x` is refused for naming
-    # two subjects and not for whichever one is also malformed.
+    # The subject token, asked of the two tokens before either is validated, so a run
+    # naming two subjects is told which it meant rather than which is malformed.
     if args.issue is not None and args.item is not None:
         # Asked of every verb: a run naming two subjects has to be told which it meant.
         problem = order_add.subject_problems(args.issue, args.item)
@@ -324,30 +390,11 @@ def main(argv: list[str] | None = None) -> int:
         if problem is not None:
             return _fail(EXIT_USAGE, *problem)
 
-    # The subject token: a positive integer in ASCII decimal digits, checked before the
-    # file is opened, so a typo cannot decide which entry of a real order gets touched.
-    # confirm is the one verb that may omit it, which means every entry at once. An
-    # ``--item`` may name an entry for the three rearranging verbs too, and then the
-    # token is the id: the type of ``subject`` tells the plan which kind of entry to
-    # reach, so ``move 7`` can never move an item's position.
-    issue: int | None = None
-    subject: int | str | None = None
-    if subcommand == "confirm" and args.issue is None and args.item is None:
-        pass
-    elif subcommand != "add" and args.item is not None:
-        subject = args.item
-    elif subcommand == "add" and args.item is not None:
-        pass
-    else:
-        token = args.issue
-        if token is None:
-            return _fail(EXIT_USAGE, f"{subcommand} needs an issue number",
-                         f"{labels.ORDER} --repo REPO {subcommand} 42")
-        if not orderstate.is_index_text(token) or int(token) < 1:
-            return _fail(EXIT_USAGE, f"issue {token!r} is not a positive integer",
-                         "name the issue by its number, e.g. 42")
-        issue = int(token)
-        subject = issue
+    issue, subject = _subject_tokens(subcommand, args.issue, args.item,
+                                     labels.ORDER, _fail)
+    if isinstance(subject, int) and issue is None:
+        # The slot holds a refusal's exit code, not an issue number: see the helper.
+        return subject
 
     if subcommand == "add" and args.decision is None:
         return _fail(EXIT_USAGE, "add needs --decision ID: an added position is a decision",
@@ -360,45 +407,20 @@ def main(argv: list[str] | None = None) -> int:
                                       "to stamp this run's time")
 
     repo = Path(args.repo)
-    # The state root is checked before the artifact is read or the decision
-    # looked up: --repo naming no directory is a usage error (the code every
-    # other flag mistake takes), not a missing order or an absent decision, and
-    # the message names the argument the caller passed. Same shape as
-    # register.py, close.py, release.py and claim.py, which all refuse here too.
-    if not repo.is_dir():
-        return _fail(EXIT_USAGE, f"--repo {args.repo} is not a directory",
-                     "pass the repository root that holds (or will hold) "
-                     "noni/direction/order.json")
-    # Every directory this run reads or writes, asked of ``lstat`` before the first
-    # read: a linked noni/ or noni/direction would otherwise carry the artifact and
-    # the decision read below into a tree outside the state root.
-    linked = _refuse_linked_state(repo, subcommand)
-    if linked is not None:
-        return linked
+    # The state root is asked about before the artifact is read or the decision looked
+    # up, so a bad path cannot be reported as a missing order. The item store joins the
+    # guarded list only for a run that names one.
+    refused = _repo_refusals(repo, args.repo, subcommand, args.item)
+    if refused is not None:
+        return refused
     order_path = repo / orderschema.ORDER_REL
 
     # --- reads: the artifact, then the decision it must cite -----------------
-    # Read once, before anything is written: a --no-commit run leaves its own
-    # bytes in the working tree for the next run to read, and a plan built from
-    # entries this run has already restamped would not be a plan at all.
-    read = orderstate.read_order(order_path)
-    if isinstance(read, orderstate.OrderFaulted):
-        return _fail(EXIT_IO, read.headline, read.hint)
-    if isinstance(read, orderstate.OrderRefused):
-        return _fail(EXIT_REFUSAL, read.headline, read.hint)
-    entries = [dict(entry) for entry in read.entries]
-    before = read.before
+    entries, before = _read_entries(order_path)
+    if isinstance(before, int) and entries is None:
+        return before
 
     # --- the plan: what the entries become, decided before any write ---------
-    # The item store joins the guarded list for a run that names one, so an
-    # ``add --item`` whose store is a link is refused as a bad ``--repo`` (2) rather
-    # than reached through: the same walk, the same code and the same wording the
-    # writer already applies to ``noni`` and ``noni/direction``.
-    if args.item is not None and subcommand == "add":
-        refused = _path_kind.refuse_state_root(repo, True,
-                                               (*_GUARDED_DIRS, itemschema.ITEM_DIR))
-        if refused is not None:
-            return _fail(EXIT_USAGE, *refused)
     verb: str
     if subcommand == "add":
         assert args.decision is not None
@@ -410,8 +432,7 @@ def main(argv: list[str] | None = None) -> int:
         entries, verb = planned.entries, planned.verb
     elif subcommand == "move":
         assert subject is not None
-        planned = order_plan.plan_move(entries, subject, args.to, stamp, _fail,
-                                       EXIT_USAGE, EXIT_REFUSAL)
+        planned = _plan_move(repo, entries, subject, args.to, args.decision, stamp)
     elif subcommand == "remove":
         assert subject is not None
         planned = order_plan.plan_remove(entries, subject, _fail, EXIT_REFUSAL)
@@ -427,46 +448,26 @@ def main(argv: list[str] | None = None) -> int:
     # for how a ``/2`` artifact ever comes to exist. Restamping a document into the
     # version its contents do not use would make the marker say nothing.
     body = {"schema": orderschema.schema_for(entries), "entries": entries}
-    rendered = _render(body)
+    # The state module's own renderer, the same call ``orderstate.read_order`` makes when
+    # it compares a file it read against the form this writer writes, so the two halves
+    # cannot drift apart on the canonical contract. Not bytes this writer can produce is a
+    # refusal: the plan is built from validated values, so the file keeps the bytes it had
+    # and nothing is claimed.
+    rendered = orderstate.render(body)
     if isinstance(rendered, orderstate.RenderRefused):
-        # Not bytes this writer can produce. The plan is built from validated
-        # values, so the file keeps the bytes it had and nothing is claimed.
         return _fail(EXIT_REFUSAL, rendered.headline, rendered.hint)
     # --- the freshness probe: did anything move under this run? ----------------
-    # The lost-update guard; order_probe.py owns it and the reason it sits here.
+    # The lost-update guard; order_probe.py owns it, the reason it sits here, and the
+    # reason it runs before the no-change shortcut below.
     # --no-commit is exempt because that route runs no git at all.
-    #
-    # It runs BEFORE the no-change shortcut below, and that ordering is load-bearing.
-    # ``rendered == before`` compares the bytes this run would write against the bytes it
-    # read out of the file, so a run whose file has been moved and moved back -- or
-    # whose file has been restamped to exactly what this verb would have stamped --
-    # reaches "nothing left to add" while HEAD and the index hold an order it never
-    # compared itself against. Reporting success for that run is a lie about the state of
-    # the repository: the guard is the step that says whether this run may write, and a
-    # run that may not write is refused whether or not its own bytes happen to match.
     if not args.no_commit:
         refused = order_probe.probe(repo, order_path, before, verb, args.repo,
                                     EXIT_IO, EXIT_REFUSAL)
         if refused is not None:
             return refused
-    if before is not None and rendered == before:
-        # The file already holds the bytes this run would write, so there is nothing
-        # left to add: nothing is staged, nothing is committed, no HEAD moves.
-        #
-        # The probe owns the decision about whether this run may write at all, and it
-        # runs ABOVE this shortcut: a no-change run still commits its index entry
-        # when HEAD moved, so a guard that sat below it would let the one run shape
-        # that commits without planning anything slip the lost-update check.
-        #
-        # So this arm is reached only once the guard has said HEAD, the index and the
-        # file all still hold what this run read -- which is exactly when "unchanged"
-        # is a true sentence, and the only reading under which the order below can
-        # print it. --no-commit keeps its own no-git contract and #76's idempotent
-        # repeat by taking the shortcut on the file's bytes alone.
-        orderstate.print_order(entries, labels.ORDER)
-        print(f"{labels.ORDER}: {orderschema.ORDER_REL} is unchanged; nothing to "
-              "commit")
-        return EXIT_OK
+    unchanged = _write_unchanged(entries, rendered, before)
+    if unchanged is not None:
+        return unchanged
 
     # The three steps to the end of the run belong to the module that owns them: the
     # parent-directory fault the pre-read walk does not cover, the atomic write, and the
@@ -480,7 +481,7 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(EXIT_IO, *faulty)
 
     orderstate.print_order(entries, labels.ORDER)
-    digest = _digests(rendered)
+    digest = order_commit.digest(rendered)
     if args.no_commit:
         # The census reads the working tree, so this file reads as uncommitted;
         # the one line says so and names the path, and committing it is the

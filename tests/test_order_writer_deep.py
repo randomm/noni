@@ -18,10 +18,12 @@ from order_fixtures import (
     FIXTURE,
     NOW,
     ORDER_REL,
+    OTHER_ID,
     STAMP,
     _assert_census_clean,
     _canonical,
     _census_ordering,
+    _commit_record,
     _entry,
     _order,
     _order_path,
@@ -208,10 +210,25 @@ def test_a_writer_run_leaves_the_ordering_census_clean(tmp_path):
     """The contract the two halves share: what the writer writes, the arbiter
     accepts. Every verb in turn, then the census."""
     repo = _repo(tmp_path)
+    # ``add`` is the second commit in the tree and ``move --decision`` the third, so the
+    # record exists before any run cites it: each fixture step is itself a commit, and
+    # HEAD read before them would not be HEAD after them.
+    _commit_record(repo, OTHER_ID, "decided", None)
     assert _order(repo, "add", "7", "--decision", BASELINE_ID, "--now", NOW).returncode == 0
     assert _order(repo, "add", "8", "--at", "1", "--decision", BASELINE_ID,
                     "--now", NOW).returncode == 0
+    # The queue is now 8 then 7, and the re-citation reaches 7 by its number: a move of a
+    # decision changes no position, so the entry is found at the place the last move put
+    # it and stays there.
     assert _order(repo, "move", "7", "--to", "2", "--now", NOW).returncode == 0
+    # A re-citation, the other thing ``move`` now writes (issue #134): the entry keeps
+    # its place and names a different record, and the arbiter still calls the order
+    # clean -- an entry citing a record the ledger holds is well-formed either way.
+    assert _order(repo, "move", "7", "--decision", OTHER_ID, "--now", NOW).returncode == 0
+    by_issue = {entry["issue"]: entry for entry in _read(repo)["entries"]}
+    assert by_issue[7]["decision"] == OTHER_ID, by_issue
+    assert by_issue[8]["decision"] == BASELINE_ID, by_issue
+    assert [entry["issue"] for entry in _read(repo)["entries"]] == [8, 7], _read(repo)
     assert _order(repo, "confirm", "--now", NOW).returncode == 0
     assert _order(repo, "remove", "8", "--now", NOW).returncode == 0
     _assert_census_clean(repo, "the full verb round trip")

@@ -29,6 +29,10 @@ from typing import Callable, NamedTuple
 
 from . import orderschema, orderstate
 
+# The rationale's key, read from the artifact's schema: a move keeps the field, so the
+# plan asks for it by the name the writer and the censuses both use.
+WHY_FIELD = orderschema.WHY_FIELD
+
 
 class Planned(NamedTuple):
     """The entries a verb writes, the word the run is named by, or a refusal.
@@ -81,14 +85,19 @@ def plan_move(entries: list, subject: int | str, to: str | None, stamp: str,
 def _restamped(moved: dict, subject: int | str, stamp: str) -> dict:
     """``moved`` with a fresh ``confirmed``, in the key order its subject writes.
 
-    Rebuilt from the entry's own ``decision`` rather than copied and patched, so the
-    moved entry lands in the documented key order and not the order the file happened to
-    hold it in -- the bytes the writer renders are the bytes the version documents.
+    Rebuilt from the entry's own ``decision`` and its own ``why`` rather than copied and
+    patched, so the moved entry lands in the documented key order and not the order the
+    file happened to hold it in -- the bytes the writer renders are the bytes the version
+    documents. The rationale travels with the position it explains: a move restamps when
+    the operator confirmed the placement, not why they wanted it, and a move that dropped
+    the reason would delete an operator's record as a side effect of reordering.
     """
+    why = moved.get(WHY_FIELD)
     if isinstance(subject, str):
         return orderschema.entry(item=subject, decision=moved["decision"],
-                                 confirmed=stamp)
-    return orderschema.entry(issue=subject, decision=moved["decision"], confirmed=stamp)
+                                 confirmed=stamp, why=why)
+    return orderschema.entry(issue=subject, decision=moved["decision"],
+                             confirmed=stamp, why=why)
 
 
 def _holds(entries: list, subject: int | str) -> bool:

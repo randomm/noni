@@ -128,7 +128,7 @@ noni/direction/order.json
 | field | meaning |
 |---|---|
 | `schema` | `noni.order/1`, or `noni.order/2` for an order that cites an item |
-| `entries` | `[{issue, decision, confirmed}]` in the order the operator wants, where an entry of a `/2` order names `item` instead of `issue` |
+| `entries` | `[{issue, decision, confirmed, why}]` in the order the operator wants, where an entry of a `/2` order names `item` instead of `issue` and `why` is optional |
 
 Position is the list index, not a field -- so a reorder moves entries and never
 renumbers anything. `issue` is a positive integer. `decision` is the id of the
@@ -137,7 +137,7 @@ entry whose `decision` is `null`, blank or absent is not an order this writer
 writes (exit 4, naming the entry) and the census reports it as
 `ordering-malformed` (15) -- a position nobody can look up is a position nobody
 decided. `confirmed` is the UTC timestamp the writer stamped when the operator
-last confirmed the entry.
+last confirmed the entry. `why` is optional: an entry written without it holds the three fields it held before the field existed, byte for byte, and `add --why REASON` records the operator's one line of reason for the position. It obeys the same rule a decision record's rationale obeys: one non-blank line within the 280-character bound `itemschema.WHY_MAX` states, counted in code points, refused at the flag (exit 2) and reported by both censuses naming the field `why`. A move or a confirm restamps an entry and never drops the reason it carries.
 
 **An entry can order an idea as well as an issue.** `add --item ID` writes an
 `item` entry: the id of a file under `noni/items/`, which is what makes the
@@ -175,8 +175,8 @@ The verb comes first, after `--repo`: what you are doing to the order, then the
 issue, then the flags that qualify it. `order.py --help` prints the same order.
 
 ```
-scripts/order.py --repo REPO add ISSUE --decision ID [--at N] [--now ISO-8601] [--no-commit]
-scripts/order.py --repo REPO add --item ID --decision ID [--at N] [--now ISO-8601] [--no-commit]
+scripts/order.py --repo REPO add ISSUE --decision ID [--why REASON] [--at N] [--now ISO-8601] [--no-commit]
+scripts/order.py --repo REPO add --item ID --decision ID [--why REASON] [--at N] [--now ISO-8601] [--no-commit]
 scripts/order.py --repo REPO move ISSUE --to N [--now ISO-8601] [--no-commit]
 scripts/order.py --repo REPO remove ISSUE [--now ISO-8601] [--no-commit]
 scripts/order.py --repo REPO confirm [ISSUE] [--now ISO-8601] [--no-commit]
@@ -198,6 +198,8 @@ verb that shortens the list.
 `--now` stamps the entry with the timestamp given instead of the clock, which is
 what makes a run -- and the census run that judges its staleness -- reproducible
 from the command line alone. A `--now` with no UTC offset is refused.
+
+`--why` belongs to `add` alone: `add --why REASON` records the reason for taking a position, and `move`, `remove` and `confirm` answer to an entry that already exists, so a run that hands one of them a reason is refused at the flag (exit 2) rather than dropping what the operator typed. The value is the ledger's one-line rule at the shared 280-character rationale bound: a blank, a padded, a multi-line or an over-long reason is refused the same way, on the same code, and nothing is written for a refusal. The number has one owner (`itemschema.WHY_MAX`), shared with a decision record's `why` and an item's reason, so a reason that fits in one fits everywhere.
 
 `--no-commit` writes through the same validation chain and stops before git: no
 `git add`, no `git commit`, and one line on stdout saying the file is left
@@ -248,7 +250,7 @@ committed here", and the first order is written and committed.
 | code | meaning |
 |---|---|
 | `0` | the order was written (and committed unless `--no-commit`), or no byte of it needed changing |
-| `2` | invalid input: an argparse failure, a subcommand outside `add`/`move`/`remove`/`confirm`, an issue that is not a positive integer, a missing `--decision` on `add`, a `--to`/`--at` that is not a 1-based position of the resulting list, a flag passed to the verb that does not own it, a `--now` that is not a valid UTC timestamp, a `--repo` that is not a directory, a `--repo` that is a directory holding no `noni/` at all (refused as not a noni state root: the path is named, the hint names `--repo`, and nothing is created — `move`/`remove`/`confirm` are refused, while `add` is admitted because its first entry creates `noni/direction`), or a `noni/`, `noni/direction/` or `noni/decisions/` that is not a plain path this writer may read or write through (a symlink, a plain file, a socket or a device: every directory from the state root down to it is asked of `lstat` before any read, write or `mkdir`, so nothing is followed and nothing is written, and an absent directory is admitted because the first `add` creates it) |
+| `2` | invalid input: an argparse failure, a subcommand outside `add`/`move`/`remove`/`confirm`, an issue that is not a positive integer, a missing `--decision` on `add`, a `--to`/`--at` that is not a 1-based position of the resulting list, an empty, multi-line or over-long `--why` or a `--why` passed to a verb that is not `add`, a flag passed to the verb that does not own it, a `--now` that is not a valid UTC timestamp, a `--repo` that is not a directory, a `--repo` that is a directory holding no `noni/` at all (refused as not a noni state root: the path is named, the hint names `--repo`, and nothing is created: `move`/`remove`/`confirm` are refused, while `add` is admitted because its first entry creates `noni/direction`), or a `noni/`, `noni/direction/` or `noni/decisions/` that is not a plain path this writer may read or write through (a symlink, a plain file, a socket or a device: every directory from the state root down to it is asked of `lstat` before any read, write or `mkdir`, so nothing is followed and nothing is written, and an absent directory is admitted because the first `add` creates it) |
 | `3` | a path this writer needs could not be read or written, or a git call failed or timed out: the order file is not a regular file at its path, a decision record it must read is unreadable, the artifact could not be written, the commit step failed (the file is left written and named, never claimed as committed), or the freshness probe could not answer (a `git show` of the committed bytes that timed out or failed for a reason that told us nothing) |
 | `4` | what the order itself refuses: the issue is already listed (`add`), absent from the order (`move`, `remove`, `confirm`), no file under `noni/decisions/` carries the given `--decision` id, that record is superseded (the hint names its successor), the existing file is not the artifact this writer writes, or the committed order bytes changed since this run read them (`the order changed since it was read; re-run` -- re-run the same command, which re-plans against what the other writer committed). The file at the artifact's path changed instead (`the file changed since it was read; restore it or discard the change`): no re-run settles that one, so restore it (`git checkout HEAD -- noni/direction/order.json`) or discard the change, and re-running alone does not help |
 

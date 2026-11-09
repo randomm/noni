@@ -71,6 +71,17 @@ def refuse_target_fields(record: dict, target_id: str,
     for field in _OPTIONAL_NAMES:
         if field in record and not _schema.is_single_line(record[field]):
             return _refusal(record, target_id, field, "a non-empty single-line string")
+    # The rationale is refused the same way and for the same reason: the flip copies
+    # every byte of it that is not the status, so a ``why`` the census reports at exit
+    # 10 (blank, a break, or past the bound) would be written back by this run. One
+    # problem is enough to refuse and the first one names what to repair -- the bound
+    # sentence carries the number, so an over-long target is refused with the count the
+    # operator has to cut to rather than a generic shape complaint.
+    bad_why = _schema.why_problems(record)
+    if bad_why:
+        return (f"supersede target {target_id} carries a why the census refuses: "
+                f"{bad_why[0]}",
+                "repair the record and commit it, then re-run decide")
     if "status" in record and record["status"] not in statuses:
         return (f"supersede target {target_id} has a status the census refuses: "
                 f"status not one of {'|'.join(statuses)}",

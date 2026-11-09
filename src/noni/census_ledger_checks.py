@@ -131,6 +131,13 @@ def _validate_record(obj: object, level: int | None = None) -> list[str]:
     for field in NAME_LINE_FIELDS:
         if field in obj and not is_single_line(obj[field]):
             problems.append(f"{field} must be a non-empty single-line string")
+    # The rationale is the third field of this shape and the one that also carries a
+    # length bound. Its wording is the same shape as the two names above -- "why must
+    # be ...", and past the bound the count and the limit -- so one malformed value
+    # still reports as one ledger-record row that names its field, and both halves are
+    # the schema's (``ledger_schema.why_problems``). That is what keeps this row and
+    # the writer's flag refusal answering one record alike.
+    problems.extend(_schema.why_problems(obj))
     if _schema.SINGLE_OPTION_MARKER in obj and obj[_schema.SINGLE_OPTION_MARKER] is not True:
         problems.append(f"{_schema.SINGLE_OPTION_MARKER} must be true when present")
     sup = obj.get("supersedes")

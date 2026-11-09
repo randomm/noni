@@ -9,8 +9,8 @@ integer, so the core stays viable with no adapter installed.
 The file holds two fields:
 
   schema   -- "noni.order/1", or "noni.order/2" for an order that cites an item
-  entries  -- [{issue, decision, confirmed}] in the order the operator wants, where
-              an entry of a /2 order names item instead of issue
+  entries  -- [{issue, decision, confirmed, why}] in the order the operator wants,
+              where an entry of a /2 order names item instead of issue
 
 ``decision`` is the id of the decision record that set the entry's position and
 is never empty: an entry whose ``decision`` is a JSON null, a blank string or
@@ -20,7 +20,13 @@ one is refused (exit 4) when no file under
 noni/decisions/ carries that id, or when the record it finds is already
 superseded, and the hint names the record that superseded it. ``confirmed`` is
 stamped by the writer (add and confirm stamp it with this run's UTC time, or
-with --now when given); a run never leaves it empty. A correction of the order
+with --now when given); a run never leaves it empty. ``why`` is optional: an entry
+written without it holds the three fields it held before the field existed, byte for
+byte, and ``add --why REASON`` records the operator's one line of reason for the
+position. It is the same rule a decision record's rationale obeys: one non-blank
+line within the bound ``itemschema.WHY_MAX`` states, refused at the flag (exit 2) and
+reported by both censuses naming the field ``why``. A move or a confirm restamps an
+entry and never drops the reason it carries. A correction of the order
 is another run of this command, so the file keeps one owner.
 
 An entry may cite a filed idea instead of an issue: ``add --item ID`` writes an
@@ -32,8 +38,8 @@ over an order that holds none, so a queue of issues is never restamped into a ve
 does not use; both versions are read.
 
 Usage:
-    order.py --repo REPO add ISSUE [--at N] [--decision ID] [--now ISO-8601] [--no-commit]
-    order.py --repo REPO add --item ID [--at N] --decision ID [--now ISO-8601] [--no-commit]
+    order.py --repo REPO add ISSUE [--at N] [--decision ID] [--why REASON] [--now ISO-8601] [--no-commit]
+    order.py --repo REPO add --item ID [--at N] --decision ID [--why REASON] [--now ISO-8601] [--no-commit]
     order.py --repo REPO move ISSUE --to N [--now ISO-8601] [--no-commit]
     order.py --repo REPO remove ISSUE [--now ISO-8601] [--no-commit]
     order.py --repo REPO confirm [ISSUE] [--now ISO-8601] [--no-commit]
@@ -43,7 +49,8 @@ Exit codes:
     2  invalid input: an argparse failure, a subcommand outside add/move/remove/confirm,
        an issue that is not a positive integer, a missing --decision on add, an add that
        names both an issue and --item or neither, an --item that is not an item id, an
-       --at or
+       empty, multi-line or over-long --why or a --why handed to a verb that is not
+       add, an --at or
        --to that is not a 1-based position of the resulting list, a flag passed to the
        verb that does not own it, --now that is not a valid ISO-8601 timestamp, a
        --repo that is not a directory, or a noni/, noni/direction or noni/decisions
@@ -126,28 +133,23 @@ _fail = orderstate._fail
 # tests replace this name to drive a hung or failing git.
 gitwrite = order_commit.gitwrite
 
-# Every return path names one of these, and the 'Exit codes:' block above
-# carries exactly this set (tests/test_order_writer_docs.py pins the two together).
+# Every return path names one of these, and the 'Exit codes:' block above carries
+# exactly this set (tests/test_order_writer_docs.py pins the two together).
 EXIT_OK: int = 0
 EXIT_USAGE: int = 2
 EXIT_IO: int = 3
 EXIT_REFUSAL: int = 4
 
 
-# The verbs the writer owns, in the order every document lists them. One tuple so
-# the unknown-verb refusal, the missing-verb hint and the usage line cannot name
-# three different sets.
+# The verbs the writer owns, in the order every document lists them, so the unknown-verb
+# refusal, the missing-verb hint and the usage line cannot name three different sets.
 VERBS: tuple[str, ...] = ("add", "move", "remove", "confirm")
 
-# The directories this run reads or writes, in the order the guard walks them:
-# ``noni`` itself first (a link there hides every path beneath it from ``lstat``),
-# then the two directories this writer touches -- the artifact's, and the ledger
-# ``add --decision`` looks a record up in. The wording, the walk and the
-# declined-``lstat`` rule all live in the guard; see :func:`_refuse_linked_state`.
+# The directories this run reads or writes, in the order the guard walks them: ``noni``
+# first (a link there hides every path beneath it from ``lstat``), then the artifact's
+# directory and the ledger ``add --decision`` looks a record up in. The wording and the
+# walk live in the guard; see :func:`_refuse_linked_state`.
 _GUARDED_DIRS: tuple[str, ...] = ("noni", orderschema.ORDER_DIR, orderstate.DECISIONS_DIR)
-
-# The verb list the unknown-verb refusal and the usage line take, spelled once from VERBS.
-_VERB_LIST = ", ".join(VERBS)
 
 # The usage line, spelled once and handed to argparse as ``usage=``.
 #
@@ -158,21 +160,19 @@ _VERB_LIST = ", ".join(VERBS)
 # ``skills/direction/SKILL.md`` both spell the verb first, and a help line that
 # contradicts the two texts a reader copies from is the bug (issue #77).
 #
-# A literal is the only public way to put the verb first. A formatter subclass used
-# to derive the line by calling argparse's private ``_format_usage`` and
-# ``_format_actions_usage``, and Python 3.14 removed the second of those: on 3.14
-# every usage print -- ``--help``, a missing subcommand, an unknown flag -- died
-# with an ``AttributeError`` instead of printing anything (issue #98). A literal
-# keeps the rendering inside argparse: it still prepends ``usage:``, still wraps the
-# line at ``COLUMNS``, and still prints it on all three of those paths.
+# A literal is the only public way to put the verb first. A formatter subclass used to
+# derive the line from argparse's private ``_format_usage`` and
+# ``_format_actions_usage``, and 3.14 removed the second: every usage print then died
+# with an ``AttributeError`` (issue #98). A literal keeps the rendering inside
+# argparse, which still prepends ``usage:`` and wraps at ``COLUMNS``.
 #
 # The flag block is the parser's own declaration, in declaration order, with the
 # metavar argparse prints for each, and it is compared against that declaration by
 # ``tests/test_order_writer_usage.py`` and the flag-set parity of
 # ``tests/test_order_writer_docs.py``: a flag added to the parser belongs here too.
 _USAGE = (f"{labels.ORDER} --repo REPO subcommand [issue]"
-          " [--at N] [--to N] [--decision ID] [--item ID] [--now ISO-8601]"
-          " [--no-commit] [-h]")
+          " [--at N] [--to N] [--decision ID] [--item ID] [--why REASON]"
+          " [--now ISO-8601] [--no-commit] [-h]")
 
 # The missing-positional message argparse composes for a required positional, and
 # the line argparse prints above it. argparse turns this refusal into usage-plus-
@@ -192,10 +192,9 @@ class _VerbedParser(argparse.ArgumentParser):
     adds the verbs to it, so the usage line, the wording and the exit code are
     unchanged and one more line names the accepted verbs.
 
-    The parser shape is deliberately untouched. ``add_subparsers`` or ``choices=``
-    would name the verbs too, but both move the verb out of the usage line and take
-    the refusal off the path the pinned wording stands for, which is what
-    ``tests/test_order_writer_usage.py`` exists to catch.
+    The parser shape is deliberately untouched: ``add_subparsers`` or ``choices=``
+    would name the verbs too, but both move the verb out of the usage line and take the
+    refusal off the path the pinned wording stands for.
     """
 
     def error(self, message: str):
@@ -211,8 +210,8 @@ class _VerbedParser(argparse.ArgumentParser):
 def _missing_verb_hint() -> str:
     """The verb list the missing-subcommand hint prints.
 
-    Joined with the same "or" the unknown-verb refusal above uses -- one sentence
-    for one set, so the two refusals of the same mistake cannot answer it twice.
+    Joined with the same "or" the unknown-verb refusal uses, so the two refusals of
+    one mistake cannot answer it twice.
     """
     *first, last = VERBS
     if len(first) == 1:
@@ -243,11 +242,9 @@ def _refuse_linked_state(repo: Path, verb: str) -> int | None:
 def _render(body: dict):
     """The canonical bytes for ``body``, or the refusal naming why none exist.
 
-    One call to the state module's renderer, which is the same call
-    ``orderstate.read_order`` makes to compare a file it read against the form
-    this writer writes: two copies of the render-and-refuse step is two places
-    for the canonical contract to be broken, and the two halves must agree byte
-    for byte or every canonical fixture becomes a refusal.
+    One call to the state module's renderer -- the same call ``orderstate.read_order``
+    makes when it compares a file it read against the form this writer writes, so the
+    two halves cannot drift apart on the canonical contract.
     """
     return orderstate.render(body)
 
@@ -275,6 +272,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="the id of a filed item to order instead of an issue "
                              "(add only; an entry naming an item makes the artifact "
                              "noni.order/2)")
+    parser.add_argument("--why", default=None, metavar="REASON",
+                        help="the operator's one line of reason for the position "
+                             "(add only; a non-empty single line within the "
+                             "rationale bound)")
     parser.add_argument("--now", default=None, metavar="ISO-8601",
                         help="fixed UTC timestamp for the confirmed stamp "
                              "(default: the current UTC time)")
@@ -301,16 +302,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.decision is not None and subcommand != "add":
         return _fail(EXIT_USAGE, f"--decision belongs to add, not {subcommand}",
                      "only add takes a position's decision; confirm restamps what is there")
+    if args.why is not None and subcommand != "add":
+        # A reason belongs to the moment a position is taken. A verb that quietly
+        # dropped one would lose what the operator typed, so the run is refused and
+        # names the flag instead.
+        return _fail(EXIT_USAGE, f"--why belongs to add, not {subcommand}",
+                     "only add records a reason; the other verbs answer to an entry "
+                     "that already carries one")
 
 
-    # add names one subject and never two: an issue number or --item ID. The question
-    # is asked of the two tokens before either is validated, so `add 7 --item x` is
-    # refused for naming two subjects rather than for whichever one of them is also
-    # malformed. Every other verb keeps its own positional rule below.
+    # add names one subject and never two: an issue number or --item ID, asked of the
+    # two tokens before either is validated, so `add 7 --item x` is refused for naming
+    # two subjects and not for whichever one is also malformed.
     if args.issue is not None and args.item is not None:
-        # Asked of every verb, before the token itself is validated: a run naming two
-        # subjects has to be told which one it meant, and no ordering of the checks
-        # below can answer that.
+        # Asked of every verb: a run naming two subjects has to be told which it meant.
         problem = order_add.subject_problems(args.issue, args.item)
         if problem is not None:
             return _fail(EXIT_USAGE, *problem)
@@ -319,16 +324,12 @@ def main(argv: list[str] | None = None) -> int:
         if problem is not None:
             return _fail(EXIT_USAGE, *problem)
 
-    # The subject token: a positive integer spelled in ASCII decimal digits, checked
-    # before the file is opened, so a typo cannot decide which entry of a real
-    # order gets touched. confirm is the one verb that may omit it, which means
-    # every entry at once. An add that named --item instead has no issue token to
-    # read, and the refusal above already said so when it named neither.
-    #
-    # An ``--item`` may name an entry for the three rearranging verbs too, and then the
-    # token is the id rather than a number: the type of ``subject`` is what tells the plan
-    # which kind of entry to reach, so ``move 7`` can never move an item's position and
-    # ``move --item idea-0001`` can never reach an issue's.
+    # The subject token: a positive integer in ASCII decimal digits, checked before the
+    # file is opened, so a typo cannot decide which entry of a real order gets touched.
+    # confirm is the one verb that may omit it, which means every entry at once. An
+    # ``--item`` may name an entry for the three rearranging verbs too, and then the
+    # token is the id: the type of ``subject`` tells the plan which kind of entry to
+    # reach, so ``move 7`` can never move an item's position.
     issue: int | None = None
     subject: int | str | None = None
     if subcommand == "confirm" and args.issue is None and args.item is None:
@@ -403,7 +404,7 @@ def main(argv: list[str] | None = None) -> int:
         assert args.decision is not None
         planned = order_add.plan_add(repo, entries, issue, args.item, args.decision,
                                      args.at, stamp, _fail, EXIT_IO, EXIT_USAGE,
-                                     EXIT_REFUSAL)
+                                     EXIT_REFUSAL, why=args.why)
         if planned.refusal is not None:
             return planned.refusal
         entries, verb = planned.entries, planned.verb
@@ -432,9 +433,8 @@ def main(argv: list[str] | None = None) -> int:
         # values, so the file keeps the bytes it had and nothing is claimed.
         return _fail(EXIT_REFUSAL, rendered.headline, rendered.hint)
     # --- the freshness probe: did anything move under this run? ----------------
-    # The lost-update guard; order_probe.py owns the check, its two refusal messages
-    # and the reason it sits here rather than with the other refusals. --no-commit is
-    # exempt because that route runs no git at all.
+    # The lost-update guard; order_probe.py owns it and the reason it sits here.
+    # --no-commit is exempt because that route runs no git at all.
     #
     # It runs BEFORE the no-change shortcut below, and that ordering is load-bearing.
     # ``rendered == before`` compares the bytes this run would write against the bytes it
@@ -468,11 +468,10 @@ def main(argv: list[str] | None = None) -> int:
               "commit")
         return EXIT_OK
 
-    # The three steps from here to the end of the run belong to the module that owns
-    # them: the parent-directory fault the pre-read walk does not cover, the atomic
-    # write, and the two git calls with their four bad answers each. Each hands back the
-    # (headline, hint) pair and this file prints it under the I/O code, so the voice and
-    # the table of codes stay here.
+    # The three steps to the end of the run belong to the module that owns them: the
+    # parent-directory fault the pre-read walk does not cover, the atomic write, and the
+    # two git calls. Each hands back its (headline, hint) pair for this file to print
+    # under the I/O code, so the voice and the table of codes stay here.
     faulty = order_commit.parent_refusal(repo)
     if faulty is not None:
         return _fail(EXIT_IO, *faulty)

@@ -27,15 +27,16 @@ it reads nothing but git.
   "source": { "issue_number": 42, "comment_id": 9102 },
   "decided_by": "operator-ann",
   "on_behalf_of": "the platform team",
-  "single_option": true
+  "single_option": true,
+  "why": "the train leaves at six and nothing else is ready"
 }
 ```
 
 The field list is fixed and the census validates it. A record with a missing or
-malformed field fails the census with exit `10`. Four fields are optional:
-`source`, `decided_by`, `on_behalf_of` and `single_option`. A record that carries
-none of them is the eight-field shape and stays valid, which is what keeps every
-record written before these fields existed censusable. Each optional field is
+malformed field fails the census with exit `10`. Five fields are optional:
+`source`, `decided_by`, `on_behalf_of`, `single_option` and `why`. A record that
+carries none of them is the eight-field shape and stays valid, which is what keeps
+every record written before these fields existed censusable. Each optional field is
 checked when present.
 
 | field | type | rules |
@@ -52,6 +53,7 @@ checked when present.
 | `decided_by` | string (optional) | who made the decision, when that is not the commit author: a login or pseudonym, never a personal-name requirement. Written by `--decided-by`. Absent means the commit author decided, so records written before this field stay valid. The census types it as a non-empty single-line string and verifies nothing about the identity |
 | `on_behalf_of` | string (optional) | the party a delegated decision was made for, written by `--on-behalf-of`. Same census shape as `decided_by`. `decide.py` refuses it without `--decided-by`; a hand-edited record carrying one name and not the other is well formed, because the pairing is the writer's rule and not the census's |
 | `single_option` | `true` (optional) | written by `--single-option`: the marker that says a question was asked with one option on purpose. It is the only thing that makes a one-option question valid, so a one-option record without it is a `ledger-record` exit 10. It is a per-record marker over a per-question bound: with it set, any question of that record may hold one option and at least one must, so a marker no question carries one option is a `ledger-record` exit 10 as well. Written as the JSON `true` literal, anything else is a malformed marker |
+| `why` | string (optional) | the operator's one line of reason for the decision, written by `--why`. Same census shape as `decided_by` (a non-empty single-line string) plus one length bound: at most 280 characters, counted in code points, so a value of emoji or combining marks is measured the way its author measures it and not by its bytes. The bound has one owner (`itemschema.WHY_MAX`, shared with an order entry's `why` and with the item store's reason field), so `decide.py` refuses a blank, multi-line or over-long value at the flag (exit 2) and both censuses report a hand-edited one as `ledger-record` exit 10 naming `why`. A `--supersedes` run whose target carries such a `why` is refused at exit 4 rather than rewriting it. Absent means no reason was recorded, which is the shape every record written before this field holds |
 
 ## The question object
 

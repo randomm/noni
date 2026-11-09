@@ -44,7 +44,13 @@ from noni.public_safety import (
 # the *same objects* the console route imports, which is what makes a seam a test
 # installs visible to the other route as well.
 for _alias, _pkg_name in (
+    # The rationale rule is registered because three artifacts read it and two of them
+    # are loaded bare: a rule that resolved through a relative import would import the
+    # package's copy under one route and fail under the other, which is the drift the
+    # module exists to prevent.
+    ("_why", "_why"),
     ("_session_git", "_session_git"),
+    ("ledger_schema", "ledger_schema"),
     ("close", "close"),
     ("release", "release"),
     ("census", "census"),

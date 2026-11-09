@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from item_writer_fixtures import BASELINE_ID, NOW, item_path, repo, run_item, seed_item, seed_record
 
+from noni.itemschema import TITLE_MAX, WHY_MAX
+
 CANDIDATE = {"schema": "noni.item/1", "id": "idea-0001", "title": "t",
              "status": "candidate", "created": "2026-10-26T00:00:00Z"}
 
@@ -174,16 +176,17 @@ def test_a_flag_value_that_is_not_one_bounded_line_is_refused(tmp_path):
     tree = repo(tmp_path)
     seed_record(tree)
     seed_item(tree, dict(CANDIDATE))
-    long_text = "x" * 201
-    long_why = "y" * 281
+    long_text = "x" * (TITLE_MAX + 1)
+    long_why = "y" * (WHY_MAX + 1)
     cases = [
         (["add", "idea-0002", "--title", "   "], "title"),
         (["add", "idea-0002", "--title", "a\nb"], "title"),
         (["add", "idea-0002", "--title", "a\rb"], "title"),
-        (["add", "idea-0002", "--title", long_text], "200"),
+        (["add", "idea-0002", "--title", long_text], str(TITLE_MAX)),
         (["drop", "idea-0001", "--decision", BASELINE_ID, "--why", "  "], "why"),
         (["drop", "idea-0001", "--decision", BASELINE_ID, "--why", "a\nb"], "why"),
-        (["drop", "idea-0001", "--decision", BASELINE_ID, "--why", long_why], "280"),
+        (["drop", "idea-0001", "--decision", BASELINE_ID, "--why", long_why],
+         str(WHY_MAX)),
     ]
     for argv, needle in cases:
         proc = run_item(tree, *argv, "--now", NOW)
@@ -198,13 +201,13 @@ def test_a_title_at_the_bound_is_accepted(tmp_path):
     here refuses the longest title the artifact is documented to hold.
     """
     tree = repo(tmp_path)
-    assert run_item(tree, "add", "idea-0001", "--title", "x" * 200,
+    assert run_item(tree, "add", "idea-0001", "--title", "x" * TITLE_MAX,
                     "--now", NOW).returncode == 0
     seed_record(tree)
     assert run_item(tree, "add", "idea-0002", "--title", "t",
                     "--now", NOW).returncode == 0
     assert run_item(tree, "drop", "idea-0002", "--decision", BASELINE_ID,
-                    "--why", "y" * 280, "--now", NOW).returncode == 0
+                    "--why", "y" * WHY_MAX, "--now", NOW).returncode == 0
 
 
 def test_an_issue_that_is_not_a_positive_integer_is_refused(tmp_path):

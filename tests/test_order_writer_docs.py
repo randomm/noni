@@ -223,7 +223,7 @@ def test_skill_md_documents_the_writer_within_the_line_cap():
     assert "scripts/order.py" in text, "SKILL.md does not document the writer"
     for verb in ("add", "move", "remove", "confirm"):
         assert f"order.py {verb}" in text or f"`{verb}`" in text, f"SKILL.md omits {verb}"
-    for flag in ("--decision", "--no-commit", "--now", "--at", "--to"):
+    for flag in ("--decision", "--no-commit", "--now", "--at", "--to", "--why"):
         assert flag in text, f"SKILL.md omits {flag}"
     assert "noni/direction/order.json" in text and "noni.order/1" in text
     for code in (0, 2, 3, 4):

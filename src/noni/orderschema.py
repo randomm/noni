@@ -29,6 +29,46 @@ import json
 import re
 from datetime import datetime, timezone
 
+
+def _why():
+    """The rationale rule module, reached the way this module itself is reached.
+
+    Both routes this file is loaded by have to work, and a relative import at the top
+    is an ``ImportError`` for the bare one, so every neighbour here is resolved on first
+    use; see :func:`_reader`, whose shape this copies.
+    """
+    try:
+        from . import _why as module
+        return module
+    except ImportError:  # no package: the rule sits beside this file on disk
+        import importlib.util
+        from pathlib import Path
+
+        source = Path(__file__).with_name("_why.py")
+        spec = importlib.util.spec_from_file_location("_why", source)
+        if spec is None or spec.loader is None:  # pragma: no cover - fixed path
+            raise RuntimeError(f"cannot load the rationale rule at {source}") from None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+
+# One module object, remembered, the way :func:`_reader` remembers its reader.
+_WHY: object = None
+
+
+def _why_rule():
+    """The remembered :func:`_why` module."""
+    global _WHY
+    if _WHY is None:
+        globals()["_WHY"] = _why()
+    return _WHY
+
+
+# The rationale's key, from the module that states its rule, so the artifact's field
+# list, the record's field list and every refusal name one field.
+WHY_FIELD = _why_rule().WHY_FIELD
+
 # The item store's own rules, written out rather than imported. The reason is the one
 # this module has always had for spelling its constants here instead of taking them from
 # somewhere else (see ``ORDER_SCHEMA`` and the field lists): the test harness loads this
@@ -45,15 +85,10 @@ _ITEM_ID_MAX = 80
 def _is_item_id(value: object) -> bool:
     """Whether ``value`` is the id shape :mod:`noni.itemschema` defines.
 
-    The whole item side of validation, spelled once: a string that matches the id
-    grammar, sits inside the length bound, and carries neither of the two suffixes that
-    would make one item named two ways. ``itemschema.is_item_id`` is the store's owner
-    of all four halves and this is its copy, held to it by the shared shape table --
-    an entry citing ``idea.json`` could never name a file under ``noni/items/``, so a
-    writer that accepted it would emit a queue the census faults and the store has no
-    name for.
-
-    A number, a boolean or any other type is not an id and has nothing further to check.
+    The whole item side of validation, spelled once: the id grammar, the length bound
+    and the two suffix rules that keep one item named one way. This is the store's
+    ``itemschema.is_item_id`` read from the other side, held to it by the shared shape
+    table; a number, a boolean or any other type is not an id.
     """
     return (isinstance(value, str) and len(value) <= _ITEM_ID_MAX
             and not value.endswith(".json") and not value.endswith(".")
@@ -77,17 +112,20 @@ ORDER_FILE = "order.json"
 ORDER_REL = f"{ORDER_DIR}/{ORDER_FILE}"
 
 # The fields of one entry, in the order they are written. Position in the
-# entries list is the order; it is not a field.
-ENTRY_FIELDS = ("issue", "decision", "confirmed")
+# entries list is the order; it is not a field. ``why`` is the operator's one line
+# of reason for the position, written by ``order.py add --why`` and optional: an entry
+# without it is the three-field shape every order written before it holds, byte for
+# byte. Its shape and its bound are the ledger's (``ledger_schema.why_problems``), the
+# same rule a record's rationale obeys.
+ENTRY_FIELDS = ("issue", "decision", "confirmed", WHY_FIELD)
 # The same fields for a ``/2`` entry, with ``item`` stated where it is written:
 # first when the entry cites an item, in place of ``issue``, and never beside it.
 # The tuple is the documented key order, which is also the byte order the
 # canonical form keeps, so this line and :func:`order_bytes` are one contract.
-ENTRY_FIELDS_V2 = ("item", "issue", "decision", "confirmed")
+ENTRY_FIELDS_V2 = ("item", "issue", "decision", "confirmed", WHY_FIELD)
 
-# The key that gives an entry its item citation. Named here so the one reader
-# that has to tolerate it ahead of the schema says which field it means, and so
-# the arbiter, the item store's census group and this writer all name one field.
+# The key that gives an entry its item citation, named here so the arbiter, the item
+# store's census group and this writer all name one field.
 ITEM_FIELD = "item"
 
 # The order block as it is printed: position right-aligned in three columns, so
@@ -97,11 +135,9 @@ POSITION_WIDTH = 3
 def entry_issue(entry: object) -> object:
     """The issue ``entry`` names, or ``None`` when it names none.
 
-    One reader of the field for the whole family. A ``/2`` entry may carry no
-    ``issue`` at all, and every caller that printed, compared or listed entries
-    used to reach for ``entry["issue"]`` and would raise on the one entry that
-    cites an item instead. Asking through here is what makes "this entry names no
-    issue" a value a caller can branch on rather than a ``KeyError``.
+    One reader of the field for the whole family: a ``/2`` entry may carry no ``issue``
+    at all, so asking through here makes "names no issue" a value a caller can branch
+    on rather than a ``KeyError``.
     """
     if not isinstance(entry, dict):
         return None
@@ -127,12 +163,10 @@ def entry_item(entry: object) -> object:
 def has_item_entry(entries_or_body: object) -> bool:
     """Whether any entry carries the ``item`` field.
 
-    The question that decides which version a run writes: an order holding one
-    item entry is a ``/2`` document and one holding none stays ``/1``, so a
-    reorder of a queue of issues never restamps the file's version. Accepts either
-    the entries list or the whole ``{schema, entries}`` body, because the writer
-    asks it of entries it has already taken out of the document and the renderer
-    asks it of the body it is about to render.
+    The question that decides which version a run writes: one item entry makes a
+    ``/2`` document, so a reorder of a queue of issues never restamps the file's
+    version. Accepts the entries list or the whole body, which is what the writer and
+    the renderer each hand it.
     """
     entries = (entries_or_body.get("entries")
                if isinstance(entries_or_body, dict) else entries_or_body)
@@ -181,11 +215,12 @@ def order_bytes(body: dict) -> bytes:
 
     The version is the body's own ``schema``, and each entry is projected through
     the fields that version documents -- ``item`` where it holds it, in place of
-    ``issue``. A projection named from a constant rather than the entry's own keys
-    is what makes the canonical comparison mean something: a renderer that handed
-    back the file's keys verbatim would certify any bytes, and a renderer that
-    dropped ``item`` on the way out would make every canonical ``/2`` file a
-    permanent refusal, since no verb could rewrite what it cannot re-render.
+    ``issue``, and the optional ``why`` last when the entry carries one. A projection
+    named from a constant rather than the entry's own keys is what makes the canonical
+    comparison mean something: a renderer that handed back the file's keys verbatim
+    would certify any bytes, and a renderer that dropped a documented field on the way
+    out (``item``, or ``why``) would make every canonical file carrying it a permanent
+    refusal, since no verb could rewrite what it cannot re-render.
     """
     schema = body.get("schema")
     fields = entry_fields(schema)
@@ -303,15 +338,17 @@ def _entry_required(entry: dict, fields: tuple[str, ...],
     """The fields one entry of ``schema`` owes, given the subject it names.
 
     ``decision`` and ``confirmed`` every entry carries; the subject is the one field the
-    entry itself chooses. Under ``/1`` the subject is always ``issue``, so the ``item`` a
-    ``/1`` entry carries is left out of the required list and the unknown-field rule names
-    it -- the honest description of a key the document's own version never declared.
+    entry itself chooses, and ``why`` is the one field no entry owes. Under ``/1`` the
+    subject is always ``issue``, so the ``item`` a ``/1`` entry carries is left out of the
+    required list and the unknown-field rule names it -- the honest description of a key
+    the document's own version never declared.
     """
+    owed = tuple(field for field in fields if field != WHY_FIELD)
     if schema != ORDER_SCHEMA_V2:
-        return fields
+        return owed
     if ITEM_FIELD in entry:
-        return tuple(f for f in fields if f != "issue")
-    return tuple(f for f in fields if f != ITEM_FIELD)
+        return tuple(f for f in owed if f != "issue")
+    return tuple(f for f in owed if f != ITEM_FIELD)
 
 
 def _entry_subject_problems(index: int, entry: dict, schema: object,
@@ -337,13 +374,18 @@ def _entry_subject_problems(index: int, entry: dict, schema: object,
 
 def _entry_field_problems(index: int, entry: dict, found: list[str]) -> None:
     """The per-field rules of one entry, appended to ``found``."""
+    if WHY_FIELD in entry:
+        # The ledger's rationale rule, asked through the module that states it, so one
+        # line of reason is one line wherever it is written. The arbiter keeps its own
+        # copy (``census_ordering._why_problems``) for the reason its field lists are
+        # copies, and the shared shape table holds the two to one answer.
+        found.extend(f"entry {index} {problem}"
+                     for problem in _why_rule().why_problems(entry))
     if ITEM_FIELD in entry:
         cited = entry[ITEM_FIELD]
         if not _is_item_id(cited):
-            # The store's own id rule, asked through the store's own module: an id
-            # outside it can never name a file under noni/items/, so it is refused
-            # before any path is built from the token and answered the same way on
-            # both sides of the writer/arbiter split.
+            # An id outside the store's rule can never name a file under
+            # noni/items/, so it is refused before any path is built from the token.
             found.append(f"entry {index} {ITEM_FIELD} {cited!r} is not an item id")
     if "issue" in entry:
         issue = entry["issue"]
@@ -355,8 +397,8 @@ def _entry_field_problems(index: int, entry: dict, found: list[str]) -> None:
             # Every entry cites a decision, whoever placed it: a position with no
             # record behind it is an ordering nobody can look up or replay, so a
             # JSON null is refused like a blank string. A missing key is the
-            # entry-gaps report above, never this one — the two sentences are
-            # what tells a reader whether a repair is an id or a key.
+            # entry-gaps report above, never this one: the two sentences tell a
+            # reader whether a repair is an id or a key.
             found.append(f"entry {index} decision is neither a record id nor null")
     confirmed = entry.get("confirmed")
     if "confirmed" in entry and (not isinstance(confirmed, str)
@@ -365,17 +407,37 @@ def _entry_field_problems(index: int, entry: dict, found: list[str]) -> None:
 
 
 def entry(issue: int | None = None, decision: str | None = None,
-          confirmed: str = "", item: str | None = None) -> dict:
+          confirmed: str = "", item: str | None = None,
+          why: str | None = None) -> dict:
     """One entry in the documented key order.
 
     Two subjects, never both: an entry names the issue it is or the item it cites.
-    ``item`` first, because an item entry writes that key where an issue entry
-    writes ``issue``, and the two are the only difference between the versions.
-    The shape rules refuse the document that carries both or neither, so a caller
-    that passed neither is refused rather than written.
+    ``item`` comes first because an item entry writes that key where an issue entry
+    writes ``issue``. ``why`` is written last and only when the caller was given a
+    reason, so an entry built without one renders the bytes the artifact held before
+    the field existed -- the promise the record's optional fields keep. The shape rules
+    refuse a document carrying both subjects or neither.
     """
     subject = {ITEM_FIELD: item} if item is not None else {"issue": issue}
-    return {**subject, "decision": decision, "confirmed": confirmed}
+    body = {**subject, "decision": decision, "confirmed": confirmed}
+    if why is not None:
+        body[WHY_FIELD] = why
+    return body
+
+
+def why_problems(entry: dict) -> list[str]:
+    """What one entry's ``why`` gets wrong, as problem strings naming the field.
+
+    The artifact's name for :func:`noni._why.why_problems`: the flag refusal, the
+    pre-write shape check and the arbiter ask one question of one rationale, so a value
+    cannot be legal in the ledger and illegal here. No ``why`` key answers no problem.
+    """
+    return _why_rule().why_problems(entry)
+
+
+def why_max() -> int:
+    """The rationale bound, read from :data:`noni.itemschema.WHY_MAX`, the one owner."""
+    return _why_rule().why_max()
 
 
 _READER: object = None

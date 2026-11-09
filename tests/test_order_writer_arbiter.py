@@ -8,12 +8,61 @@ import os
 import subprocess
 from pathlib import Path
 
+from ledger_schema_fixtures import (
+    arbiter_line_rules,
+    arbiter_why_max,
+    product_why_max,
+)
 from order_fixtures import (
     _gitwrite_module,
     _schema_case,
     _schema_module,
 )
 from ordering_shapes import CLEAN_SHAPES, MALFORMED_SHAPES
+
+
+def test_the_arbiter_copy_of_the_rationale_bound_is_the_owner():
+    """The one legitimate second spelling of the bound is held to its owner by reading.
+
+    ``census_ordering`` is loaded by path and imports nothing from the writer's
+    package, so it keeps its own copy of the number -- the same reason it keeps copies
+    of the field lists and the two character sets. A copy nobody reads back is how the
+    writer and the arbiter came to disagree about a value one of them wrote, so this
+    asserts the two numbers are equal at the moment the suite runs, and that neither is
+    a test's own figure. The shape table
+    (``tests/ordering_shapes.py``) drives the same bound through both sides; this is
+    the assertion that says the arbiter's copy is the product's number and not a
+    bystander that happens to match today.
+    """
+    owner = product_why_max()
+    copy = arbiter_why_max()
+    assert copy == owner, (
+        f"the ordering arbiter holds {copy} and the item store owns {owner}: a reason "
+        "the writer emits is an artifact this class faults, and no verb can rewrite "
+        "what the writer will not re-render")
+
+
+def test_the_arbiter_copies_of_the_line_rule_are_the_writer_s(tmp_path):
+    """The second spelling of the *shape* half is held to its owner the same way.
+
+    The bound has a read-back (above); the two character sets the same rule is
+    composed from had none, so an edit to the arbiter's copy of one of the ten line
+    breaks, or of one of the four blanks, was caught only when the shared shape table
+    happened to carry that character. A break the writer refuses and this arbiter
+    calls clean is an artifact committed and never reported; the reverse is an
+    artifact the census faults that no verb will rewrite. Both are refused here by
+    comparing the copies themselves, character for character, rather than by
+    sampling values through them.
+    """
+    from noni import ledger_schema
+
+    breaks, blanks = arbiter_line_rules()
+    assert tuple(breaks) == ledger_schema.LINE_BREAKS, (
+        f"the arbiter's line breaks {breaks!r} are not the writer's "
+        f"{ledger_schema.LINE_BREAKS!r}")
+    assert blanks == "".join(ledger_schema.BLANKS), (
+        f"the arbiter's blanks {blanks!r} are not the writer's "
+        f"{''.join(ledger_schema.BLANKS)!r}")
 
 
 def test_the_git_helper_is_bounded_hardened_and_makes_no_signing_promise(tmp_path):

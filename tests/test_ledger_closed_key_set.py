@@ -60,23 +60,38 @@ def test_each_junk_key_fixture_is_refused_by_both_censuses(tmp_path):
 
 def test_the_closed_set_is_a_set_and_not_a_count(tmp_path):
     """The rule stated as the rule, not as the four fixtures: a record whose keys
-    are all declared is clean at twelve keys, and one extra key makes it malformed
-    at any count.
+    are all declared is clean at the full count, and one extra key makes it
+    malformed at any count.
 
     A count and a set agree on every record that carries only declared keys, so the
     positive half matters: it is what shows the set test did not simply tighten
     until nothing passed.
+
+    The count is derived from ``ledger_schema`` rather than written here, and the
+    fixture is required to hold every declared key: a number spelled in a test is a
+    second declaration of the set, and the day ``why`` joined it such a number left
+    the suite asserting a shape the schema no longer produces (issue #122 -- the
+    literal 12 here was the failure the derivation was written to make impossible).
     """
+    from noni import ledger_schema
+
+    declared = (set(ledger_schema.REQUIRED_LEDGER_FIELDS)
+                | set(ledger_schema.OPTIONAL_LEDGER_FIELDS))
     full = _fixture("decision-valid-all-optional-fields.json")
-    assert len(full) == 12, f"the control is the full twelve-key shape: {len(full)}"
-    _assert_both_clean(tmp_path, full, "all four optional fields")
+    assert set(full) == declared, (
+        "the control fixture must carry every field the schema declares: "
+        f"missing {sorted(declared - set(full))}, extra "
+        f"{sorted(set(full) - declared)}")
+    assert len(full) == len(declared), (
+        f"the control is the full {len(declared)}-key shape: {len(full)}")
+    _assert_both_clean(tmp_path, full, "every optional field")
 
     with_junk = dict(full)
-    with_junk["id"] = "2026-10-04-thirteen-keys"
+    with_junk["id"] = "2026-10-04-one-key-over"
     with_junk["junk"] = "one key over a count the old rule never reached"
-    assert len(with_junk) == 13
-    _assert_both_refuse(tmp_path, with_junk, "junk", "a thirteenth key",
-                        subdir="thirteen")
+    assert len(with_junk) == len(declared) + 1
+    _assert_both_refuse(tmp_path, with_junk, "junk", "a key over the closed set",
+                        subdir="over-the-set")
 
 
 def test_a_record_missing_a_required_field_is_still_reported(tmp_path):
@@ -112,7 +127,11 @@ def test_the_schema_field_sets_are_the_only_declaration_of_the_set():
     assert OPTIONAL_LEDGER_FIELDS == ledger_schema.OPTIONAL_LEDGER_FIELDS
     declared = (set(ledger_schema.REQUIRED_LEDGER_FIELDS)
                 | set(ledger_schema.OPTIONAL_LEDGER_FIELDS))
-    assert len(declared) == 12, sorted(declared)
+    # The count is the schema's own sum, so the assertion is that the two tuples
+    # partition the set (no name in both) and not that the set has a number the test
+    # remembers.
+    assert len(declared) == (len(ledger_schema.REQUIRED_LEDGER_FIELDS)
+                             + len(ledger_schema.OPTIONAL_LEDGER_FIELDS)), sorted(declared)
     # No third copy: the record pass names the sets it validates by importing
     # them, so a name added to the schema alone changes the census too.
     assert set(ledger_schema.REQUIRED_LEDGER_FIELDS) & \
@@ -185,6 +204,6 @@ def test_the_golden_fixtures_the_suite_reads_are_all_present():
     the shapes into a loop over nothing that still ends green.
     """
     for name in list(JUNK_FIXTURES) + ["decision-valid-all-optional-fields.json",
-                                       "decision-valid.json"]:
+                                       "decision-valid.json", "decision-why.json"]:
         assert (FIXTURES / name).is_file(), f"the golden fixture {name} is missing"
     assert REPO.is_dir()

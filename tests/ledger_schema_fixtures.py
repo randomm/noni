@@ -36,6 +36,8 @@ from pathlib import Path
 
 from _harness import REPO, subprocess_env
 
+from noni import ledger_schema
+
 FIXTURES = REPO / "tests" / "fixtures"
 CENSUS_SH = REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"
 CENSUS_PY = REPO / "skills" / "census" / "scripts" / "census.py"
@@ -69,6 +71,90 @@ BASELINE_FIXTURE = "decision-valid.json"
 # does not declare it: what a newer writer emits and a pinned census then refuses.
 # Not in the closed set, by design -- see ``tests/test_ledger_schema_level_skew.py``.
 SKEW_FIELD = "decided_by_next_era"
+
+# The rationale field, and its bound, both read from the product rather than spelled
+# here: the three modules that drive a ``why`` through the censuses ask the schema for
+# the key and :func:`noni.itemschema.WHY_MAX` for the number, so a bound that moves
+# reddens them instead of certifying a shape nothing enforces any more. The key is
+# reached through the ledger's own module and not the item store's, because the ledger
+# census is the arbiter these tests are asking.
+WHY_FIELD = ledger_schema.WHY_FIELD
+WHY_MAX = ledger_schema.why_max()
+
+# Each of the three separators json escapes and ``str.splitlines`` breaks a line on,
+# and each of the three json writes into the bytes unescaped. Shared because the name
+# rule, the marker rule and the rationale rule all refuse the same ten characters: a
+# ``why`` carrying one is one JSON string and two lines, which is what the single-line
+# rule was written for.
+FILE_GROUP_RECORD = ("\x1c", "\x1d", "\x1e")
+RAW_SEPARATORS = ("\x85", "\u2028", "\u2029")
+# A value made of nothing but a character the blank rule refuses, and one ordinary
+# value that must stay accepted: the positive control of every shape table here.
+BLANK_WHY = "   "
+# The committed fixture's own reason, so the fixture and the in-process cases read
+# one value rather than each keeping a copy of a sentence.
+ORDINARY_WHY = "the train leaves at six and nothing else is ready"
+
+
+def why_over_bound(char: str = "a") -> str:
+    """A rationale one code point past the bound the product states, in ``char``.
+
+    A function and not a constant so the bound is read at the moment the caller asks:
+    a module-level ``"a" * (WHY_MAX + 1)`` would be a copy of the number taken at
+    import time, which is the thing these fixtures exist to stop.
+    """
+    return char * (WHY_MAX + 1)
+
+
+def why_at_bound(char: str = "a") -> str:
+    """A rationale of exactly the bound: the longest value both sides must accept."""
+    return char * WHY_MAX
+
+
+def product_why_max() -> int:
+    """The rationale bound as the product states it, read at the moment of the call.
+
+    The one spelling of the number any test may compare against. A module constant is
+    taken at import time, so a suite that imported it kept a copy of its own -- and a
+    copy is what the acceptance criterion for issue #122 refuses: the day the bound
+    moves, every module holding one fails to notice. This reads
+    :data:`noni.itemschema.WHY_MAX` through the package, which is the route the writer,
+    the ledger census and the ordering arbiter all take.
+    """
+    from noni.itemschema import WHY_MAX as owner
+
+    return owner
+
+
+def arbiter_why_max() -> int:
+    """The ordering arbiter's own copy of the bound, read from the loaded module.
+
+    ``census_ordering`` is loaded by path and imports nothing from the writer's package,
+    so it holds the number as a module constant on purpose (see its comment). That copy
+    is the one legitimate second spelling in the product, and the only way to hold it to
+    the owner is to read it back and compare -- which is what the suites driving the
+    shared shape table do.
+    """
+    from harness_module import load_package_module
+
+    return load_package_module("census_ordering").WHY_MAX
+
+
+def arbiter_line_rules() -> tuple[tuple[str, ...], str]:
+    """The ordering arbiter's own copies of the two character sets, read back.
+
+    ``census_ordering`` holds :data:`WHY_MAX` twice for the reason its field lists
+    are copied, and it copies the shape half of the rule the same way: the ten
+    ``LINE_BREAKS`` and the four blanks. A number that drifts reddens
+    :func:`arbiter_why_max`; these two had no read-back, so an edit to one copy of
+    the ten was caught only if the shared shape table happened to carry that
+    character. This hands both copies to the suite that compares them against the
+    writer's own sets.
+    """
+    from harness_module import load_package_module
+
+    arbiter = load_package_module("census_ordering")
+    return arbiter.LINE_BREAKS, arbiter.WHY_BLANKS
 
 
 def _with_skew_field(record: dict, value: str = "future-writer") -> dict:

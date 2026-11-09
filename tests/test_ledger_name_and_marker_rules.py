@@ -40,6 +40,8 @@ from _harness import REPO, subprocess_env
 from ledger_class_support import _comment_above, _names_strip_as_basis
 from ledger_schema_fixtures import (
     CENSUS_SH,
+    FILE_GROUP_RECORD,
+    RAW_SEPARATORS,
     _assert_both_clean,
     _assert_both_refuse,
     _baseline,
@@ -47,11 +49,10 @@ from ledger_schema_fixtures import (
     no_package_env,
 )
 
-# Each of the three separators json escapes and str.splitlines breaks a line on.
-FILE_GROUP_RECORD = ("\x1c", "\x1d", "\x1e")
-# Each of the three json writes into the bytes unescaped, which is why the rule
-# cannot be a check for a newline alone: the value is one JSON string and two lines.
-RAW_SEPARATORS = ("\x85", "\u2028", "\u2029")
+# The two separator families are shared with the rationale cases in
+# ``tests/test_decide_attribution_fields.py`` through ``ledger_schema_fixtures``: both
+# rules refuse the same ten characters, and two lists of ten is how the two sides of a
+# rule first drifted apart.
 # A name made of nothing but a character the blank rule refuses: the four of
 # ``ledger_schema.BLANKS`` (space, tab, U+000B, U+000C), each alone and each
 # doubled, plus the empty string. The comment test below reads BLANKS's own

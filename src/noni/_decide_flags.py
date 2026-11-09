@@ -94,6 +94,12 @@ Fail = Callable[[int, str, str | None], int]
 # of that rule kept here could drift from it in silence.
 LineFree = Callable[[object], bool]
 
+# The same rule plus a length bound, for a flagged value that carries one (a
+# record's ``why``). Handed in rather than imported for the reason ``LineFree`` is:
+# the shape and the number both belong to the schema the census reads, and a copy of
+# either here is how a writer comes to accept what the arbiter reports.
+BoundedLine = Callable[[object, int], bool]
+
 
 class RecordFlags(Protocol):
     """The parsed flags :func:`build_record_flags` reads -- argparse's namespace, typed.
@@ -289,19 +295,28 @@ def refuse_slug(slug: str, *, fail: Fail, exit_usage: int,
 
 
 def refuse_name(flag: str, value: str | None, *, fail: Fail,
-                exit_usage: int, line_free: LineFree) -> int | None:
-    """The census's shape for one of the two name flags, or the code of the
-    refusal printed. ``None`` (flag absent) is not a refusal: both names are
+                exit_usage: int, line_free: LineFree,
+                bounded: BoundedLine | None = None,
+                maximum: int | None = None) -> int | None:
+    """The census's shape for one optional text flag, or the code of the
+    refusal printed. ``None`` (flag absent) is not a refusal: the optional names are
     optional and a record without them means the commit author decided.
 
-    The rule is the census's own (`decided_by`/`on_behalf_of` must be non-empty
-    single-line strings), stated once so the writer refuses at the flag what the
-    census would otherwise report at exit 10 after the record was committed. The
-    blank and the line rules are both carried by ``line_free``, the census's own
-    predicate handed in by the caller: a name that is only whitespace names
-    nobody, and a name carrying a break is not one name. Keeping both in the
-    handed-in predicate is what stops the writer and the census disagreeing
-    on either.
+    The rule is the census's own (a name must be a non-empty single-line string),
+    stated once so the writer refuses at the flag what the census would otherwise
+    report at exit 10 after the record was committed. The blank and the line rules are
+    both carried by ``line_free``, the census's own predicate handed in by the caller:
+    a name that is only whitespace names nobody, and a name carrying a break is not one
+    name. Keeping both in the handed-in predicate is what stops the writer and the
+    census disagreeing on either.
+
+    The bound is the second half of the pair, asked only when the caller hands it:
+    ``bounded``/``maximum`` are how a flagged value that also has a length limit (a
+    record's ``why``) is refused at the flag rather than reported by the census after
+    the commit. Both arrive together or neither is asked: a bound with no predicate
+    could not tell a blank from a long value, and the pair comes from the same schema
+    the census reads, so the writer cannot accept a shape the arbiter reports. A name
+    flag passes neither and keeps its two refusals.
     """
     if value is None:
         return None
@@ -313,6 +328,10 @@ def refuse_name(flag: str, value: str | None, *, fail: Fail,
                         f"name a login or pseudonym, e.g. {flag} operator-ann")
         return fail(exit_usage, f"{flag} is not a single line",
                     f"one name per {flag}: no line break in the value")
+    if bounded is not None and maximum is not None and not bounded(value, maximum):
+        return fail(exit_usage,
+                    f"{flag} is {len(value)} characters, past the {maximum} limit",
+                    f"shorten {flag} to at most {maximum} characters")
     return None
 
 

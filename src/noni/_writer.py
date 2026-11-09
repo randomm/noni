@@ -149,6 +149,38 @@ def stage_and_commit(label: str, repo: Path, rels: list[str], message: str,
     return None
 
 
+def written(exc: OSError, what: str) -> str:
+    """One 'could not be written' headline naming the OSError and its reason.
+
+    The writer family's own wording for a write that did not land, so the record
+    whose ``os.replace`` faulted and the target the flip could not put back are named
+    in one voice.
+    """
+    return f"{what} ({exc.__class__.__name__}: {exc.strerror or exc})"
+
+
+def refuse_unwritten(label: str, ledger: Path, fail: Callable[..., int],
+                     exit_commit_failed: int, repo: Path, rels: list[str],
+                     target_rel: str | None, record_rel: str,
+                     committed_bytes: bytes | None, exc: OSError) -> int:
+    """Roll the run's paths back after a write that did not land, and refuse.
+
+    ``os.replace`` never half-writes, so a failed path holds what it held before this
+    run; the refusal names what the undo could not do rather than call the tree clean.
+    The printer, the code, the label and the ledger path stay the caller's, so the
+    wording and the exit table keep one owner while this module keeps the mechanics of
+    the undo -- which is the same split :func:`stage_and_commit` makes for the two git
+    steps, and for the same reason: :mod:`noni.decide` is at its line cap.
+    """
+    unredone = gitwrite.rollback(repo, rels, target_rel, record_rel, committed_bytes)
+    detail = written(exc, "the record could not be written")
+    if unredone is not None:
+        return fail(exit_commit_failed,
+                    *gitwrite.undo_wording(detail, str(unredone), str(exc), rels))
+    return fail(exit_commit_failed, detail,
+                f"check that {ledger} is writable, then re-run {label}")
+
+
 def identity(label: str, run_git: Callable[..., subprocess.CompletedProcess[str]],
              repo: Path) -> tuple[str, tuple[str, str] | None]:
     """The tree's ``git config user.name``, and a (headline, hint) refusal.
@@ -254,7 +286,10 @@ def flag_refusals(fail: Callable[[int, str, str | None], int], exit_usage: int,
                   on_behalf_of: str | None,
                   line_free: Callable[[object], bool],
                   options_by_question: dict[str, list[str]],
-                  single_option: bool) -> int | None:
+                  single_option: bool,
+                  why: str | None = None,
+                  bounded: Callable[[object, int], bool] | None = None,
+                  why_max: int | None = None) -> int | None:
     """The exit code of the first usage refusal the flags earn, or None.
 
     The rules, in the order they are refused: the slug is what the census accepts as
@@ -278,6 +313,14 @@ def flag_refusals(fail: Callable[[int, str, str | None], int], exit_usage: int,
     advertised a call it could not honour -- it would raise, not refuse. ``fail``
     and ``exit_usage`` are the caller's printer and code, so every
     refusal is worded in one voice.
+
+    ``why`` is the record's rationale and joins the name loop below: it is the same
+    kind of free text the operator types, and the three refusals it can earn (blank, a
+    break, past the bound) are worded by one seam rather than three. Its bound arrives
+    as ``bounded``/``why_max`` -- the schema's predicate and the number it counts to --
+    so the writer refuses at the flag what the census reports at exit 10. All three
+    default to None because this validator guards a second entry point to the writer,
+    and a caller that writes no rationale asks no question about one.
     """
     # The two slug rules in one call. This validator guards a second entry point to
     # the same writer, so it runs the first validator's rules rather than trust the
@@ -295,9 +338,13 @@ def flag_refusals(fail: Callable[[int, str, str | None], int], exit_usage: int,
                                "name the agent role or session that asked")):
         if not value.strip():
             return fail(exit_usage, f"{flag} is empty", hint)
-    for flag, value in (("--decided-by", decided_by), ("--on-behalf-of", on_behalf_of)):
+    for flag, value, limit in (("--decided-by", decided_by, None),
+                               ("--on-behalf-of", on_behalf_of, None),
+                               ("--why", why, why_max)):
         refused = refuse_name(flag, value, fail=fail, exit_usage=exit_usage,
-                              line_free=line_free)
+                              line_free=line_free,
+                              bounded=bounded if limit is not None else None,
+                              maximum=limit)
         if refused is not None:
             return refused
     if on_behalf_of is not None and decided_by is None:

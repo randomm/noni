@@ -19,7 +19,6 @@ from __future__ import annotations
 
 from ._safe_text import safe_text
 from .census_text import _bounded
-from .itemschema import ID_MAX, STATUS_CANDIDATE, TITLE_MAX
 
 # What a block prints when the artifact it reads is not readable at all (a symlink, a directory,
 # a device, or bytes this reader refuses). The refusal text the reader carries is deliberately

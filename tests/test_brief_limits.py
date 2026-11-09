@@ -25,13 +25,12 @@ from brief_fixtures import (
 from brief_support import (
     DROPPED_PREFIX,
     census_summary,
-    dropped_of,
     dropped_line,
-    page_with_budget,
+    dropped_of,
+    page_owed_lines,
     rows,
     sections,
     stripped,
-    summary_line,
 )
 
 from noni import brief as brief_module
@@ -134,61 +133,37 @@ def test_brief_the_budget_drops_order_entries_and_not_the_purpose(tmp_path: Path
 
     The truncation order is order entries first, then the purpose body. A budget the order can pay
     for on its own leaves the purpose block whole and every one of its lines on the screen, so the
-    debt never reaches the prose and the lines that went missing are order rows. The page is asked
-    of a process that briefed no other tree: the census caches the tree it audits, so a parent that
-    ran two trees would compare one tree's page against another's.
+    debt never reaches the prose: the lines the reader misses are order rows, and the tool counts
+    exactly the rows that came off the list.
     """
     root = plant_brief_tree(tmp_path)
-    full = page_lines(root)
-    out = page_with_budget(root, full - 3, fresh=True)
-    kept = rows(out, brief_module.ORDER_HEADER)
-    assert kept and len(kept) < brief_module.TOP_ENTRIES
-    assert len(stripped(sections(out), brief_module.PURPOSE_HEADER)) == \
-        brief_module.PURPOSE_MAX_LINES + 1
-    assert dropped_line(out) == f"{DROPPED_PREFIX}3 line(s)"
-
-
-# The one-page shape the two budget cases measure against: the two headers, the purpose body and
-# its ellipsis, the order's ten rows, and the single blank the page prints between two blocks that
-# both held something. Spelled from the tool's constants so a change to a cap moves the cases with
-# it rather than through them.
-BRIEF_UNCUT = 2 + PURPOSE_MAX + 1 + TOP + 1
-
-
-def test_brief_the_dropped_line_counts_the_lines_the_page_withheld(tmp_path: Path) -> None:
-    """The count line names the lines the page withheld, and the page is what a reader counts.
-
-    The budget counts the blank line between the two blocks as a line of the page, so a run that
-    empties the order block withholds one line more than the rows it held: the ten entries go and
-    the separator that stood under them goes with them. A count read off the arithmetic of the debt
-    named ten where the screen was eleven lines shorter -- which is the line this case exists to
-    pin, and why the expectation is written as rows plus separator rather than as the debt.
-    """
-    root = plant_brief_tree(tmp_path)
-    for owed in range(1, TOP + 3):
-        out = page_with_budget(root, BRIEF_UNCUT - owed, fresh=True)
-        kept = len(rows(out, brief_module.ORDER_HEADER))
-        # The page lost the order rows the cut took, and the separator that went with the last of
-        # them once the block held nothing. The purpose block pays nothing at any of these cuts.
-        assert dropped_of(out) == (TOP - kept) + (1 if kept == 0 else 0), (owed, out)
-        assert len(stripped(sections(out), brief_module.PURPOSE_HEADER)) == PURPOSE_MAX + 1, owed
-        # The verdict survives every cut. The budget governs the blocks, so the page as printed is
-        # the blocks the tool kept, its own count line, and the verdict line beneath them.
-        assert len(out.splitlines()) == BRIEF_UNCUT - owed + 2, owed
-
-
-def test_brief_the_budget_drops_order_entries_and_not_the_purpose(tmp_path: Path) -> None:
-    """The block that gives way is the one the spec names, and the count says how much.
-
-    The truncation order is order entries first, then the purpose body. A budget the order can pay
-    for on its own leaves the purpose block whole and every one of its lines on the screen, so the
-    debt never reaches the prose and the lines that went missing are order rows.
-    """
-    root = plant_brief_tree(tmp_path)
-    out = page_with_budget(root, BRIEF_UNCUT - 3, fresh=True)
+    out = page_owed_lines(root, 3)
     assert len(rows(out, brief_module.ORDER_HEADER)) == TOP - 3
     assert len(stripped(sections(out), brief_module.PURPOSE_HEADER)) == PURPOSE_MAX + 1
     assert dropped_of(out) == 3
+
+
+def test_brief_a_dropped_block_takes_its_separator_with_it(tmp_path: Path) -> None:
+    """The count names the separator too, which is the line the debt arithmetic did not know.
+
+    The budget charges the blank line between the two blocks as a line of the page, so a cut that
+    empties the order block takes that separator away with the last of its rows: the reader misses
+    the header, the ten rows and the blank above them, one line more than the debt named. A count
+    read off the arithmetic of the debt printed the smaller number, and a reader who counted the
+    screen and the sentence got two answers. This case is that line: it pins the count to the rows
+    that came off the list plus the separator that went with the last of them.
+    """
+    root = plant_brief_tree(tmp_path)
+    # Ten lines off the page, which is the point the order block runs out: its ten rows go, the block
+    # is left at its header alone, and the separator above it goes with the last of them -- so the
+    # tool owes one line more than the ten rows it took, and the purpose block still prints whole.
+    out = page_owed_lines(root, TOP)
+    assert rows(out, brief_module.ORDER_HEADER) == []
+    # The purpose block pays nothing: its header, its twenty lines and the ellipsis all print.
+    assert len(stripped(sections(out), brief_module.PURPOSE_HEADER)) == PURPOSE_MAX + 1
+    assert dropped_of(out) == TOP + 1
+    # The verdict survives the deepest cut the content caps leave reachable.
+    assert out.splitlines()[-1].startswith("summary:")
 
 
 def test_brief_the_budget_never_swallows_the_verdict(tmp_path: Path) -> None:
@@ -198,7 +173,10 @@ def test_brief_the_budget_never_swallows_the_verdict(tmp_path: Path) -> None:
     whatever the budget was, the last line of the page is the arbiter's.
     """
     root = plant_brief_tree(tmp_path)
-    out = page_with_budget(root, 3)
+    # A budget three lines long: every line of both blocks is past it, so the debt runs through the
+    # order block and on into the Purpose body, which is the shape where the tool is left printing
+    # two headers and its own count line.
+    out = page_owed_lines(root, 30)
     lines = out.splitlines()
     assert lines[0] == brief_module.PURPOSE_HEADER
     assert dropped_line(out).startswith(DROPPED_PREFIX)

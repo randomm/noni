@@ -214,18 +214,25 @@ def main(argv: list[str] | None = None) -> int:
 def _render(blocks: list[list[str]]) -> str:
     """The brief's own blocks as one string: budgeted, and closed by the dropped line.
 
-    The lines of the blocks joined by the blank lines between them, in the order the
-    brief prints them. The budget counts these lines and nothing else, so the summary line
-    the caller prints after this one is never the line that tipped a run over.
+    The lines of the blocks joined by the blank lines between them, in the order the brief prints
+    them. The budget counts these lines and nothing else, so the summary line the caller prints
+    after this one is never the line that tipped a run over.
 
-    The truncation order is the spec's: order entries first, then the Purpose body, and a
-    run that still owes lines after both has nothing left to give (only reachable if a
-    header alone is past the cap, which the constants above make impossible). A run whose
-    blocks total at most the cap prints no dropped-count line; a run past it prints exactly
-    one, naming the number of the page's own lines it withheld.
+    The truncation order is the spec's: order entries first, then the Purpose body, and a run that
+    still owes lines after both has nothing left to give (only reachable if a header alone is past
+    the cap, which the constants above make impossible). A run whose blocks total at most the cap
+    prints no dropped-count line; a run past it prints exactly one, naming the number of lines the
+    reader does not see -- rows and the separators that went with them, not the debt alone.
     """
+    # A copy per block: the budget trims tails, and the blocks the caller holds are the census's own
+    # reads rather than this function's to change.
     kept = [list(lines) for lines in blocks]
-    owed = _page_lines(kept) - BRIEF_MAX_LINES
+    # What the page costs before anything is cut -- the lines the two blocks hold, plus the blank the
+    # renderer puts between two blocks that both hold something. This one number settles the budget
+    # and answers the count line below, so the tool's sentence and the lines a reader counts on the
+    # screen cannot drift apart.
+    before = _page_lines(kept)
+    owed = before - BRIEF_MAX_LINES
     for index in (1, 0):
         if owed <= 0:
             break
@@ -239,33 +246,29 @@ def _render(blocks: list[list[str]]) -> str:
         if out and len(lines) > 1:
             out.append("")
         out.extend(lines)
-    # The count names the lines the page did not print: what the blocks held before the budget ran
-    # over what it left, both counted the same way. A line of the page is a line of a block or the
-    # blank the renderer puts before a block that follows one which printed something, so emptying
-    # a block takes its separator with its last row and a reader who counts the screen is told that
-    # line too. Read off the two pages rather than off the arithmetic of the debt, which knows the
-    # rows and not the separators.
-    withheld = _page_lines(blocks) - _page_lines(kept)
+    # The count is what the reader looks for on the screen and does not find, so it is read off the
+    # page rather than off the arithmetic of the debt. The two differ by the separator: the budget
+    # charges a block's blank line as a line of the page, and a cut that empties a block takes that
+    # separator away with the last of its rows, so at the cut where the order block goes the reader
+    # misses twelve lines -- its header, its ten rows and the separator above them -- where the debt
+    # named eleven.
+    withheld = before - len(out)
     if withheld > 0:
         out.append(f"{DROPPED_PREFIX}{withheld} line(s)")
     return "\n".join(out)
 
 
 def _page_lines(blocks: list[list[str]]) -> int:
-    """How many lines these blocks contribute to the page: their own lines, and their separators.
+    """What the page costs for these blocks: every line they hold, and their separator.
 
-    The one rule the budget and the count line share, stated once: a block prints its lines, and a
-    block that follows one which printed something prints a blank line first. A block emptied to its
-    header contributes no separator, which is the whole reason the number of block lines is not the
-    number of page lines and the reason the count cannot be read off the debt.
+    The one rule the budget and the dropped-count line share, stated once so the two cannot disagree
+    about what a line is: a block prints its lines, and the page puts one blank line between two
+    blocks that both hold something. A block the budget cut to its header alone holds nothing, so the
+    separator goes with its last row -- which is why the count line cannot be read off the arithmetic
+    of the debt and is read off the page instead.
     """
-    seen = False
-    total = 0
-    for lines in blocks:
-        if len(lines) > 1:
-            total += len(lines) + (1 if seen else 0)
-            seen = True
-    return total
+    return sum(len(lines) for lines in blocks) + (
+        1 if sum(1 for lines in blocks if len(lines) > 1) > 1 else 0)
 
 
 def _drop(lines: list[str], owed: int) -> int:

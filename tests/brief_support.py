@@ -13,7 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from brief_fixtures import NOW, census_stdout, run_brief_in_process
+from brief_fixtures import NOW, census_stdout
 from harness_runners import subprocess_env
 
 from noni import brief as brief_module
@@ -77,9 +77,14 @@ def summary_line(text: str) -> str:
 
 
 def census_summary(root: Path, now: str = NOW) -> str:
-    """The census's own last non-blank stdout line for one tree at one instant."""
-    code, text = census_stdout(root, "--now", now)
-    assert code == 0, (code, text)
+    """The census's own last non-blank stdout line for one tree at one instant.
+
+    The census's exit code is a verdict and not a delivery: a tree with findings leaves the code
+    non-zero while its report reaches stdout in full, which is the whole reason the brief can echo a
+    failing verdict and still exit 0. So the code is not asserted here -- the line is, and a case that
+    cares about the verdict the code carries asks for the code itself.
+    """
+    _code, text = census_stdout(root, "--now", now)
     lines = [line for line in text.splitlines() if line.strip()]
     return lines[-1]
 
@@ -153,50 +158,51 @@ def dropped_of(page: str) -> int:
     return int(line[len(DROPPED_PREFIX):].split()[0]) if line else 0
 
 
-def page_with_budget(root: Path, cap: int, *, fresh: bool = False) -> str:
-    """The page for one tree under a budget of ``cap`` block lines.
+def page_owed_lines(root: Path, owed: int) -> str:
+    """The page for one tree, cut by ``owed`` lines below the length its blocks cost it.
 
-    The budget is the tool's own module constant and no page the content caps allow is long
-    enough to trip it, so a case has to lower it to reach the branch at all. The constant lives in
-    whichever process renders the page, so the child sets it itself from the environment before it
-    calls the tool: a parent rebinding its own copy would change nothing out there, and the case
-    would silently run at the real cap and assert about a cut that never happened.
+    The budget is a count of the page's lines, so a case that wants a page ``owed`` lines shorter
+    than the tree's own page asks for the tree's own length less the debt. Both halves come from the
+    tool: the child prints what ``noni.brief._page_lines`` charges the tree's two blocks for, then
+    renders the page at the cap that length leaves. Asked of the tool rather than restated from
+    ``PURPOSE_MAX_LINES`` and ``TOP_ENTRIES``, because a case that kept its own arithmetic would go
+    quietly wrong the day a block gained a line.
 
-    Restored in a ``finally``, because a case that left the budget at 3 would truncate every page
-    the rest of the file asks for, and their failures would be about this one. The child still reads
-    the tree from disk, so the copy under ``tmp_path`` is the one being briefed.
+    The page comes from a child process and not from this one: the census caches the tree it audits
+    for the life of the process, so a parent that measured one tree and then rendered another was
+    comparing the second tree's page with the first tree's length -- which reads as a page that
+    withheld lines it never had.
     """
-    if fresh or cap < brief_module.BRIEF_MAX_LINES:
-        return _run_child(root, cap, count=False)
-    original = brief_module.BRIEF_MAX_LINES
-    brief_module.BRIEF_MAX_LINES = cap
-    try:
-        code, out, err = run_brief_in_process(root, "--now", NOW)
-    finally:
-        brief_module.BRIEF_MAX_LINES = original
-    assert code == 0, (code, out, err)
-    return out
+    return _run_child(root, _page_lines(root) - owed, count=False)
 
 
-# The child's program, as one string. With no cap in its environment it rebinds the tool's own
-# budget constant and prints the page, which is what the launched route of the suite is for: the
-# census caches the tree it audits for the life of a process, so a case that measured one tree and
-# then briefed another in the parent would be reading the first tree's page. With
-# ``NONI_BRIEF_TEST_LINES`` set it stops at the two blocks and prints the number of lines they
-# hold, which is the budget's own count rather than a page the caller would have to parse.
+def _page_lines(root: Path) -> int:
+    """What the budget charges the tree's two blocks for, before any cut.
+
+    The measurement a budget case cuts its debt from, asked of the renderer's own rule and taken in a
+    process that briefed no other tree. A rendered page would do for it too, but a page also carries
+    the census's verdict line, whose findings come from the tree rather than from the page.
+    """
+    return _run_child(root, None, count="blocks")
+
+
+# The child's program, as one string. With nothing in its environment it prints the page, which is
+# what the launched route of the suite is for. ``NONI_BRIEF_TEST_LINES`` set, it prints what the
+# budget charges the tree's two blocks for before any cut, which is what a budget case cuts its debt
+# from; the verdict line is outside the measurement because the census prints it, it is not budgeted,
+# and it would move with the tree's faults.
 _CHILD = """
 import os, sys
 from pathlib import Path
 from noni import brief
 
 root = Path(os.environ["NONI_BRIEF_TEST_ROOT"])
-if os.environ.get("NONI_BRIEF_TEST_LINES"):
-    blocks = [brief._purpose_block(root), brief._order_block(root)]
-    print(sum(len(lines) for lines in blocks))
-    sys.exit(0)
 cap = os.environ.get("NONI_BRIEF_TEST_CAP")
 if cap:
     brief.BRIEF_MAX_LINES = int(cap)
+if os.environ.get("NONI_BRIEF_TEST_LINES"):
+    print(brief._page_lines([brief._purpose_block(root), brief._order_block(root)]))
+    sys.exit(0)
 sys.exit(brief.main(["--repo", str(root), "--now", os.environ["NONI_BRIEF_TEST_NOW"]]))
 """
 
@@ -204,17 +210,16 @@ sys.exit(brief.main(["--repo", str(root), "--now", os.environ["NONI_BRIEF_TEST_N
 def _run_child(root: Path, cap: int | None, *, count: bool):
     """One brief run in an interpreter of its own, optionally at the budget ``cap``.
 
-    ``count`` asks the child for the number of lines its blocks hold instead of for the page: that
-    is the measurement the budget cases compare a cut page against, and it has to come from a
-    process that briefed no other tree, so the page a budget case measures is the page of the tree
-    the case named.
+    ``count`` asks the child for the number the budget charges the tree's two blocks for instead of
+    for the page. Either way the run has to come from a process that briefed no other tree, so the
+    page a budget case measures is the page of the tree the case named.
     """
     env = dict(subprocess_env())
     env["NONI_BRIEF_TEST_ROOT"] = str(root)
     env["NONI_BRIEF_TEST_NOW"] = NOW
     if cap is not None:
         env["NONI_BRIEF_TEST_CAP"] = str(cap)
-    if count:
+    if count == "blocks":
         env["NONI_BRIEF_TEST_LINES"] = "1"
     launched = subprocess.run([sys.executable, "-c", _CHILD],
                               capture_output=True, text=True, env=env, timeout=120)

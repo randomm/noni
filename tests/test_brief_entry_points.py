@@ -154,6 +154,7 @@ def test_brief_reads_no_census_state_from_the_previous_run(tmp_path: Path) -> No
     first = plant_brief_tree(tmp_path, name="first")
     second = plant_brief_tree(tmp_path, name="second")
     from brief_fixtures import write_order_entries
+
     from noni import orderschema
 
     write_order_entries(second, [

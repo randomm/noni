@@ -8,7 +8,6 @@ line is not mistaken for a header.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from brief_fixtures import (
@@ -16,7 +15,6 @@ from brief_fixtures import (
     ORDER_CITATION,
     PURPOSE_LINES,
     intent_path,
-    order_path,
     plant_brief_tree,
     run_brief,
 )

@@ -82,7 +82,7 @@ def test_brief_runs_against_a_state_root_without_any_git(tmp_path: Path) -> None
     """A tree with no history is a page, not a crash, and it leaves nothing behind.
 
     The fixture's ``.git`` is renamed away, so no repository is reachable from the copy at all:
-    the census reports what it cannot read and the brief still prints all four parts.
+    the census reports what it cannot read and the brief still prints its parts.
     """
     root = plant_brief_tree(tmp_path)
     shutil.rmtree(root / ".git-brief")

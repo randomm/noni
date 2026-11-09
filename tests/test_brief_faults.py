@@ -15,14 +15,12 @@ from brief_fixtures import (
     NOT_READ,
     NOW,
     intent_path,
-    item_path,
     order_path,
     plant_brief_tree,
     run_brief,
 )
 from brief_support import (
     HEADERS,
-    candidate_rows,
     census_summary,
     sections,
     stripped,
@@ -30,12 +28,6 @@ from brief_support import (
 )
 
 from noni import brief as brief_module
-
-# The title of an idea that lives outside the tree. A symlink planted into the state root points
-# at a file holding it, and the assertion of every such case is that this string never reaches
-# stdout: a listing that read through the link would print the outside content and the case fails
-# on the one line that makes it about the link rather than about a store that holds nothing.
-OUTSIDE_TITLE = "Idea that lives outside the tree"
 
 
 def test_brief_intent_absent_prints_not_readable(tmp_path: Path) -> None:
@@ -46,7 +38,6 @@ def test_brief_intent_absent_prints_not_readable(tmp_path: Path) -> None:
     assert stripped(sections(out), brief_module.PURPOSE_HEADER) == [NOT_READ]
     assert len(stripped(sections(out), brief_module.ORDER_HEADER)) == \
         brief_module.TOP_ENTRIES
-    assert len(candidate_rows(out)) == brief_module.TOP_CANDIDATES
 
 
 def test_brief_intent_non_utf8_prints_not_readable(tmp_path: Path) -> None:
@@ -119,7 +110,8 @@ def test_brief_order_absent_prints_an_empty_top_block(tmp_path: Path) -> None:
     assert code == 0
     assert stripped(sections(out), brief_module.ORDER_HEADER) == []
     assert NOT_READ not in out
-    assert len(candidate_rows(out)) == brief_module.TOP_CANDIDATES
+    assert len(stripped(sections(out), brief_module.PURPOSE_HEADER)) == \
+        brief_module.PURPOSE_MAX_LINES + 1
 
 
 def test_brief_order_malformed_prints_not_readable(tmp_path: Path) -> None:
@@ -150,160 +142,60 @@ def test_brief_order_that_is_a_directory_prints_not_readable(tmp_path: Path) -> 
                     brief_module.ORDER_HEADER) == [NOT_READ]
 
 
-def test_brief_items_absent_prints_an_empty_candidates_block(tmp_path: Path) -> None:
-    root = plant_brief_tree(tmp_path)
-    shutil.rmtree(root / ITEMS_REL)
-    code, out, _ = run_brief(root, "--now", NOW)
-    assert code == 0
-    assert candidate_rows(out) == []
-    assert len(stripped(sections(out), brief_module.ORDER_HEADER)) == 10
+def test_brief_the_item_store_never_changes_the_page(tmp_path: Path) -> None:
+    """Every fault the store can hold costs the page nothing, because the page reads none of it.
 
-
-def test_brief_items_directory_that_is_a_file_prints_an_empty_block(tmp_path: Path) -> None:
-    root = plant_brief_tree(tmp_path)
-    items = root / ITEMS_REL
-    shutil.rmtree(items)
-    items.write_text("not a directory\n", encoding="utf-8")
-    assert candidate_rows(run_brief(root, "--now", NOW)[1]) == []
-
-
-def test_brief_one_malformed_item_costs_only_its_own_row(tmp_path: Path) -> None:
-    """A single bad file is one row lost, not the block.
-
-    The census's items group refuses a store holding a malformed file -- the store's arbiter
-    fails closed on it. The brief's rule is narrower and ``brief_items`` says so: a listing
-    drops what it could not read and keeps the ideas it could, because a screen is not a gate.
+    The brief stopped listing candidates, so the store is no longer an input to the page: an
+    absent directory, one that is a plain file, a file of bytes no reader can parse, and a
+    directory that is a link out of the tree all print the same blocks as the pristine tree does,
+    at exit 0 and with stderr empty. The suite keeps the cases the listing needed for one reason:
+    they are what says the page is independent of the store rather than merely lucky about it. The
+    census still reads the store for its own rows, which is why the verdict line is asked of the
+    census for each tree rather than compared to the pristine one.
     """
-    root = plant_brief_tree(tmp_path)
-    item_path(root, "idea-0009").write_text("{ broken\n", encoding="utf-8")
-    code, out, _ = run_brief(root, "--now", NOW)
-    assert code == 0
-    # The cap counts rows the block could build, so the eleventh candidate fills in behind
-    # the broken one: nine rows is a block that stopped at the fault, and ten is a block that
-    # read the store.
-    rows = candidate_rows(out)
-    assert len(rows) == brief_module.TOP_CANDIDATES
-    assert not any(row.startswith("idea-0009 ") for row in rows)
-    assert any(row.startswith("idea-0010 ") for row in rows)
+    pristine = plant_brief_tree(tmp_path / "pristine")
+    before = run_brief(pristine, "--now", NOW)[1]
 
+    cases = {}
 
-def test_brief_one_unreadable_item_costs_only_its_own_row(tmp_path: Path) -> None:
-    root = plant_brief_tree(tmp_path)
-    item_path(root, "idea-0007").write_bytes(b"\xff\xfe not utf-8\n")
-    rows = candidate_rows(run_brief(root, "--now", NOW)[1])
-    assert len(rows) == brief_module.TOP_CANDIDATES
-    assert not any(row.startswith("idea-0007 ") for row in rows)
+    def variant(name: str) -> Path:
+        root = plant_brief_tree(tmp_path / name)
+        cases[name] = root
+        return root
 
+    shutil.rmtree(variant("absent") / ITEMS_REL)
 
-def test_brief_an_item_whose_id_disagrees_with_its_stem_is_no_row(tmp_path: Path) -> None:
-    """The id is what the row prints, so an idea listed under a name its file denies is dropped."""
-    root = plant_brief_tree(tmp_path)
-    path = item_path(root, "idea-0005")
-    raw = path.read_text(encoding="utf-8")
-    path.write_text(raw.replace('"id": "idea-0005"', '"id": "idea-0099"'), encoding="utf-8")
-    rows = candidate_rows(run_brief(root, "--now", NOW)[1])
-    assert not any(row.startswith(("idea-0005 ", "idea-0099 ")) for row in rows)
-    assert len(rows) == brief_module.TOP_CANDIDATES
+    store = variant("file") / ITEMS_REL
+    shutil.rmtree(store)
+    store.write_text("not a directory\n", encoding="utf-8")
 
+    broken = variant("broken")
+    (broken / ITEMS_REL / "idea-0001.json").write_bytes(b"{ broken\n")
 
-def test_brief_a_title_that_would_make_one_file_two_rows_is_dropped(tmp_path: Path) -> None:
-    """A title carrying a newline would break the one-row-per-idea shape; the row goes."""
-    root = plant_brief_tree(tmp_path)
-    path = item_path(root, "idea-0003")
-    raw = path.read_text(encoding="utf-8")
-    path.write_text(raw.replace("Show the kill list beside the queue", "two\nrows"),
-                    encoding="utf-8")
-    rows = candidate_rows(run_brief(root, "--now", NOW)[1])
-    assert not any(row.startswith("idea-0003 ") for row in rows)
-    assert len(rows) == brief_module.TOP_CANDIDATES
-
-
-def test_brief_a_symlinked_store_is_not_read_through(tmp_path: Path) -> None:
-    """A store that is a link out of the tree contributes nothing, and its bytes stay unseen.
-
-    The listing classifies ``noni/items/`` with the lstat of :func:`noni.orderstate.file_kind`,
-    the way :mod:`noni.item_reads` classifies every path it opens. ``Path.is_file`` follows a
-    link and answers True for the file at its far end, so a store that is a link to a directory
-    elsewhere would have been listed and printed as though the tree held those ideas.
-    """
-    root = plant_brief_tree(tmp_path)
+    linked = variant("linked")
     outside = tmp_path / "outside-store"
     outside.mkdir()
-    smuggled = item_path(root, "idea-0001").read_text(encoding="utf-8")
     (outside / "idea-0099.json").write_text(
-        smuggled.replace("idea-0001", "idea-0099")
-        .replace("Cache the census result", OUTSIDE_TITLE), encoding="utf-8")
-    shutil.rmtree(root / ITEMS_REL)
-    (root / ITEMS_REL).symlink_to(outside)
-    code, out, err = run_brief(root, "--now", NOW)
-    assert code == 0
-    assert err == ""
-    assert candidate_rows(out) == []
-    assert OUTSIDE_TITLE not in out
+        "{\"id\": \"idea-0099\", \"title\": \"Idea that lives outside the tree\"}\n",
+        encoding="utf-8")
+    shutil.rmtree(linked / ITEMS_REL)
+    (linked / ITEMS_REL).symlink_to(outside)
 
-
-def test_brief_a_symlinked_item_is_not_read_through(tmp_path: Path) -> None:
-    """One item file that is a link out of the tree is no row, and its text never prints.
-
-    The sibling of the case above: the directory and the file are classified apart, so a tree
-    whose store is a plain directory holding one link must lose that row and nothing else. The
-    other nine ideas are still listed, which is what separates "this file is not a candidate"
-    from "this store could not be read".
-    """
-    root = plant_brief_tree(tmp_path)
-    outside = tmp_path / "outside-item.json"
-    smuggled = item_path(root, "idea-0001").read_text(encoding="utf-8")
-    outside.write_text(smuggled.replace("idea-0001", "idea-0001")
-                       .replace("Cache the census result", OUTSIDE_TITLE),
-                       encoding="utf-8")
-    item_path(root, "idea-0001").unlink()
-    item_path(root, "idea-0001").symlink_to(outside)
-    code, out, err = run_brief(root, "--now", NOW)
-    assert code == 0
-    assert err == ""
-    rows = candidate_rows(out)
-    assert OUTSIDE_TITLE not in out
-    assert not any(row.startswith("idea-0001 ") for row in rows)
-    # The block still prints its ten rows because it never ran out of ideas: the store holds
-    # eleven readable candidates once this one is refused, and the cap -- not the refusal -- is
-    # what stops the block at ten. The assertion above is the one about the link.
-    assert len(rows) == brief_module.TOP_CANDIDATES
-
-
-def test_brief_a_subdirectory_of_the_store_is_not_a_candidate(tmp_path: Path) -> None:
-    """A directory in the store is not an idea, and costs the block nothing.
-
-    The counterweight of the pair: one more entry in the listing that is not a candidate and
-    the block still holds its full ten rows, because a row is not lost when nothing was
-    refused.
-    """
-    root = plant_brief_tree(tmp_path)
-    (root / ITEMS_REL / "not-an-item").mkdir()
-    assert len(candidate_rows(run_brief(root, "--now", NOW)[1])) == \
-        brief_module.TOP_CANDIDATES
-
-
-def test_brief_a_file_of_another_suffix_is_not_a_candidate(tmp_path: Path) -> None:
-    root = plant_brief_tree(tmp_path)
-    (root / ITEMS_REL / "notes.md").write_text("idea-9999\n", encoding="utf-8")
-    rows = candidate_rows(run_brief(root, "--now", NOW)[1])
-    assert len(rows) == brief_module.TOP_CANDIDATES
-    assert not any("idea-9999" in row for row in rows)
-
-
-def test_brief_a_status_the_store_does_not_know_is_not_a_candidate(tmp_path: Path) -> None:
-    """Only the store's own ``candidate`` rows reach the block, whatever the file claims."""
-    root = plant_brief_tree(tmp_path)
-    path = item_path(root, "idea-0005")
-    raw = path.read_text(encoding="utf-8")
-    path.write_text(raw.replace('"status": "candidate"', '"status": "wip"'),
-                    encoding="utf-8")
-    assert not any(row.startswith("idea-0005 ")
-                   for row in candidate_rows(run_brief(root, "--now", NOW)[1]))
+    for name, root in cases.items():
+        code, out, err = run_brief(root, "--now", NOW)
+        assert code == 0, (name, code, err)
+        assert err == "", (name, err)
+        # The blocks are the brief's own reads and none of them opens the store, so they are the
+        # bytes of the pristine page. The verdict is the one line that may differ, because the
+        # arbiter does read the store and a store of no files is not the same claim about a tree as
+        # a store of twelve.
+        assert out.splitlines()[:-1] == before.splitlines()[:-1], name
+        assert "Idea that lives outside the tree" not in out, name
+        assert summary_line(out) == census_summary(root, NOW), name
 
 
 def test_brief_three_reads_failed_at_once_still_prints_the_verdict(tmp_path: Path) -> None:
-    """Nothing readable is still a page: three headers and the arbiter's line."""
+    """Nothing readable is still a page: two headers and the arbiter's line."""
     root = plant_brief_tree(tmp_path)
     intent_path(root).unlink()
     order_path(root).unlink()
@@ -314,7 +206,6 @@ def test_brief_three_reads_failed_at_once_still_prints_the_verdict(tmp_path: Pat
     blocks = sections(out)
     assert stripped(blocks, brief_module.PURPOSE_HEADER) == [NOT_READ]
     assert stripped(blocks, brief_module.ORDER_HEADER) == []
-    assert candidate_rows(out) == []
     assert summary_line(out) == census_summary(root, NOW)
 
 

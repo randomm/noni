@@ -44,7 +44,7 @@ SUMMARIES: dict[str, str] = {
     "order": "write the ordered list of issues to work next",
     "intent": "write the standing intent file the agents read first",
     "item": "file one idea as its own committed record (the item store)",
-    "brief": "print the standing purpose, the top of the order, the candidates "
+    "brief": "print the standing purpose, the top of the order "
              "and the census summary line (read-only)",
 }
 

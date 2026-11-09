@@ -14,19 +14,18 @@ from pathlib import Path
 import pytest
 from _harness import REPO
 from brief_fixtures import (
-    ITEMS_REL,
     NOW,
     PURPOSE_LINES,
     intent_path,
-    item_path,
     plant_brief_tree,
     run_brief,
     run_brief_from,
     run_brief_in_process,
 )
 from brief_support import (
-    candidate_rows,
     is_refusal,
+    sections,
+    stripped,
 )
 from harness_runners import run_noni
 
@@ -125,7 +124,8 @@ def test_brief_the_repo_is_read_at_the_path_it_was_given(tmp_path: Path) -> None
     """A page is about the tree named, never about the tree the process happens to sit in.
 
     The state root and the cwd hold different content; the page names the state root's, which is the
-    assertion that no cwd default was smuggled in behind the resolution.
+    assertion that no cwd default was smuggled in behind the resolution. The cwd's own purpose line
+    is planted beside its item so the case asks one question of both artifacts the page does read.
     """
     root = plant_brief_tree(tmp_path, name="state-root")
     elsewhere = tmp_path / "cwd-tree"
@@ -137,7 +137,8 @@ def test_brief_the_repo_is_read_at_the_path_it_was_given(tmp_path: Path) -> None
                          itemschema.STATUS_CANDIDATE, "2027-01-01T00:00:00Z")))
     out = run_brief_from(elsewhere, root, "--now", NOW)[1]
     assert "Belongs to the other tree" not in out
-    assert len(candidate_rows(out)) == brief_module.TOP_CANDIDATES
+    assert len(stripped(sections(out), brief_module.ORDER_HEADER)) == \
+        brief_module.TOP_ENTRIES
 
 
 def test_brief_reads_no_census_state_from_the_previous_run(tmp_path: Path) -> None:
@@ -147,40 +148,40 @@ def test_brief_reads_no_census_state_from_the_previous_run(tmp_path: Path) -> No
     process. The launched route the suite uses cannot show what that means, so this case drives the
     two runs it needs directly: a brief whose second page came from the first tree is the failure
     the launched route exists to avoid, and the case pins that the tool itself is not the thing
-    carrying state between runs.
+    carrying state between runs. The two trees differ in their standing intent, which is the
+    artifact the page does read.
     """
     first = plant_brief_tree(tmp_path, name="first")
     second = plant_brief_tree(tmp_path, name="second")
-    title = "Belongs to the second tree"
-    from noni import itemschema
+    from brief_fixtures import write_order_entries
+    from noni import orderschema
 
-    item_path(second, "idea-0001").write_bytes(itemschema.item_bytes(
-        itemschema.entry("idea-0001", title, itemschema.STATUS_CANDIDATE,
-                         "2027-01-01T00:00:00Z")))
+    write_order_entries(second, [
+        orderschema.entry(issue=77, decision="2026-10-01-brief",
+                          confirmed="2026-10-26T00:00:00Z")])
     run_brief_in_process(first, "--now", NOW)
     out = run_brief_in_process(second, "--now", NOW)[1]
-    assert title in out
+    assert "1. #77" in out
+    assert "1. #1" not in out
 
 
 def test_brief_is_a_sibling_module_of_the_tool_and_read_by_it(tmp_path: Path) -> None:
-    """The readers the tool split out for the size cap are the tool's own reads.
+    """The reader the tool split out for the size cap is the tool's own read.
 
-    The seam the split made is only honest if the tool still asks each of them: a block that grew
+    The seam the split made is only honest if the tool still asks it: a block that grew
     its own copy of a read would make the split a place for a second answer to live, which is the
     thing the split was meant to prevent.
     """
-    from noni import brief_intent, brief_items
+    from noni import brief_intent
 
     assert brief_intent.purpose_block.__module__ == "noni.brief_intent"
-    assert brief_items.candidates.__module__ == "noni.brief_items"
     root = plant_brief_tree(tmp_path)
     assert brief_intent.purpose_body(intent_path(root)) is not None
-    assert len(brief_items.candidates(root / ITEMS_REL)) == 12
     assert run_brief(root, "--now", NOW)[1].splitlines()[1] == PURPOSE_LINES[0]
 
 
 def test_brief_source_stays_within_the_size_cap() -> None:
     """The split was made for ``tests/test_file_size_limit.py``; it has to have worked."""
-    for name in ("brief.py", "brief_intent.py", "brief_items.py"):
+    for name in ("brief.py", "brief_intent.py", "brief_page.py"):
         source = (REPO / "src" / "noni" / name).read_text(encoding="utf-8")
         assert len(source.splitlines()) < 500, name

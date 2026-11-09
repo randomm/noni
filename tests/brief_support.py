@@ -9,17 +9,19 @@ a block's rows and :func:`dropped_line` reports on its own.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 from brief_fixtures import NOW, census_stdout, run_brief_in_process
+from harness_runners import subprocess_env
 
 from noni import brief as brief_module
 from noni import labels as labels_module
 
-# The three block headers, in print order, and the prefix of the line the tool appends when
+# The two block headers, in print order, and the prefix of the line the tool appends when
 # its own budget forced it to withhold block lines.
-HEADERS = [brief_module.PURPOSE_HEADER, brief_module.ORDER_HEADER,
-           brief_module.CANDIDATES_HEADER]
+HEADERS = [brief_module.PURPOSE_HEADER, brief_module.ORDER_HEADER]
 DROPPED_PREFIX = "dropped: "
 
 # The label every refusal of this tool opens with. The tool builds it from its own label
@@ -82,19 +84,31 @@ def census_summary(root: Path, now: str = NOW) -> str:
     return lines[-1]
 
 
-def candidate_rows(out: str) -> list[str]:
-    """The ``candidates`` block's body lines, the tool's own accounting line excepted.
+def dropped_line(page: str) -> str:
+    """The budget's own count line of a page, or ``""`` when it printed none.
 
-    A block that withheld a line of foreign text closes with its own ``dropped: N line(s)`` line, and
-    that line is the tool's arithmetic rather than one of the store's ideas: left among the rows it
-    would make every case that asks how many candidates printed a case about the count too. It is read
-    by :func:`dropped_line` (``test_brief_limits.py``) and by nothing else here. The prefix is the
-    tool's own constant, spelled at the top of this file the way the headers are.
+    Read from the page rather than from a block: the count line is the blocks' last line and sits
+    directly under the last header, so a reader of the page sees it as the last block's last row.
+    That is the tool's rule and not a fault to route around -- the count line belongs to the blocks
+    and the verdict line belongs to the page.
     """
-    return [row for row in stripped(sections(out), brief_module.CANDIDATES_HEADER)
+    for line in reversed(page.splitlines()):
+        if line.startswith(DROPPED_PREFIX):
+            return line
+    return ""
+
+
+def rows(page: str, header: str) -> list[str]:
+    """One block's rows, with the budget's own count line left out.
+
+    The count line is printed as the last line of the blocks, which puts it under the last header
+    and inside the last block as a reader of the page sees it. Every budget case asks about the
+    rows the block kept, so the count line is asked for separately, by :func:`dropped_line`, and
+    excluded here -- and a case can then say "the order block holds nothing" and mean the
+    entries, not the tool's arithmetic.
+    """
+    return [row for row in stripped(sections(page), header)
             if not row.startswith(DROPPED_PREFIX)]
-
-
 
 
 def is_refusal(err: str) -> bool:
@@ -133,33 +147,27 @@ def finding_count(line: str) -> int:
     return int(digits) if digits else 0
 
 
-def block_lines(root: Path) -> int:
-    """How many lines the tool counts against its budget for one tree.
-
-    Asked of the tool and not derived from its constants, and asked through the same in-process
-    route the budget cases use. The budget counts the three headers, each block's rows, and the
-    blank line the page puts between two blocks that printed something -- so the blank lines are
-    counted where they are printed, which is not a fixed number of them. A case that restated the
-    list in arithmetic would be a second answer to that question and would go quietly wrong when
-    the rule for a separator changes. The page without its verdict line is the count.
-    """
-    page = run_brief_in_process(root, "--now", NOW)[1]
-    return len(page.splitlines()) - 1
+def dropped_of(page: str) -> int:
+    """How many lines the tool says it withheld from the blocks, 0 when it printed no count."""
+    line = dropped_line(page)
+    return int(line[len(DROPPED_PREFIX):].split()[0]) if line else 0
 
 
-def page_with_budget(root: Path, cap: int) -> str:
+def page_with_budget(root: Path, cap: int, *, fresh: bool = False) -> str:
     """The page for one tree under a budget of ``cap`` block lines.
 
-    The budget is the tool's own module constant and no page the four content caps allow is long
-    enough to trip it, so a case has to lower it to reach the branch at all -- which is why these
-    three cases run the brief in process. In a launched child the constant is a value in that
-    child's own module and a parent rebinding it here would change nothing out there, so the case
+    The budget is the tool's own module constant and no page the content caps allow is long
+    enough to trip it, so a case has to lower it to reach the branch at all. The constant lives in
+    whichever process renders the page, so the child sets it itself from the environment before it
+    calls the tool: a parent rebinding its own copy would change nothing out there, and the case
     would silently run at the real cap and assert about a cut that never happened.
 
     Restored in a ``finally``, because a case that left the budget at 3 would truncate every page
-    the rest of the file asks for, and their failures would be about this one. The in-process call
-    still reads the tree from disk, so the copy under ``tmp_path`` is the one being briefed.
+    the rest of the file asks for, and their failures would be about this one. The child still reads
+    the tree from disk, so the copy under ``tmp_path`` is the one being briefed.
     """
+    if fresh or cap < brief_module.BRIEF_MAX_LINES:
+        return _run_child(root, cap, count=False)
     original = brief_module.BRIEF_MAX_LINES
     brief_module.BRIEF_MAX_LINES = cap
     try:
@@ -168,3 +176,47 @@ def page_with_budget(root: Path, cap: int) -> str:
         brief_module.BRIEF_MAX_LINES = original
     assert code == 0, (code, out, err)
     return out
+
+
+# The child's program, as one string. With no cap in its environment it rebinds the tool's own
+# budget constant and prints the page, which is what the launched route of the suite is for: the
+# census caches the tree it audits for the life of a process, so a case that measured one tree and
+# then briefed another in the parent would be reading the first tree's page. With
+# ``NONI_BRIEF_TEST_LINES`` set it stops at the two blocks and prints the number of lines they
+# hold, which is the budget's own count rather than a page the caller would have to parse.
+_CHILD = """
+import os, sys
+from pathlib import Path
+from noni import brief
+
+root = Path(os.environ["NONI_BRIEF_TEST_ROOT"])
+if os.environ.get("NONI_BRIEF_TEST_LINES"):
+    blocks = [brief._purpose_block(root), brief._order_block(root)]
+    print(sum(len(lines) for lines in blocks))
+    sys.exit(0)
+cap = os.environ.get("NONI_BRIEF_TEST_CAP")
+if cap:
+    brief.BRIEF_MAX_LINES = int(cap)
+sys.exit(brief.main(["--repo", str(root), "--now", os.environ["NONI_BRIEF_TEST_NOW"]]))
+"""
+
+
+def _run_child(root: Path, cap: int | None, *, count: bool):
+    """One brief run in an interpreter of its own, optionally at the budget ``cap``.
+
+    ``count`` asks the child for the number of lines its blocks hold instead of for the page: that
+    is the measurement the budget cases compare a cut page against, and it has to come from a
+    process that briefed no other tree, so the page a budget case measures is the page of the tree
+    the case named.
+    """
+    env = dict(subprocess_env())
+    env["NONI_BRIEF_TEST_ROOT"] = str(root)
+    env["NONI_BRIEF_TEST_NOW"] = NOW
+    if cap is not None:
+        env["NONI_BRIEF_TEST_CAP"] = str(cap)
+    if count:
+        env["NONI_BRIEF_TEST_LINES"] = "1"
+    launched = subprocess.run([sys.executable, "-c", _CHILD],
+                              capture_output=True, text=True, env=env, timeout=120)
+    assert launched.returncode == 0, (launched.stdout, launched.stderr)
+    return int(launched.stdout.strip()) if count else launched.stdout

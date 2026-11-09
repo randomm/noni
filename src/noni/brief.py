@@ -1,30 +1,30 @@
 """The read-only brief: one screen of what noni currently knows about a project.
 
-``noni brief --repo REPO [--now ISO-8601]`` prints four blocks and nothing else:
+``noni brief --repo REPO [--now ISO-8601]`` prints three blocks and nothing else:
 
     Purpose
     Ship the direction layer.
 
     top 10
     1. #7
-    2. Cache the census (item idea-0001)
-
-    candidates
-    idea-0007 candidate 2026-10-24T00:00:00Z An idea
+    2. item idea-0001
 
     summary: 1 warning(s); 1 finding(s); verdict ok
 
 It reads and prints. It never writes, never contacts a tracker, and never recomposes the
 census's own words: the last line of stdout is the final ``summary:`` line of the census's
-human report for the same ``--repo`` and the same ``--now``, printed verbatim (see
-:func:`_summary_line`). The census's ``note:`` lines and its finding rows are not part of
-the brief -- the screen is four blocks and a verdict, and the report is one command away.
+human report for the same ``--repo`` and the same ``--now``, echoed as the census printed it
+(see :func:`_summary_line`). The census's ``note:`` lines and its finding rows are not part
+of the brief -- the screen is three blocks and a verdict, and the report is one command
+away. The page names the order's subjects and stops there: an entry citing an item prints
+the citation it holds and never opens the item store, because a screen of what to work on
+next does not need the store's prose to say which idea the operator queued.
 
 Three rules the tool is built around:
 
 - **Bounded.** :data:`BRIEF_MAX_LINES` caps the lines the brief's own blocks print,
   headers and the blank lines between blocks included. A run that would print more drops
-  candidates first (oldest first), then order entries, then the Purpose body, and closes
+  order entries first (from the tail of the list), then the Purpose body, and closes
   its own blocks with one ``dropped: N line(s)`` line naming the total it withheld. The
   dropped-count line and the summary line sit outside the budget, so a reader always gets
   the verdict (see :func:`_render`).
@@ -32,13 +32,14 @@ Three rules the tool is built around:
   order comes from the artifact's own list order or from a sort over ``created`` and
   ``id``, and nothing in the brief reads the clock or the cwd: ``--repo`` is resolved once
   and every path is taken from it, and the instant is the caller's or taken once here.
-- **Read-only.** Every read is an ``open`` or an ``lstat``. The tool writes no file,
+- **Read-only.** Every read is an ``open`` or an ``lstat``; the item store is not read at
+  all. The tool writes no file,
   stages no commit, and runs no git call of its own; the census it launches runs in
   process with its output captured, so the census's own read-only promise is this tool's.
 
 Nothing here re-derives a shape another module owns: the order is read through
-:func:`noni.orderstate.read_order`, the item store and the intent file through the two
-reader modules beside this file, the text of every row through
+:func:`noni.orderstate.read_order`, the intent file through the reader module beside this
+file, the text of every row through
 :mod:`noni.brief_page` (control bytes out, host paths scrubbed, the field bounded), and the
 verdict through the census itself.
 
@@ -57,7 +58,6 @@ from pathlib import Path
 
 from . import (
     brief_intent,
-    brief_items,
     census_run,
     intentschema,
     itemschema,
@@ -66,24 +66,15 @@ from . import (
     orderstate,
 )
 from ._safe_text import safe_path
-from .brief_page import (  # re-exported: tests name them on this module
+from .brief_page import (
     DROPPED_PREFIX,
     NOT_READ,
-    ROW_FIELD_LIMITS,
-    ROW_FIELD_SEPARATORS,
     TEXT_LIMIT,
     block_rows,
     close_block,
     page_line,
     page_lines,
 )
-
-# The row bound lives with the rule that applies it, in :mod:`noni.brief_page`, and is imported
-# here to be named: the bound is a property of *this* tool's output -- the candidate row of the
-# page it prints -- so the tool that promises the bound is the one that names it, and a reader of
-# this module finds the number of the row it renders without going looking in the helper. The
-# tests read the two names off this module for that reason, and the module says so.
-__all__ = ["ROW_FIELD_LIMITS", "ROW_FIELD_SEPARATORS"]
 
 # The two codes of this tool, published by this docstring and named nowhere else
 # (docs/PRODUCT.md 7 gives ``brief`` 2 for a wrong command line, beside ``intent``,
@@ -94,19 +85,17 @@ __all__ = ["ROW_FIELD_LIMITS", "ROW_FIELD_SEPARATORS"]
 # and a name for it would be a second place to look for the answer.
 EXIT_USAGE: int = 2
 
-# The cap on the lines the brief's own blocks print. Counted over the three blocks
+# The cap on the lines the brief's own blocks print. Counted over both blocks
 # together -- each header, its rows, and the blank line that separates one block from the
-# next -- and not per block: a 200-entry order would otherwise crowd the other two blocks
-# off the screen the brief exists to fit on. The dropped-count line and the census's
+# next -- and not per block: a 200-entry order would otherwise crowd the other block off
+# the screen the brief exists to fit on. The dropped-count line and the census's
 # summary line are outside the count, so a truncated run still ends with its verdict.
 BRIEF_MAX_LINES = 200
 
-# How many order entries the ``top 10`` block prints, and how many candidates the
-# ``candidates`` block prints before the budget is consulted. Both are a reading aid: the
-# order is what to work on next and the screen shows its head, and the candidates are
-# listed newest first, so the ideas the budget keeps are the freshest ones.
+# How many order entries the ``top 10`` block prints before the budget is consulted. It is a
+# reading aid: the order is what to work on next and the screen shows its head, so the operator
+# sees the front of the queue and the census is the tool that lists the whole of it.
 TOP_ENTRIES = 10
-TOP_CANDIDATES = 10
 
 # The Purpose body is the operator's prose, not a report. Twenty lines is a paragraph or
 # two; past that the block is an essay and the ellipsis line says so.
@@ -116,11 +105,10 @@ PURPOSE_MAX_LINES = 20
 # census's own clip marker (``census_text._clipped``) rather than a third spelling.
 ELLIPSIS = "..."
 
-# The three block headers, spelled once so the budget, the truncation order, the readers and the
+# The two block headers, spelled once so the budget, the truncation order, the readers and the
 # tests all name one set of words.
 PURPOSE_HEADER = "Purpose"
 ORDER_HEADER = "top 10"
-CANDIDATES_HEADER = "candidates"
 
 # The prefix of the line the census's human report ends with, and the line the brief
 # prints when the census printed no verdict to echo. Both are the brief's vocabulary and
@@ -132,11 +120,11 @@ NOT_RUN_SUMMARY = "summary: not-run; 0 finding(s); verdict fail"
 
 # The headers plus the two lines this tool itself can print below them, as the set no body line
 # may be: the rule lives in :func:`noni.brief_page.page_line` and this is the vocabulary it is
-# handed. A reader splits the page on the headers, so a candidate titled exactly ``candidates``
-# would open a second block and a purpose line of exactly ``top 10`` would make the reader count
-# blocks that are not there; the ellipsis and the verdict prefix are in the set for the mirror
-# reason -- a body line shaped like one of the tool's own lines could be read as one of them.
-PAGE_RESERVED = frozenset({PURPOSE_HEADER, ORDER_HEADER, CANDIDATES_HEADER,
+# handed. A reader splits the page on the headers, so a purpose line of exactly ``top 10`` would
+# make the reader count a block that is not there; the ellipsis and the verdict prefix are in the
+# set for the mirror reason -- a body line shaped like one of the tool's own lines could be read
+# as one of them.
+PAGE_RESERVED = frozenset({PURPOSE_HEADER, ORDER_HEADER,
                            ELLIPSIS, SUMMARY_PREFIX.strip()})
 
 def _refuse(headline: str, hint: str) -> int:
@@ -181,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog=labels.BRIEF,
         description="Read-only brief: the standing intent's purpose, the top of the "
-                    "order, the filed candidates, and the census summary line.",
+                    "order, and the census summary line.",
     )
     parser.add_argument("--repo", required=True, metavar="DIR",
                         help="the state root whose direction is briefed (no default)")
@@ -217,7 +205,7 @@ def main(argv: list[str] | None = None) -> int:
                        f"pass --repo naming the state root, the directory that holds "
                        f"(or will hold) {orderstate.DECISIONS_DIR}/")
 
-    blocks = [_purpose_block(root), _order_block(root), _candidates_block(root)]
+    blocks = [_purpose_block(root), _order_block(root)]
     print(_render(blocks))
     print(_summary_line(root, stamp))
     return 0
@@ -226,20 +214,19 @@ def main(argv: list[str] | None = None) -> int:
 def _render(blocks: list[list[str]]) -> str:
     """The brief's own blocks as one string: budgeted, and closed by the dropped line.
 
-    The lines of the three blocks joined by the blank lines between them, in the order the
+    The lines of the blocks joined by the blank lines between them, in the order the
     brief prints them. The budget counts these lines and nothing else, so the summary line
     the caller prints after this one is never the line that tipped a run over.
 
-    The truncation order is the spec's: candidates first, then order entries, then the
-    Purpose body, and a run that still owes lines after all three has nothing left to give
-    (only reachable if a header alone is past the cap, which the constants above make
-    impossible). A run whose blocks total at most the cap prints no dropped-count line; a
-    run past it prints exactly one, naming the number of its own block lines it withheld.
+    The truncation order is the spec's: order entries first, then the Purpose body, and a
+    run that still owes lines after both has nothing left to give (only reachable if a
+    header alone is past the cap, which the constants above make impossible). A run whose
+    blocks total at most the cap prints no dropped-count line; a run past it prints exactly
+    one, naming the number of the page's own lines it withheld.
     """
     kept = [list(lines) for lines in blocks]
-    total = sum(len(lines) for lines in kept)
-    owed = total - BRIEF_MAX_LINES
-    for index in (2, 1, 0):
+    owed = _page_lines(kept) - BRIEF_MAX_LINES
+    for index in (1, 0):
         if owed <= 0:
             break
         owed = _drop(kept[index], owed)
@@ -252,17 +239,40 @@ def _render(blocks: list[list[str]]) -> str:
         if out and len(lines) > 1:
             out.append("")
         out.extend(lines)
-    if total > BRIEF_MAX_LINES:
-        out.append(f"{DROPPED_PREFIX}{total - BRIEF_MAX_LINES} line(s)")
+    # The count names the lines the page did not print: what the blocks held before the budget ran
+    # over what it left, both counted the same way. A line of the page is a line of a block or the
+    # blank the renderer puts before a block that follows one which printed something, so emptying
+    # a block takes its separator with its last row and a reader who counts the screen is told that
+    # line too. Read off the two pages rather than off the arithmetic of the debt, which knows the
+    # rows and not the separators.
+    withheld = _page_lines(blocks) - _page_lines(kept)
+    if withheld > 0:
+        out.append(f"{DROPPED_PREFIX}{withheld} line(s)")
     return "\n".join(out)
+
+
+def _page_lines(blocks: list[list[str]]) -> int:
+    """How many lines these blocks contribute to the page: their own lines, and their separators.
+
+    The one rule the budget and the count line share, stated once: a block prints its lines, and a
+    block that follows one which printed something prints a blank line first. A block emptied to its
+    header contributes no separator, which is the whole reason the number of block lines is not the
+    number of page lines and the reason the count cannot be read off the debt.
+    """
+    seen = False
+    total = 0
+    for lines in blocks:
+        if len(lines) > 1:
+            total += len(lines) + (1 if seen else 0)
+            seen = True
+    return total
 
 
 def _drop(lines: list[str], owed: int) -> int:
     """Remove up to ``owed`` lines from the tail of one block; the lines still owed.
 
     A block's tail is what goes, so the head of every list stays on the screen: the head of
-    the candidate list is its freshest ideas and the head of the order is what to work on
-    next, which is the pair of questions the screen is for. The header line stays too -- a
+    the order is what to work on next, which is the question the screen is for. The header line stays too -- a
     reader who cannot tell which block went missing has lost more than one who sees an
     empty block under its own name. When a block reaches its header the remaining debt moves
     on to the next block rather than being forgiven, which is what makes a whole-block drop
@@ -306,9 +316,10 @@ def _order_block(root: Path) -> list[str]:
 
     The read is :func:`noni.orderstate.read_order` and the entries are rendered without
     branching on the document's schema version: an entry naming an issue prints
-    ``{position}. #{issue}``, one citing an item prints ``{position}. {title} (item {id})``,
-    and one citing an item the store does not hold prints ``{position}. item {id} not
-    found`` instead of a title this run did not read. Both shapes are asked through
+    ``{position}. #{issue}``, one citing an item prints ``{position}. item {id}``, and one
+    citing neither prints ``{position}. (unnamed entry)``. Neither shape opens an item file:
+    the row says which idea the operator queued and leaves the store's prose to the tools
+    that read the store. Both shapes are asked through
     :func:`noni.orderschema.entry_issue` / :func:`noni.orderschema.entry_item`, which is
     where the two versions' one-subject rule lives.
 
@@ -333,9 +344,11 @@ def _order_row(root: Path, position: int, entry: dict) -> str:
     The subject is the issue or the cited item; a document naming neither was refused by
     the reader before this line was reached, so the third branch is the shape a row always
     has rather than a state a file can put it in, and it exists so a row is one line instead
-    of an exception. Every piece of text here is the store's or the operator's and goes
-    through the scrub, including the id of an entry whose item is missing: an id is a token
-    somebody typed.
+    of an exception. The item branch reads no file: an id is a token somebody typed, so it
+    goes through the page's renderer (control bytes out, whitespace collapsed, the store's own
+    id bound applied) and nothing else. The bound cannot leave nothing, because the bound of a
+    field this wide is wider than the longest sequence it can delete; a citation that renders to
+    nothing at all is named by the tool's own word rather than by a row with a hole in it.
     """
     issue = orderschema.entry_issue(entry)
     if issue is not None:
@@ -343,29 +356,10 @@ def _order_row(root: Path, position: int, entry: dict) -> str:
     cited = orderschema.entry_item(entry)
     if cited is None:
         return f"{position}. (unnamed entry)"
-    # The path is built from this citation only after the store's own id rule was asked of it
-    # (``brief_items.candidate_title`` refuses a name that is not an id before it names a file),
-    # so an entry cannot point this row at a path outside the store. What the row then prints for
-    # an idea the store does not hold is the citation the artifact itself holds, verbatim: a
-    # citation is an identifier, and one that the listing printed unchanged is the only answer
-    # about an idea this run could not read that stays true to the artifact. A name the strict
-    # JSON reader let through can still carry control bytes, and a row that carried them would put
-    # an escape sequence on the terminal and could add lines to the page, so the citation is
-    # rendered by the page's rule: control bytes out, whitespace collapsed, the store's own id
-    # bound applied. The rule cannot leave nothing, because the bound of a field this wide is
-    # wider than the longest sequence it can delete; a citation that renders to nothing at all is
-    # named by the tool's own word rather than by a row with a hole in it.
-    shown = _citation(cited)
-    title = brief_items.candidate_title(root, cited)
-    if title is None:
-        return f"{position}. item {shown} not found"
-    # The title is the one foreign word in the row and the one that can read as a header, so
-    # it goes through the page's own shape test; a refused title costs the row its subject,
-    # which is what the citation branch already prints for an unreadable item.
-    line = page_line(title, itemschema.TITLE_MAX, PAGE_RESERVED)
-    if line is None:
-        return f"{position}. item {shown} not found"
-    return f"{position}. {line} (item {shown})"
+    # A name the strict JSON reader let through can still carry control bytes, and a row that
+    # carried them would put an escape sequence on the terminal and could add lines to the page,
+    # so the citation is rendered by the page's rule rather than printed as the artifact's bytes.
+    return f"{position}. item {_citation(cited)}"
 
 
 def _citation(cited: str) -> str:
@@ -380,50 +374,8 @@ def _citation(cited: str) -> str:
     return page_line(cited, itemschema.ID_MAX, PAGE_RESERVED) or NOT_READ
 
 
-def _candidates_block(root: Path) -> list[str]:
-    """The ``candidates`` block: the store's candidates, newest ``created`` first.
-
-    At most :data:`TOP_CANDIDATES` rows, and an empty store or an absent one prints the
-    header alone. A row is ``{id} candidate {created} {title}``: the four fields of an idea
-    the listing of the store is asked for, in that order, with the title last because it is
-    the field that may hold a space and a reader cuts the line by field, not by column.
-    """
-    bodies = brief_items.candidates(root / itemschema.ITEM_DIR)
-    # The cap counts rows that were built, not files that were read, so the listing is walked
-    # in order and the cap is applied at the end: a candidate whose row was refused costs the
-    # block nothing but its own row, and fifteen candidates of which five read badly still
-    # print the ten ideas the screen is for. A block that took the ten freshest bodies first
-    # would show fewer ideas than the store holds, for a reason the reader cannot see. The cap
-    # stops the listing at the rows the block prints, so an idea the page refused that sits
-    # behind them is not looked at at all: the count line speaks of the refusals the block met
-    # on the way to its own ten, which is the number of ideas this screen could not name.
-    rows, withheld = block_rows((_candidate_line(body) for body in bodies),
-                                 TOP_CANDIDATES)
-    return close_block([CANDIDATES_HEADER, *rows], withheld)
-
-
-def _candidate_line(body: dict) -> str | None:
-    """One line of the ``candidates`` block, or None when the row would not be a row.
-
-    The four fields of an item this listing selected: the id, the word ``candidate``, the
-    ``created`` stamp and the title, in that order. Each is the store's or the operator's
-    text and goes through :func:`noni.brief_page.page_line`, which is where the shape of a row is
-    decided:
-    a blank field or a title that is one of the page's own words costs the row, because a
-    row missing a field cannot be cut by field and a row that reads as a header cannot be
-    told from one.
-    """
-    fields = [page_line(body["id"], itemschema.ID_MAX, PAGE_RESERVED),
-              itemschema.STATUS_CANDIDATE,
-              page_line(body["created"], TEXT_LIMIT, PAGE_RESERVED),
-              page_line(body["title"], itemschema.TITLE_MAX, PAGE_RESERVED)]
-    if any(field is None for field in fields):
-        return None
-    return " ".join(fields)
-
-
 def _summary_line(root: Path, stamp: str) -> str:
-    """The last ``summary:`` line of the census's human report for this tree, verbatim.
+    """The last ``summary:`` line of the census's human report for this tree, echoed as printed.
 
     The census runs in process through :func:`noni.census_run._run` with ``--repo`` and
     ``--now`` and nothing else, under both :func:`contextlib.redirect_stdout` and

@@ -1,6 +1,6 @@
 """The brief suite, part 4 of 6: the caps, then the budget.
 
-The four caps hold the page down before the budget is reached; when the budget is
+The caps hold the page down before the budget is reached; when the budget is
 reached, the block that gives way is the one the spec names, and the count line says
 how much was withheld.
 """
@@ -24,10 +24,11 @@ from brief_fixtures import (
 )
 from brief_support import (
     DROPPED_PREFIX,
-    block_lines,
-    candidate_rows,
     census_summary,
+    dropped_of,
+    dropped_line,
     page_with_budget,
+    rows,
     sections,
     stripped,
     summary_line,
@@ -35,6 +36,10 @@ from brief_support import (
 
 from noni import brief as brief_module
 from noni import orderschema
+
+# Read off the tool so the budget cases below state a page length in the tool's own numbers.
+PURPOSE_MAX = brief_module.PURPOSE_MAX_LINES
+TOP = brief_module.TOP_ENTRIES
 
 
 def test_brief_purpose_is_clipped_at_the_cap_with_an_ellipsis(tmp_path: Path) -> None:
@@ -82,54 +87,6 @@ def _intent_with_purpose(lines: tuple[str, ...] | list[str]) -> str:
             "Anything that costs money.\n")
 
 
-def test_brief_the_candidate_block_holds_at_most_ten_rows(tmp_path: Path) -> None:
-    """The cap is the tool's, not an artefact of the fixture's twelve."""
-    from noni import itemschema
-
-    root = plant_brief_tree(tmp_path)
-    template = item_path(root, "idea-0001").read_bytes().decode("utf-8")
-    for number in range(13, 30):
-        item_id = f"idea-{number:04d}"
-        raw = template.replace("idea-0001", item_id)
-        raw = raw.replace(CREATED_NEWEST, "2026-12-31T09:00:00Z")
-        item_path(root, item_id).write_text(raw, encoding="utf-8")
-    code, out, _ = run_brief(root, "--now", NOW)
-    assert code == 0
-    rows = candidate_rows(out)
-    assert len(rows) == brief_module.TOP_CANDIDATES
-    assert rows[0].split()[0] == "idea-0029"
-    assert itemschema.STATUS_CANDIDATE in rows[0]
-
-
-def test_brief_a_refused_row_is_counted_and_the_block_holds_ten_rows(tmp_path: Path) -> None:
-    """Fifteen candidates of which five read badly still print ten rows, and say five went missing.
-
-    The cap counts rows that were printed, not files that were read: a listing that counted
-    the refusals would show fewer ideas than the store holds, for a reason the reader cannot
-    see. The five newest ideas are given titles the page refuses, and the block still shows
-    the ten freshest rows it could build. The refusals the block met on the way to those ten are
-    the number its own count line carries, so a reader who sees ten ideas knows five of the
-    store's ideas were refused rather than absent.
-    """
-    root = plant_brief_tree(tmp_path)
-    template = item_path(root, "idea-0001").read_bytes().decode("utf-8")
-    for number in range(13, 18):
-        item_id = f"idea-{number:04d}"
-        raw = template.replace("idea-0001", item_id)
-        raw = raw.replace(CREATED_NEWEST, "2026-12-31T09:00:00Z")
-        raw = raw.replace("Cache the census result", brief_module.CANDIDATES_HEADER)
-        item_path(root, item_id).write_text(raw, encoding="utf-8")
-    code, out, _ = run_brief(root, "--now", NOW)
-    assert code == 0
-    rows = candidate_rows(out)
-    assert len(rows) == brief_module.TOP_CANDIDATES
-    assert not any(row.split()[0].startswith("idea-001") and int(row.split()[0][5:]) >= 13
-                   for row in rows)
-    # The count line is the block's own, printed under its header rather than at the foot of the
-    # page, and it names the five refusals the block met before it filled its ten rows.
-    assert f"{DROPPED_PREFIX}5 line(s)" in out
-
-
 def test_brief_a_hundred_order_entries_render_ten(tmp_path: Path) -> None:
     root = plant_brief_tree(tmp_path)
     entries = [orderschema.entry(issue=number, decision=RECORD_ID,
@@ -144,11 +101,13 @@ def test_brief_a_hundred_order_entries_render_ten(tmp_path: Path) -> None:
 
 
 def test_brief_the_page_never_exceeds_the_cap(tmp_path: Path) -> None:
-    """Every cap at once: the page is 45 lines, and the cap is a backstop none of them reaches.
+    """Every cap at once: the page is 34 lines, and the cap is a backstop none of them reaches.
 
-    The expected count is built from the tool's own constants -- three headers, 21 purpose
-    lines, 10 order rows, 10 candidate rows, two separators, one verdict -- so the case
-    follows a change to a cap instead of pinning a number nobody chose.
+    The expected count is built from the tool's own constants -- two headers, the purpose body
+    and its ellipsis, 10 order rows, one separator, one verdict -- so the case
+    follows a change to a cap instead of pinning a number nobody chose. The store is filled with
+    200 ideas and the order with 200 entries on the way: the page reads neither list past its
+    cap, so the count must not move.
     """
     root = plant_brief_tree(tmp_path)
     entries = [orderschema.entry(issue=number, decision=RECORD_ID,
@@ -164,87 +123,72 @@ def test_brief_the_page_never_exceeds_the_cap(tmp_path: Path) -> None:
             .replace(CREATED_NEWEST, "2026-12-31T09:00:00Z"), encoding="utf-8")
     code, out, _ = run_brief(root, "--now", NOW)
     assert code == 0
-    expected = (3 + brief_module.PURPOSE_MAX_LINES + 1 + brief_module.TOP_ENTRIES
-                + brief_module.TOP_CANDIDATES + 2 + 1)
+    expected = (2 + brief_module.PURPOSE_MAX_LINES + 1 + brief_module.TOP_ENTRIES
+                + 1 + 1)
     assert len(out.splitlines()) == expected <= brief_module.BRIEF_MAX_LINES
     assert DROPPED_PREFIX not in out
-def dropped_line(page: str) -> str:
-    """The budget's own count line of a page, or ``""`` when it printed none.
-
-    Read from the page rather than from a block: the count line is the blocks' last line and sits
-    directly under the last header, so a reader of the page sees it as the last block's last row.
-    That is the tool's rule and not a fault to route around -- the count line belongs to the blocks
-    and the verdict line belongs to the page.
-    """
-    for line in reversed(page.splitlines()):
-        if line.startswith(DROPPED_PREFIX):
-            return line
-    return ""
 
 
-def rows(page: str, header: str) -> list[str]:
-    """One block's rows, with the budget's own count line left out.
-
-    The count line is printed as the last line of the blocks, which puts it under the last header
-    and inside the last block as a reader of the page sees it. Every budget case asks about the
-    rows the block kept, so the count line is asked for separately, by :func:`_dropped_line`, and
-    excluded here -- and a case can then say "the candidate block holds nothing" and mean the
-    ideas, not the tool's arithmetic.
-    """
-    rows = stripped(sections(page), header)
-    return [row for row in rows if not row.startswith(DROPPED_PREFIX)]
-
-
-def test_brief_the_budget_drops_candidates_then_order_then_purpose(tmp_path: Path) -> None:
+def test_brief_the_budget_drops_order_entries_and_not_the_purpose(tmp_path: Path) -> None:
     """The block that gives way is the one the spec names, and the count says how much.
 
-    The truncation order is candidates first, then order entries, then the purpose body. At a
-    budget of 60 the candidate block alone has more than enough to pay for the cut, so the purpose
-    and the order come through whole and every line the page withheld is a candidate row.
+    The truncation order is order entries first, then the purpose body. A budget the order can pay
+    for on its own leaves the purpose block whole and every one of its lines on the screen, so the
+    debt never reaches the prose and the lines that went missing are order rows. The page is asked
+    of a process that briefed no other tree: the census caches the tree it audits, so a parent that
+    ran two trees would compare one tree's page against another's.
     """
     root = plant_brief_tree(tmp_path)
-    # The cut is expressed as a fraction of the page's own length rather than as a number of lines:
-    # a case that named 60 would be pinning how long the fixture's purpose block happens to be.
-    full = block_lines(root)
-    # One row short of a full cut: this is the case about where the debt falls, not about the
-    # exact arithmetic of a separator, so the number the block is left with is read back and only
-    # the fact of it is asserted.
-    out = page_with_budget(root, full - brief_module.TOP_CANDIDATES + 1)
-    kept = rows(out, brief_module.CANDIDATES_HEADER)
-    assert kept and len(kept) < brief_module.TOP_CANDIDATES
-    assert len(rows(out, brief_module.ORDER_HEADER)) == brief_module.TOP_ENTRIES
-    assert dropped_line(out) == \
-        f"{DROPPED_PREFIX}{brief_module.TOP_CANDIDATES - len(kept)} line(s)"
+    full = page_lines(root)
+    out = page_with_budget(root, full - 3, fresh=True)
+    kept = rows(out, brief_module.ORDER_HEADER)
+    assert kept and len(kept) < brief_module.TOP_ENTRIES
+    assert len(stripped(sections(out), brief_module.PURPOSE_HEADER)) == \
+        brief_module.PURPOSE_MAX_LINES + 1
+    assert dropped_line(out) == f"{DROPPED_PREFIX}3 line(s)"
 
 
-def test_brief_the_budget_empties_a_block_down_to_its_header(tmp_path: Path) -> None:
-    """A block cut to nothing still prints its header, and the debt moves to the next block.
+# The one-page shape the two budget cases measure against: the two headers, the purpose body and
+# its ellipsis, the order's ten rows, and the single blank the page prints between two blocks that
+# both held something. Spelled from the tool's constants so a change to a cap moves the cases with
+# it rather than through them.
+BRIEF_UNCUT = 2 + PURPOSE_MAX + 1 + TOP + 1
 
-    At 25 lines neither the candidates nor the order can keep a row once the 21-line purpose block
-    has taken what it takes, so both are emptied to their headers. A reader who cannot tell which
-    block went missing has lost more than one who sees an empty block under its own name, which is
-    why :func:`noni.brief._drop` stops at the header and hands the rest of the debt on.
+
+def test_brief_the_dropped_line_counts_the_lines_the_page_withheld(tmp_path: Path) -> None:
+    """The count line names the lines the page withheld, and the page is what a reader counts.
+
+    The budget counts the blank line between the two blocks as a line of the page, so a run that
+    empties the order block withholds one line more than the rows it held: the ten entries go and
+    the separator that stood under them goes with them. A count read off the arithmetic of the debt
+    named ten where the screen was eleven lines shorter -- which is the line this case exists to
+    pin, and why the expectation is written as rows plus separator rather than as the debt.
     """
     root = plant_brief_tree(tmp_path)
-    # A budget one row above the page's own length minus the order block: the candidates have
-    # already been emptied and the debt has moved on to the order, which is left standing at its
-    # header alone.
-    full = block_lines(root)
-    # A budget no block can satisfy: the two lists are emptied down to their headers, which the
-    # tool keeps so a reader can tell which block went missing, and the purpose block is what
-    # survives -- the debt moves from candidates to order to purpose, and stops at the headers.
-    out = page_with_budget(root, full - brief_module.TOP_ENTRIES - brief_module.TOP_CANDIDATES)
-    assert rows(out, brief_module.PURPOSE_HEADER)
-    # The candidates gave all ten of their rows, the order gave nine of its ten, and the line the
-    # tool keeps when it empties a block is the header -- which is why the block is asked for by
-    # name and not counted: a reader who can see ``top 10`` above an empty list knows what went
-    # missing, and that is the whole claim of this case.
-    assert rows(out, brief_module.CANDIDATES_HEADER) == []
-    assert rows(out, brief_module.ORDER_HEADER)
-    assert brief_module.ORDER_HEADER in out.splitlines()
-    assert brief_module.CANDIDATES_HEADER in out.splitlines()
-    assert summary_line(out) == census_summary(root, NOW)
-    assert dropped_line(out).startswith(DROPPED_PREFIX)
+    for owed in range(1, TOP + 3):
+        out = page_with_budget(root, BRIEF_UNCUT - owed, fresh=True)
+        kept = len(rows(out, brief_module.ORDER_HEADER))
+        # The page lost the order rows the cut took, and the separator that went with the last of
+        # them once the block held nothing. The purpose block pays nothing at any of these cuts.
+        assert dropped_of(out) == (TOP - kept) + (1 if kept == 0 else 0), (owed, out)
+        assert len(stripped(sections(out), brief_module.PURPOSE_HEADER)) == PURPOSE_MAX + 1, owed
+        # The verdict survives every cut. The budget governs the blocks, so the page as printed is
+        # the blocks the tool kept, its own count line, and the verdict line beneath them.
+        assert len(out.splitlines()) == BRIEF_UNCUT - owed + 2, owed
+
+
+def test_brief_the_budget_drops_order_entries_and_not_the_purpose(tmp_path: Path) -> None:
+    """The block that gives way is the one the spec names, and the count says how much.
+
+    The truncation order is order entries first, then the purpose body. A budget the order can pay
+    for on its own leaves the purpose block whole and every one of its lines on the screen, so the
+    debt never reaches the prose and the lines that went missing are order rows.
+    """
+    root = plant_brief_tree(tmp_path)
+    out = page_with_budget(root, BRIEF_UNCUT - 3, fresh=True)
+    assert len(rows(out, brief_module.ORDER_HEADER)) == TOP - 3
+    assert len(stripped(sections(out), brief_module.PURPOSE_HEADER)) == PURPOSE_MAX + 1
+    assert dropped_of(out) == 3
 
 
 def test_brief_the_budget_never_swallows_the_verdict(tmp_path: Path) -> None:

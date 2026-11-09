@@ -47,7 +47,6 @@ PRODUCT_MODULES = (
     "src/noni/_decide_state_root.py",
     "src/noni/brief.py",
     "src/noni/brief_intent.py",
-    "src/noni/brief_items.py",
     "src/noni/brief_page.py",
     "src/noni/close.py",
     "src/noni/release.py",

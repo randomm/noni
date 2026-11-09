@@ -115,7 +115,7 @@ jobs:
       - name: The noni command is on PATH
         run: |
           .venv-wheel/bin/noni --help
-          for tool in census register claim close release decide order intent; do
+          for tool in census register claim close release decide order intent item; do
             .venv-wheel/bin/noni "$tool" --help >/dev/null
             echo "noni $tool --help: ok"
           done

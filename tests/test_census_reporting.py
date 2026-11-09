@@ -414,6 +414,16 @@ class TestJsonMode:
 
 class TestCheckFilters:
     def test_list_prints_all_checks(self):
+        """``--list`` names every class the table holds, pinned by hand.
+
+        The expected set is written out here and nowhere else on purpose. A version
+        that read it from ``census_report.CHECKS`` was a tautology: remove a class from
+        the table and the listing still matched it, which is the failure a listing test
+        exists to catch. The names below are the contract -- the direction and session
+        classes the census has always printed, plus the six the item group of #124
+        declares. A class may only join or leave this set together with the row that
+        documents it.
+        """
         import io
         from contextlib import redirect_stdout
         out = io.StringIO()
@@ -428,8 +438,12 @@ class TestCheckFilters:
                      "session-stalled", "probe",
                      "ledger-empty", "session-same-identity", "session-deleted",
                      "hygiene", "intent",
-                     "ordering-malformed", "ordering-stale", "ordering-closed"}
+                     "ordering-malformed", "ordering-stale", "ordering-closed",
+                     "item-malformed", "item-dropped-in-order",
+                     "item-promoted-without-issue", "item-reference-unresolved",
+                     "item-stale", "item-unlistable"}
         assert set(lines) == expected, f"got {lines}"
+        assert len(lines) == len(set(lines)), "a class was listed twice"
 
     def test_only_session_double(self, tmp_path):
         """--only session-double skips ledger checks."""

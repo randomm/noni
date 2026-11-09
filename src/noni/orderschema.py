@@ -30,6 +30,13 @@ ORDER_REL = f"{ORDER_DIR}/{ORDER_FILE}"
 # entries list is the order; it is not a field.
 ENTRY_FIELDS = ("issue", "decision", "confirmed")
 
+# The key sub-issue 2 gives an entry to cite an item, named here so the one
+# reader that has to tolerate it ahead of the schema says which field it means.
+# An entry carrying it is not yet an artifact ``order.py`` writes: today's rules
+# report it as an unknown field, and a reader that applied that report would
+# answer "no entry cites it" about the very entry this scan exists to catch.
+ITEM_FIELD = "item"
+
 # The order block as it is printed: position right-aligned in three columns, so
 # a 400-entry order stays one readable column.
 POSITION_WIDTH = 3

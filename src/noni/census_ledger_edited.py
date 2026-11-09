@@ -24,7 +24,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from .census_ledger import ledger_name
-from .census_report import CLASS_CODE, CLASS_SEVERITY, _promote
+from .census_render import _promote
+from .census_report import CLASS_CODE, CLASS_SEVERITY
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, nothing imported at runtime
     from .census_git import Git

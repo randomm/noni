@@ -140,6 +140,23 @@ def arbiter_why_max() -> int:
     return load_package_module("census_ordering").WHY_MAX
 
 
+def arbiter_line_rules() -> tuple[tuple[str, ...], str]:
+    """The ordering arbiter's own copies of the two character sets, read back.
+
+    ``census_ordering`` holds :data:`WHY_MAX` twice for the reason its field lists
+    are copied, and it copies the shape half of the rule the same way: the ten
+    ``LINE_BREAKS`` and the four blanks. A number that drifts reddens
+    :func:`arbiter_why_max`; these two had no read-back, so an edit to one copy of
+    the ten was caught only if the shared shape table happened to carry that
+    character. This hands both copies to the suite that compares them against the
+    writer's own sets.
+    """
+    from harness_module import load_package_module
+
+    arbiter = load_package_module("census_ordering")
+    return arbiter.LINE_BREAKS, arbiter.WHY_BLANKS
+
+
 def _with_skew_field(record: dict, value: str = "future-writer") -> dict:
     """``record`` plus one field no census at an older level declares.
 

@@ -84,7 +84,8 @@ noni/items/<id>.json, spelled the same with and without --no-commit.
 
 The artifact's shape lives in itemschema.py in the package, the two guards the verbs
 run first in item_guard.py, the reads of the order and the ledger it must not
-contradict in item_reads.py, and the file and git mechanics in item_write.py (whose
+contradict in item_reads.py (whose promote half, the order citation and its rewrite,
+is item_reads_order.py), and the file and git mechanics in item_write.py (whose
 own git calls are reused from order_gitwrite.py). All are package imports: inside an
 installed wheel there is no sibling file to load by path, and no directory of the
 package ever goes on ``sys.path``, so no caller can put a lookalike ahead of them. This
@@ -101,6 +102,7 @@ from pathlib import Path
 from . import (
     item_cli,
     item_guard,
+    item_promote_verb,
     item_reads,
     item_write,
     itemschema,
@@ -188,10 +190,14 @@ def _write(repo: Path, body: dict, verb: str, no_commit: bool) -> int:
     verdict, headline, hint = item_write.write_item(
         repo, body, rendered, _committable(repo, verb, no_commit, rendered))
     if verdict == "refuse":
-        # Two shapes reach here: the environment refusals of the file step, which
-        # carry their own two lines and take exit 3, and a commit step that already
-        # printed its own refusal and returned its own code -- for which this prints
-        # nothing and hands back the code the commit chose.
+        # Three shapes reach here: the environment refusals of the file step, which
+        # carry their own two lines and take exit 3 under the I/O code this step chooses;
+        # a commit step that already printed its own refusal and returned its own code,
+        # which arrives as an int in the headline slot and is returned untouched; and a
+        # commit step whose refusal carried text, which has no line to reprint and so
+        # keeps the I/O code of the step that writes files.
+        if isinstance(headline, int):
+            return headline
         return EXIT_OK if not headline else _fail(EXIT_IO, headline, hint)
     print(f"{labels.ITEM}: {body['id']} is {body['status']} ({verb})")
     if verdict == "unchanged":
@@ -214,18 +220,17 @@ def _committable(repo: Path, verb: str, no_commit: bool, rendered: bytes):
                   "before running the census")
             return "ok", "", None
         code = _commit(repo, path_rel, f"items: {verb} [{_digests(rendered)}]", shown)
-        return ("ok", "", None) if code == EXIT_OK else ("refuse", "", None)
+        if code == EXIT_OK:
+            return "ok", "", None
+        # A commit that refused printed its own two lines and chose its own code, which
+        # ``_commit`` handed back. It has to travel on: an empty headline would be read
+        # below as "nothing to report" and the run would exit 0 having committed nothing
+        # -- the opposite of what a writer that never claims a commit it did not make
+        # means. The code is carried in the headline slot because it is already an int,
+        # and the write step returns it unchanged when it is one.
+        return "refuse", code, None
 
     return commit
-
-
-def _refuse_cited_order(repo: Path, item_id: str) -> int | None:
-    """The refusal ``promote`` owes an order that cites this item, or None.
-
-    The question, its two answers and their wording are ``item_reads``'; the code
-    table and the printed voice are this writer's, handed over at the call.
-    """
-    return item_reads.refuse_cited_order(repo, item_id, _fail, EXIT_IO, EXIT_REFUSAL)
 
 
 def _state_root(args: argparse.Namespace, verb: str) -> Path | None:
@@ -309,7 +314,23 @@ def main(argv: list[str] | None = None) -> int:
         return _run_add(repo, args, stamp)
     if subcommand == "drop":
         return _run_drop(repo, args, stamp)
-    return _run_promote(repo, args, stamp)
+    return item_promote_verb.promote(repo, args.id, _promote_issue(args), args.issue,
+                                     args.no_commit, _fail, _write, _digests,
+                                     EXIT_OK, EXIT_IO, EXIT_USAGE, EXIT_REFUSAL)
+
+
+def _promote_issue(args: argparse.Namespace) -> int | None:
+    """The ``--issue`` of a promote as the number the record carries, or None.
+
+    A token that is not a positive integer is answered ``None`` and refused by the verb,
+    which also receives the token as typed: the verb owns the sentence and the code, and
+    this only spells the number for the two places that need an ``int`` rather than text.
+    """
+    if args.issue is None:
+        return None
+    if not orderstate.is_index_text(args.issue) or int(args.issue) < 1:
+        return None
+    return int(args.issue)
 
 
 def _run_list(args: argparse.Namespace) -> int:
@@ -404,55 +425,6 @@ def _run_drop(repo: Path, args: argparse.Namespace, stamp: str) -> int:
     body = itemschema.entry(args.id, existing["title"], itemschema.STATUS_DROPPED,
                             existing["created"], None, args.decision, args.why)
     return _write(repo, body, f"drop {args.id}", args.no_commit)
-
-
-def _run_promote(repo: Path, args: argparse.Namespace, stamp: str) -> int:
-    """``promote``: mark a candidate as the issue it became, refusing a cited item.
-
-    Item-only in this sub-issue: the order side is sub-issue 2's same-commit rewrite,
-    so a promote that would leave an order entry citing a newly promoted item is
-    refused (exit 4) naming the order path. ``created`` is carried over, never
-    restamped: promoting an idea does not make it younger.
-    """
-    issue: int | None = None
-    if args.issue is not None:
-        if not orderstate.is_index_text(args.issue) or int(args.issue) < 1:
-            return _fail(EXIT_USAGE, f"issue {args.issue!r} is not a positive "
-                         "integer", "name the issue by its number, e.g. --issue 42")
-        issue = int(args.issue)
-    if issue is None:
-        # A promoted item is one that became an issue, and the schema refuses a
-        # ``promoted`` item that carries none, so a verb that wrote one would leave a
-        # file the next ``add`` refuses to write over and the census reports
-        # ``item-malformed``. Refused here, at the verb that owes the field, for the
-        # same reason ``drop`` owes ``--decision`` and ``--why``.
-        return _fail(EXIT_USAGE, "promote needs --issue N: a promoted item is one "
-                     "that became an issue, and one that names none was promoted to "
-                     "nothing", "name the issue it became, e.g. --issue 42, or leave "
-                     "it a candidate until an issue is filed for it")
-    # The store before the item, for the reason ``drop`` gives above: this verb rewrites
-    # a record of a store this run may have to refuse to open.
-    unlistable = item_reads.store_is_readable(repo, _fail, EXIT_IO)
-    if unlistable is not None:
-        return unlistable
-    existing, code = item_reads.read_item(repo / itemschema.item_rel(args.id),
-                                          args.id, _fail, EXIT_IO, EXIT_REFUSAL)
-    if code is not None:
-        return code
-    if existing is None:
-        return _fail(EXIT_REFUSAL, f"no item {args.id} is filed under "
-                     f"{itemschema.ITEM_DIR}/",
-                     "file it first with 'item.py add ID --title TITLE'")
-    if existing["status"] in itemschema.TERMINAL_STATUSES:
-        return _fail(EXIT_REFUSAL, f"item {args.id} is already "
-                     f"{existing['status']}, so there is nothing to promote",
-                     "a promoted item is ordered with order.py, not re-promoted")
-    refusal = _refuse_cited_order(repo, args.id)
-    if refusal is not None:
-        return refusal
-    body = itemschema.entry(args.id, existing["title"], itemschema.STATUS_PROMOTED,
-                            existing["created"], issue)
-    return _write(repo, body, f"promote {args.id}", args.no_commit)
 
 
 if __name__ == "__main__":

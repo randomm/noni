@@ -87,16 +87,22 @@ def record(tree: Path, record_id: str, status: str = "decided",
     return target
 
 
-def order(tree: Path, entries: list[dict], schema: str = "noni.order/1") -> Path:
+def order(tree: Path, entries: list[dict] | None,
+          schema: str = "noni.order/1") -> Path:
     """The order artifact the items group reads, written by hand.
 
-    Hand-written because ``noni.order/1`` has no ``item`` field and ``order.py`` would
-    refuse one: the ``/2`` shape is exercised here so the class that reads it is not
-    invented when the second schema version lands.
+    Hand-written rather than produced by ``order.py`` so a suite can plant a shape no
+    verb writes: an ``item`` field inside a ``/1`` document, or a ``/2`` document whose
+    entry cites an idea the store does not hold. Both are defects this group's classes
+    exist to report, and a builder that validated what it emitted could not plant them.
+
+    ``entries`` of ``None`` writes the empty queue -- the state an operator reaches by
+    removing everything, and the one an ordering run reads as "nothing is ordered".
     """
     target = tree / "noni" / "direction" / "order.json"
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps({"schema": schema, "entries": entries},
+    target.write_text(json.dumps({"schema": schema,
+                                  "entries": entries if entries is not None else []},
                                  indent=2) + "\n", encoding="utf-8")
     return target
 

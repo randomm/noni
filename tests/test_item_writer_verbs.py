@@ -285,14 +285,48 @@ def test_promote_refuses_an_item_the_order_cites(tmp_path):
 
 
 def test_an_uncited_item_promotes(tmp_path):
-    """The refusal is about the citation, not about the order existing."""
+    """The refusal is about the citation, not about the order existing.
+
+    The issue promoted to is one the queue does not hold: promoting an item to an issue
+    the order already lists is its own refusal (a rewrite would name that issue twice),
+    and this case asks the other question -- an order that cites nothing must not stop
+    the promote.
+    """
     tree = repo(tmp_path)
     seed_record(tree)
     seed_item(tree, {"schema": "noni.item/1", "id": "idea-0001", "title": "t",
                      "status": "candidate", "created": FRESH})
     seed_order(tree, [{"issue": 7, "decision": BASELINE_ID, "confirmed": FRESH}])
-    assert run_item(tree, "promote", "idea-0001", "--issue", "7",
+    assert run_item(tree, "promote", "idea-0001", "--issue", "42",
                     "--now", NOW).returncode == 0
+
+
+def test_promote_to_an_issue_the_order_already_lists_is_refused(tmp_path):
+    """A rewrite that duplicates an issue is refused, not written.
+
+    ``order.py add`` refuses a second position for one issue and the arbiter reports the
+    duplicate as malformed, so a promote that wrote it would emit an artifact no verb
+    could open again. One entry has to cite the item for a rewrite to be owed at all --
+    an order that merely lists the issue cites nothing and owes no rewrite.
+
+    The item keeps its ``candidate`` status and the order keeps the entry that still
+    describes it: a refusal is the whole run.
+    """
+    tree = repo(tmp_path)
+    seed_record(tree)
+    seed_item(tree, {"schema": "noni.item/1", "id": "idea-0001", "title": "t",
+                     "status": "candidate", "created": FRESH})
+    seed_order(tree, [{"item": "idea-0001", "decision": BASELINE_ID,
+                       "confirmed": FRESH},
+                      {"issue": 42, "decision": BASELINE_ID, "confirmed": FRESH}],
+               schema="noni.order/2")
+    before_item = item_path(tree, "idea-0001").read_bytes()
+    before_order = (tree / "noni" / "direction" / "order.json").read_bytes()
+    proc = run_item(tree, "promote", "idea-0001", "--issue", "42", "--now", NOW)
+    assert proc.returncode == 4, proc.stderr
+    assert "already in the order" in proc.stderr, proc.stderr
+    assert item_path(tree, "idea-0001").read_bytes() == before_item
+    assert (tree / "noni" / "direction" / "order.json").read_bytes() == before_order
 
 
 def test_promote_refuses_an_item_that_is_already_terminal(tmp_path):

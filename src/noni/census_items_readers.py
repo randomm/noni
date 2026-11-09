@@ -146,6 +146,74 @@ def items_listing(items: Path) -> ItemsProbe:
 
 
 @dataclass(frozen=True)
+class OrderScan:
+    """What one read of the order artifact answered for the items group.
+
+    ``entries`` is the artifact's entry list as this run holds it (``()`` for a file
+    that is simply not there, which is the honest answer about an artifact that cites
+    nothing); ``blind`` says this run could not hold those entries at all, and names
+    the fault in one short sentence. The two are kept apart by construction rather
+    than by a sentinel the reporter has to remember, because both 53 and 55 answer
+    differently for a dangling citation the run *read* and a file it could not open:
+    the first is the project's defect, the second this run's blindness, and collapsing
+    them is how "no entry cites an item" gets said about a file nobody opened.
+
+    ``entries`` holds every entry that is a mapping, including one too broken to name
+    a subject: whether such an entry is a defect is the ordering group's question
+    under ``ordering-malformed``, and this group reads what it can from the rest.
+    """
+
+    entries: tuple[dict, ...] = ()
+    blind: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.blind is not None and self.entries:
+            raise ValueError(
+                "OrderScan answers one read: a run that could not hold the entries "
+                "holds no entries, so set entries or blind, never both")
+
+
+def order_scan(order: Path, *, file_kind: Callable[..., tuple[str, str | None]],
+               read_record: Callable[[Path], tuple[bytes | None, OSError | None]],
+               load_json: Callable[[bytes], object],
+               bounded: Callable[..., str]) -> OrderScan:
+    """The order's entries, read once, or the sentence saying this run could not.
+
+    The items group's own read of ``noni/direction/order.json``, split from
+    ``census_items.py`` the way the store scan was: this module owns the reads and
+    words nothing. The artifact is classified before it is opened and opened through
+    the census's own open-time-safe reader, so a link is refused rather than followed
+    and a path swapped for a link between the two steps is refused by the flags on the
+    open.
+
+    "Absent is not a fault" is the rule, stated the same way ``items_listing`` states
+    it: a file that is not there carries no entries and answers the two order
+    questions, while a path that is there and could not be read or parsed answers
+    neither. The fault text goes through ``bounded`` because an ``OSError`` carries
+    the path it failed on, and no row of this group may quote one.
+    """
+    kind, problem = file_kind(order)
+    if kind == "absent":
+        return OrderScan()
+    if kind != "regular":
+        return OrderScan(blind=_shape_words(kind, problem))
+    raw, fault = read_record(order)
+    if fault is not None:
+        return OrderScan(blind=f"the file could not be opened "
+                              f"({bounded(fault_text(fault))})")
+    if raw is None:  # pragma: no cover - read_record answers one or the other
+        return OrderScan(blind="the file could not be opened")
+    verdict = _classify(raw, load_json)
+    if isinstance(verdict, str):
+        return OrderScan(blind=verdict)
+    entries = verdict.get("entries")
+    if not isinstance(entries, list):
+        return OrderScan(blind="the file holds no entry list this run can read")
+    return OrderScan(entries=tuple(entry for entry in entries
+                                    if isinstance(entry, dict)))
+
+
+@dataclass(frozen=True)
 class ItemScan:
     """What one run's single read of the store answered, per file.
 
@@ -167,6 +235,10 @@ class ItemScan:
       complete item document whose ``id`` field names something other than its own
       stem — a defect of a file the group can still describe, so its body stays in
       ``bodies`` and its age and citations stay checkable.
+
+    The three buckets are the group's own; the order artifact the group also reads has
+    its own scan beside this one (:class:`OrderScan`), because the two reads answer
+    different questions and one run must not ask the order what the store said.
 
     The distinction between the last two is the whole of the probe-honesty rule
     for this group: a file the run could not read and a file it read and found wrong

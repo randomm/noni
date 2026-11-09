@@ -127,8 +127,8 @@ noni/direction/order.json
 
 | field | meaning |
 |---|---|
-| `schema` | `noni.order/1`, the artifact's version marker |
-| `entries` | `[{issue, decision, confirmed}]` in the order the operator wants |
+| `schema` | `noni.order/1`, or `noni.order/2` for an order that cites an item |
+| `entries` | `[{issue, decision, confirmed}]` in the order the operator wants, where an entry of a `/2` order names `item` instead of `issue` |
 
 Position is the list index, not a field -- so a reorder moves entries and never
 renumbers anything. `issue` is a positive integer. `decision` is the id of the
@@ -138,6 +138,21 @@ writes (exit 4, naming the entry) and the census reports it as
 `ordering-malformed` (15) -- a position nobody can look up is a position nobody
 decided. `confirmed` is the UTC timestamp the writer stamped when the operator
 last confirmed the entry.
+
+**An entry can order an idea as well as an issue.** `add --item ID` writes an
+`item` entry: the id of a file under `noni/items/`, which is what makes the
+artifact `noni.order/2`. An entry names one subject and never two -- `item` or
+`issue`, not both and not neither (exit 4, naming the entry; the census reports
+the same entry as `ordering-malformed`). The id is checked against the item store
+before a position is granted, so an order cannot hold a position for an idea
+nobody filed (exit 4) or for one already dropped. The writer emits `/2` for a run
+that has an item entry to write and `/1` for every run over an order that holds
+none, so a queue of issues is never restamped into a version its contents do not
+use; both versions are read. When `item.py promote` gives an item its issue, the
+entry citing it is rewritten to that issue in the same commit, so the queue never
+keeps a position for an idea that has become work. The promote is refused (exit 4,
+nothing written) when the order already holds that issue, because the rewrite would
+give one issue two positions.
 
 The file is written in one canonical form: keys in the order above, two-space
 indent, one trailing newline. A file that is not in that form is refused, never
@@ -161,13 +176,15 @@ issue, then the flags that qualify it. `order.py --help` prints the same order.
 
 ```
 scripts/order.py --repo REPO add ISSUE --decision ID [--at N] [--now ISO-8601] [--no-commit]
+scripts/order.py --repo REPO add --item ID --decision ID [--at N] [--now ISO-8601] [--no-commit]
 scripts/order.py --repo REPO move ISSUE --to N [--now ISO-8601] [--no-commit]
 scripts/order.py --repo REPO remove ISSUE [--now ISO-8601] [--no-commit]
 scripts/order.py --repo REPO confirm [ISSUE] [--now ISO-8601] [--no-commit]
 ```
 
 Every run prints the resulting order, one line per entry: the 1-based position,
-the issue, and the decision (or `-`) and confirmed timestamp it carries.
+the issue (or the item an entry of a `/2` order cites), and the decision (or `-`)
+and confirmed timestamp it carries.
 
 `add` requires `--decision`: a position someone placed is a decision, and the id
 it names must be a file under `noni/decisions/` that is not superseded. `--at N`

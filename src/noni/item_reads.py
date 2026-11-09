@@ -36,11 +36,11 @@ def order_cites_item(repo: Path, item_id: str) -> tuple[bool, str]:
     ``order.py`` already gives them, and treats the first two answers alike: neither is a
     refusal.
 
-    The entry's own key is asked with ``.get`` because the item field of the order is
-    sub-issue 2's: a ``noni.order/1`` entry carries ``issue``, ``decision`` and
-    ``confirmed`` and nothing else, so today nothing cites an item and the honest
-    answer is the empty scan. The day the order gains the field, the scan already
-    asks the right question and only the order's schema changes.
+    The entry's own key is asked with ``.get``: a ``noni.order/1`` entry carries
+    ``issue``, ``decision`` and ``confirmed`` and nothing else, so a ``/1`` file
+    answers the empty scan and that is the honest answer about a document that cites
+    no item, not the blindness answer. A ``noni.order/2`` entry carries ``item`` and
+    is scanned by the same line.
     The path is classified with ``orderstate.file_kind`` first, the way every other
     read of this family asks, and only the one state "no file" answers "no entry cites
     it": a plain file, a directory or a file whose bytes this run cannot read is no
@@ -79,12 +79,11 @@ def _order_entries_if_artifact(raw: bytes) -> list | None:
     for the bytes no noni writer emits (non-finite numbers, a duplicate key, a nesting
     past the bound), ``orderschema.problems`` for the document's shape, and
     ``orderstate.render`` for the canonical form. All three because ``promote`` owes the
-    same codes ``order.py`` owes for the same defects, and none of them relaxed here: an
-    order whose entries carry a key today's schema does not name -- the ``item`` field
-    ``noni.order/2`` brings -- is simply *not* a ``noni.order/1`` artifact, so it is
-    refused as a malformed order naming the order path, exactly as ``order.py`` refuses
-    those bytes today. Until that artifact lands nothing on disk cites an item, and the
-    scan above is the ready answer for the day it does.
+    same codes ``order.py`` owes for the same defects, and none of them relaxed here. An
+    entry that carries the ``item`` field of ``noni.order/2`` inside a ``noni.order/1``
+    document is not the artifact either version describes, so it is refused as a
+    malformed order naming the order path, exactly as ``order.py`` refuses those bytes;
+    a ``/2`` document whose entries hold the field is read, and is what a promote rewrites.
     """
     try:
         value = orderschema.load_json_checked(raw)
@@ -94,7 +93,11 @@ def _order_entries_if_artifact(raw: bytes) -> list | None:
         return None
     entries = [dict(entry) for entry in value["entries"]
                if isinstance(entry, dict)]
-    rendered = orderstate.render(orderstate.body_of(value))
+    # The version the document itself states, handed to the renderer rather than a
+    # default: ``body_of`` keeps the marker precisely so a ``/2`` file is compared
+    # against ``/2`` bytes, and asking for ``/1`` bytes here would make every citing
+    # order a permanent refusal.
+    rendered = orderstate.render({"schema": value["schema"], "entries": value["entries"]})
     if isinstance(rendered, orderstate.RenderRefused) or rendered != raw:
         return None
     return entries
@@ -333,46 +336,3 @@ def dropped_title_taken(repo: Path, title: str, report, exit_io: int,
     return None
 
 
-def refuse_cited_order(repo: Path, item_id: str, report, exit_io: int,
-                       exit_refusal: int) -> int | None:
-    """The refusal ``promote`` owes an order that cites this item, or None.
-
-    Promote is item-only in this sub-issue, so an order that already cites the item
-    is refused rather than left pointing at a newly promoted item the same commit did
-    not rewrite. The question is answered by :func:`order_cites_item` beside this
-    function, which distinguishes "no entry cites it" from "the order could not be
-    read", and the two get different codes: the first is no refusal at all, the second
-    is the caller's environment code naming the order path, because a run that read
-    nothing may not promote on the strength of not having read it. Sub-issue 2 replaces
-    this refusal with the same-commit order rewrite.
-
-    The two refusals are built here and printed through the caller's ``report``, the
-    way every other read in this module hands its answer back: the reader keeps the
-    question and the wording of its answer, and the writer keeps its codes, its voice
-    and the choice of when the question is asked at all.
-    """
-    cited, answer = order_cites_item(repo, item_id)
-    if answer in ("read", "absent") and not cited:
-        return None
-    if answer == "io":
-        return report(exit_io, f"{orderschema.ORDER_REL} could not be read, so "
-                     "whether an order entry cites this item cannot be answered",
-                       f"repair or remove {orderschema.ORDER_REL}, then re-run the "
-                       "item writer")
-    if answer == "malformed":
-        # The artifact's own defect, and the code ``order.py`` gives the same bytes:
-        # not "could not be read" (the file was read) and not a citation (no entry was
-        # vouched for). The order is what has to change, so the hint says so.
-        return report(exit_refusal,
-                      f"{orderschema.ORDER_REL} is not an order this reader can "
-                      "check, so whether an entry cites this item cannot be answered",
-                      f"repair {orderschema.ORDER_REL} to the documented shape "
-                      f"({orderschema.ORDER_SCHEMA}) with the order writer, then "
-                      "re-run the item writer")
-    return report(exit_refusal,
-                  f"{orderschema.ORDER_REL} has an entry that cites item {item_id}, "
-                  "so promoting the item alone would leave the order out of step",
-                  f"the order is what has to change: correct that entry in "
-                  f"{orderschema.ORDER_REL} with the order writer in the same commit "
-                  "as the promotion; until the order carries items, remove it and "
-                  "re-run promote")

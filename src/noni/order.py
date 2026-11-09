@@ -8,8 +8,9 @@ integer, so the core stays viable with no adapter installed.
 
 The file holds two fields:
 
-  schema   -- "noni.order/1", the artifact's version marker
-  entries  -- [{issue, decision, confirmed}] in the order the operator wants
+  schema   -- "noni.order/1", or "noni.order/2" for an order that cites an item
+  entries  -- [{issue, decision, confirmed}] in the order the operator wants, where
+              an entry of a /2 order names item instead of issue
 
 ``decision`` is the id of the decision record that set the entry's position and
 is never empty: an entry whose ``decision`` is a JSON null, a blank string or
@@ -22,8 +23,17 @@ stamped by the writer (add and confirm stamp it with this run's UTC time, or
 with --now when given); a run never leaves it empty. A correction of the order
 is another run of this command, so the file keeps one owner.
 
+An entry may cite a filed idea instead of an issue: ``add --item ID`` writes an
+``item`` entry, which is what makes the artifact ``noni.order/2``. The two subjects are
+exclusive -- an entry names one of them, never both and never neither -- and the id is
+the store's own, checked against ``noni/items/`` before a position is granted to it. The
+writer emits ``/2`` for a run that has an item entry to write and ``/1`` for every run
+over an order that holds none, so a queue of issues is never restamped into a version it
+does not use; both versions are read.
+
 Usage:
     order.py --repo REPO add ISSUE [--at N] [--decision ID] [--now ISO-8601] [--no-commit]
+    order.py --repo REPO add --item ID [--at N] --decision ID [--now ISO-8601] [--no-commit]
     order.py --repo REPO move ISSUE --to N [--now ISO-8601] [--no-commit]
     order.py --repo REPO remove ISSUE [--now ISO-8601] [--no-commit]
     order.py --repo REPO confirm [ISSUE] [--now ISO-8601] [--no-commit]
@@ -31,7 +41,9 @@ Usage:
 Exit codes:
     0  the order was written (and committed unless --no-commit)
     2  invalid input: an argparse failure, a subcommand outside add/move/remove/confirm,
-       an issue that is not a positive integer, a missing --decision on add, an --at or
+       an issue that is not a positive integer, a missing --decision on add, an add that
+       names both an issue and --item or neither, an --item that is not an item id, an
+       --at or
        --to that is not a 1-based position of the resulting list, a flag passed to the
        verb that does not own it, --now that is not a valid ISO-8601 timestamp, a
        --repo that is not a directory, or a noni/, noni/direction or noni/decisions
@@ -42,13 +54,15 @@ Exit codes:
     3  a path this writer needs could not be read or written, or a git call failed or
        timed out: the order file is not a regular file at its path (a symlink, a
        directory, an unreadable file), the decision ledger could not be looked in, a
-       decision record it must read is unreadable, the artifact could not be written, or
-       the commit step failed (the file is left written and named, never claimed as
+       decision record it must read is unreadable, the item store could not be listed
+       for an --item check or an item file it must read is unreadable, the artifact could not be written, or the commit step failed (the file is left written and named, never claimed as
        committed), or the freshness probe could not answer (a ``git show`` that
        timed out or failed for a reason that told us nothing)
     4  what the order itself refuses: the issue is already listed (add), absent from the
        order (move, remove, confirm), no file under noni/decisions/ carries the given
        --decision id, the record it finds is superseded (the hint names its successor),
+       no item of that id is filed under noni/items/ or the one it finds is dropped
+       (add --item),
        an entry of the existing file whose decision is null, blank or absent (the refusal
        names the entry), or the existing order file is not the artifact this writer writes
        (unparseable, wrong schema, or malformed entries) so overwriting it would destroy an
@@ -68,7 +82,8 @@ command wrote (git add -- <path> then git commit --only -- <path>), so a file
 somebody else had staged is neither committed nor unstaged. --no-commit writes
 through the same chain, leaves the file uncommitted and prints one line saying
 so. Every run prints the resulting order, one line per entry: the 1-based
-position, the issue, and the decision (or -) and confirmed timestamp it carries.
+position, the issue (or the item an entry of a /2 order cites), and the decision
+(or -) and confirmed timestamp it carries.
 The path the success line names (wrote, committed, or left uncommitted) is the
 artifact's real location as seen from the caller's working directory: ``--repo``
 followed by noni/direction/order.json, spelled exactly the same with and without
@@ -92,17 +107,24 @@ from pathlib import Path
 
 from . import (
     _path_kind,
+    itemschema,
     labels,
+    order_add,
+    order_commit,
+    order_plan,
     order_probe,
     orderschema,
     orderstate,
 )
-from . import order_gitwrite as gitwrite
 
 # The state reader reports a refusal as a (headline, hint) pair and leaves the
 # code to the writer, so the one table of codes stays here and the reader's
 # answers arrive pre-coded at the call sites below.
 _fail = orderstate._fail
+
+# The git layer the run ends with: ``order_commit`` calls it, and the writer's git-layer
+# tests replace this name to drive a hung or failing git.
+gitwrite = order_commit.gitwrite
 
 # Every return path names one of these, and the 'Exit codes:' block above
 # carries exactly this set (tests/test_order_writer_docs.py pins the two together).
@@ -124,9 +146,7 @@ VERBS: tuple[str, ...] = ("add", "move", "remove", "confirm")
 # declined-``lstat`` rule all live in the guard; see :func:`_refuse_linked_state`.
 _GUARDED_DIRS: tuple[str, ...] = ("noni", orderschema.ORDER_DIR, orderstate.DECISIONS_DIR)
 
-# The verb list the unknown-verb refusal and the usage line take, spelled once from
-# ``VERBS``. The missing-subcommand hint spells its conjunction itself, and its own
-# test pins that text.
+# The verb list the unknown-verb refusal and the usage line take, spelled once from VERBS.
 _VERB_LIST = ", ".join(VERBS)
 
 # The usage line, spelled once and handed to argparse as ``usage=``.
@@ -151,7 +171,8 @@ _VERB_LIST = ", ".join(VERBS)
 # ``tests/test_order_writer_usage.py`` and the flag-set parity of
 # ``tests/test_order_writer_docs.py``: a flag added to the parser belongs here too.
 _USAGE = (f"{labels.ORDER} --repo REPO subcommand [issue]"
-          " [--at N] [--to N] [--decision ID] [--now ISO-8601] [--no-commit] [-h]")
+          " [--at N] [--to N] [--decision ID] [--item ID] [--now ISO-8601]"
+          " [--no-commit] [-h]")
 
 # The missing-positional message argparse composes for a required positional, and
 # the line argparse prints above it. argparse turns this refusal into usage-plus-
@@ -250,6 +271,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--decision", default=None, metavar="ID",
                         help="decision record id that set this entry's position "
                              "(required for add)")
+    parser.add_argument("--item", default=None, metavar="ID",
+                        help="the id of a filed item to order instead of an issue "
+                             "(add only; an entry naming an item makes the artifact "
+                             "noni.order/2)")
     parser.add_argument("--now", default=None, metavar="ISO-8601",
                         help="fixed UTC timestamp for the confirmed stamp "
                              "(default: the current UTC time)")
@@ -277,12 +302,40 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(EXIT_USAGE, f"--decision belongs to add, not {subcommand}",
                      "only add takes a position's decision; confirm restamps what is there")
 
-    # The issue token: a positive integer spelled in ASCII decimal digits, checked
+
+    # add names one subject and never two: an issue number or --item ID. The question
+    # is asked of the two tokens before either is validated, so `add 7 --item x` is
+    # refused for naming two subjects rather than for whichever one of them is also
+    # malformed. Every other verb keeps its own positional rule below.
+    if args.issue is not None and args.item is not None:
+        # Asked of every verb, before the token itself is validated: a run naming two
+        # subjects has to be told which one it meant, and no ordering of the checks
+        # below can answer that.
+        problem = order_add.subject_problems(args.issue, args.item)
+        if problem is not None:
+            return _fail(EXIT_USAGE, *problem)
+    if subcommand == "add":
+        problem = order_add.subject_problems(args.issue, args.item)
+        if problem is not None:
+            return _fail(EXIT_USAGE, *problem)
+
+    # The subject token: a positive integer spelled in ASCII decimal digits, checked
     # before the file is opened, so a typo cannot decide which entry of a real
     # order gets touched. confirm is the one verb that may omit it, which means
-    # every entry at once.
+    # every entry at once. An add that named --item instead has no issue token to
+    # read, and the refusal above already said so when it named neither.
+    #
+    # An ``--item`` may name an entry for the three rearranging verbs too, and then the
+    # token is the id rather than a number: the type of ``subject`` is what tells the plan
+    # which kind of entry to reach, so ``move 7`` can never move an item's position and
+    # ``move --item idea-0001`` can never reach an issue's.
     issue: int | None = None
-    if subcommand == "confirm" and args.issue is None:
+    subject: int | str | None = None
+    if subcommand == "confirm" and args.issue is None and args.item is None:
+        pass
+    elif subcommand != "add" and args.item is not None:
+        subject = args.item
+    elif subcommand == "add" and args.item is not None:
         pass
     else:
         token = args.issue
@@ -293,6 +346,7 @@ def main(argv: list[str] | None = None) -> int:
             return _fail(EXIT_USAGE, f"issue {token!r} is not a positive integer",
                          "name the issue by its number, e.g. 42")
         issue = int(token)
+        subject = issue
 
     if subcommand == "add" and args.decision is None:
         return _fail(EXIT_USAGE, "add needs --decision ID: an added position is a decision",
@@ -332,65 +386,46 @@ def main(argv: list[str] | None = None) -> int:
     if isinstance(read, orderstate.OrderRefused):
         return _fail(EXIT_REFUSAL, read.headline, read.hint)
     entries = [dict(entry) for entry in read.entries]
-    before_entries = [dict(entry) for entry in read.entries]
     before = read.before
-    listed = {entry["issue"] for entry in entries}
 
     # --- the plan: what the entries become, decided before any write ---------
+    # The item store joins the guarded list for a run that names one, so an
+    # ``add --item`` whose store is a link is refused as a bad ``--repo`` (2) rather
+    # than reached through: the same walk, the same code and the same wording the
+    # writer already applies to ``noni`` and ``noni/direction``.
+    if args.item is not None and subcommand == "add":
+        refused = _path_kind.refuse_state_root(repo, True,
+                                               (*_GUARDED_DIRS, itemschema.ITEM_DIR))
+        if refused is not None:
+            return _fail(EXIT_USAGE, *refused)
     verb: str
     if subcommand == "add":
-        assert issue is not None
         assert args.decision is not None
-        if issue in listed:
-            position = next(i for i, e in enumerate(entries, 1) if e["issue"] == issue)
-            return _fail(EXIT_REFUSAL, f"issue {issue} is already in the order at position "
-                         f"{position}", f"move it with 'order.py move {issue} --to N', or "
-                         "restamp it with 'order.py confirm'")
-        refusal = orderstate.decision_problems(repo, args.decision, EXIT_IO, EXIT_REFUSAL)
-        if refusal is not None:
-            return _fail(*refusal)
-        count = len(entries) + 1
-        if args.at is None:
-            position = count
-        else:
-            position, problem = orderstate.parse_index(args.at, "--at", count)
-            if problem is not None:
-                return _fail(EXIT_USAGE, *problem)
-        entries.insert(position - 1, orderschema.entry(issue, args.decision, stamp))
-        verb = f"add {issue}"
+        planned = order_add.plan_add(repo, entries, issue, args.item, args.decision,
+                                     args.at, stamp, _fail, EXIT_IO, EXIT_USAGE,
+                                     EXIT_REFUSAL)
+        if planned.refusal is not None:
+            return planned.refusal
+        entries, verb = planned.entries, planned.verb
     elif subcommand == "move":
-        assert issue is not None
-        if issue not in listed:
-            return _fail(EXIT_REFUSAL, f"issue {issue} is not in the order",
-                         "list it first with 'order.py add ISSUE --decision ID'")
-        if args.to is None:
-            return _fail(EXIT_USAGE, "move needs --to N: a move to no position is not a move",
-                         f"pass the 1-based position to move {issue} to, e.g. --to 1")
-        position, problem = orderstate.parse_index(args.to, "--to", len(entries))
-        if problem is not None:
-            return _fail(EXIT_USAGE, *problem)
-        moved = next(e for e in before_entries if e["issue"] == issue)
-        entries = [e for e in entries if e["issue"] != issue]
-        entries.insert(position - 1, orderschema.entry(issue, moved["decision"], stamp))
-        verb = f"move {issue} to {position}"
+        assert subject is not None
+        planned = order_plan.plan_move(entries, subject, args.to, stamp, _fail,
+                                       EXIT_USAGE, EXIT_REFUSAL)
     elif subcommand == "remove":
-        assert issue is not None
-        if issue not in listed:
-            return _fail(EXIT_REFUSAL, f"issue {issue} is not in the order",
-                         "there is nothing to remove; the order is left as it is")
-        entries = [e for e in entries if e["issue"] != issue]
-        verb = f"remove {issue}"
+        assert subject is not None
+        planned = order_plan.plan_remove(entries, subject, _fail, EXIT_REFUSAL)
     else:
-        if issue is not None and issue not in listed:
-            return _fail(EXIT_REFUSAL, f"issue {issue} is not in the order",
-                         "add it first with 'order.py add ISSUE --decision ID'")
-        targets = entries if issue is None else [e for e in entries if e["issue"] == issue]
-        for entry in targets:
-            entry["confirmed"] = stamp
-        verb = f"confirm {issue if issue is not None else 'all'}"
+        planned = order_plan.plan_confirm(entries, subject, stamp, _fail, EXIT_REFUSAL)
+    if planned.refusal is not None:
+        return planned.refusal
+    entries, verb = planned.entries, planned.verb
 
     # --- the write: every check above has passed -----------------------------
-    body = {"schema": orderschema.ORDER_SCHEMA, "entries": entries}
+    # The version the plan's own entries describe, never a constant: a queue of issues
+    # stays ``/1`` and an order holding an item entry is ``/2``, which is the whole rule
+    # for how a ``/2`` artifact ever comes to exist. Restamping a document into the
+    # version its contents do not use would make the marker say nothing.
+    body = {"schema": orderschema.schema_for(entries), "entries": entries}
     rendered = _render(body)
     if isinstance(rendered, orderstate.RenderRefused):
         # Not bytes this writer can produce. The plan is built from validated
@@ -433,24 +468,17 @@ def main(argv: list[str] | None = None) -> int:
               "commit")
         return EXIT_OK
 
-    if order_path.parent.exists() and not order_path.parent.is_dir():
-        # The parent path is part of the artifact's identity, and this is the one
-        # shape about it the pre-read guard does NOT own: an ordinary FILE at
-        # noni/direction, under a real noni/, which the walk admits because nothing
-        # above it is a link. A symlink at that position never reaches here (it is
-        # refused with the rest of the tree at exit 2, before this read); a plain
-        # file is an environment fault, and mkdir would have failed anyway with a
-        # worse message.
-        return _fail(EXIT_IO, f"{orderschema.ORDER_DIR} is not a directory",
-                     f"remove {orderschema.ORDER_DIR} or move it aside, then re-run "
-                     "order.py")
-    try:
-        order_path.parent.mkdir(parents=True, exist_ok=True)
-        gitwrite.write_atomic(order_path, rendered)
-    except OSError as exc:
-        return _fail(EXIT_IO, gitwrite.written(exc, f"{orderschema.ORDER_REL} could not be "
-                                               "written"),
-                     f"check that {orderschema.ORDER_DIR} is writable, then re-run order.py")
+    # The three steps from here to the end of the run belong to the module that owns
+    # them: the parent-directory fault the pre-read walk does not cover, the atomic
+    # write, and the two git calls with their four bad answers each. Each hands back the
+    # (headline, hint) pair and this file prints it under the I/O code, so the voice and
+    # the table of codes stay here.
+    faulty = order_commit.parent_refusal(repo)
+    if faulty is not None:
+        return _fail(EXIT_IO, *faulty)
+    faulty = order_commit.write(repo, rendered)
+    if faulty is not None:
+        return _fail(EXIT_IO, *faulty)
 
     orderstate.print_order(entries, labels.ORDER)
     digest = _digests(rendered)
@@ -458,41 +486,13 @@ def main(argv: list[str] | None = None) -> int:
         # The census reads the working tree, so this file reads as uncommitted;
         # the one line says so and names the path, and committing it is the
         # caller's job.
-        # The caller-cwd form (``--repo`` plus the artifact's path under it), the
-        # same token the committed route prints, so one writer prints one path
-        # form whatever the flag says (issue #77, AC2).
-        print(f"{labels.ORDER}: wrote {order_path}; left uncommitted: "
-              "commit this path before running the census")
+        order_commit.report(order_path, verb, True)
         return EXIT_OK
 
-    rel = orderschema.ORDER_REL
-    # --only with the explicit path: the commit carries exactly what this run
-    # wrote, never a file somebody else had staged.
-    added = gitwrite.git(repo, "add", "--", rel)
-    if added.returncode == gitwrite.GIT_TIMEOUT_RC:
-        return _fail(EXIT_IO, f"git add timed out for {rel} after {gitwrite.GIT_TIMEOUT}s "
-                     f"(the file is written, its staged state unknown)",
-                     "check 'git status --porcelain' once git answers, then stage and "
-                     "commit the path by hand or re-run order.py")
-    if added.returncode != 0:
-        detail = added.stderr.strip() or added.stdout.strip() or "no reason given"
-        return _fail(EXIT_IO, f"git add failed for {rel} (the file is written, "
-                     f"unstaged): {detail}",
-                     f"run 'git status --porcelain -- {rel}' and stage the path by "
-                     "hand, or re-run order.py")
-    committed = gitwrite.git(repo, "commit", "-q", "-m", f"direction: {verb} [{digest}]",
-                             "--only", "--", rel)
-    if committed.returncode == gitwrite.GIT_TIMEOUT_RC:
-        return _fail(EXIT_IO, f"git commit timed out for {rel} after {gitwrite.GIT_TIMEOUT}s "
-                     f"(the file is written and staged, not committed)",
-                     "check 'git log -1 --oneline' once git answers, then commit the path "
-                     "by hand or re-run order.py")
-    if committed.returncode != 0:
-        detail = committed.stderr.strip() or committed.stdout.strip() or "no reason given"
-        return _fail(EXIT_IO, f"git commit failed for {rel} (the file is written and "
-                     f"staged, not committed): {detail}",
-                     f"commit {rel} by hand, or re-run order.py once git answers")
-    print(f"{labels.ORDER}: committed {order_path} ({verb})")
+    refused = order_commit.commit(repo, verb, digest)
+    if refused is not None:
+        return _fail(EXIT_IO, *refused)
+    order_commit.report(order_path, verb, False)
     return EXIT_OK
 
 

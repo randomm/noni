@@ -13,6 +13,7 @@ from order_fixtures import (
     _schema_case,
     _schema_module,
 )
+from ordering_shapes import CLEAN_SHAPES, MALFORMED_SHAPES
 
 
 def test_the_git_helper_is_bounded_hardened_and_makes_no_signing_promise(tmp_path):
@@ -144,7 +145,11 @@ def test_the_schema_reports_the_first_defect_it_finds(tmp_path):
     assert schema.problems(_schema_case()) == []
     assert schema.problems([]), "a list is not an order"
     assert schema.problems({"entries": []}), "no schema key"
-    assert schema.problems({"schema": "noni.order/2", "entries": []}), "wrong schema"
+    assert schema.problems({"schema": "noni.order/3", "entries": []}), "wrong schema"
+    # ``noni.order/2`` is a version the writer reads and emits, not a defect: it is
+    # the shape of an order whose entries cite items (#123).
+    assert schema.problems({"schema": "noni.order/2", "entries": []}) == [], \
+        "the item version is a schema, not a defect"
     assert schema.problems({"schema": schema.ORDER_SCHEMA, "extra": 1,
                             "entries": []}), "unknown field"
     assert schema.problems({"schema": schema.ORDER_SCHEMA, "entries": {}}), "entries not a list"
@@ -183,3 +188,55 @@ def test_the_schema_reads_a_utc_stamp_and_refuses_a_bare_one():
     assert schema.parse_confirmed("2026-10-27T12:00:00+02:00") is not None
     assert schema.parse_confirmed("2026-10-27T12:00:00") is None
     assert schema.parse_confirmed("yesterday") is None
+
+
+def test_the_writer_and_the_arbiter_answer_one_entry_list_alike():
+    """The two rule sets are one contract written twice, and this says so per shape.
+
+    ``orderschema.problems`` gates the write and ``census_ordering.order_problems``
+    is what the census reports as ``ordering-malformed``. The census loads its group
+    by path and imports nothing from the writer's package, so the two lists are two
+    copies -- which is exactly how they drift, and the ``/2`` entry is the shape a
+    wrong copy breaks: an entry that owed *both* ``issue`` and ``item`` made every
+    file the writer emitted a permanent refusal, since no verb can rewrite an
+    artifact the arbiter faults and the writer will not open.
+
+    So the shapes are driven through both sides here, on the shared table, and the
+    two verdicts are required to agree in both directions: what one refuses the other
+    must refuse, and what one calls clean the other must call clean.
+    """
+    from harness_module import load_package_module
+
+    schema = load_package_module("orderschema")
+    arbiter = load_package_module("census_ordering")
+
+    def _iso(text):
+        """A UTC stamp parses; a stamp with no offset does not.
+
+        The arbiter takes the parse as an argument because the census's own ``_parse_iso``
+        is the census's, and the two differ on purpose: a bare time names no instant, so
+        the ordering group refuses it exactly as ``orderschema.parse_confirmed`` does. A
+        stub that accepted one would hide the drift this test exists to catch.
+        """
+        import datetime
+        if not text.endswith("Z") and "+" not in text:
+            return None
+        return datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+
+    for label, text in sorted(CLEAN_SHAPES.items()):
+        value = json.loads(text)
+        assert schema.problems(value) == [], f"{label}: the writer refuses: " \
+                                             f"{schema.problems(value)}"
+        assert arbiter.order_problems(value, _iso, lambda _t: True) == [], \
+            f"{label}: the arbiter faults what the writer emits: " \
+            f"{arbiter.order_problems(value, _iso, lambda _t: True)}"
+
+    for label, (text, _needle) in sorted(MALFORMED_SHAPES.items()):
+        try:
+            value = json.loads(text)
+        except ValueError:
+            continue  # a document no JSON reader parses is refused by both readers
+        writer = schema.problems(value)
+        census = arbiter.order_problems(value, _iso, lambda _t: True)
+        assert bool(writer) == bool(census), \
+            f"{label}: writer={writer} census={census}"

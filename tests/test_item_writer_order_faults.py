@@ -223,11 +223,13 @@ def test_promote_prompts_nothing_when_no_entry_cites_the_item(tmp_path):
     """The refusal is about the citation, not about the order being there.
 
     Pinned beside the refusal so the two cannot be confused: an order this run read in
-    full, whose entries cite something else, is the state a promote runs on.
+    full, whose entries cite something else, is the state a promote runs on. The issue is
+    one that order does not list -- promoting to an issue the queue already holds is a
+    refusal of its own, and this case asks the other question.
     """
     tree = _candidate(tmp_path, "order-uncited")
     _seed_order_text(tree, _order_text([UNCITED]))
-    proc = _promote(tree)
+    proc = run_item(tree, "promote", "idea-0001", "--issue", "42", "--now", NOW)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert json.loads(item_path(tree, "idea-0001").read_text(
         encoding="utf-8"))["status"] == "promoted"

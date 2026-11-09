@@ -108,29 +108,58 @@ def _at(text: str, needle: str) -> int:
 
 
 def docstring_verb_lines() -> list[str]:
-    """The four ``Usage:`` lines of ``order.py``'s own docstring.
+    """The ``Usage:`` lines of ``order.py``'s own docstring, one per verb.
 
     Read from the shipped source through ``order_fixtures``, so the assertion
     holds the product's text and not a copy kept in a test file.
+
+    ``add`` is printed twice -- once for an issue, once for ``--item`` -- and both
+    lines describe the one verb, so the count the tests hold these to is the count
+    of verbs, not of lines. The second ``add`` line is refused here if the first is
+    missing, which is what keeps "five lines" a document with two ``add`` forms
+    rather than a page that duplicated some other verb.
     """
     doc = _docstring(_order_ast())
-    lines = [line.strip() for line in doc.splitlines()
-             if line.strip().startswith("order.py --repo REPO")]
-    for line in lines:
-        verb = line.split()[3]
-        assert verb in VERBS, f"unexpected verb in the Usage block: {line!r}"
-    return lines
+    return usage_verb_lines(doc.splitlines(), "order.py --repo REPO",
+                            "docstring Usage block")
 
 
 def skill_md_verb_lines() -> list[str]:
-    """The four command lines ``skills/direction/SKILL.md`` prints.
+    """The command lines ``skills/direction/SKILL.md`` prints, one per verb.
 
     The page is the form the ticket names as correct, so it is read from disk
     rather than quoted here: a page that dropped a verb fails the count rather
     than passing on a stale copy of it.
     """
     text = (REPO / "skills" / "direction" / "SKILL.md").read_text(encoding="utf-8")
-    lines = [line.strip() for line in text.splitlines()
-             if line.strip().startswith("scripts/order.py --repo REPO")]
-    assert lines, f"{SKILL_DIR / 'SKILL.md'} prints no order command lines"
-    return lines
+    return usage_verb_lines(text.splitlines(), "scripts/order.py --repo REPO",
+                            str(SKILL_DIR / "SKILL.md"))
+
+
+def usage_verb_lines(lines: list[str], prefix: str, where: str) -> list[str]:
+    """The command lines of ``lines`` that start with ``prefix``, one verb each.
+
+    Shared by the two documents so the shape they are held to is one shape: every
+    line names a verb the parser accepts, and the verbs covered are exactly
+    :data:`VERBS` -- each one present, none repeated beyond the ``add`` pair that
+    spells the issue and the item form of the same verb.
+    """
+    found = [line.strip() for line in lines if line.strip().startswith(prefix)]
+    assert found, f"{where} prints no order command lines"
+    covered: list[str] = []
+    for line in found:
+        verb = line.split()[3]
+        assert verb in VERBS, f"unexpected verb in {where}: {line!r}"
+        covered.append(verb)
+    assert sorted(set(covered)) == sorted(VERBS), (
+        f"{where} covers {sorted(set(covered))}, not {sorted(VERBS)}: {found}")
+    repeated = [verb for verb in VERBS if covered.count(verb) > 1]
+    assert repeated == ["add"], (
+        f"{where} prints more than the issue and item forms of add: {found}")
+    assert sorted(covered) == sorted([*VERBS, "add"]), (
+        f"{where} prints {covered}, expected one line per verb plus the add --item "
+        f"form: {found}")
+    item_lines = [line for line in found if "--item" in line]
+    assert len(item_lines) == 1 and "add --item" in item_lines[0], (
+        f"{where} does not print exactly one 'add --item' form: {found}")
+    return found

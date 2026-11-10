@@ -1,16 +1,15 @@
-"""The path gates a census run consults before it owes a group a read.
+"""The path gate a census run consults before it owes the intent group a read.
 
-``census_run.py`` sequences the run; this module owns the two rules that decide whether
-the intent file and the item store are owed their read at all, given the flags the run
-was started with. They are split from the body for the reason the body is split from
-``census.py``: a file that both sequences the run and words every gate of every group
-is larger than one responsibility is worth, and each gate here is a rule about a path,
-not a step of the sequence.
+``census_run.py`` sequences the run; this module owns the one rule that decides whether
+the intent file is owed its read at all, given the flags the run was started with. It is
+split from the body for the reason the body is split from ``census.py``: a file that both
+sequences the run and words every gate of every group is larger than one responsibility is
+worth, and the gate is a rule about a path, not a step of the sequence.
 
-Both gates ask the census's own classifier, by a call rather than a binding made at
+The gate asks the census's own classifier, by a call rather than a binding made at
 import, so the seam a test puts on ``census._file_kind`` is the one the gate uses: a
-run's gate and a run's rows then answer for one path from one seam. And both answer
-"worth a read" rather than "there is something to report", which is why neither may
+run's gate and a run's rows then answer for one path from one seam. And it answers
+"worth a read" rather than "there is something to report", which is why it may not
 use ``Path.exists`` -- it follows links, so it reads the symlink whose cannot-tell row
 the gate exists to keep as absent, and it propagates the ``OSError`` of a parent it
 cannot traverse, which would end a filtered run with a traceback on exactly the input
@@ -54,21 +53,3 @@ def _intent_present(intent: Path) -> bool:
     """
     kind, _ = _census()._file_kind(intent)
     return kind != "absent"
-
-
-def _store_listable(probe) -> bool:
-    """Whether the store's one readdir is owed, for the group's filter gate.
-
-    The probe already answered the two states the gate asks about, so the gate reads the
-    probe rather than classifying the path a second time: a fault is a read the run owes
-    (``item-unlistable`` is the row that names it), and a listing that named nothing is
-    the state of a project that has never filed an idea -- no row can come of it either
-    way, so a filtered run of an empty store pays nothing for the read.
-
-    Asking the probe rather than ``Path`` is the same rule the intent gate obeys: the
-    classification is the census's, taken once, and a gate that re-derived it with
-    ``Path.exists`` would follow the symlink whose cannot-tell row the group exists to
-    keep and would propagate the ``OSError`` of a parent it cannot traverse.
-    """
-    return probe.fault is not None or bool(probe.names)
-

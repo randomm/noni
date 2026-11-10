@@ -139,7 +139,7 @@ FIELD_ORDER = ("id", "date", "asked_by", "questions", "by",
 def _why_max() -> int:
     """The rationale bound this writer holds --why to, read from the schema.
 
-    Never a number spelled in this file: :mod:`noni.itemschema` owns the bound and a
+    Never a number spelled in this file: :mod:`noni._why` owns the bound and a
     second literal is how a writer, the census and the help line come to state three
     different limits. Asked through a function so the help text and the refusal read
     one answer.

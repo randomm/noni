@@ -17,8 +17,6 @@ through it.
 
 from __future__ import annotations
 
-from .census_items import ITEM_CHECKS, ITEM_ROWS  # noqa: F401  (the items group)
-
 SCHEMA_VERSION = "noni.census/1"
 
 
@@ -53,20 +51,6 @@ ORDERING_CHECKS = frozenset({"ordering-malformed", "ordering-stale", "ordering-c
 # noni/direction/intent.md is not a finding: standing intent is optional, so the
 # group adds no row at all when the artifact is absent.
 INTENT_CHECKS = frozenset({"intent"})
-
-# The items group: the six checks share one readdir of ``noni/items/`` and one read
-# of each file under it, so the group runs when any of them was asked for and the
-# row filter keeps what the caller named. Their ids, codes, severities and fix hints
-# are declared by the module that runs the group (``census_items.ITEM_ROWS``, beside
-# the classes they describe) and merged into ``CHECKS`` below, so a class cannot
-# exist in one place and not the other: the group set and the table rows are the two
-# halves of one declaration, written in the same file, and a name missing from
-# either is a KeyError at import rather than a class nobody can run or document.
-# Like the ordering and intent groups, a missing store is not a finding: an idea
-# nobody filed earns no row. Only a store that exists and cannot be listed earns
-# ``item-unlistable``, and only then for the path the caller named with ``--items``
-# (the ruling on the flag: the default path being absent is the state of a project
-# that has never filed an idea, not a fault).
 
 # --- Exit-code table ----------------------------------------------------------
 # The class codes live in CHECKS below; 0 | 2 | 3 are reserved for non-class
@@ -148,11 +132,6 @@ CHECKS: dict[str, tuple[int, str, str]] = {
 }
 
 # Derived views of CHECKS — never edited by hand.
-# The items group's six rows are declared by the module that runs them (see
-# ``ITEM_ROWS`` above) and merged in here, so the table stays the one place a code,
-# a severity or a fix hint is read from while the class itself keeps its own file.
-CHECKS.update(ITEM_ROWS)
-
 CLASS_CODE = {name: code for name, (code, _sev, _fix) in CHECKS.items()}
 CLASS_SEVERITY = {name: sev for name, (_code, sev, _fix) in CHECKS.items()}
 CLASS_FIX = {name: fix for name, (_code, _sev, fix) in CHECKS.items()}

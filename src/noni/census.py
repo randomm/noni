@@ -1,10 +1,10 @@
 """The unified census: one read-only entry point over the steering ledger,
-the ordering artifact and the item store.
+the ordering artifact and the standing intent.
 
 The census is the arbiter of the noni protocol invariants. It reads the git
 history plus the committed files under ``noni/`` (decision records under
 ``noni/decisions/``, the ordering artifact at ``noni/direction/order.json``,
-the standing intent file and the item store under ``noni/items/``), flags
+and the standing intent file), flags
 protocol violations, and returns an honest exit code. It never writes
 anything: running it leaves ``git status --porcelain`` empty, and no digest
 file or report directory is produced — results are recomputed on demand.
@@ -89,7 +89,6 @@ from .census_ledger_edited import (
     check_ledger_edited,
 )
 from .census_render import (  # noqa: F401  (re-exported: the census is their home)
-    ITEM_STALE_AFTER_DEFAULT,
     NO_STATE_ROOT_NOTE,
     NO_STATE_ROOT_PREFIX,
     ORDERING_CLOSED_CHECK,
@@ -118,7 +117,6 @@ from .census_report import (  # noqa: F401  (re-exported: the census is home)
     EXIT_TOOL_MISSING,
     EXIT_USAGE,
     INTENT_CHECKS,
-    ITEM_CHECKS,
     LEDGER_CHECKS,
     ORDERING_CHECKS,
     SCHEMA_VERSION,
@@ -280,13 +278,6 @@ _clipped = _text._clipped
 # census_json.py). Their composition, the ``--issue-state`` read and the row
 # mechanics handed to them live in ``census_run.py`` beside this file with the
 # body of the run, which reads the mechanics back off this module at the call.
-
-# The six item classes live in census_items.py beside this file, their reads in
-# census_items_readers.py, and the store's one readdir in census_items_probe.py,
-# re-exported here as the census's own seam so the
-# group's tests patch a name of the module they already import and the run reaches
-# one definition of the readdir.
-from .census_items_probe import ItemsProbe, _items_listing  # noqa: E402,F401
 
 
 def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict],

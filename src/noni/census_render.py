@@ -29,17 +29,11 @@ from .census_report import (
 
 STALE_AFTER_RE = re.compile(r"^\d+d?$")
 
-# One threshold flag, two thresholds: --stale-after pins every class to the number
-# the caller named, and without it each class gets the default that belongs to it
-# (see the threshold block in the run's body for why the flag's presence decides, and
+# One threshold flag and one threshold: --stale-after pins the class to the number the
+# caller named, and without it the class gets the default that belongs to it (see the
+# threshold block in the run's body for why the flag's presence decides, and
 # :func:`_threshold` for how a default is parsed).
 ORDERING_STALE_AFTER_DEFAULT = "30d"
-
-# The item threshold, beside the ordering's because one flag selects between the two.
-# An unmoved candidate is an idea nobody has taken up, so its default matches the
-# ordering queue's: thirty days is "this is not waiting on anyone", seven would
-# report every fresh idea the week it was filed.
-ITEM_STALE_AFTER_DEFAULT = "30d"
 
 # The one wording of the note that ``ordering-closed`` was not evaluated, declared
 # beside the class whose fix hint repeats it: the human-readable branch prints it as
@@ -331,7 +325,7 @@ def _render_human(findings: list[dict], counts: dict[str, int], ok: bool,
 # through the census before the renderers were split out: one object each, never a
 # copy, so the contract keeps its single owner in ``census_report``.
 __all__ = [name for name in dir() if name.startswith("_")] + [
-    "ITEM_STALE_AFTER_DEFAULT", "NO_STATE_ROOT_NOTE", "NO_STATE_ROOT_PREFIX",
+    "NO_STATE_ROOT_NOTE", "NO_STATE_ROOT_PREFIX",
     "ORDERING_CLOSED_CHECK", "ORDERING_CLOSED_NOT_EVALUATED",
     "ORDERING_STALE_AFTER_DEFAULT", "STALE_AFTER_RE",
     "no_state_root_note",

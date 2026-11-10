@@ -146,7 +146,7 @@ def is_bounded_single_line(value: object, maximum: int) -> bool:
 
 
 def why_max() -> int:
-    """The rationale bound, read from :data:`noni.itemschema.WHY_MAX`, the one owner.
+    """The rationale bound, read from :data:`noni._why.WHY_MAX`, the one owner.
 
     Never spelled here nor anywhere else in the product: a second literal is how a
     writer and the census come to disagree about a value one of them wrote, and how a

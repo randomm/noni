@@ -1,8 +1,8 @@
 """The ``noni`` console command: dispatch only.
 
 One command, one subcommand per shipped tool: ``census``, ``decide`` (a
-supersede is ``decide``'s ``--supersedes`` flag), ``order``, ``intent``, ``item``
-and ``brief``. The argv after the subcommand is handed to that tool's own ``main`` verbatim, so flags, output, exit codes and
+supersede is ``decide``'s ``--supersedes`` flag), ``order``, ``intent`` and
+``brief``. The argv after the subcommand is handed to that tool's own ``main`` verbatim, so flags, output, exit codes and
 ``--help`` bytes are exactly what the in-place script produces — which is what
 the paired wrapper-vs-console test asserts.
 
@@ -23,18 +23,16 @@ TOOLS: dict[str, tuple[str, str]] = {
     "decide": ("noni.decide", "main"),
     "order": ("noni.order", "main"),
     "intent": ("noni.intent", "main"),
-    "item": ("noni.item", "main"),
     "brief": ("noni.brief", "main"),
 }
 
 # One line per subcommand, for this command's own --help. Each tool's flags and
 # exit codes are its own --help's business, not a second copy here.
 SUMMARIES: dict[str, str] = {
-    "census": "read-only checks over the ledger, ordering artifact and item store",
+    "census": "read-only checks over the ledger, ordering artifact and intent",
     "decide": "write one dated steering decision record (supersede with --supersedes)",
     "order": "write the ordered list of issues to work next",
     "intent": "write the standing intent file the agents read first",
-    "item": "file one idea as its own committed record (the item store)",
     "brief": "print the standing purpose, the top of the order "
              "and the census summary line (read-only)",
 }

@@ -33,9 +33,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import census_intent as _intent
-from . import census_items_gate as _items_gate
-from . import census_items_ledger_reads as _ledger_reads
-from . import census_items_run as _items_run
+from . import census_group_gate as _group_gate
 from . import census_json as _census_json
 from . import census_ordering as _ordering
 from . import census_ordering_readers as _ordering_readers
@@ -43,7 +41,6 @@ from . import census_text as _text
 from . import intentschema
 from .census_cli import _build_parser
 from .census_render import (
-    ITEM_STALE_AFTER_DEFAULT,
     ORDERING_CLOSED_NOT_EVALUATED,
     ORDERING_STALE_AFTER_DEFAULT,
     STALE_AFTER_RE,
@@ -200,11 +197,11 @@ def _run(argv: list[str] | None = None) -> int:
         )
         return EXIT_USAGE
     stale_after = timedelta(days=days)
-    # The two thresholds this run applies. --stale-after was given: both classes
-    # use the number the caller named, which is what keeps a census run
-    # reproducible from its command line alone. It was not: each class gets the
-    # default that belongs to it, and the run records which one it used in the
-    # row's own wording (the stale row names the threshold it compared against).
+    # The threshold this run applies. --stale-after was given: the class uses the
+    # number the caller named, which is what keeps a census run reproducible from its
+    # command line alone. It was not: the class gets the default that belongs to it, and
+    # the run records which one it used in the row's own wording (the stale row names the
+    # threshold it compared against).
     # The flag's *presence* decides, not its value: an argparse default cannot
     # tell a caller who typed the number from one who did not, and treating the
     # literal `7d` as absent would quietly run the ordering check at 30 days on
@@ -213,11 +210,6 @@ def _run(argv: list[str] | None = None) -> int:
                 if a == "--stale-after" or a.startswith("--stale-after=")]
     ordering_stale_after = (stale_after if supplied
                             else _threshold(ORDERING_STALE_AFTER_DEFAULT))
-    # The item threshold, chosen by the same presence rule and for the same reason:
-    # an explicit ``--stale-after 7`` must move the candidates as well as the order
-    # entries, and an absent flag must leave the store at its own thirty days.
-    item_stale_after = (stale_after if supplied
-                        else _threshold(ITEM_STALE_AFTER_DEFAULT))
 
     # git is a required tool: the census reads history for three of its four
     # groups. The lookup goes through this module's own ``shutil``, so the seam a
@@ -235,18 +227,10 @@ def _run(argv: list[str] | None = None) -> int:
                 else root / "noni" / "direction" / "order.json")
     intent = (Path(args.intent) if args.intent
               else root / intentschema.INTENT_REL)
-    # The store's default is <repo>/noni/items, and the flag replaces the path under
-    # the state root exactly as the other three overrides do. Nothing else about the
-    # flag matters to the run: whether a read is owed is answered by what stands at
-    # the path (see the gate at the group's call below), not by whether the caller
-    # named it, so an absent store is silence named or unnamed and a store that exists
-    # and cannot be read is a row named or unnamed.
-    items = Path(args.items) if args.items else root / "noni" / "items"
     issue_state_path = Path(args.issue_state) if args.issue_state else None
     ledger = Path(os.path.expanduser(str(ledger)))
     ordering = Path(os.path.expanduser(str(ordering)))
     intent = Path(os.path.expanduser(str(intent)))
-    items = Path(os.path.expanduser(str(items)))
     if issue_state_path is not None:
         issue_state_path = Path(os.path.expanduser(str(issue_state_path)))
 
@@ -358,45 +342,15 @@ def _run(argv: list[str] | None = None) -> int:
     # be no row. The gate asks the classifier rather than ``Path.exists`` because
     # a path the filesystem will not describe is a read the run owes, not a crash:
     # ``check_intent`` owns that verdict, and the gate must not reach it first.
-    if INTENT_CHECKS & requested or _items_gate._intent_present(intent):
+    if INTENT_CHECKS & requested or _group_gate._intent_present(intent):
         _check_intent(intent, ledger, root, args.strict, findings)
         findings[:] = keep(findings)
 
-    # The items group is its own group: one readdir of the store, one read of every
-    # file under it, and the two questions it cannot answer from the store alone
-    # (does the cited record stand, does the order hold the issue) answered from the
-    # ledger listing and the order read this run already has. Like every other group
-    # its path defaults under --repo and ``census_cli`` gives it the same kind of
-    # path override the ledger, ordering and intent groups have.
-    #
-    # The gate is the store's own probe, taken here before the group is gated on its
-    # answer so the gate and the rows are one readdir, and the probe alone decides
-    # the entry. Two states let the group run and both are needed:
-    #
-    # - a store this run could not list is owed its ``item-unlistable`` row whatever
-    #   the filter named, because that row is the probe-honesty one ``keep`` never
-    #   drops and a gate that asked the filter first would stop the read that produces
-    #   it. This is also the whole of the ``--items`` ruling: a path the caller named
-    #   and this run cannot read is a finding, while a default path that is simply
-    #   absent is the state of a project that never filed an idea and is no finding at
-    #   all. Neither question is asked of the flag here -- the probe answers both, so
-    #   the gate and the rows cannot disagree about what stands at the path.
-    # - a store with something in it is worth reading for the six classes that share
-    #   one read. The filter is applied by ``keep`` after the group has run, which is
-    #   what lets a run that asked for one class still read every file of the store: a
-    #   filter that selected the rows could not also select the files that a row's own
-    #   finding depends on.
-    #
-    # An empty store is no ground to enter on at all: an absent path lists as empty and
-    # so does the directory the last cleaned-out item left behind, and neither has a row
-    # to give -- which keeps a project that filed no idea, or holds an empty store, free
-    # of a read it can be shown to need.
-    items_probe = census._items_listing(items)
-    if _items_gate._store_listable(items_probe):
-        _items_run._check_items(items, ledger, ordering, root, now, item_stale_after,
-                     args.strict, findings, items_probe, ledger_probe.names,
-                     ledger_records=_ledger_reads.shared_map(ledger, ledger_probe))
-        findings[:] = keep(findings)
+    # The item store and its six classes were removed, and the census ignores a
+    # ``noni/items/`` directory a repository still holds: it is not listed, not read,
+    # not classified and not reported, so a tree with a stale store left behind censuses
+    # exactly as the same tree without it. The hygiene group is untouched by it: the
+    # directory is not one of the paths hygiene inspects.
 
     # hygiene is its own check group: it scans the tracked files of the census's
     # own git tree (never the --ledger override). The group is entered

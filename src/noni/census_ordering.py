@@ -276,51 +276,39 @@ def _entry_problems(entries: list, problems: list[str], parse_iso, names_zone) -
             problems.append(f"entry {index} confirmed {confirmed!r} is not a UTC timestamp")
 
 
-def closed_state_unasked_row(order: Path, root: Path, strict: bool,
+def closed_state_unasked_row(entries: list[dict] | None, root: Path, strict: bool,
                              findings: list[dict], *, row: Callable[..., dict],
-                             rel_to_root: Callable[[Path, Path], str],
-                             readers, primitives: dict) -> None:
+                             order: Path, requested: set[str] | frozenset[str],
+                             rel_to_root: Callable[[Path, Path], str]) -> None:
     """Append the run's one row for a closed question it could not ask, if it owes one.
 
     A note is not a verdict. ``check_ordering`` answers the closed question from the
-    ``--issue-state`` map alone and says nothing when the map was never handed over; the
-    run prints that as a ``note:`` line (and on the summary row under ``--json``), but a
-    CI step gating on the exit code stayed green for days over an order whose issues had
-    all been closed (issue #148). So the same fact is also a row of ``ordering-closed``:
-    ``warn``, the class's own 46 under ``--strict``, no row and no exit otherwise. The
-    caller asks only when the flag was absent and the class was requested, so this
-    function reads no flag and no filter -- only the artifact, the one fact left to
-    decide.
+    ``--issue-state`` map alone and says nothing when the map never came; the run prints
+    that as a ``note:`` line (and on the ``--json`` summary row), but a CI step gating
+    on the exit code stayed green for days over an order whose issues had all closed
+    (issue #148). So the same fact is also a row of the class: ``warn``, its own 46
+    under ``--strict``, no row and no exit otherwise.
 
-    The row is owed by exactly one state, and every other state is refused: a run must
-    never invent a finding where the reader has nothing to repair.
+    ``entries`` is the pair ``check_ordering`` got from ``readers.load_order``, never
+    re-read here: a second read would double the cost and let this group answer from a
+    later view of the tree than the rows above it. Three states owe nothing, because a
+    run never invents a finding where the reader has nothing to repair: a faulted
+    artifact (``None``) already earned its fail-class ``ordering-malformed`` row, and a
+    warn must not second-guess it; an empty list, which is also what an absent artifact
+    answers, is a project that never ordered anything, and the ordering layer is
+    optional; entries that name no issue leave no closed state unstated.
 
-    - no artifact at all: the ordering layer is optional, so a project that never
-      ordered anything is not in default of a closed check (``load_order`` answers
-      ``([], None)`` for an absent file, so the empty-entries arm covers that too).
-    - an artifact this run could not read: the group already appended its fail-class
-      ``ordering-malformed`` row, and a warn of this class must not add a second
-      verdict to a defect the run already reported as a failure.
-    - an artifact holding no entry: an operator who wants nothing ordered next has said
-      so, and no ordered issue has a closed state left unstated.
-
-    ``readers`` and the census's own path classifier, clock parser, stamp rule and
-    message bounder in ``primitives`` are handed in at the call exactly as
-    ``check_ordering`` takes them, so a seam a test puts on any of them is the seam this
-    decision uses too, and this file keeps redefining none of them. The artifact is read
-    a second time on purpose: ``check_ordering`` read it once and reported what it read,
-    and a shape this reader cannot parse is the absence of a verdict here, never a second
-    verdict of this group's own. ``strict`` goes to the row factory and nowhere else, so
-    the row's severity is the one rule the whole report reads
-    (``census_render._promote``) and its fix hint is the table's for the class: a row
-    this run raises never words its own remedy.
+    ``requested`` is the run's ``--only``/``--skip`` set: the row carries the
+    ``whole_artifact`` marker, which exempts a row from that filter as the probe-honesty
+    rule does (``census_run.keep``), so the class is tested here too -- ``--skip
+    ordering-closed`` still means no row of the class. ``strict`` goes to the row factory
+    and nowhere else, so its severity is the one rule the whole report reads
+    (``census_render._promote``) and its fix hint is the table's: a row this run raises
+    never words its own remedy.
     """
-    entries, problem = readers.load_order(
-        order, primitives["file_kind"], primitives["bounded"], primitives["parse_iso"],
-        lambda value: order_problems(value, primitives["parse_iso"],
-                                     readers.names_zone),
-        primitives["load_json"], primitives["clipped"])
-    if problem is not None or not entries:
+    owed = (CLOSED_STATE_CHECK in requested and bool(entries)
+            and any(isinstance(entry.get("issue"), int) for entry in entries))
+    if not owed:
         return
     findings.append(row(CLOSED_STATE_CHECK, strict,
                         ORDER_WHOLE_ARTIFACT_SUBJECT, rel_to_root(root, order),
@@ -335,6 +323,8 @@ def check_ordering(
     load_json_strict: Callable[[bytes], object], clipped: Callable[[str], str],
     ledger_name: Callable[[str], str],
     names: tuple[str, ...] | None = None,
+    closed_state_unasked: bool = False,
+    requested: set[str] | frozenset[str] = frozenset({CLOSED_STATE_CHECK}),
 ) -> None:
     """Check the ordering artifact; append its findings to ``findings``.
 
@@ -414,6 +404,14 @@ def check_ordering(
         add("ordering-malformed", ORDER_DEFAULT_SUBJECT, rel_to_root(root, order), problem,
             whole_artifact=True)
         return
+
+    if closed_state_unasked and issue_state.map is None:
+        # The class was asked for, no state map came in, and the artifact holds issues:
+        # the question is unasked and the run owes it a verdict and not only a note
+        # (issue #148). Decided from the map rather than the flag alone so a run given a
+        # state file never raises it, whatever the caller passed.
+        closed_state_unasked_row(entries, root, strict, findings, row=row, order=order,
+                                 requested=requested, rel_to_root=rel_to_root)
 
     rel_ledger = rel_to_root(root, ledger)
     records, ledger_readable, unreadable_records, listed, listing_fault = \

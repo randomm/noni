@@ -141,16 +141,30 @@ def _warn_count(findings: list[dict]) -> int:
     return sum(1 for f in findings if f["severity"] == "warn")
 
 
-def closed_state_verdict(notes: tuple[str, ...]) -> str:
+# The opening words of the row ``census_ordering.closed_state_unasked_row`` raises for
+# an order whose closed state went unasked. The verdict line recognises that row by this
+# prefix rather than by a second copy of the sentence: the row's wording is the product's
+# and lives with the class that raises it, and a clause matched on a literal typed here
+# would go quietly stale the next time that sentence was reworded.
+CLOSED_STATE_UNASKED_PREFIX = "closed state not checked:"
+
+
+def closed_state_verdict(notes: tuple[str, ...],
+                         findings: list[dict] | tuple[dict, ...] = ()) -> str:
     """The clause of the verdict line saying the closed question went unasked, or "".
 
-    A run over an order holding entries with no ``--issue-state`` leaves the whole
-    closed question unasked, and a reader who judges the run by its last line (a CI step
+    A run over an order holding issues with no ``--issue-state`` leaves the whole closed
+    question unasked, and a reader who judges the run by its last line (a CI step
     grepping the verdict, a person scanning a terminal) must not have to reach past the
-    rows to a ``note:`` line to learn it. So the verdict carries the id of the class
-    that went unasked, keyed on the note the run itself produced: no note, no clause.
-    ``--strict`` gives the same fact its exit code (see ``census_ordering
-    .closed_state_unasked_row``); this clause is what the un-strict run says instead.
+    rows to a ``note:`` line to learn it. So the verdict carries the id of the class that
+    went unasked.
+
+    It is keyed on the closed row of this run's own rows, not on the note alone: the note
+    says only that no state map came in, which is true of a tree that ordered nothing at
+    all, and a verdict that called such a tree unchecked would say something the run did
+    not observe. ``census_ordering.closed_state_unasked_row`` raises that row for exactly
+    the orders whose closed state really was left unstated, so the clause and the row
+    cannot disagree about which run was asked to check a closed order.
 
     Returns ``""`` rather than folding into the caller's sentence: the caller's all-clear
     branch is shared by every run that has nothing to report, and an empty string is what
@@ -160,7 +174,11 @@ def closed_state_verdict(notes: tuple[str, ...]) -> str:
     than replacing it: a run with no rows whose closed check went unasked still has no
     findings to count, so it says "clean" and then says what it did not check.
     """
-    return f" {ORDERING_CLOSED_CHECK} not checked" if ORDERING_CLOSED_NOT_EVALUATED in notes else ""
+    if ORDERING_CLOSED_NOT_EVALUATED not in notes:
+        return ""
+    owed = any(f["check"] == ORDERING_CLOSED_CHECK
+               and f["message"].startswith(CLOSED_STATE_UNASKED_PREFIX) for f in findings)
+    return f" {ORDERING_CLOSED_CHECK} not checked" if owed else ""
 
 
 def _not_evaluated_headline(notes: tuple[str, ...]) -> str:
@@ -332,7 +350,8 @@ def _render_human(findings: list[dict], counts: dict[str, int], ok: bool,
     if ok:
         # ``closed_state_verdict`` returns the empty string for every run that asked
         # its closed question, and the all-clear word survives only when it did.
-        verdict_text = (f"{warns} warning(s)" if warns else "clean") + closed_state_verdict(notes)
+        verdict_text = (f"{warns} warning(s)" if warns else "clean") \
+            + closed_state_verdict(notes, findings)
     else:
         verdict_text = f"{exit_code} ({', '.join(sorted(fired))})"
     print(f"summary: {verdict_text}; {sum(counts.values())} finding(s); "
@@ -349,6 +368,7 @@ def _render_human(findings: list[dict], counts: dict[str, int], ok: bool,
 # through the census before the renderers were split out: one object each, never a
 # copy, so the contract keeps its single owner in ``census_report``.
 __all__ = [name for name in dir() if name.startswith("_")] + [
+    "CLOSED_STATE_UNASKED_PREFIX",
     "NO_STATE_ROOT_NOTE", "NO_STATE_ROOT_PREFIX",
     "ORDERING_CLOSED_CHECK", "ORDERING_CLOSED_NOT_EVALUATED",
     "ORDERING_STALE_AFTER_DEFAULT", "STALE_AFTER_RE",

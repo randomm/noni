@@ -93,7 +93,8 @@ def _load_issue_state(issue_state_path: Path | None):
 def _check_ordering(
     order: Path, ledger: Path, root: Path, now: datetime, ordering_stale_after: timedelta,
     issue_state, strict: bool, findings: list[dict],
-    names: tuple[str, ...] | None,
+    names: tuple[str, ...] | None, requested: set[str],
+    closed_state_unasked: bool = False,
 ) -> None:
     """The ordering group, run by the module beside the census.
 
@@ -106,6 +107,13 @@ def _check_ordering(
     ``names`` is the run's one ledger listing, the probe's, handed down for the
     group's record lookups: the ordering group reads the ledger the census
     already read and never walks the directory again (see ``LedgerProbe.names``).
+
+    ``closed_state_unasked`` is the run's own answer to "was the closed question
+    skipped": no ``--issue-state`` came in. It is passed in rather than read here so the
+    group and the run's ``note:`` line key on one decision, and it is what makes the group
+    append the row that turns that note into a verdict the exit code carries (see
+    ``closed_state_unasked_row``). ``requested`` is the run's class set, handed down so
+    that row obeys ``--skip ordering-closed`` the way every other row of the class does.
     """
     census = _census()
     _ordering.check_ordering(order, ledger, root, now, ordering_stale_after,
@@ -119,7 +127,9 @@ def _check_ordering(
                              readers=_ordering_readers,
                              load_json_strict=_census_json.load_json_strict,
                              names_zone=_ordering_readers.names_zone,
-                             ledger_name=census._ledger_name)
+                             ledger_name=census._ledger_name,
+                             closed_state_unasked=closed_state_unasked,
+                             requested=requested)
 
 
 def _check_intent(
@@ -309,7 +319,8 @@ def _run(argv: list[str] | None = None) -> int:
     if ORDERING_CHECKS & requested:
         _check_ordering(ordering, ledger, root, now, ordering_stale_after,
                         _load_issue_state(issue_state_path),
-                        args.strict, findings, ledger_probe.names)
+                        args.strict, findings, ledger_probe.names, requested,
+                        issue_state_path is None)
         findings[:] = keep(findings)
         # The closed check's question comes only from --issue-state, which an
         # adapter or the operator produces. Without it the class is not run, and
@@ -321,21 +332,6 @@ def _run(argv: list[str] | None = None) -> int:
         # reads the human report.
         if issue_state_path is None and "ordering-closed" in requested:
             notes.append(ORDERING_CLOSED_NOT_EVALUATED)
-            # The note alone is not a verdict, and a recipe-following CI that reads
-            # only the exit code saw green while its order went dead (issue #148). So
-            # the same fact is also a row of the class that owns the question, built by
-            # the group's own ``add`` helper so it shares the group's row factory,
-            # ``strict`` promotion and root-relative artifact naming: a warn without
-            # --strict, which leaves the exit exactly where the note left it, and the
-            # class's own 46 under --strict.
-            _ordering.closed_state_unasked_row(
-                ordering, root, args.strict, findings, row=census._row,
-                rel_to_root=census._rel_to_root, readers=_ordering_readers,
-                primitives={"file_kind": census._file_kind,
-                            "bounded": census._bounded,
-                            "clipped": census._clipped,
-                            "parse_iso": census._parse_iso,
-                            "load_json": _census_json.load_json_strict})
 
     # The intent class is its own group: one file, one cited record, and the
     # citation question answered from the history view this run already took. The

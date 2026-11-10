@@ -1,8 +1,7 @@
 """The brief fixture's committed tar is the tree its builder claims to produce.
 
-The fixture is the ground the whole brief suite stands on: eleven order entries, twelve
-candidates with a ``created`` tie, one intent file, one decided record, and a last commit whose
-subject cites it. Every case in the six ``test_brief_*.py`` files asserts against it, and a
+The fixture is the ground the whole brief suite stands on: eleven order entries, one intent
+file, one decided record, and a last commit whose subject cites it. Every case in the six ``test_brief_*.py`` files asserts against it, and a
 case that quietly ran against a different tree would be a green run about a fixture nobody
 wrote.
 
@@ -14,9 +13,8 @@ so neither can drift alone:
   directory and compares the member names, modes and bytes to the committed one -- a hand edit
   to the tar, or an edit to the builder without a rebuild, fails here.
 - :func:`test_brief_fixture_holds_the_shape_the_suite_asserts` counts what the spec names, read
-  out of the tar's own members: eleven entries, twelve candidates, a ``created`` tie, one intent
-  file, one record, and the ``intent: <record-id>`` commit that makes the census's ``intent``
-  class see a citation.
+  out of the tar's own members: eleven entries, one intent file, one record, and the
+  ``intent: <record-id>`` commit that makes the census's ``intent`` class see a citation.
 - :func:`test_brief_fixture_unpacks_as_a_repository_the_census_can_read` unpacks it and asks git,
   which is the only reader that matters: the census runs ``git -C <top>``, so a fixture that
   unpacks but does not open is not a fixture.
@@ -41,14 +39,12 @@ ARCHIVE = REPO / "tests" / "fixtures" / "brief.tar"
 # from the tar: these are the numbers the six brief suites' assertions are built on, and a fixture
 # that lost an entry would otherwise be discovered by ten unrelated failures instead of one.
 ORDER_ENTRIES = 11
-CANDIDATES = 12
 INTENT_SECTIONS = 4
 
 # The member names the repository must carry. The work-tree paths are what the brief reads through
 # ``--repo``; the ``.git`` ones are what makes the census able to answer a question about history.
 WORK_TREE_MEMBERS = ("noni/direction/order.json", "noni/direction/intent.md",
-                     "noni/decisions/2026-10-01-brief.json",
-                     "noni/items/idea-0001.json", "noni/items/idea-0012.json")
+                     "noni/decisions/2026-10-01-brief.json")
 GIT_MEMBERS = (".git/HEAD", ".git/config", ".git/index", ".git/packed-refs",
                ".git/logs/HEAD")
 
@@ -123,19 +119,10 @@ def test_brief_fixture_holds_the_shape_the_suite_asserts() -> None:
         assert name in members, f"{name} missing from the committed fixture"
 
     order = json.loads(members["noni/direction/order.json"][1])
-    assert order["schema"] == "noni.order/2"
+    assert order["schema"] == "noni.order/1"
     assert len(order["entries"]) == ORDER_ENTRIES, len(order["entries"])
-    cited = [entry for entry in order["entries"] if "item" in entry]
-    assert len(cited) == 1, "the order is to hold exactly one item entry"
-
-    candidates = {name: json.loads(payload)
-                  for name, (_mode, payload) in members.items()
-                  if name.startswith("noni/items/")}
-    assert len(candidates) == CANDIDATES, len(candidates)
-    stamps = [body["created"] for body in candidates.values()]
-    assert all(body["status"] == "candidate" for body in candidates.values())
-    duplicated = {stamp for stamp in stamps if stamps.count(stamp) > 1}
-    assert duplicated, "the fixture owes a created tie for the ordering case to be about"
+    assert all("item" not in entry for entry in order["entries"]), \
+        "the removed item store's key must not survive in the committed fixture"
 
     intent = members["noni/direction/intent.md"][1].decode("utf-8")
     headings = [line for line in intent.splitlines() if line.startswith("## ")]
@@ -145,8 +132,6 @@ def test_brief_fixture_holds_the_shape_the_suite_asserts() -> None:
     assert record["status"] == "decided"
     assert all(entry["decision"] == record["id"] for entry in order["entries"]), (
         "every order entry must cite the one committed record")
-    assert all(body.get("decision") in (None, record["id"])
-               for body in candidates.values())
 
 
 def test_brief_fixture_unpacks_as_a_repository_the_census_can_read(tmp_path: Path) -> None:
@@ -181,7 +166,7 @@ def test_brief_fixture_builder_describes_itself_without_writing(tmp_path: Path) 
     """``generate.py`` with no output argument reports the tree and writes nothing.
 
     The mode a reader of the fixture uses first, and the one that must not touch the tree: the
-    counts and the newest candidates on stdout, no file created, and a zero exit code. Checked in a
+    counts on stdout, no file created, and a zero exit code. Checked in a
     directory of its own because the suite's environment fixture puts a HOME sandbox in ``tmp_path``
     for every case -- an emptiness assertion made at the root would be a test of that fixture.
     """

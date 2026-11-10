@@ -2,9 +2,9 @@
 
 The builder constructs a bare origin plus two agent clones in a throwaway
 directory (a tmp_path in the tests; its own temp dir when run standalone
-with no argument), drives the real item.py and order.py writers through their
+with no argument), drives the real order.py writer through its
 fetch-rebase-push commit path, and commits a healthy steering decision chain.
-In the faulted variant it plants four disjoint faults (census codes 52, 53 and
+In the faulted variant it plants three disjoint faults (census codes 54 and
 20 committed to origin, and 12 planted in the fresh clone's working tree), each
 in its own artifact. Every
 commit runs with pinned GIT_AUTHOR_DATE / GIT_COMMITTER_DATE, so a rebuilt
@@ -69,12 +69,9 @@ from scenario_core import (
     _ensure_branch,
     _git_pinned,
     _issue_state,
-    _item_body,
-    _item_healthier,
     _order_healthier,
     _push,
     _record,
-    _run_item,
     _run_order,
     _ts,
 )
@@ -94,15 +91,12 @@ __all__ = [
     "_ensure_branch",
     "_git_pinned",
     "_issue_state",
-    "_item_body",
-    "_item_healthier",
     "_mask",
     "_order_healthier",
     "_plant_fault_12",
     "_plant_faults",
     "_push",
     "_record",
-    "_run_item",
     "_run_order",
     "_ts",
     "build_scenario",

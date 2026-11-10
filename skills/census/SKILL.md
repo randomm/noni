@@ -1,6 +1,6 @@
 ---
 name: census
-description: Run the unified noni census — a single read-only script that checks the steering ledger (schema, edit-after-commit, supersede chain), the ordering artifact (malformed order, stale entries, ordered-but-closed issues), the standing intent file (missing or repeated sections, a file past its cap, an intent whose last commit cites no record) and the item store (malformed item, dropped-but-ordered, promoted-without-issue, unresolved reference, stale, unlistable) and returns an honest exit code. Use when the operator or any agent needs to verify the protocol invariants before merging, when triaging a failing census, or when the question is "are the ledger, the order, the intent and the item store in a valid state?" Do NOT use for writing, fixing, or mutating anything — the census is strictly read-only.
+description: Run the unified noni census — a single read-only script that checks the steering ledger (schema, edit-after-commit, supersede chain), the ordering artifact (malformed order, stale entries, ordered-but-closed issues) and the standing intent file (missing or repeated sections, a file past its cap, an intent whose last commit cites no record) and returns an honest exit code. Use when the operator or any agent needs to verify the protocol invariants before merging, when triaging a failing census, or when the question is "are the ledger, the order and the intent in a valid state?" Do NOT use for writing, fixing, or mutating anything — the census is strictly read-only.
 ---
 
 # census
@@ -30,11 +30,10 @@ directory, is a usage error (exit 2) before any check runs.
 | `--ledger PATH` | `<repo>/noni/decisions` | override the ledger directory |
 | `--ordering PATH` | `<repo>/noni/direction/order.json` | override the ordering artifact |
 | `--intent PATH` | `<repo>/noni/direction/intent.md` | override the standing intent file (its citation is still answered against the run's `--ledger`) |
-| `--items DIR` | `<repo>/noni/items` | override the item store. An absent store is not a finding (an idea nobody filed earns no row); a store named here that cannot be listed is reported by `item-unlistable` rather than reading as an empty store |
 | `--issue-state FILE` | — | JSON map `{"<issue>": "open"\|"closed"}` produced by an adapter or the operator; the only route by which closed state reaches the census, which never contacts a tracker |
 | `--now ISO-8601` | current UTC | fixed timestamp for time-based checks (reproducible output) |
-| `--stale-after` | `30d` `ordering-stale`, `30d` `item-stale` | staleness threshold; positive whole days as `<N>` or `<N>d` (e.g. `7` or `7d`). Each class keeps its own default; a given value applies to all stale classes |
-| `--strict` | off | treat every warn class as a failure: `probe`, `ledger-empty`, `ordering-stale`, `ordering-closed`, `hygiene`, `item-stale`, `item-unlistable` |
+| `--stale-after` | `30d` `ordering-stale` | staleness threshold; positive whole days as `<N>` or `<N>d` (e.g. `7` or `7d`). The class keeps its own default; a given value applies to every stale class |
+| `--strict` | off | treat every warn class as a failure: `probe`, `ledger-empty`, `ordering-stale`, `ordering-closed`, `hygiene` |
 | `--json` | off | emit NDJSON records on stdout (`noni.census/1`) |
 | `--only CHECK` | all | run only the named check (repeatable). Rows of a class it does not name are dropped; a row about the file a group was asked to read is reported whatever the filter names, because a group that could not read its input must say so |
 | `--skip CHECK` | none | skip the named check (repeatable) |
@@ -49,17 +48,11 @@ directory, is a usage error (exit 2) before any check runs.
 | `ledger-edited` | 12 | a record was edited after commit (supersede, never edit); a committed record deleted or renamed from the working tree is also reported here, with the "deleted" reason — including the case where the whole `decisions/` directory was deleted and the deletion committed; also the `cannot-tell` row for a `decisions/` directory that exists but could not be listed (warn by default; fail under `--strict`) |
 | `ledger-chain` | 20 | the supersede chain is broken (dangling, duplicate, orphan, cycle, zero-live, multi-live) |
 | `probe` | 41 | a probe could not read its input (unreadable file, symlink, git failure) — never reported as clean |
-| `ordering-malformed` | 15 | the ordering artifact is there and is not the artifact: unparseable bytes, a non-finite number, a key stated twice, wrong `schema`, a duplicate or non-positive `issue`, a `confirmed` that is not a UTC timestamp (one with no offset included), a `decision` matching no file in the ledger, an `--issue-state` file that does not parse or whose keys are not plain positive issue numbers, or a decision ledger whose listing faulted |
+| `ordering-malformed` | 15 | the ordering artifact is there and is not the artifact: unparseable bytes, a non-finite number, a key stated twice, wrong `schema`, a duplicate or non-positive `issue`, a `confirmed` that is not a UTC timestamp (one with no offset included), a `decision` matching no file in the ledger, an `--issue-state` file that does not parse or whose keys are not plain positive issue numbers, or a decision ledger whose listing faulted. An order the removed item store left behind — a `schema` of `noni.order/2`, or an entry carrying an `item` key — is reported here with a message that says item entries are no longer supported and names the repair |
 | `ordering-stale` | 45 | an order entry whose `confirmed` is older than the `--stale-after` threshold relative to `--now` (warn by default; fail under `--strict`) |
 | `ordering-closed` | 46 | an ordered issue the `--issue-state` file says is closed; also the `cannot-tell` row for an entry the file does not mention (warn by default; fail under `--strict`) |
 | `intent` | 51 | `noni/direction/intent.md` is there and is not the artifact: a `## Purpose` / `## Principles` / `## Never` / `## Ask first` heading missing, repeated or out of order, the `Last-confirmed:` line absent or repeated, or the file past its line cap; or the last commit that touched it is not an `intent: <decision-id>` headline naming a record the ledger holds (`uncited`). The `cannot-tell` row for a file this run could not read, for a cited decision record that is a symlink or any other non-regular path, for a ledger directory reached through a symlink, or for a file no commit touched, is a warn (fail under `--strict`); an absent file adds no row at all |
 | `hygiene` | 50 | a tracked file fails the public-repo hygiene scan (machine-local home path, secret shape, active deny-list entry), a committed allowlist entry matches nothing, or the scan/deny-list did not run (warn by default; fail under `--strict`) |
-| `item-malformed` | 52 | an item file under `noni/items/` is there and is not the artifact: wrong `schema`, an `id` that is not its own file's name or is not `[a-z0-9][a-z0-9._-]{0,79}` (and does not end in `.json`), a `title` that is blank, multi-line or past its bound, a `status` outside `candidate`/`promoted`/`dropped`, a `created` that is not a UTC timestamp, or an `issue`/`decision`/`why` carried by a status that does not owe it (a `dropped` item with no `decision` or no `why` is one of these) |
-| `item-dropped-in-order` | 53 | an entry of `noni/direction/order.json` cites an item the store has dropped (an entry of `noni.order/2` carries an `item` where a `/1` entry carries an `issue`, so a `/1` file can cite no item and this class reports nothing on it) |
-| `item-promoted-without-issue` | 54 | a status and an `issue` that contradict each other: a `promoted` item naming no issue, a `candidate` or `dropped` item naming an issue, or a `promoted` item whose issue no entry of `noni/direction/order.json` holds |
-| `item-reference-unresolved` | 55 | a reference that resolves to nothing, from either side: an item whose `decision` names no live record (no file under `noni/decisions/` carries that id, or the record it finds is superseded — the row names its successor when the ledger holds one), or an entry of `noni/direction/order.json` whose `item` names no file under `noni/items/`. Only the `cannot-tell` rows of the first half — a cited record this run could not read, or an order citation this run could not check against a store it could not list — are a warn (fail under `--strict`); a dangling `item` is a finding, never a cannot-tell, and never a row of `ordering-closed` |
-| `item-stale` | 56 | a `candidate` whose `created` is older than the `--stale-after` threshold relative to `--now` (warn by default; fail under `--strict`) |
-| `item-unlistable` | 57 | the store exists and could not be listed, so no item of it was checked (warn by default; fail under `--strict`) |
 
 The `warn` classes are reported either way and never move the exit code on
 their own: a run whose only findings are warnings exits 0, and `--strict`
@@ -93,12 +86,6 @@ class that fired.
 46  ordering-closed (warn by default; failure under --strict)
 50  hygiene (warn by default; failure under --strict)
 51  intent
-52  item-malformed
-53  item-dropped-in-order
-54  item-promoted-without-issue
-55  item-reference-unresolved
-56  item-stale (warn by default; failure under --strict)
-57  item-unlistable (warn by default; failure under --strict)
 ```
 
 A clean exit with warnings is normal: a cannot-tell staleness probe (no git
@@ -209,14 +196,11 @@ The same rule extends to the classes that report their own absence:
   both carry the ledger's name and whose message carries the `OSError` text,
   bounded and stripped of machine-local paths. It is a warn at exit 0 and a
   failure at 12 under `--strict`.
-- **An absent `noni/items/` is clean and an unreadable one is not.** An item
-  store that is simply absent adds no row at all (an idea nobody filed is a real
-  state, not a failed read); a store that stats as a directory and cannot be
-  listed earns one `item-unlistable` `cannot-tell` row, named by the same rule
-  the ledger bullet above states, with the `OSError` text in the message. A
-  leftover `noni/sessions/` directory from a removed subsystem is neither: the
-  census reads no claim files, so that directory earns no row, no error and no
-  warning in any mode.
+- **A leftover directory of a removed subsystem is not a finding.** A
+  `noni/sessions/` directory left by a removed claim register, or a
+  `noni/items/` directory left by the removed item store, earns no row, no error
+  and no warning in any mode: the census reads no claim files and no item files,
+  so an artifact it was never given cannot be a failed read.
 - **`hygiene` (50)** always reports under `noni census`, a clean tree included
   (the per-artifact wrappers run one group each and report no hygiene row). When the
   deny-list class is not active (its file is `absent`, `corrupt`, or present

@@ -27,7 +27,7 @@ _CENSUS = REPO / "skills" / "census" / "scripts" / "census.py"
 # scale, so the scenario is identical across builds and hosts.
 BASE = datetime(2026, 10, 1, 0, 0, 0, tzinfo=timezone.utc)
 NOW = (BASE + timedelta(days=3)).isoformat().replace("+00:00", "Z")
-STALE_AFTER = "2"  # days: the planted item's commit (day 0) is 3 days old at --now
+STALE_AFTER = "2"  # days: the planted fault (day 0) is 3 days old at --now
 
 # The committed ordering, one entry per worked issue: issue 1 holds position 1
 # and issue 2 position 2, each citing the decision record that set its position.
@@ -73,53 +73,13 @@ def _order_healthier(clone: Path) -> None:
     _push(clone, NOW)
 
 
-def _item_body(item_id: str, status: str = "candidate") -> str:
-    """An item-store file in the noni.item/1 shape, as JSON text.
-
-    Used for the planted faults, which need bytes the real writer would not
-    produce. A healthy file goes through ``item.py add`` instead.
-    """
-    return json.dumps({"schema": "noni.item/1", "id": item_id,
-                       "status": status, "title": item_id.title(),
-                       "created": NOW}, indent=2) + "\n"
-
-
-def _item_healthier(clone: Path) -> None:
-    """The healthy item store, produced by the real writer.
-
-    Two ideas filed through ``item.py add`` (the product's own writer, which
-    commits each file itself), then pushed. Neither is ordered, referenced or
-    past its cap, so a healthy store earns no census row.
-    """
-    _run_item(clone, "add", "first-idea", "--title", "First idea")
-    _run_item(clone, "add", "second-idea", "--title", "Second idea")
-    _push(clone, NOW)
-
-
-def _run_item(repo: Path, *args: str) -> subprocess.CompletedProcess:
-    """Run the real item.py writer in repo; returns the completed process.
-
-    Goes through the harness launcher (deterministic git identity, coverage
-    hook). The writer commits the one item path itself, which is what makes the
-    fixture's store a writer product rather than something this file rendered.
-    """
-    from _harness import run_item
-
-    proc = run_item(repo, *args)
-    assert proc.returncode == 0, (
-        f"item.py {' '.join(args)} failed ({proc.returncode}):\n"
-        f"{proc.stdout}\n{proc.stderr}"
-    )
-    return proc
-
-
 def _ts(day: int, hour: int = 0) -> str:
     """A pinned ISO-8601 UTC timestamp on the scenario timeline."""
     return (BASE + timedelta(days=day, hours=hour)).isoformat().replace("+00:00", "Z")
 
 
 # The commit date every planted fault carries: day 0, hour 4 of the scenario
-# timeline, which is the clock the planted item is stale against at --now.
+# timeline, which is the clock the planted faults are read against at --now.
 # Named here, beside the timeline it sits on, so the builder and the planters
 # cannot drift apart on it.
 FAULT_CLOCK = _ts(0, 4)

@@ -20,7 +20,6 @@ from scenario_core import (
     Scenario,
     _commit,
     _ensure_branch,
-    _item_healthier,
     _order_healthier,
     _push,
     _record,
@@ -54,8 +53,7 @@ def build_scenario(base: Path, faulted: bool = False) -> Scenario:
     healthy steering decision chain (d1 superseded by d2) sets the ordering
     between the two issues; the ordering artifact itself is
     written by the real order.py writer and stamped healthy by one confirm run;
-    the item store is written by the real item.py writer; every commit uses a
-    pinned recent date.
+    every commit uses a pinned recent date.
     """
     from _harness import _git_ok
 
@@ -129,10 +127,8 @@ def build_scenario(base: Path, faulted: bool = False) -> Scenario:
     _push(clone_a, t_d2)
 
     # The ordering artifact, written by the real writer and stamped healthy by
-    # one confirm run, then the issue-state map the census is handed, then the
-    # item store, written by its own real writer.
+    # one confirm run, then the issue-state map the census is handed.
     _order_healthier(clone_a)
-    _item_healthier(clone_a)
     scenario = Scenario(base=base, origin=origin, clone_a=clone_a, clone_b=clone_b)
 
     if faulted:

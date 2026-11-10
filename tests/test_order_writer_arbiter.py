@@ -37,7 +37,7 @@ def test_the_arbiter_copy_of_the_rationale_bound_is_the_owner():
     owner = product_why_max()
     copy = arbiter_why_max()
     assert copy == owner, (
-        f"the ordering arbiter holds {copy} and the item store owns {owner}: a reason "
+        f"the ordering arbiter holds {copy} and the rationale rule owns {owner}: a reason "
         "the writer emits is an artifact this class faults, and no verb can rewrite "
         "what the writer will not re-render")
 
@@ -63,6 +63,28 @@ def test_the_arbiter_copies_of_the_line_rule_are_the_writer_s(tmp_path):
     assert blanks == "".join(ledger_schema.BLANKS), (
         f"the arbiter's blanks {blanks!r} are not the writer's "
         f"{''.join(ledger_schema.BLANKS)!r}")
+
+
+def test_the_migration_hint_is_one_sentence_written_once():
+    """The repair sentence is held to its owner the same way the bound and the
+    character sets are.
+
+    The writer and the arbiter each keep their own copy of the migration sentence
+    (the arbiter loads by path and imports nothing from the writer's package), and
+    the sentence is the whole of what a pre-removal order tells its operator to do.
+    A copy that drifted would not change any verdict -- both sides still refuse the
+    same two shapes -- and only the words the reader would follow would differ, so
+    no behavioural test would notice. Comparing the two constants is the pin that
+    keeps the refusal one sentence.
+    """
+    from harness_module import load_package_module
+
+    owner = load_package_module("orderschema").MIGRATION_HINT
+    copy = load_package_module("census_ordering").MIGRATION_HINT
+    assert copy == owner, (
+        f"the ordering arbiter words the repair {copy!r} and the writer's schema "
+        f"module owns {owner!r}: the census and the writer answer the same artifact "
+        "with two different instructions")
 
 
 def test_the_git_helper_is_bounded_hardened_and_makes_no_signing_promise(tmp_path):
@@ -195,10 +217,17 @@ def test_the_schema_reports_the_first_defect_it_finds(tmp_path):
     assert schema.problems([]), "a list is not an order"
     assert schema.problems({"entries": []}), "no schema key"
     assert schema.problems({"schema": "noni.order/3", "entries": []}), "wrong schema"
-    # ``noni.order/2`` is a version the writer reads and emits, not a defect: it is
-    # the shape of an order whose entries cite items (#123).
-    assert schema.problems({"schema": "noni.order/2", "entries": []}) == [], \
-        "the item version is a schema, not a defect"
+    # ``noni.order/2`` is a version no reader accepts: the item store that stamped
+    # it was removed, so a file that still states it is a pre-removal artifact and
+    # the refusal names the repair rather than the wrong-schema sentence.
+    migrated = schema.problems({"schema": "noni.order/2", "entries": []})
+    assert migrated and "item entries are no longer supported" in migrated[0], migrated
+    # An entry that still carries the removed key is answered the same way, and only
+    # that way: the entry rules do not also report it as a missing or unknown field.
+    keyed = schema.problems({"schema": schema.ORDER_SCHEMA, "entries": [
+        {"item": "idea-0001", "decision": "2026-10-01-baseline",
+         "confirmed": "2026-10-26T00:00:00Z"}]})
+    assert keyed and all("item entries are no longer supported" in p for p in keyed), keyed
     assert schema.problems({"schema": schema.ORDER_SCHEMA, "extra": 1,
                             "entries": []}), "unknown field"
     assert schema.problems({"schema": schema.ORDER_SCHEMA, "entries": {}}), "entries not a list"

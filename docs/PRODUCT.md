@@ -17,9 +17,7 @@ It owns four artifacts:
 2. **Backlog & ordering** — the Now-state: what the operator wants worked next,
    in what order, and a "why this order" provenance field per row.
    GitHub issues remain the work carrier; noni owns the direction layer above them.
-3. **Item store** — one committed file per filed idea, promoted to an issue when
-   the operator puts it in the order. An idea nobody has filed has no file.
-4. **Census** — the read-only script that is also the arbiter: it flags
+3. **Census** — the read-only script that is also the arbiter: it flags
    protocol violations, and emits NDJSON
    metrics. It is the enforcement mechanism for every invariant (§6).
 
@@ -97,21 +95,17 @@ All noni state of one project lives under one **state root**, in this layout:
 <state root>/noni/
   direction/   intent.md: the standing intent; order.json: the ordered list of work
   decisions/   steering ledger: one file per dated record
-  items/       the item store: one file per filed idea, optional until a first add
 ```
 
 Both files under `direction/` are optional and each has exactly one writer:
-`intent.py` writes `intent.md` and `order.py` writes `order.json`. The
-`items/` directory is optional in the same way and has one writer (`item.py`):
-a team that files no idea has no item store at all, which is a clean state and not
-a fault — see the driver-coexistence position in `docs/QUICKSTART.md`. Absence is a
+`intent.py` writes `intent.md` and `order.py` writes `order.json`. Absence is a
 state, not a fault, and the census adds no row for a file that was never written.
 
 **Precedence** is the rule that makes the intent file answerable rather than
 decorative. When a question comes up, the answer is the most recent applicable
 record in `decisions/` (the end of its supersede chain); otherwise the four
 sections of `intent.md` (`Purpose`, `Principles`, `Never`, `Ask first`); and if
-neither settles it, the agent asks the operator and does not guess. An item under
+neither settles it, the agent asks the operator and does not guess. An entry under
 `Ask first` is never decided autonomously. Because standing direction is
 traceable, the writer refuses to install an intent whose `--decision` the ledger
 does not hold or has superseded, and the census reports an intent whose last
@@ -145,16 +139,16 @@ land on the state repository's own branch.
 
 There is no third mechanism that *selects* the state root: no environment
 variable and no config file names it. The unified census's `--ledger`,
-`--ordering`, `--intent`, `--items` and `--issue-state` overrides do not select
+`--ordering`, `--intent` and `--issue-state` overrides do not select
 it either; they replace the path under it, and a leading `~` given by the caller is
-expanded in those five values and nowhere else. Every shipped tool resolves
+expanded in those four values and nowhere else. Every shipped tool resolves
 every other `noni/` path from `--repo` — never from the tool's own location, and
 never from the current directory beyond `--repo`'s default.
 
 A `--repo` that is missing, or is not a directory, stops the command with a
 clear message and a non-zero code (the fail-closed rule, §6). The code is the
 one that command already uses for a mistake in its own arguments: 2 for
-`intent`, `order` and `item` and the unified census, 3 for `decide` (the same
+`intent`, `order` and the unified census, 3 for `decide` (the same
 refusal `decide` gives a `--repo` that is
 not a git work tree). The codes are not interchangeable — each is that tool's
 existing refusal, and a caller tells a wrong path from a fault of the tree by
@@ -182,7 +176,7 @@ The unified census changes no exit code for this state (a no-`noni/` tree stays
 prints one note ahead of its rows saying that no `noni/` directory was found
 under `--repo`; in `--json` mode the same sentence rides the summary row's
 `not_evaluated` field. The note is not printed when any of `--ledger`,
-`--ordering`, `--intent` or `--items` replaces the path under the state root,
+`--ordering` or `--intent` replaces the path under the state root,
 because then the state need not live under `--repo` at all.
 
 The three writers of the direction layer (`order`, `intent`, `decide`) refuse the
@@ -204,8 +198,7 @@ The brief is the other read-only tool, and the only one that answers a person
 rather than a check: `noni brief --repo DIR` prints three parts and exits — the
 standing intent's `Purpose`, the head of the order, and the census's own `summary:`
 line, echoed and never recomposed. An order row names its subject and reads no
-further: an entry that names an issue prints `#N`, one that cites an item prints
-`item <id>`, and neither opens an item file. It writes nothing, so running it
+further: an entry that names an issue prints `#N` and nothing else. It writes nothing, so running it
 leaves `git status --porcelain`
 empty too, and
 it prints the same bytes twice over one tree at one `--now`. It has no verdict of

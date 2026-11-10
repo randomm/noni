@@ -11,8 +11,8 @@ collapsed, machine-local paths replaced, tail bounded), and :func:`noni._safe_te
 the renderer every noni refusal prints its caller-supplied text through (no control bytes,
 bounded). Neither is enough on its own for a line of the page: the census scrub is a whitespace
 and path rule and leaves an escape byte standing, and the refusal renderer keeps runs of
-whitespace and knows nothing about paths. A screen that prints an operator's prose and an
-item's title takes both, in the order that makes the bound mean what it says.
+whitespace and knows nothing about paths. A screen that prints an operator's prose takes
+both, in the order that makes the bound mean what it says.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ DROPPED_PREFIX = "dropped: "
 # The words a body line must never be, as a rule over a set the caller hands in: the caller's
 # block headers, its ellipsis, and its verdict prefix.
 #
-# The block bodies are foreign text (a purpose line, an item citation) and a reader splits the
+# The block bodies are foreign text (a purpose line) and a reader splits the
 # page on these words, so a purpose line of exactly ``top 10`` would make the reader of the page
 # count blocks that are not
 # there. A page is a page only while its headers are the only lines that say those words, so a

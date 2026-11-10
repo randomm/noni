@@ -154,24 +154,21 @@ def body_of(value: dict) -> dict:
     """The {schema, entries} mapping a parsed artifact holds, in canonical key order.
 
     The version travels with the body: the canonical comparison renders this back
-    through the version the file states, so a ``/2`` artifact is compared against
-    ``/2`` bytes and a ``/1`` one against ``/1``. Dropping the key here would make
-    every ``/2`` file a refusal, because the renderer would answer for the other
-    version.
+    through the version the file states, so a file that names a version this artifact
+    does not have is refused for what it says rather than silently re-rendered.
     """
     return {"schema": value["schema"], "entries": value["entries"]}
 
 
 def _artifact_hint(why: str) -> str:
-    """The 'repair the artifact' hint, naming the versions a repair may use.
+    """The 'repair the artifact' hint, naming the version a repair may use.
 
-    Both versions are named because both are readable: telling the operator to
-    repair a file to ``noni.order/1`` when the file is a well-formed ``/2`` would
-    send them to change a field that is not the defect.
+    The one version is named because it is the only one a reader accepts: a file that
+    states another is refused for what it says, not repaired by this writer.
     """
     return (f"repair the file {why} (it must hold "
-            + " or ".join(repr(name) for name in orderschema.ORDER_SCHEMAS)
-            + ") or remove it and rebuild the order with order.py add")
+            f"{orderschema.ORDER_SCHEMA!r}) or remove it and rebuild the order with "
+            "order.py add")
 
 
 def read_order(path: Path) -> OrderOk | OrderRefused | OrderFaulted:
@@ -459,9 +456,8 @@ def print_order(entries: list[dict], label: str) -> None:
     ``order.py``), which the line opens: this module has no opinion on which
     command printed the order it just read.
 
-    The subject is the issue (``#7``) or, for an entry that cites an item instead,
-    the item id on its own (``idea-0001``): the ``#`` belongs to a tracker issue and
-    an item has none, and printing ``#None`` for the entry the operator most needs
+    The subject is the issue (``#7``): the ``#`` belongs to a tracker issue,
+    and printing ``#None`` for the entry the operator most needs
     to recognise would be worse than printing what it is. The columns stay in one
     position either way, so a reader still cuts the line by field.
     """
@@ -473,13 +469,12 @@ def print_order(entries: list[dict], label: str) -> None:
 
 
 def _subject_of(entry: dict) -> str:
-    """What one printed line calls an entry: its issue, or the item it cites.
+    """What one printed line calls an entry: its issue.
 
     One rule for both writers of this line, so the print path and a refusal that
-    names an entry cannot spell the same subject two ways.
+    names an entry cannot spell the same subject two ways. An entry the shape rules
+    have not refused always names an issue; the fallback only keeps a malformed value
+    from printing nothing where the operator reads the subject.
     """
     issue = orderschema.entry_issue(entry)
-    if issue is not None:
-        return f"#{issue}"
-    cited = orderschema.entry_item(entry)
-    return cited if cited is not None else "(unnamed entry)"
+    return f"#{issue}" if issue is not None else "(unnamed entry)"

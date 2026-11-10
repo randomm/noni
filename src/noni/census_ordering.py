@@ -18,10 +18,10 @@ Three classes, one read of the artifact:
 - ``ordering-closed`` (warn 46): an entry whose issue the ``--issue-state`` map
   says is closed, plus the ``cannot-tell`` rows for the issues it does not name.
 
-Both schema versions are arbitrated: a ``noni.order/2`` entry may cite an item
-instead of an issue, and an entry whose ``item`` names no file under the item store
-is reported by the items group's ``item-reference-unresolved`` (55) rather than
-through this group's cannot-tell arm, which answers only for tracker issues.
+Only ``noni.order/1`` is arbitrated. The item store and the ``noni.order/2`` version it
+brought are gone, so a file that still states that version or holds an entry with an
+``item`` key is reported by ``ordering-malformed`` with a message that names the
+migration (re-add each entry as an issue entry) rather than read as a valid ``/1``.
 
 Nothing here prints or exits: every answer is appended to the caller's
 ``findings`` list through the ``row`` factory it supplies.
@@ -29,37 +29,37 @@ Nothing here prints or exits: every answer is appended to the caller's
 
 from __future__ import annotations
 
-import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
-# The item id an order entry may cite, copied for the same reason the field lists
-# are: the census loads this module by path and imports nothing from the writer's
-# package. One rule with ``itemschema.ID_RE`` and ``ID_MAX``, held to it by the
-# shared shape table.
-ITEM_ID_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,79}")
-ITEM_ID_MAX = 80
-
-# The artifact's shape, the census's side of the contract order.py writes to.
-# The two versions live here rather than being imported from the writer's schema
-# module: the census loads its group modules by path and trusts nothing on
-# sys.path, so the field lists of this file and of orderschema.py are two copies of
-# one contract and MUST move together -- tests/ordering_shapes.py drives every shape
-# through both sides precisely to catch the drift this split invites.
+# The artifact's shape, the census's side of the contract order.py writes to. The
+# version lives here rather than being imported from the writer's schema module: the
+# census loads its group modules by path and trusts nothing on sys.path, so the field
+# lists of this file and of orderschema.py are two copies of one contract and MUST move
+# together -- tests/ordering_shapes.py drives every shape through both sides precisely
+# to catch the drift this split invites.
 ORDER_SCHEMA = "noni.order/1"
-ORDER_SCHEMA_V2 = "noni.order/2"
-ORDER_SCHEMAS = (ORDER_SCHEMA, ORDER_SCHEMA_V2)
+# The version the item store used to stamp an order with, kept as a name so both sides
+# of the split can word the refusal: it is a migration, not a wrong schema, and the row
+# has to tell the operator what to do about it.
+REMOVED_ITEM_SCHEMA = "noni.order/2"
+# The only version a reader accepts.
+ORDER_SCHEMAS = (ORDER_SCHEMA,)
 ORDER_REQUIRED_FIELDS = ("schema", "entries")
 ORDER_ENTRY_FIELDS = ("issue", "decision", "confirmed", "why")
-# A ``/2`` entry names an item where a ``/1`` entry names an issue, and never both.
+# The fields every entry owes; ``why`` is the one field no entry owes.
+ORDER_ENTRY_OWED = ("issue", "decision", "confirmed")
+# The key the item store used to give an entry its citation, and the one sentence both
+# sides word the refusal with.
 ORDER_ITEM_FIELD = "item"
-ORDER_ENTRY_FIELDS_V2 = (ORDER_ITEM_FIELD, "issue", "decision", "confirmed", "why")
+MIGRATION_HINT = ("item entries are no longer supported: re-add each one with "
+                  "'order.py add ISSUE --decision ID' after filing it as an issue")
 
 # The rationale bound and the two character sets of the ledger's single-line rule,
 # spelled here for the same reason the field lists above are: the census loads this
 # module by path and imports nothing from the writer's package, so these are copies of
-# the writer's, held to ``itemschema.WHY_MAX`` and to ``ledger_schema.LINE_BREAKS`` /
+# the writer's, held to ``_why.WHY_MAX`` and to ``ledger_schema.LINE_BREAKS`` /
 # ``BLANKS`` by the shared shape table (``tests/ordering_shapes.py``). A value the
 # writer emits and this arbiter refuses -- or the other way round -- fails there and not
 # in the field, which is the drift these copies invite.
@@ -96,55 +96,12 @@ ORDER_DEFAULT_SUBJECT = "noni/direction/order.json"
 ISSUE_STATE_SUBJECT = "issue-state"
 
 
-def order_entry_fields(schema: object) -> tuple[str, ...]:
-    """The documented fields of one entry of ``schema``, in the order they are written.
-
-    The census's copy of :func:`noni.orderschema.entry_fields`, held to it by the
-    shared shape table. A ``/2`` entry that carries ``item`` is clean here and clean
-    for the writer; an ``item`` inside a ``/1`` document is an unknown field on both
-    sides.
-    """
-    return ORDER_ENTRY_FIELDS_V2 if schema == ORDER_SCHEMA_V2 else ORDER_ENTRY_FIELDS
-
-
-def _entry_required(entry: dict, fields: tuple[str, ...],
-                    schema: object) -> tuple[str, ...]:
-    """The fields one entry of ``schema`` owes, given the subject it names.
-
-    The census's copy of ``orderschema._entry_required``, and it has to be a copy: the
-    whole ``/1``/``/2`` contract is written twice on purpose (this file is loaded by
-    path and imports nothing from the writer's package), and the shape of a ``/2``
-    entry is the one place a wrong copy makes the arbiter refuse what the writer just
-    emitted. ``decision`` and ``confirmed`` every entry carries; the subject is the
-    field the entry itself chooses and ``why`` is the one field no entry owes. Under
-    ``/1`` the subject is always ``issue``, so the ``item`` a ``/1`` entry carries is
-    left out of the required list and the unknown-field rule names it instead -- the
-    honest description of a key that version never declared.
-    """
-    owed = tuple(field for field in fields if field != "why")
-    if schema != ORDER_SCHEMA_V2:
-        return owed
-    if ORDER_ITEM_FIELD in entry:
-        return tuple(field for field in owed if field != "issue")
-    return tuple(field for field in owed if field != ORDER_ITEM_FIELD)
-
-
-def _subject_problems(index: int, entry: dict, schema: object,
-                     problems: list[str]) -> None:
-    """The census's copy of the writer's rule that an entry names one subject only."""
-    if schema != ORDER_SCHEMA_V2:
-        return
-    if ("issue" in entry) == (ORDER_ITEM_FIELD in entry):
-        problems.append(f"entry {index} names {ORDER_ITEM_FIELD} and issue: an entry "
-                        "names exactly one of them")
-
-
 def _why_problems(entry: dict) -> list[str]:
     """The census's copy of the rationale rule for one entry's ``why``.
 
     The bound is spelled here because this file is loaded by path and imports nothing
     from the writer's package -- the same reason the field lists are copies -- and it is
-    held to :data:`noni.itemschema.WHY_MAX` by the shared shape table, which reads the
+    held to :data:`noni._why.WHY_MAX` by the shared shape table, which reads the
     number off the product. The shape is the ten ``LINE_BREAKS`` and the four
     ``WHY_BLANKS`` above, both tabled there for the same reason; the bound counts code
     points, so a value of combining marks or emoji is measured the way its author
@@ -172,40 +129,42 @@ def _why_field_problems(index: int, entry: dict, problems: list[str]) -> None:
         problems.extend(f"entry {index} {problem}" for problem in _why_problems(entry))
 
 
-def _item_id_problems(index: int, entry: dict, problems: list[str]) -> None:
-    """The census's copy of the store's item id rule for one entry's ``item``.
+def _migration_problems(value: dict) -> list[str]:
+    """Why ``value`` is a pre-removal order, as the census words it; [] when it is not.
 
-    The same predicate ``item.py`` refuses at its own flag, so an order entry whose
-    citation could never name a file is reported here as it is there. The pattern is
-    this module's own copy for the same reason the field lists are: the census loads
-    by path and imports nothing from the writer's package.
+    The census's copy of ``orderschema.migration_problems``, and it has to be a copy:
+    this file is loaded by path and imports nothing from the writer's package. A file
+    that states the item version's marker, or holds an entry carrying the item key, is
+    answered with the migration sentence rather than the wrong-schema sentence: the
+    repair is to re-add each entry as an issue entry, and a row that called the shape a
+    plain defect would send the operator to change a field that is not the problem.
     """
-    cited = entry.get(ORDER_ITEM_FIELD)
-    if cited is not None and not _is_item_id(cited):
-        problems.append(f"entry {index} {ORDER_ITEM_FIELD} {cited!r} is not an item id")
-
-
-def _is_item_id(value: object) -> bool:
-    """Whether ``value`` is an id the item store may name a file for.
-
-    Mirrors ``itemschema.is_item_id``: the ruled character set, the length bound, and
-    the two suffix rules that keep one item named one way.
-    """
-    return (isinstance(value, str) and len(value) <= ITEM_ID_MAX
-            and not value.endswith(".json") and not value.endswith(".")
-            and bool(ITEM_ID_RE.fullmatch(value)))
+    problems: list[str] = []
+    if value.get("schema") == REMOVED_ITEM_SCHEMA:
+        problems.append(f"schema is {REMOVED_ITEM_SCHEMA!r}: {MIGRATION_HINT}")
+    entries = value.get("entries")
+    if isinstance(entries, list) and any(
+            isinstance(entry, dict) and ORDER_ITEM_FIELD in entry
+            for entry in entries):
+        problems.append(f"an entry carries {ORDER_ITEM_FIELD}: {MIGRATION_HINT}")
+    return problems
 
 
 def order_problems(value: object, parse_iso, names_zone) -> list[str]:
     """Why ``value`` is not an order the census can read; [] when it is.
 
-    The rules of both schema versions as one list, so the row the class reports and
+    The rules of the one schema version as one list, so the row the class reports and
     the refusal order.py applies before writing cannot drift apart: the writer
     refuses what this census would report, which is what keeps a writer run from
     producing an artifact this arbiter calls malformed. The census reads with the
     strict reader (``census_json.load_json_strict``), so the two answer the same
     document alike, and a non-finite number is refused here as the backstop for
     a parsed value that came from anywhere but that reader.
+
+    The pre-removal shapes are answered first and with the migration sentence, and the
+    entry pass is then skipped: an entry whose subject is the removed ``item`` key would
+    otherwise also be reported as a missing or unknown field, which describes a defect
+    the repair does not touch.
 
     A ``decision`` that is not a non-blank id is a defect, not a state the file
     carries: every entry cites the record that set its position (anti-fabrication,
@@ -225,6 +184,9 @@ def order_problems(value: object, parse_iso, names_zone) -> list[str]:
     """
     if not isinstance(value, dict):
         return ["the order file is not a JSON object"]
+    migrated = _migration_problems(value)
+    if migrated:
+        return migrated
     problems: list[str] = []
     missing = [f for f in ORDER_REQUIRED_FIELDS if f not in value]
     if missing:
@@ -234,51 +196,41 @@ def order_problems(value: object, parse_iso, names_zone) -> list[str]:
         problems.append("unknown field(s): " + ", ".join(extra))
     if "schema" in value and value["schema"] not in ORDER_SCHEMAS:
         problems.append("schema is " + repr(value["schema"]) + ", not "
-                        + " or ".join(repr(name) for name in ORDER_SCHEMAS))
+                        + repr(ORDER_SCHEMA))
     entries = value.get("entries")
     if entries is None:
         return problems
     if not isinstance(entries, list):
         problems.append("entries is not an array")
         return problems
-    _entry_problems(entries, problems, parse_iso, names_zone, value.get("schema"))
+    _entry_problems(entries, problems, parse_iso, names_zone)
     return problems
 
 
-def _entry_problems(entries: list, problems: list[str], parse_iso, names_zone,
-                    schema: object = ORDER_SCHEMA) -> None:
+def _entry_problems(entries: list, problems: list[str], parse_iso, names_zone) -> None:
     """Append why one entry list is not a list of entries the census can read.
 
     Split from :func:`order_problems` so each half reads as one rule set: the
     document's own fields, then the entries' fields. A duplicate ``issue`` is
     reported once per repeat, and a non-integer is not also counted as a
     duplicate: a caller who fixes the type gets a second answer rather than a
-    surprise. An item citation is held to the same uniqueness, and to the store's
-    own id rule, on both sides of the split.
+    surprise.
 
-    ``schema`` picks the field list, which is what makes a ``/2`` file carrying
-    ``item`` clean here and clean for its writer, and an ``item`` inside a ``/1``
-    file the unknown field it is. The subject half of that list is chosen per entry
-    (:func:`_entry_required`), because a ``/2`` entry names an *or* an idea and owing
-    both keys would refuse the very shape the version exists to allow -- a file the
-    writer emits and the arbiter calls malformed is the drift this whole split is
-    built to make impossible.
+    Every entry is answered by the one field list the artifact documents, which is what
+    makes a file the writer emits clean here and clean for its writer -- the drift this
+    whole split is built to make impossible.
     """
-    fields = order_entry_fields(schema)
     seen: set[int] = set()
-    seen_items: set[str] = set()
     for index, entry in enumerate(entries, 1):
         if not isinstance(entry, dict):
             problems.append(f"entry {index} is not an object")
             continue
-        gap = [f for f in _entry_required(entry, fields, schema) if f not in entry]
+        gap = [f for f in ORDER_ENTRY_OWED if f not in entry]
         if gap:
             problems.append(f"entry {index} is missing field(s): " + ", ".join(gap))
-        junk = sorted(k for k in entry if k not in fields)
+        junk = sorted(k for k in entry if k not in ORDER_ENTRY_FIELDS)
         if junk:
             problems.append(f"entry {index} has unknown field(s): " + ", ".join(junk))
-        _subject_problems(index, entry, schema, problems)
-        _item_id_problems(index, entry, problems)
         _why_field_problems(index, entry, problems)
         issue = entry.get("issue")
         if "issue" in entry:
@@ -288,11 +240,6 @@ def _entry_problems(entries: list, problems: list[str], parse_iso, names_zone,
                 problems.append(f"issue {issue} appears more than once")
             else:
                 seen.add(issue)
-        cited = entry.get(ORDER_ITEM_FIELD)
-        if isinstance(cited, str):
-            if cited in seen_items:
-                problems.append(f"item {cited} appears more than once")
-            seen_items.add(cited)
         decision = entry.get("decision")
         if "decision" in entry and not (isinstance(decision, str) and decision.strip()):
             # The same rule the writer's ``orderschema`` applies: an entry that

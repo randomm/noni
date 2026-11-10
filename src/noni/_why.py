@@ -1,29 +1,28 @@
 """The rationale rule: the one statement a ``why`` value answers to.
 
-Three artifacts of the product hold a rationale and all three read this module: a
-decision record's ``why``, an order entry's ``why``, and an item's reason. One owner
-is what keeps a value one writer committed from being refused by the arbiter that
-reads it -- the symptom of a drift is a record the writer happily wrote and the
-census then reports at exit 10, which no verb can repair because no verb will open a
-file its own writer refuses to re-render.
+Two artifacts of the product hold a rationale and both read this module: a decision
+record's ``why`` and an order entry's ``why``. One owner is what keeps a value one
+writer committed from being refused by the arbiter that reads it -- the symptom of a
+drift is a record the writer happily wrote and the census then reports at exit 10,
+which no verb can repair because no verb will open a file its own writer refuses to
+re-render.
 
 Two rules and one wording. The shape is :func:`noni.ledger_schema.is_single_line` --
-the same predicate the two attribution names and an item's title answer to -- so a
-rationale cannot smuggle a second line into a report or a log line. The bound is
-:data:`noni.itemschema.WHY_MAX`, counted over code points by ``len`` of the string
-and not over bytes, so a value of combining marks or emoji is measured the way its
-author measures it.
+the same predicate the two attribution names answer to -- so a rationale cannot smuggle
+a second line into a report or a log line. The bound is :data:`WHY_MAX`, spelled once in
+this module and counted over code points by ``len`` of the string and not over bytes, so
+a value of combining marks or emoji is measured the way its author measures it.
 
 Nothing here prints, exits or appends a finding: these are predicates and problem
-strings, and each caller words its own refusal. Both neighbours are reached by
-:func:`_neighbour` rather than imported at load time: ``itemschema`` imports
-``ledger_schema`` for its own single-line rule, so an import of it at load time here
-would close a cycle between the two schemas.
+strings, and each caller words its own refusal. The one neighbour this rule reads is
+reached by :func:`_neighbour` rather than imported at load time: ``ledger_schema`` is
+read by the artifacts whose writers read this module, so an import of it at load time
+here would close a cycle between the two schemas.
 """
 
 from __future__ import annotations
 
-# The two neighbours this rule reads, resolved the way this module itself is reached.
+# The one neighbour this rule reads, resolved the way this module itself is reached.
 # Both load paths have to work: the package route takes the ordinary import, and the
 # route that loads one file of this family by path (the test harness, and any consumer
 # of a skill's ``scripts/`` copy) lands in a module with no package, where a relative
@@ -31,7 +30,7 @@ from __future__ import annotations
 # ``__file__`` pointing at wherever the loader chose, so a neighbour is looked for
 # beside this file first and then in the source tree's package directory.
 _IMPORT_ERROR = ImportError
-_ITEM_SEARCH = ("", "noni")
+_SEARCH = ("", "noni")
 
 
 def _neighbour(name: str):
@@ -46,7 +45,7 @@ def _neighbour(name: str):
         from pathlib import Path
 
         here = Path(__file__).resolve().parent
-        roots = [here] + [here.parent / part for part in _ITEM_SEARCH
+        roots = [here] + [here.parent / part for part in _SEARCH
                           if (here.parent / part / f"{name}.py").is_file()]
         for root in roots:
             source = root / f"{name}.py"
@@ -64,14 +63,14 @@ def _neighbour(name: str):
 
 
 def why_max() -> int:
-    """The rationale bound, read from the one module that owns the number.
+    """The rationale bound, read from :data:`WHY_MAX`, the one owner.
 
-    The number lives beside the item store's reason field: one rationale bound for
-    the whole product, spelled once. A second literal anywhere is how a writer and
-    the census come to disagree about a value one of them wrote, and is how a doc
-    page comes to state a bound no code enforces.
+    One rationale bound for the whole product, spelled once and reached through this
+    function. A second literal anywhere is how a writer and the census come to disagree
+    about a value one of them wrote, and is how a doc page comes to state a bound no
+    code enforces.
     """
-    return _neighbour("itemschema").WHY_MAX
+    return WHY_MAX
 
 
 def is_bounded_single_line(value: object, maximum: int) -> bool:
@@ -118,6 +117,14 @@ def why_problems(record: dict) -> list[str]:
         return [f"{WHY_FIELD} is {len(value)} characters, past the {maximum} limit"]
     return []
 
+
+# The longest rationale the writers accept, in code points. A rationale is the
+# operator's one line of reason and not an essay: the bound is what makes a refusal
+# line, a census row and a printed page all finite. Compared with ``len`` over code
+# points, and nothing normalises the text, so an operator measuring a limit measures
+# the text they see. One constant for every writer and both censuses: a second literal
+# is how the two come to disagree about a value one side wrote.
+WHY_MAX = 280
 
 # The key a rationale is written under: a decision record's field, an order entry's
 # field, and the name every refusal and every census row prints for it. Named once,

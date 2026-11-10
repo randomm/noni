@@ -3,7 +3,7 @@
 ``order add --why REASON`` records why the operator wants the position. The field is
 optional, so an entry written without it renders the bytes the artifact held before it
 existed, and it obeys the same rule a decision record's rationale obeys: one non-blank
-line within the bound ``itemschema.WHY_MAX`` states.
+line within the bound ``_why.WHY_MAX`` states.
 
 Checked here: the flag (exit 2, nothing written), the artifact (the ``/1`` shape and the
 key order), the two verbs that rebuild an entry (a move and a confirm keep the reason),
@@ -30,7 +30,7 @@ from order_fixtures import (
 )
 from ordering_shapes import CLEAN_SHAPES, MALFORMED_SHAPES
 
-# Read from the product (``itemschema.WHY_MAX``) and not spelled here: a copy taken at
+# Read from the product (``_why.WHY_MAX``) and not spelled here: a copy taken at
 # import time is a second owner of the number, and the suite would stay green the day
 # the owner moved.
 WHY_MAX = product_why_max()
@@ -101,7 +101,7 @@ def test_the_bound_is_the_shared_one_and_counts_characters(tmp_path):
     characters the operator counts rather than bytes: a bound's length of accented
     characters is accepted where a byte count would refuse them.
 
-    The bound has one owner (``itemschema.WHY_MAX``); these runs are what say this
+    The bound has one owner (``_why.WHY_MAX``); these runs are what say this
     artifact reads that owner rather than a copy of the number.
     """
     repo = _repo(tmp_path)

@@ -74,9 +74,9 @@ SKEW_FIELD = "decided_by_next_era"
 
 # The rationale field, and its bound, both read from the product rather than spelled
 # here: the three modules that drive a ``why`` through the censuses ask the schema for
-# the key and :func:`noni.itemschema.WHY_MAX` for the number, so a bound that moves
+# the key and :data:`noni._why.WHY_MAX` for the number, so a bound that moves
 # reddens them instead of certifying a shape nothing enforces any more. The key is
-# reached through the ledger's own module and not the item store's, because the ledger
+# reached through the ledger's own module, because the ledger
 # census is the arbiter these tests are asking.
 WHY_FIELD = ledger_schema.WHY_FIELD
 WHY_MAX = ledger_schema.why_max()
@@ -118,10 +118,10 @@ def product_why_max() -> int:
     taken at import time, so a suite that imported it kept a copy of its own -- and a
     copy is what the acceptance criterion for issue #122 refuses: the day the bound
     moves, every module holding one fails to notice. This reads
-    :data:`noni.itemschema.WHY_MAX` through the package, which is the route the writer,
+    :data:`noni._why.WHY_MAX` through the package, which is the route the writer,
     the ledger census and the ordering arbiter all take.
     """
-    from noni.itemschema import WHY_MAX as owner
+    from noni._why import WHY_MAX as owner
 
     return owner
 

@@ -418,10 +418,9 @@ class TestCheckFilters:
         The expected set is written out here and nowhere else on purpose. A version
         that read it from ``census_report.CHECKS`` was a tautology: remove a class from
         the table and the listing still matched it, which is the failure a listing test
-        exists to catch. The names below are the contract -- the ledger, ordering
-        and hygiene classes the census has always printed, plus the six the item group of #124
-        declares. A class may only join or leave this set together with the row that
-        documents it.
+        exists to catch. The names below are the contract -- the ledger, ordering,
+        intent and hygiene classes the census ships. A class may only join or leave this
+        set together with the row that documents it.
         """
         import io
         from contextlib import redirect_stdout
@@ -436,10 +435,7 @@ class TestCheckFilters:
                      "probe",
                      "ledger-empty",
                      "hygiene", "intent",
-                     "ordering-malformed", "ordering-stale", "ordering-closed",
-                     "item-malformed", "item-dropped-in-order",
-                     "item-promoted-without-issue", "item-reference-unresolved",
-                     "item-stale", "item-unlistable"}
+                     "ordering-malformed", "ordering-stale", "ordering-closed"}
         assert set(lines) == expected, f"got {lines}"
         assert len(lines) == len(set(lines)), "a class was listed twice"
 

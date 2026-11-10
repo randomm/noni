@@ -128,8 +128,8 @@ noni/direction/order.json
 
 | field | meaning |
 |---|---|
-| `schema` | `noni.order/1`, or `noni.order/2` for an order that cites an item |
-| `entries` | `[{issue, decision, confirmed, why}]` in the order the operator wants, where an entry of a `/2` order names `item` instead of `issue` and `why` is optional |
+| `schema` | `noni.order/1`, the only version this artifact has |
+| `entries` | `[{issue, decision, confirmed, why}]` in the order the operator wants, where `why` is optional |
 
 Position is the list index, not a field -- so a reorder moves entries and never
 renumbers anything. `issue` is a positive integer. `decision` is the id of the
@@ -138,22 +138,16 @@ entry whose `decision` is `null`, blank or absent is not an order this writer
 writes (exit 4, naming the entry) and the census reports it as
 `ordering-malformed` (15) -- a position nobody can look up is a position nobody
 decided. `confirmed` is the UTC timestamp the writer stamped when the operator
-last confirmed the entry. `why` is optional: an entry written without it holds the three fields it held before the field existed, byte for byte, and `add --why REASON` records the operator's one line of reason for the position. It obeys the same rule a decision record's rationale obeys: one non-blank line within the 280-character bound `itemschema.WHY_MAX` states, counted in code points, refused at the flag (exit 2) and reported by both censuses naming the field `why`. A move or a confirm restamps an entry and never drops the reason it carries.
+last confirmed the entry. `why` is optional: an entry written without it holds the three fields it held before the field existed, byte for byte, and `add --why REASON` records the operator's one line of reason for the position. It obeys the same rule a decision record's rationale obeys: one non-blank line within the 280-character bound `_why.WHY_MAX` states, counted in code points, refused at the flag (exit 2) and reported by both censuses naming the field `why`. A move or a confirm restamps an entry and never drops the reason it carries.
 
-**An entry can order an idea as well as an issue.** `add --item ID` writes an
-`item` entry: the id of a file under `noni/items/`, which is what makes the
-artifact `noni.order/2`. An entry names one subject and never two -- `item` or
-`issue`, not both and not neither (exit 4, naming the entry; the census reports
-the same entry as `ordering-malformed`). The id is checked against the item store
-before a position is granted, so an order cannot hold a position for an idea
-nobody filed (exit 4) or for one already dropped. The writer emits `/2` for a run
-that has an item entry to write and `/1` for every run over an order that holds
-none, so a queue of issues is never restamped into a version its contents do not
-use; both versions are read. When `item.py promote` gives an item its issue, the
-entry citing it is rewritten to that issue in the same commit, so the queue never
-keeps a position for an idea that has become work. The promote is refused (exit 4,
-nothing written) when the order already holds that issue, because the rewrite would
-give one issue two positions.
+**An order that still names the removed item store is refused, never rewritten.**
+A file whose `schema` is `noni.order/2`, or an entry that still carries an `item`
+key, is what the item store left behind when it was removed. Every verb refuses it
+(exit 4, the artifact left byte for byte as it was) and the census reports it as
+`ordering-malformed` (15), both naming the repair: re-add each entry with
+`add ISSUE --decision ID` after filing it as an issue. Nothing is dropped quietly
+and no file is restamped down to `/1`, because every verb rebuilds the whole list
+and a reader that accepted such a file would delete the operator's entry.
 
 The file is written in one canonical form: keys in the order above, two-space
 indent, one trailing newline. A file that is not in that form is refused, never
@@ -177,15 +171,13 @@ issue, then the flags that qualify it. `order.py --help` prints the same order.
 
 ```
 scripts/order.py --repo REPO add ISSUE --decision ID [--why REASON] [--at N] [--now ISO-8601] [--no-commit]
-scripts/order.py --repo REPO add --item ID --decision ID [--why REASON] [--at N] [--now ISO-8601] [--no-commit]
 scripts/order.py --repo REPO move ISSUE [--to N] [--decision ID] [--now ISO-8601] [--no-commit]
 scripts/order.py --repo REPO remove ISSUE [--now ISO-8601] [--no-commit]
 scripts/order.py --repo REPO confirm [ISSUE] [--now ISO-8601] [--no-commit]
 ```
 
 Every run prints the resulting order, one line per entry: the 1-based position,
-the issue (or the item an entry of a `/2` order cites), and the decision (or `-`)
-and confirmed timestamp it carries.
+the issue, and the decision (or `-`) and confirmed timestamp it carries.
 
 `add` requires `--decision`: a position someone placed is a decision, and the id
 it names must be a file under `noni/decisions/` that is not superseded. `--at N`
@@ -209,7 +201,7 @@ verb that shortens the list.
 what makes a run -- and the census run that judges its staleness -- reproducible
 from the command line alone. A `--now` with no UTC offset is refused.
 
-`--why` belongs to `add` alone: `add --why REASON` records the reason for taking a position, and `move`, `remove` and `confirm` answer to an entry that already exists, so a run that hands one of them a reason is refused at the flag (exit 2) rather than dropping what the operator typed. The value is the ledger's one-line rule at the shared 280-character rationale bound: a blank, a padded, a multi-line or an over-long reason is refused the same way, on the same code, and nothing is written for a refusal. The number has one owner (`itemschema.WHY_MAX`), shared with a decision record's `why` and an item's reason, so a reason that fits in one fits everywhere.
+`--why` belongs to `add` alone: `add --why REASON` records the reason for taking a position, and `move`, `remove` and `confirm` answer to an entry that already exists, so a run that hands one of them a reason is refused at the flag (exit 2) rather than dropping what the operator typed. The value is the ledger's one-line rule at the shared 280-character rationale bound: a blank, a padded, a multi-line or an over-long reason is refused the same way, on the same code, and nothing is written for a refusal. The number has one owner (`_why.WHY_MAX`), shared with a decision record's `why`, so a reason that fits in one fits everywhere.
 
 `--no-commit` writes through the same validation chain and stops before git: no
 `git add`, no `git commit`, and one line on stdout saying the file is left

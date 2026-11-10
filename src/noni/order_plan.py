@@ -53,7 +53,7 @@ WHY_FIELD = orderschema.WHY_FIELD
 # flag-set parity of ``tests/test_order_writer_docs.py``: a flag added to the parser
 # belongs here too.
 USAGE = (f"{labels.ORDER} --repo REPO subcommand [issue]"
-          " [--at N] [--to N] [--decision ID] [--item ID] [--why REASON]"
+          " [--at N] [--to N] [--decision ID] [--why REASON]"
           " [--now ISO-8601] [--no-commit] [-h]")
 
 # The missing-positional message argparse composes for a required positional, and the
@@ -87,7 +87,7 @@ class Planned(NamedTuple):
     refusal: int | None
 
 
-def plan_move(repo: Path, entries: list, subject: int | str, to: str | None,
+def plan_move(repo: Path, entries: list, subject: int, to: str | None,
               stamp: str, decision: str | None, report,
               exit_io: int, exit_usage: int, exit_refusal: int) -> Planned:
     """The list ``move`` writes, or the refusal naming why it writes none.
@@ -113,9 +113,7 @@ def plan_move(repo: Path, entries: list, subject: int | str, to: str | None,
     the citation, because the reason for a priority changed while the priority itself
     stood. A run that names neither is refused: a move of nothing is not a move.
 
-    ``subject`` is an issue number or an item id, and the two never name the same entry:
-    a string is looked up among the entries citing an idea and an int among those naming
-    an issue, so ``move 7`` can never reach into an item's position by coincidence.
+    ``subject`` is an issue number.
     """
     if decision is not None:
         cited = orderstate.decision_problems(repo, decision, exit_io, exit_refusal)
@@ -127,8 +125,7 @@ def plan_move(repo: Path, entries: list, subject: int | str, to: str | None,
     if not _holds(entries, subject):
         return Planned([], "", report(
             exit_refusal, _absent(subject),
-            "list it first with 'order.py add ISSUE --decision ID' or "
-            "'order.py add --item ID --decision ID'"))
+            "list it first with 'order.py add ISSUE --decision ID'"))
     if to is None and decision is None:
         return Planned([], "", report(
             exit_usage, "move needs --to N: a move to no position is not a move",
@@ -150,7 +147,7 @@ def plan_move(repo: Path, entries: list, subject: int | str, to: str | None,
     return Planned(rest, _move_name(subject, position, to, decision), None)
 
 
-def _move_name(subject: int | str, position: int, to: str | None,
+def _move_name(subject: int, position: int, to: str | None,
                decision: str | None) -> str:
     """The sentence a move run is printed and committed under.
 
@@ -165,7 +162,7 @@ def _move_name(subject: int | str, position: int, to: str | None,
     return f"move {subject} to {position} with decision {decision}"
 
 
-def _restamped(moved: dict, subject: int | str, stamp: str,
+def _restamped(moved: dict, subject: int, stamp: str,
                decision: str | None = None) -> dict:
     """``moved`` with a fresh ``confirmed`` (and a new decision when one was given),
     in the key order its subject writes.
@@ -186,61 +183,52 @@ def _restamped(moved: dict, subject: int | str, stamp: str,
     return entry_for(subject, cited, stamp, why)
 
 
-def entry_for(subject: int | str, decision: str, confirmed: str,
+def entry_for(subject: int, decision: str, confirmed: str,
               why: str | None) -> dict:
-    """One entry for ``subject``, spelled from the type the caller handed it.
+    """One entry for ``subject``, the issue the caller named.
 
-    The one place this module chooses an entry's subject key, so the verb that rebuilds a
+    The one place this module builds an entry, so the verb that rebuilds a
     moved entry and the verb that places a new one cannot spell the same entry two ways:
     ``add`` reaches it through :func:`noni.order_add._new_entry` and ``move`` through
     :func:`_restamped`, and both arrive at :func:`noni.orderschema.entry` here. The
     rationale is written last and only when the caller was given one, which is what lets a
     rebuilt entry hold the bytes the artifact held before the field existed.
     """
-    if isinstance(subject, str):
-        return orderschema.entry(item=subject, decision=decision,
-                                 confirmed=confirmed, why=why)
     return orderschema.entry(issue=subject, decision=decision,
                              confirmed=confirmed, why=why)
 
 
-def _holds(entries: list, subject: int | str) -> bool:
+def _holds(entries: list, subject: int) -> bool:
     """Whether the list holds an entry naming ``subject``."""
     return any(_names(entry, subject) for entry in entries
                if isinstance(entry, dict))
 
 
-def _names(entry: dict, subject: int | str) -> bool:
-    """Whether ``entry`` is the one ``subject`` names, by the type of the subject.
+def _names(entry: dict, subject: int) -> bool:
+    """Whether ``entry`` is the one ``subject`` names.
 
-    The one place the two kinds of subject are told apart for these three verbs, so a
-    lookup written wrong is wrong once. A dict that is not an entry at all never matches:
+    The one place the lookup is written for these three verbs, so a lookup written wrong
+    is wrong once. A dict that is not an entry at all never matches:
     the shape rules have already refused the document, and a plan built from a list the
     caller still holds must not reach into a value that has no subject to compare.
     """
     if not isinstance(entry, dict):
         return False
-    if isinstance(subject, str):
-        return orderschema.entry_item(entry) == subject
     return orderschema.entry_issue(entry) == subject
 
 
-def _absent(subject: int | str) -> str:
-    """The refusal for a subject the queue does not hold, worded for its kind."""
-    if isinstance(subject, str):
-        return f"item {subject} is not in the order"
+def _absent(subject: int) -> str:
+    """The refusal for a subject the queue does not hold."""
     return f"issue {subject} is not in the order"
 
 
-def plan_remove(entries: list, subject: int | str, report,
+def plan_remove(entries: list, subject: int, report,
                 exit_refusal: int) -> Planned:
     """The list ``remove`` writes: every entry but the one naming ``subject``.
 
     The only verb that shortens the list, and the only one whose refusal tells the
     operator nothing to do: a subject that is not in the queue is already not in it, and
-    the artifact is left exactly as it was rather than rewritten to say so. An item
-    removed from the queue keeps its record under ``noni/items/``: this verb drops a
-    position, never an idea.
+    the artifact is left exactly as it was rather than rewritten to say so.
     """
     if not _holds(entries, subject):
         return Planned([], "", report(exit_refusal, _absent(subject),
@@ -250,7 +238,7 @@ def plan_remove(entries: list, subject: int | str, report,
     return Planned(kept, f"remove {subject}", None)
 
 
-def plan_confirm(entries: list, subject: int | str | None, stamp: str, report,
+def plan_confirm(entries: list, subject: int | None, stamp: str, report,
                  exit_refusal: int) -> Planned:
     """The list ``confirm`` writes: the same entries, with ``confirmed`` restamped.
 
@@ -264,7 +252,6 @@ def plan_confirm(entries: list, subject: int | str | None, stamp: str, report,
     if subject is not None and not _holds(entries, subject):
         return Planned([], "", report(exit_refusal, _absent(subject),
                                       "add it first with 'order.py add ISSUE "
-                                      "--decision ID' or 'order.py add --item ID "
                                       "--decision ID'"))
     confirmed = []
     for entry in entries:

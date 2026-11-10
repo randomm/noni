@@ -144,12 +144,12 @@ def test_the_run_survives_a_path_it_cannot_classify(tmp_path, monkeypatch):
     monkeypatch.setattr(census, "_file_kind",
                         intent_kind_answers("nonregular", "lstat: Permission denied"))
 
-    code, out, err = run_census_in_process(repo, "--only", "item-unlistable")
+    code, out, err = run_census_in_process(repo, "--only", "ordering-stale")
     assert findings_of(out, "intent") == [("intent", "cannot-tell", "warn")], out
     assert err == "", "the run's blindness must not reach the operator as a traceback"
     assert code == 0
     # --strict promotes the run's own blindness, as it promotes every cannot-tell.
-    assert run_census_in_process(repo, "--only", "item-unlistable",
+    assert run_census_in_process(repo, "--only", "ordering-stale",
                                  "--strict")[0] == 51
 
     # And the gate got that answer from the census's classifier and nowhere else.
@@ -157,11 +157,10 @@ def test_the_run_survives_a_path_it_cannot_classify(tmp_path, monkeypatch):
     # this machine), so the shape is pinned too: ``Path.exists`` follows links and
     # propagates the ``OSError`` of a parent it cannot read, which is the crash this
     # gate caused and the reason a dangling link read as no read owed.
-    # The gate lives in ``census_items_gate.py`` (it moved there when the items group
-    # was wired in); the assertion is about the gate itself, not the file that calls it.
-    gate = (SRC / "noni" / "census_items_gate.py").read_text(encoding="utf-8")
+    # The gate lives in ``census_group_gate.py``, split from the run body; the
+    # assertion is about the gate itself, not the file that calls it.
+    gate = (SRC / "noni" / "census_group_gate.py").read_text(encoding="utf-8")
     body = gate[gate.index("def _intent_present"):]
-    body = body[:body.index("\ndef ") + 1]
     assert "_file_kind" in body, "the gate stopped asking the census's classifier"
     assert ".exists()" not in body, (
         "the intent gate re-derives the path state itself: a link it follows and a "

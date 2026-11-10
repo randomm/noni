@@ -11,12 +11,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from brief_fixtures import (
-    CREATED_NEWEST,
     NOW,
     PURPOSE_LINES,
     RECORD_ID,
     intent_path,
-    item_path,
     order_path,
     plant_brief_tree,
     run_brief,
@@ -122,9 +120,9 @@ def test_brief_the_page_never_exceeds_the_cap(tmp_path: Path) -> None:
 
     The expected count is built from the tool's own constants -- two headers, the purpose body
     and its ellipsis, 10 order rows, one separator, one verdict -- so the case
-    follows a change to a cap instead of pinning a number nobody chose. The store is filled with
-    200 ideas and the order with 200 entries on the way: the page reads neither list past its
-    cap, so the count must not move.
+    follows a change to a cap instead of pinning a number nobody chose. The order is filled
+    with 200 entries on the way: the page reads no list past its cap, so the count must not
+    move.
     """
     root = plant_brief_tree(tmp_path)
     entries = [orderschema.entry(issue=number, decision=RECORD_ID,
@@ -132,12 +130,6 @@ def test_brief_the_page_never_exceeds_the_cap(tmp_path: Path) -> None:
                for number in range(1, 200)]
     order_path(root).write_bytes(orderschema.order_bytes(
         {"schema": orderschema.ORDER_SCHEMA, "entries": entries}))
-    template = item_path(root, "idea-0001").read_bytes().decode("utf-8")
-    for number in range(13, 200):
-        item_id = f"idea-{number:04d}"
-        item_path(root, item_id).write_text(
-            template.replace("idea-0001", item_id)
-            .replace(CREATED_NEWEST, "2026-12-31T09:00:00Z"), encoding="utf-8")
     code, out, _ = run_brief(root, "--now", NOW)
     assert code == 0
     expected = (2 + brief_module.PURPOSE_MAX_LINES + 2 + brief_module.TOP_ENTRIES

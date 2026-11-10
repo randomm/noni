@@ -2,8 +2,8 @@
 
 noni makes sure a decision outlives the session that made it, and that the order
 of work stays what the operator said it was. It is an attachable direction layer
-for a Git project: standing intent, decisions, the agreed order of work and the
-item store are plain files committed to the repo, and one read-only script
+for a Git project: standing intent, decisions and the agreed order of work are
+plain files committed to the repo, and one read-only script
 reports where the work has drifted. No service, no database.
 
 ## The problem
@@ -16,7 +16,7 @@ reports where the work has drifted. No service, no database.
 
 ## What you get
 
-Four artifacts, all committed files under `noni/`, all read by the census. The
+Three artifacts, all committed files under `noni/`, all read by the census. The
 order is of issues your tracker holds, by their positive numbers: noni is no
 backlog and no notes tool, so unfiled work has nowhere to go.
 
@@ -25,8 +25,7 @@ backlog and no notes tool, so unfiled work has nowhere to go.
 | standing intent | what the project is for, its principles, its never-do list, and what must be asked first, in `noni/direction/intent.md` | `intent.py` |
 | steering ledger | one JSON file per dated, attributed decision under `noni/decisions/` | `decide.py` |
 | ordering | the issues you want worked next, in order, in `noni/direction/order.json` | `order.py` |
-| item store | one JSON file per filed idea under `noni/items/` | `item.py` |
-| census | nothing: it reads the four above and reports | read-only |
+| census | nothing: it reads the three above and reports | read-only |
 
 The artifacts are statements, not locks. The intent file tells a session how to
 decide, and the census is what flags one that has drifted from its shape or its
@@ -89,7 +88,7 @@ missing deny-list and a ledger with nothing to arbitrate), and does not move it.
 
 Read `noni/skills/<skill>/SKILL.md` for what each writer accepts and refuses;
 the steering-ledger skill keeps record-shape detail in its `references/`
-directory. `noni --help` names the six subcommands and
+directory. `noni --help` names the five subcommands and
 `noni <tool> --help` the flags of one.
 
 Everything noni keeps in your repository lives in one directory:
@@ -99,14 +98,12 @@ Everything noni keeps in your repository lives in one directory:
   decisions/   one JSON record per dated decision
   direction/   intent.md: what the project is for and will not do
                order.json: the ordered list of issues to work next
-  items/       one JSON file per filed idea
 ```
 
 Nothing else is state. The writers above are the only things that create those
 files, and each commits what it writes in one atomic step. The try-it run above
 creates the ledger record only: `intent.md` appears when you first run
-`intent.py`, `order.json` when you first run `order.py`, and an item file when
-you first run `item.py`. All four are optional, and only a run that counted
+`intent.py` and `order.json` when you first run `order.py`. Both are optional, and only a run that counted
 no row and skipped no check reads all-clear (`census: no findings; all checks
 passed`, `summary: clean; 0 finding(s); verdict ok`); the try-it run above does
 not: the always-reporting hygiene class leaves a first tree a warn row. The
@@ -120,7 +117,7 @@ exit codes; [docs/ONBOARDING.md](docs/ONBOARDING.md) covers the skills.
 
 Shipped, and covered by the test suite: the steering ledger with its supersede
 chain, the ordering artifact, the standing intent file with its precedence rule,
-the item store, the unified census with its honest exit codes, and the `noni`
+the unified census with its honest exit codes, and the `noni`
 package that carries them (installed from a clone or a git URL, then
 `noni <tool>`: no PyPI package, distribution name `noni-noni`).
 

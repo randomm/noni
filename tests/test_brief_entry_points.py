@@ -14,8 +14,10 @@ from pathlib import Path
 import pytest
 from _harness import REPO
 from brief_fixtures import (
+    CONFIRMED,
     NOW,
     PURPOSE_LINES,
+    RECORD_ID,
     intent_path,
     plant_brief_tree,
     run_brief,
@@ -124,19 +126,23 @@ def test_brief_the_repo_is_read_at_the_path_it_was_given(tmp_path: Path) -> None
     """A page is about the tree named, never about the tree the process happens to sit in.
 
     The state root and the cwd hold different content; the page names the state root's, which is the
-    assertion that no cwd default was smuggled in behind the resolution. The cwd's own purpose line
-    is planted beside its item so the case asks one question of both artifacts the page does read.
+    assertion that no cwd default was smuggled in behind the resolution. The cwd tree holds its own
+    order and its own purpose line, so the case asks one question of both artifacts the page reads.
     """
     root = plant_brief_tree(tmp_path, name="state-root")
-    elsewhere = tmp_path / "cwd-tree"
-    (elsewhere / "noni" / "items").mkdir(parents=True)
-    from noni import itemschema
+    from noni import orderschema
 
-    (elsewhere / "noni/items/idea-0001.json").write_bytes(itemschema.item_bytes(
-        itemschema.entry("idea-0001", "Belongs to the other tree",
-                         itemschema.STATUS_CANDIDATE, "2027-01-01T00:00:00Z")))
+    elsewhere = tmp_path / "cwd-tree"
+    (elsewhere / "noni" / "direction").mkdir(parents=True)
+    (elsewhere / "noni/direction/order.json").write_bytes(orderschema.order_bytes(
+        {"schema": orderschema.ORDER_SCHEMA, "entries": [orderschema.entry(
+            issue=4242, decision=RECORD_ID, confirmed=CONFIRMED)]}))
+    (elsewhere / "noni/direction/intent.md").write_text(
+        "# Intent\nLast-confirmed: 2026-10-01\n\n## Purpose\n\n"
+        "Belongs to the other tree\n", encoding="utf-8")
     out = run_brief_from(elsewhere, root, "--now", NOW)[1]
     assert "Belongs to the other tree" not in out
+    assert "1. #4242" not in out
     assert len(stripped(sections(out), brief_module.ORDER_HEADER)) == \
         brief_module.TOP_ENTRIES
 

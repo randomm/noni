@@ -19,8 +19,8 @@ commit chain, the index, the refs -- are constructed here with ``hashlib`` and `
 only host state that reaches the archive is what the caller hands in.
 
 What the state root holds is the fixture's whole reason to exist, and it is shared with the tests
-rather than repeated. The content -- the twelve candidate items, the eleven order entries, the intent
-file, the one decided record, the ``created`` instants four of the items are tied at, and the instant
+rather than repeated. The content -- the eleven order entries, the intent
+file and the one decided record, and the instant
 the suite briefs the tree at -- all of it comes from ``tests/brief_fixtures.py``, the module the brief
 cases already read. The builder and the assertions therefore answer to one table: a change to a title,
 a stamp or the citation is visible to both at once, which is the drift that would otherwise let a
@@ -51,29 +51,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 import git_bytes
 from brief_fixtures import (
     CONFIRMED,
-    CREATED_TIED,
-    ITEM_STAMPS,
-    ITEM_TITLES,
     NOW,
-    ORDER_CITATION,
     PURPOSE_LINES,
     RECORD_ID,
 )
 
-from noni import itemschema, ledger_schema, orderschema
+from noni import ledger_schema, orderschema
 
-
-def _stamp_of(item_id: str) -> str:
-    """The ``created`` instant one candidate carries.
-
-    Read out of :data:`tests.brief_fixtures.ITEM_STAMPS`, which is keyed by stamp and groups the ids --
-    the shape the ordering cases state, since they ask which ids tie. Inverting it per call is cheap at
-    twelve items and keeps one table: the builder never carries its own idea of who was created when.
-    """
-    for stamp, ids in ITEM_STAMPS.items():
-        if item_id in ids:
-            return stamp
-    raise KeyError(f"{item_id} has no stamp in ITEM_STAMPS")
 
 # The instant every file and tar member of the fixture carries. A fixed stamp, not the building
 # clock: a tar whose mtimes moved with each run could not be compared member by member against the
@@ -87,7 +71,7 @@ TAR_MTIME = 1_793_000_000             # 2026-10-27T00:00:00Z, the same instant t
 # citation the tool cannot see, and the case would be about the fixture instead of about the tool.
 COMMIT_SUBJECTS = [
     "noni: seed the direction layer",
-    "noni: register twelve candidate items",
+    "noni: order the eleven queued issues",
     f"intent: {RECORD_ID}",
 ]
 
@@ -138,72 +122,34 @@ def _identity() -> str:
 # field agree: the ledger class compares them, and a record whose date contradicts its id is a row.
 RECORD_STAMP = f"{RECORD_ID[:10]}T00:00:00Z"
 
-# The 1-based position of the order's one item entry. The page cases assert the fourth row of the
-# ``top 10`` block is the cited item's title, and :data:`tests.brief_fixtures.FIXTURE_LAYOUT` states the
-# same fact in prose; the entry is placed here rather than appended so the two cannot drift into a tree
-# where the citation sits past the block's ten-row cap.
-ORDER_POSITION = 4
-
-# How many entries the order holds: ten issue positions and the one item entry that displaces the
-# fourth, so the file is eleven deep and the ``top 10`` block still shows every one but the last.
+# How many entries the order holds, one per issue, in the order the operator set them.
+# The ``top 10`` block shows the first ten and drops the eleventh: the count sits just past
+# the cap on purpose, so the committed tree exercises the budget's truncation as well as a
+# list that fits.
 ORDER_ENTRIES = 11
 
 
-def item_document(item_id: str) -> dict:
-    """One candidate item, in the shape :func:`noni.itemschema` documents.
-
-    Built through :func:`noni.itemschema.entry` rather than as a literal dict, because that function is
-    what omits the optional keys a candidate owes nothing (``issue``, ``why``) instead of writing them
-    as ``null`` -- and a canonical item holding ``"issue": null`` is the one shape the item reader
-    refuses. A fixture that hand-rolled its items would be reported ``item-malformed`` and the candidate
-    block the cases count would come back short.
-
-    The status is :data:`noni.itemschema.STATUS_CANDIDATE` for all twelve, which is what makes them
-    candidates: the brief's block keeps candidates, so an item that drifted to ``promoted`` or
-    ``dropped`` would vanish from the page and the counts the cases assert would move with it.
-    ``decision`` is set only on the item the order cites -- the value ``_cited_ids`` reads, and the
-    reason that entry is reported cited from the item side as well as the order side.
-
-    ``title`` and ``created`` come from :data:`tests.brief_fixtures.ITEM_TITLES` and
-    :data:`tests.brief_fixtures.ITEM_STAMPS`, the same tables the assertions read; the rest is the
-    fixture's own claim about who recorded the item and when.
-    """
-    entry = itemschema.entry(item_id, ITEM_TITLES[item_id], itemschema.STATUS_CANDIDATE,
-                             _stamp_of(item_id))
-    if item_id == ORDER_CITATION:
-        entry["decision"] = RECORD_ID
-    return entry
-
-
 def order_document() -> dict:
-    """``noni/direction/order.json``: ten issue positions and one item entry.
+    """``noni/direction/order.json``: eleven issue positions, none of them stale.
 
-    Built from the entry shapes :mod:`noni.orderschema` documents -- ``{issue, decision, confirmed}``,
-    with ``item`` in place of ``issue`` for the one ``/2`` entry -- rather than from invented keys. The
-    brief renders this file through :func:`noni.orderstate.read_order`, which refuses a document
-    carrying a field its version never declared, so a fixture that wrote ``ref`` and a top-level
-    ``confirmed`` printed ``not readable`` and turned ten page cases into a fixture investigation.
+    Built from the entry shape :mod:`noni.orderschema` documents -- ``{issue, decision,
+    confirmed}`` -- rather than from invented keys. The brief renders this file through
+    :func:`noni.orderstate.read_order`, which refuses a document carrying a field the
+    artifact never declared, so a fixture that wrote ``ref`` and a top-level
+    ``confirmed`` printed ``not readable`` and turned ten page cases into a fixture
+    investigation.
 
-    The single item entry sits at position 4 and is the one the census's ``order`` class must not reject
-    and the brief must mark cited, so it is the entry that cites the committed record -- the same item
-    :func:`item_document` stamps with that id. Its position is a fact the page cases assert (the fourth
-    row of the ``top 10`` block is the item's title, and ``4. #4`` must not appear), and it is inside the
-    block's ten-row cap for the same reason: an item entry pushed past position ten would be budgeted
-    away and the citation shape would go untested by the committed tree.
+    Every entry cites the one committed record and carries
+    :data:`tests.brief_fixtures.CONFIRMED`, a stamp inside the census's staleness window
+    of the brief instant: an entry citing nothing, or confirmed too long ago, is a census
+    row the verdict line would then have to report.
 
-    The nine issue entries are what keeps the entry count above the twelve-item block, so an ordering
-    case cannot pass by counting items alone. Every entry cites the one committed record and carries
-    :data:`tests.brief_fixtures.CONFIRMED`, a stamp inside the census's staleness window of the brief
-    instant: an entry citing nothing, or confirmed too long ago, is a census row the verdict line would
-    then have to report.
+    The count is one past the block's ten-row cap, which is what makes the committed tree
+    hold both halves of the budget: ten rows that print and one the page withholds.
     """
-    issues = [number for number in range(1, ORDER_ENTRIES + 1) if number != ORDER_POSITION]
-    entries: list[dict] = [{"issue": number, "decision": RECORD_ID, "confirmed": CONFIRMED}
-                           for number in issues[:ORDER_POSITION - 1]]
-    entries.append({"item": ORDER_CITATION, "decision": RECORD_ID, "confirmed": CONFIRMED})
-    entries += [{"issue": number, "decision": RECORD_ID, "confirmed": CONFIRMED}
-                for number in issues[ORDER_POSITION - 1:]]
-    return {"schema": orderschema.ORDER_SCHEMA_V2, "entries": entries}
+    entries = [{"issue": number, "decision": RECORD_ID, "confirmed": CONFIRMED}
+               for number in range(1, ORDER_ENTRIES + 1)]
+    return {"schema": orderschema.ORDER_SCHEMA, "entries": entries}
 
 
 def record_document() -> dict:
@@ -265,9 +211,9 @@ def documents() -> dict[str, bytes]:
     :func:`tests.brief_fixtures.session_body` states, and that function is where the shape the sessions
     census reads lives.
 
-    The documents are serialised by the writers that own their format -- :func:`noni.itemschema
-    .item_bytes` and :func:`noni.orderschema.order_bytes` -- because both readers insist on their own
-    canonical bytes: a hand-formatted item or order is refused as non-canonical, and the page then
+    The documents are serialised by the writers that own their format --
+    :func:`noni.orderschema.order_bytes` -- because the reader insists on its own
+    canonical bytes: a hand-formatted order is refused as non-canonical, and the page then
     reports ``not readable`` where it should report the fixture. Going through the writer is also what
     keeps the fixture honest about itself: were a field to be renamed in the schema, the builder would
     stop compiling rather than quietly write a file the tool refuses.
@@ -275,7 +221,6 @@ def documents() -> dict[str, bytes]:
     tree: dict[str, object] = {
         "noni/decisions": {f"{RECORD_ID}.json": record_document()},
         "noni/direction": {"intent.md": intent_text(), "order.json": order_document()},
-        "noni/items": {f"{item_id}.json": item_document(item_id) for item_id in ITEM_TITLES},
     }
     files: dict[str, bytes] = {}
     for directory, entries in tree.items():
@@ -287,16 +232,14 @@ def documents() -> dict[str, bytes]:
 def _serialise(rel: str, payload: object) -> bytes:
     """One document as the bytes the state root holds, rendered by whoever owns its format.
 
-    ``rel`` selects the writer: an item path goes to :func:`noni.itemschema.item_bytes`, the order to
-    :func:`noni.orderschema.order_bytes`, and anything else (the ledger record, the intent's prose)
+    ``rel`` selects the writer: the order goes to :func:`noni.orderschema.order_bytes`,
+    and anything else (the ledger record, the intent's prose)
     takes the documented canonical form -- two-space indent and one trailing newline for JSON, the text
     as written for Markdown. The dispatch is by path rather than by sniffing the document's keys so a
     renamed field cannot route a document to the wrong writer and have it come back well-formed.
     """
     if isinstance(payload, str):
         return payload.encode("utf-8")
-    if rel.startswith("noni/items/"):
-        return itemschema.item_bytes(payload)
     if rel.endswith(orderschema.ORDER_REL):
         return orderschema.order_bytes(payload)
     import json
@@ -418,20 +361,17 @@ def build_tar(target: Path) -> dict[str, int]:
 def main(argv: list[str]) -> int:
     """Build the fixture at the given path, or describe the tree when given no path.
 
-    ``generate.py`` alone prints the shape of what it would build -- the counts, and the newest
-    candidates first -- so a reader can see the fixture without unpacking a tar. ``generate.py
-    OUT/brief.tar`` writes it.
+    ``generate.py`` alone prints the shape of what it would build -- the counts -- so a
+    reader can see the fixture without unpacking a tar. ``generate.py OUT/brief.tar``
+    writes it.
     """
     if len(argv) > 1:
         counts = build_tar(Path(argv[1]))
         print(f"wrote {argv[1]}: {counts['files']} files, {counts['objects']} git objects, "
               f"{counts['members']} tar members")
         return 0
-    newest = sorted(((ITEM_TITLES[item_id], _stamp_of(item_id), item_id) for item_id in ITEM_TITLES),
-                    key=lambda row: (row[1], row[2]), reverse=True)
     print(f"{len(documents())} files, {len(COMMIT_SUBJECTS)} commits, briefed at {NOW}")
-    print("newest candidates: " + ", ".join(f"{item_id} {stamp}" for _t, stamp, item_id in newest[:3]))
-    print(f"tied pair: {CREATED_TIED[0]}/{CREATED_TIED[1]}, order cites: {ORDER_CITATION}")
+    print(f"{ORDER_ENTRIES} order entries citing {RECORD_ID}")
     return 0
 
 

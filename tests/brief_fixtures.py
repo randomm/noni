@@ -1,15 +1,14 @@
 """Shared builders for the brief suite: the committed tree and its planted variants.
 
 A helper module (never named ``test_*``, so pytest never collects it as a suite of its
-own), following ``order_fixtures.py`` and ``items_fixtures.py``: the one copy of the
+own), following ``order_fixtures.py``: the one copy of the
 fixture path, the tree copier, and the planter every case in the brief's suite shares. A
 fixture one test quietly relaxed would make the other's green meaningless, so none of them
 carries a private copy.
 
 The committed fixture is ``tests/fixtures/brief.tar``: a git repository holding the state
-root the brief reads -- 11 order entries, 12 candidate items (two pairs sharing a
-``created`` stamp), one intent file whose ``## Purpose`` body runs past the 20-line clip,
-and one decision record the order and the intent both cite. It travels as a tar rather
+root the brief reads -- 11 order entries, one intent file whose ``## Purpose`` body runs
+past the 20-line clip, and one decision record the order and the intent both cite. It travels as a tar rather
 than a directory because a repository's own ``index`` and pack files are binary and the
 purity suites below read every file under ``tests/fixtures/`` as text. It is unpacked, not
 symlinked, into the caller's ``tmp_path`` and its ``.git`` is renamed to ``.git-brief``
@@ -55,56 +54,12 @@ RECORD_ID = "2026-10-01-brief"
 # computed against, and the byte-equality cases depend on it appearing in both commands.
 NOW = "2026-10-27T09:00:00Z"
 
-# The stamps the fixture's twelve candidates carry, newest first, and the id the order's one
-# item entry cites. Named here so the ordering cases state the fixture's own data rather than a
-# number a reader has to go and count in the committed tree, and so a rebuild of the fixture
-# that changes one of them fails a case instead of quietly proving less.
-CREATED_NEWEST = "2026-10-24T09:00:00Z"
-CREATED_TIED = ("idea-0001", "idea-0002")
-ORDER_CITATION = "idea-0009"
-
 # The ``confirmed`` stamp every order entry of the fixture carries, and the date the decided record is
 # dated. An entry confirmed outside the census's staleness window of :data:`NOW` is reported
 # ``ordering-stale``, and a record dated after the brief instant is dated a day the tree has not seen;
 # both would put a row in the verdict line the read-only cases assert byte for byte. Named here so the
 # builder writes the stamp and the cases that reason about staleness read the same value.
 CONFIRMED = "2026-10-26T00:00:00Z"
-
-# The twelve candidates grouped by the ``created`` stamp they carry, newest stamp first. The
-# fixture's own statement of who was created when, and the single source the builder of
-# ``tests/fixtures/brief.tar`` writes those stamps from: a case that asks what the newest-first
-# block must print and the file that puts the stamps on disk read one table, so the pair cannot
-# disagree about which ideas tie. Four of the eight instants carry a pair, and the pair named by
-# :data:`CREATED_TIED` is the one whose order the tie-break decides.
-ITEM_STAMPS: dict[str, tuple[str, ...]] = {
-    "2026-10-24T09:00:00Z": ("idea-0001", "idea-0002"),
-    "2026-10-24T08:00:00Z": ("idea-0007",),
-    "2026-10-22T09:00:00Z": ("idea-0003", "idea-0004"),
-    "2026-10-22T08:00:00Z": ("idea-0008",),
-    "2026-10-20T09:00:00Z": ("idea-0005", "idea-0006"),
-    "2026-10-20T08:00:00Z": ("idea-0009",),
-    "2026-10-18T08:00:00Z": ("idea-0010", "idea-0011"),
-    "2026-10-16T08:00:00Z": ("idea-0012",),
-}
-
-# What each candidate is called, keyed by id. The titles are the text the page prints, and two cases
-# edit one of them out of the committed file to build their own scenario, so the words live beside the
-# stamps the builder writes them from: a rebuild that renamed an item would fail those cases with a
-# message that names the title instead of a missing-substring failure a reader has to trace.
-ITEM_TITLES: dict[str, str] = {
-    "idea-0001": "Cache the census result",
-    "idea-0002": "Replay a decision into a fresh clone",
-    "idea-0003": "Show the kill list beside the queue",
-    "idea-0004": "One screen for the whole direction",
-    "idea-0005": "Carry the rationale into the order",
-    "idea-0006": "Name the state root in every refusal",
-    "idea-0007": "Keep the order short",
-    "idea-0008": "Read the ledger once per run",
-    "idea-0009": "Explain a failing census",
-    "idea-0010": "Print the queue the operator set",
-    "idea-0011": "Bound every foreign message",
-    "idea-0012": "Leave the tree exactly as it was",
-}
 
 # The fixture's purpose body, first line first. The two clip cases count against this tuple, so
 # the committed file and the cases that depend on its length are one fact rather than two.
@@ -122,12 +77,12 @@ PURPOSE_LINES: tuple[str, ...] = (
     "An unreadable file is never the same report as an absent one.",
     "The brief is four blocks and a verdict, and it never writes.",
     "A tool that could not read its input does not call the tree clean.",
+    "An order names issues; the tracker holds what each one is about.",
     "Every foreign message is scrubbed and bounded before it is printed.",
     "Adapters live outside the core and the core stays viable without them.",
     "A page that is true today and false in two hundred pull requests",
     "is not documentation, so this file states principles, not steps.",
     "Position in the queue is the operator's word and nobody else's.",
-    "An item is one idea, filed once, and its reason is never deleted.",
     "Steering never answers for the operator; a question stays a question.",
     "The intent file is read first at session start and capped at a page.",
     "Superseding is the correction; the original record keeps its place.",
@@ -139,7 +94,6 @@ PURPOSE_LINES: tuple[str, ...] = (
 # The state-root paths the brief reads, spelled once for the cases that plant one of them.
 INTENT_REL = "noni/direction/intent.md"
 ORDER_REL = "noni/direction/order.json"
-ITEMS_REL = "noni/items"
 DECISIONS_REL = "noni/decisions"
 
 # The line the brief's read-fault blocks print, and the verdict it prints when the census
@@ -180,43 +134,16 @@ def plant_brief_tree(tmp_path: Path, name: str = "repo") -> Path:
 
 
 def write_order_entries(root: Path, entries: list[dict]) -> None:
-    """Replace the ordering artifact with ``entries``, in the version they are entries of.
+    """Replace the ordering artifact with ``entries``, in the version the artifact has.
 
     Written through the writer's own renderer rather than as hand-typed JSON: the brief refuses
     an order the writer would render differently, so a case that composed its own bytes would
-    reach the block's "not readable" answer instead of the row it meant to test. The version is
-    derived from the entries themselves, which is what makes an ``item`` entry a ``/2`` document
-    and a list of issues a ``/1`` one, exactly as ``order.py`` decides.
+    reach the block's "not readable" answer instead of the row it meant to test.
     """
     from noni import orderschema
 
-    schema = (orderschema.ORDER_SCHEMA_V2
-              if orderschema.has_item_entry(entries) else orderschema.ORDER_SCHEMA)
     order_path(root).write_bytes(orderschema.order_bytes(
-        {"schema": schema, "entries": entries}))
-
-
-def write_item(root: Path, item_id: str, title: str, created: str,
-               status: str | None = None) -> Path:
-    """One item file of the store, written in the bytes the store's own writer writes.
-
-    Used by the cases that need an item the fixture does not carry -- a title holding a control
-    byte, an id at the length the schema's bound allows -- rather than by editing one of the
-    fixture's twelve. The bytes come from :func:`noni.itemschema.item_bytes` so the file is what
-    a real store holds and the listing has no reason to refuse it for a reason of its own.
-    """
-    from noni import itemschema
-
-    body = itemschema.entry(item_id, title, status or itemschema.STATUS_CANDIDATE, created)
-    path = item_path(root, item_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(itemschema.item_bytes(body))
-    return path
-
-
-def item_path(root: Path, item_id: str) -> Path:
-    """The store path of one candidate of the fixture, spelled from the fixture's own id."""
-    return root / ITEMS_REL / f"{item_id}.json"
+        {"schema": orderschema.ORDER_SCHEMA, "entries": entries}))
 
 
 def order_path(root: Path) -> Path:

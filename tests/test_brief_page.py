@@ -12,7 +12,6 @@ from pathlib import Path
 
 from brief_fixtures import (
     NOW,
-    ORDER_CITATION,
     PURPOSE_LINES,
     intent_path,
     plant_brief_tree,

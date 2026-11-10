@@ -27,7 +27,7 @@ _CENSUS = REPO / "skills" / "census" / "scripts" / "census.py"
 # scale, so the scenario is identical across builds and hosts.
 BASE = datetime(2026, 10, 1, 0, 0, 0, tzinfo=timezone.utc)
 NOW = (BASE + timedelta(days=3)).isoformat().replace("+00:00", "Z")
-STALE_AFTER = "2"  days: the planted fault (day 0) is 3 days old at --now
+STALE_AFTER = "2"  # days: the planted fault (day 0) is 3 days old at --now
 
 # The committed ordering, one entry per worked issue: issue 1 holds position 1
 # and issue 2 position 2, each citing the decision record that set its position.

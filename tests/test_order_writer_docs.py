@@ -112,13 +112,13 @@ def test_both_usage_texts_put_the_verb_before_the_flags():
     each command line of SKILL.md is read
     through the one reader the help is compared with, so the two halves of AC1
     cannot be checked against two different readings of a line. That reader also
-    holds the count: one line per verb plus the second ``add`` line spelling the
-    ``--item`` form, so a page that dropped or duplicated a verb fails here.
+    holds the count: one line per verb, so a page that dropped or duplicated a verb
+    fails here.
     """
     doc = docstring_verb_lines()
-    assert len(doc) == 5, f"the docstring prints {len(doc)} verb lines: {doc}"
+    assert len(doc) == 4, f"the docstring prints {len(doc)} verb lines: {doc}"
     pages = skill_md_verb_lines()
-    assert len(pages) == 5, f"SKILL.md prints {len(pages)} verb lines: {pages}"
+    assert len(pages) == 4, f"SKILL.md prints {len(pages)} verb lines: {pages}"
 
     for line in doc:
         assert_verb_precedes_flags(line, f"order.py docstring {line!r}")
@@ -136,12 +136,10 @@ def test_both_usage_texts_put_the_verb_before_the_flags():
             out.append(words[words.index("REPO") + 1])
         return out
 
-    # One verb per line, in document order, with ``add`` twice: the issue form and
-    # the ``--item`` form of the same verb, which is why the two pages print five.
-    assert verbs(doc) == [*VERBS[:1], *VERBS], verbs(doc)
-    assert verbs(pages) == [*VERBS[:1], *VERBS], verbs(pages)
-    for doc_line, page_line, verb in zip(doc, pages, (*VERBS[:1], *VERBS),
-                                         strict=True):
+    # One verb per line, in document order: each of the four verbs once.
+    assert verbs(doc) == list(VERBS), verbs(doc)
+    assert verbs(pages) == list(VERBS), verbs(pages)
+    for doc_line, page_line, verb in zip(doc, pages, VERBS, strict=True):
         assert _doc_usage_flags(f"Usage:\n    {doc_line}") == \
             _doc_usage_flags(f"Usage:\n    {page_line}"), (
             f"the {verb} line differs between the docstring and SKILL.md: "

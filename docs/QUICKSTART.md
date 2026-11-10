@@ -184,9 +184,7 @@ your project. `intent-draft.md` starts from
 `skills/direction/references/intent-template.md`, which validates as it stands;
 the writer restamps its `Last-confirmed:` line to this run's UTC day and commits
 the file as `intent: <record-id>`. Both direction files are optional: a project
-that has written neither earns no `intent` (51) or `ordering` rows at all. The
-item store is optional in the same way: `item.py add` is what creates
-`noni/items/`, and a team that files no idea never makes it.
+that has written neither earns no `intent` (51) or `ordering` rows at all.
 
 The census reads only the tree `--repo`
 names, so the code repository's tracked files never enter it — and its hygiene
@@ -249,8 +247,8 @@ run.
 Run it without `--strict`, and gate the build on these two sets, which are the
 census's own classes split by their default severity:
 
-- **fail the build** on 10, 12, 15, 20, 51, 52, 53, 54 and 55;
-- **report without failing** on 41, 42, 45, 46, 50, 56 and 57.
+- **fail the build** on 10, 12, 15, 20 and 51;
+- **report without failing** on 41, 42, 45, 46 and 50.
 
 `skills/census/SKILL.md` owns that table with the class names beside each code.
 A warning never moves the exit code on its own, so a first CI run on a tree with
@@ -277,8 +275,7 @@ per-issue state, worktree claims and a queue. noni does not compete with it.
   That is the state this page documents for such a team, and the state is that
   `noni/sessions/` **does not exist**: do not create it as an empty directory.
   A tree that holds no claim files is a clean state, and the census adds no row
-  for an artifact it was never given, the same way it adds none for an item
-  store nobody has filed an idea into.
+  for an artifact it was never given.
 
 ## The deny-list, and why --strict fails on a fresh attach
 

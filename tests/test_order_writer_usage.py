@@ -104,7 +104,7 @@ def test_the_rendered_usage_leads_the_flag_block_of_the_docstring_block(tmp_path
     rendered = first_usage_line(_order(_repo(tmp_path), "--help").stdout)
     assert_verb_precedes_flags(rendered, "order.py --help")
     lines = docstring_verb_lines()
-    assert len(lines) == 5, f"expected one line per verb plus add --item: {lines}"
+    assert len(lines) == 4, f"expected one line per verb: {lines}"
     for line in lines:
         assert " --repo REPO " in line, f"Usage line does not name --repo: {line!r}"
         assert_verb_precedes_flags(line, f"docstring Usage line {line!r}")
@@ -118,7 +118,7 @@ def test_skill_md_and_the_help_name_the_same_verb_first_form(tmp_path):
     accepts.
     """
     documented = skill_md_verb_lines()
-    assert len(documented) == 5, f"SKILL.md documents {len(documented)} order lines"
+    assert len(documented) == 4, f"SKILL.md documents {len(documented)} order lines"
     for line in documented:
         assert_verb_precedes_flags(line, f"skills/direction/SKILL.md {line!r}")
 

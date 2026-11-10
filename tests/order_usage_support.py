@@ -113,11 +113,8 @@ def docstring_verb_lines() -> list[str]:
     Read from the shipped source through ``order_fixtures``, so the assertion
     holds the product's text and not a copy kept in a test file.
 
-    ``add`` is printed twice -- once for an issue, once for ``--item`` -- and both
-    lines describe the one verb, so the count the tests hold these to is the count
-    of verbs, not of lines. The second ``add`` line is refused here if the first is
-    missing, which is what keeps "five lines" a document with two ``add`` forms
-    rather than a page that duplicated some other verb.
+    One line per verb, four verbs: no verb has a second subject form, so the count
+    the tests hold a document to is the count of verbs and of lines at once.
     """
     doc = _docstring(_order_ast())
     return usage_verb_lines(doc.splitlines(), "order.py --repo REPO",
@@ -141,8 +138,7 @@ def usage_verb_lines(lines: list[str], prefix: str, where: str) -> list[str]:
 
     Shared by the two documents so the shape they are held to is one shape: every
     line names a verb the parser accepts, and the verbs covered are exactly
-    :data:`VERBS` -- each one present, none repeated beyond the ``add`` pair that
-    spells the issue and the item form of the same verb.
+    :data:`VERBS` -- each one present once, since no verb has a second subject form.
     """
     found = [line.strip() for line in lines if line.strip().startswith(prefix)]
     assert found, f"{where} prints no order command lines"
@@ -151,15 +147,9 @@ def usage_verb_lines(lines: list[str], prefix: str, where: str) -> list[str]:
         verb = line.split()[3]
         assert verb in VERBS, f"unexpected verb in {where}: {line!r}"
         covered.append(verb)
-    assert sorted(set(covered)) == sorted(VERBS), (
-        f"{where} covers {sorted(set(covered))}, not {sorted(VERBS)}: {found}")
-    repeated = [verb for verb in VERBS if covered.count(verb) > 1]
-    assert repeated == ["add"], (
-        f"{where} prints more than the issue and item forms of add: {found}")
-    assert sorted(covered) == sorted([*VERBS, "add"]), (
-        f"{where} prints {covered}, expected one line per verb plus the add --item "
-        f"form: {found}")
-    item_lines = [line for line in found if "--item" in line]
-    assert len(item_lines) == 1 and "add --item" in item_lines[0], (
-        f"{where} does not print exactly one 'add --item' form: {found}")
+    assert sorted(covered) == sorted(VERBS), (
+        f"{where} must print exactly one line per verb, one of each of "
+        f"{sorted(VERBS)}: {found}")
+    assert not [line for line in found if "--item" in line], (
+        f"{where} still prints the removed item form of add: {found}")
     return found

@@ -5,7 +5,7 @@ written as though they were ordinary documents: a ``NaN`` or ``Infinity`` litera
 an overflowed number that decodes to ``inf`` with no token to stop, a key stated
 twice (last one wins), and a document nested deep enough to make the decoder
 recurse past the interpreter's limit. Each of those is refused here, so a reader
-that reaches an artifact, a decision record or an item file says "not what this
+that reaches an artifact or a decision record says "not what this
 product wrote" instead of inventing a document out of the file's shape.
 
 The census holds its own copy of these rules (``noni.census_json``) for the one

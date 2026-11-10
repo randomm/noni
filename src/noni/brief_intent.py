@@ -4,7 +4,7 @@ Split from ``brief.py`` for the 500-line source cap (``tests/test_file_size_limi
 along the seam the tool already had: ``brief.py`` owns the command line, the budget, the
 blocks and what each prints, and this module owns the single read of
 ``noni/direction/intent.md`` that is not one line of output. The other artifact reads of
-the tool (the order, the item store, the census run) are borrowed from the modules that
+the tool (the order, the census run) are borrowed from the modules that
 own them; this file is the one read the brief had to write itself, so it is the one file
 beside the tool that holds it.
 

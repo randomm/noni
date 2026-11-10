@@ -37,7 +37,7 @@ def test_the_arbiter_copy_of_the_rationale_bound_is_the_owner():
     owner = product_why_max()
     copy = arbiter_why_max()
     assert copy == owner, (
-        f"the ordering arbiter holds {copy} and the item store owns {owner}: a reason "
+        f"the ordering arbiter holds {copy} and the rationale rule owns {owner}: a reason "
         "the writer emits is an artifact this class faults, and no verb can rewrite "
         "what the writer will not re-render")
 
@@ -195,10 +195,17 @@ def test_the_schema_reports_the_first_defect_it_finds(tmp_path):
     assert schema.problems([]), "a list is not an order"
     assert schema.problems({"entries": []}), "no schema key"
     assert schema.problems({"schema": "noni.order/3", "entries": []}), "wrong schema"
-    # ``noni.order/2`` is a version the writer reads and emits, not a defect: it is
-    # the shape of an order whose entries cite items (#123).
-    assert schema.problems({"schema": "noni.order/2", "entries": []}) == [], \
-        "the item version is a schema, not a defect"
+    # ``noni.order/2`` is a version no reader accepts: the item store that stamped
+    # it was removed, so a file that still states it is a pre-removal artifact and
+    # the refusal names the repair rather than the wrong-schema sentence.
+    migrated = schema.problems({"schema": "noni.order/2", "entries": []})
+    assert migrated and "item entries are no longer supported" in migrated[0], migrated
+    # An entry that still carries the removed key is answered the same way, and only
+    # that way: the entry rules do not also report it as a missing or unknown field.
+    keyed = schema.problems({"schema": schema.ORDER_SCHEMA, "entries": [
+        {"item": "idea-0001", "decision": "2026-10-01-baseline",
+         "confirmed": "2026-10-26T00:00:00Z"}]})
+    assert keyed and all("item entries are no longer supported" in p for p in keyed), keyed
     assert schema.problems({"schema": schema.ORDER_SCHEMA, "extra": 1,
                             "entries": []}), "unknown field"
     assert schema.problems({"schema": schema.ORDER_SCHEMA, "entries": {}}), "entries not a list"

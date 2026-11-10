@@ -57,11 +57,11 @@ def test_unparseable_bytes_are_a_finding_at_fifteen(tmp_path):
 
 
 def test_a_wrong_schema_is_a_finding(tmp_path):
-    """A schema neither version owns is a finding; ``noni.order/2`` is not.
+    """A schema the artifact does not have is a finding naming the one it does.
 
-    ``/2`` was the wrong-schema case until item entries landed (#123): an entry may
-    now name an idea instead of an issue, and the version that carries it is a
-    version the census reads. The three shapes that remain are ones no writer emits.
+    The version the item store stamped an order with is no longer one of these
+    shapes: it is reported as a migration, on the same code but with the repair
+    named, and holds its own case below. The three here are ones no writer emits.
     """
     for schema in ("noni.order/3", "noni.order/0", "orders/1"):
         repo = _repo(tmp_path, schema.replace(".", "-").replace("/", "-"))
@@ -71,18 +71,19 @@ def test_a_wrong_schema_is_a_finding(tmp_path):
         assert "noni.order/1" in rows[0]["message"], rows[0]
 
 
-def test_an_empty_order_of_the_item_version_is_clean(tmp_path):
-    """``noni.order/2`` is a version the census reads, not a defect.
+def test_an_empty_order_of_the_removed_item_version_is_reported(tmp_path):
+    """``noni.order/2`` is a version no reader accepts, empty entries or not.
 
-    The empty entries list is the state an operator reaches by removing everything;
-    the version marker alone is no finding, and the writer emits ``/2`` only when an
-    entry holds an item, so a ``/2`` file with no entries is one the writer produced
-    earlier and then emptied.
+    The item store and its version marker were removed, so a file that still states
+    them is a pre-removal artifact rather than an order, and there is no empty-order
+    exemption for it: a run that read it as clean would tell the operator their order
+    is fine while every verb refuses to touch the file. The row names the repair.
     """
     repo = _repo(tmp_path, "v2-empty")
     _order(repo, json.dumps({"schema": "noni.order/2", "entries": []}))
-    code, _rows, _out, _err = _run(repo)
-    assert code == 0, f"a /2 order is read, not faulted: {code} {_rows}"
+    code, rows, _out, _err = _run(repo)
+    assert code == 15, f"a /2 order is reported, not read: {code} {rows}"
+    assert "item entries are no longer supported" in rows[0]["message"], rows[0]
 
 
 def test_the_malformed_shapes_are_all_reported(tmp_path):
@@ -380,10 +381,10 @@ def test_a_file_the_writer_emits_is_never_the_file_this_class_faults(tmp_path):
 
     ``MALFORMED_SHAPES`` proves the two sides agree about what is *wrong*. It says
     nothing about a shape one side refuses while the other calls clean -- which is the
-    direction that ruins an operator, because a ``/2`` file the census faults and no
-    verb can rewrite has no remedy at all: the writer will not touch it and the census
-    keeps reporting it. The clean table is the shared one
-    (``tests/ordering_shapes.py``), so the ``/2`` entry the writer emits is driven
+    direction that ruins an operator, because a file the census faults and no verb can
+    rewrite has no remedy at all: the writer will not touch it and the census keeps
+    reporting it. The clean table is the shared one
+    (``tests/ordering_shapes.py``), so whatever the writer emits is driven
     through the arbiter here and cannot drift from it.
     """
     for index, (label, body) in enumerate(sorted(CLEAN_SHAPES.items())):

@@ -43,14 +43,6 @@ PRODUCT_MODULES = (
     "src/noni/census_hygiene.py",
     "src/noni/census_hygiene_rows.py",
     "src/noni/census_intent.py",
-    "src/noni/census_items.py",
-    "src/noni/census_items_citations.py",
-    "src/noni/census_items_names.py",
-    "src/noni/census_items_probe.py",
-    "src/noni/census_items_run.py",
-    "src/noni/census_items_gate.py",
-    "src/noni/census_items_ledger_reads.py",
-    "src/noni/census_items_readers.py",
     "src/noni/census_intent_readers.py",
     "src/noni/census_json.py",
     "src/noni/census_row.py",
@@ -76,13 +68,6 @@ PRODUCT_MODULES = (
     "src/noni/intent.py",
     "src/noni/intentschema.py",
     "src/noni/intentschema_headings.py",
-    "src/noni/item.py",
-    "src/noni/item_guard.py",
-    "src/noni/item_cli.py",
-    "src/noni/item_reads.py",
-    "src/noni/item_reads_order.py",
-    "src/noni/itemschema.py",
-    "src/noni/item_write.py",
     "src/noni/labels.py",
     "src/noni/order.py",
     "src/noni/order_gitwrite.py",
@@ -91,8 +76,6 @@ PRODUCT_MODULES = (
     "src/noni/order_json.py",
     "src/noni/order_plan.py",
     "src/noni/order_read.py",
-    "src/noni/item_promote.py",
-    "src/noni/item_promote_verb.py",
     "src/noni/order_probe.py",
     "src/noni/orderschema.py",
     "src/noni/orderstate.py",
@@ -131,13 +114,6 @@ DECIDE = STEERING_SKILL / "decide.py"
 ORDER = DIRECTION_SKILL / "order.py"
 INTENT = DIRECTION_SKILL / "intent.py"
 CENSUS = CENSUS_SKILL / "census.py"
-
-# The item writer has no skill directory yet (the items skill is its own
-# ticket), so its entry point is a thin in-place wrapper under scripts/, the same
-# shape as the other tools' wrappers: running a package module by path fails on
-# its relative imports, and the wrapper is what makes the in-place form and
-# ``noni item`` print the same bytes.
-ITEM = REPO / "scripts" / "item.py"
 
 # The four tools the ``noni`` command dispatches: subcommand -> the wrapper that
 # must produce the same bytes. The shell census entry point is the other

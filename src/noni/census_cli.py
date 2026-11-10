@@ -26,7 +26,6 @@ import argparse
 
 from . import labels
 from .census_render import (
-    ITEM_STALE_AFTER_DEFAULT,
     ORDERING_CLOSED_NOT_EVALUATED,  # noqa: F401  (doc scraper)
     ORDERING_STALE_AFTER_DEFAULT,
     _warn_class_names,

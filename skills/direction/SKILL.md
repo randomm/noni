@@ -138,7 +138,7 @@ entry whose `decision` is `null`, blank or absent is not an order this writer
 writes (exit 4, naming the entry) and the census reports it as
 `ordering-malformed` (15) -- a position nobody can look up is a position nobody
 decided. `confirmed` is the UTC timestamp the writer stamped when the operator
-last confirmed the entry. `why` is optional: an entry written without it holds the three fields it held before the field existed, byte for byte, and `add --why REASON` records the operator's one line of reason for the position. It obeys the same rule a decision record's rationale obeys: one non-blank line within the 280-character bound `itemschema.WHY_MAX` states, counted in code points, refused at the flag (exit 2) and reported by both censuses naming the field `why`. A move or a confirm restamps an entry and never drops the reason it carries.
+last confirmed the entry. `why` is optional: an entry written without it holds the three fields it held before the field existed, byte for byte, and `add --why REASON` records the operator's one line of reason for the position. It obeys the same rule a decision record's rationale obeys: one non-blank line within the 280-character bound `_why.WHY_MAX` states, counted in code points, refused at the flag (exit 2) and reported by both censuses naming the field `why`. A move or a confirm restamps an entry and never drops the reason it carries.
 
 **An entry can order an idea as well as an issue.** `add --item ID` writes an
 `item` entry: the id of a file under `noni/items/`, which is what makes the
@@ -209,7 +209,7 @@ verb that shortens the list.
 what makes a run -- and the census run that judges its staleness -- reproducible
 from the command line alone. A `--now` with no UTC offset is refused.
 
-`--why` belongs to `add` alone: `add --why REASON` records the reason for taking a position, and `move`, `remove` and `confirm` answer to an entry that already exists, so a run that hands one of them a reason is refused at the flag (exit 2) rather than dropping what the operator typed. The value is the ledger's one-line rule at the shared 280-character rationale bound: a blank, a padded, a multi-line or an over-long reason is refused the same way, on the same code, and nothing is written for a refusal. The number has one owner (`itemschema.WHY_MAX`), shared with a decision record's `why` and an item's reason, so a reason that fits in one fits everywhere.
+`--why` belongs to `add` alone: `add --why REASON` records the reason for taking a position, and `move`, `remove` and `confirm` answer to an entry that already exists, so a run that hands one of them a reason is refused at the flag (exit 2) rather than dropping what the operator typed. The value is the ledger's one-line rule at the shared 280-character rationale bound: a blank, a padded, a multi-line or an over-long reason is refused the same way, on the same code, and nothing is written for a refusal. The number has one owner (`_why.WHY_MAX`), shared with a decision record's `why`, so a reason that fits in one fits everywhere.
 
 `--no-commit` writes through the same validation chain and stops before git: no
 `git add`, no `git commit`, and one line on stdout saying the file is left

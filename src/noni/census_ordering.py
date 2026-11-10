@@ -196,7 +196,7 @@ def order_problems(value: object, parse_iso, names_zone) -> list[str]:
         problems.append("unknown field(s): " + ", ".join(extra))
     if "schema" in value and value["schema"] not in ORDER_SCHEMAS:
         problems.append("schema is " + repr(value["schema"]) + ", not "
-                        + " or ".join(repr(name) for name in ORDER_SCHEMAS))
+                        + repr(ORDER_SCHEMA))
     entries = value.get("entries")
     if entries is None:
         return problems

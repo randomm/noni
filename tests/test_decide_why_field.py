@@ -30,8 +30,8 @@ from decide_fixtures import (
     _record_path,
 )
 
-# The bound the item store's reason field has always had, named as the ledger's too:
-# one number owns every rationale in the product (itemschema.WHY_MAX), and this suite
+# The bound every rationale in the product answers to: one number owns them all
+# (_why.WHY_MAX), and this suite
 # reads it rather than copying it -- a copy here would keep these runs green the day the
 # owner moves, which is the drift the constant exists to prevent.
 from ledger_schema_fixtures import product_why_max
@@ -174,14 +174,14 @@ def test_the_bound_is_the_shared_one_and_counts_characters_not_bytes(tmp_path):
 
 def test_the_bound_is_stated_by_one_owner_in_the_source():
     """One number for the product's rationales: the ledger and the order read it from
-    the item store's module, so no writer or doc carries a second bound to drift.
+    the rationale rule's own module, so no writer or doc carries a second bound to drift.
 
     The mutation it survives: the bound spelled as a literal in a second module, which
     reads the same today and diverges the day someone widens one of the two.
     """
-    from noni import _why, itemschema
+    from noni import _why
 
-    assert itemschema.WHY_MAX == WHY_MAX
+    assert _why.WHY_MAX == WHY_MAX
     assert _why.why_max() == WHY_MAX
     assert _why.WHY_FIELD == FIELD
 

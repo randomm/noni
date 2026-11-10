@@ -30,7 +30,7 @@ from __future__ import annotations
 # ``__file__`` pointing at wherever the loader chose, so a neighbour is looked for
 # beside this file first and then in the source tree's package directory.
 _IMPORT_ERROR = ImportError
-_ITEM_SEARCH = ("", "noni")
+_SEARCH = ("", "noni")
 
 
 def _neighbour(name: str):
@@ -45,7 +45,7 @@ def _neighbour(name: str):
         from pathlib import Path
 
         here = Path(__file__).resolve().parent
-        roots = [here] + [here.parent / part for part in _ITEM_SEARCH
+        roots = [here] + [here.parent / part for part in _SEARCH
                           if (here.parent / part / f"{name}.py").is_file()]
         for root in roots:
             source = root / f"{name}.py"

@@ -1,13 +1,13 @@
 """The artifact's shape: the bytes ``order.py`` writes and the rules it obeys.
 
 Mechanics, not the writer's contract: what an order looks like on disk, the one
-rendering the writer emits for each schema version, and the checks that decide
+rendering the writer emits, and the checks that decide
 whether a file already at the path is an order this writer may extend.
 ``order.py`` owns the verbs, the exit codes and the commit; this module owns the
 form, so the census's arbiter and the writer's refusal are held to one definition
 rather than two.
 
-Two versions are read into the product's history and one is written. ``noni.order/1``
+One version is written and one is read. ``noni.order/1``
 is the only artifact this writer writes: each entry names an issue. The item store and
 its ``noni.order/2`` marker were removed, so a file that still states ``/2`` or carries
 an entry with an ``item`` key is not silently rewritten down to ``/1``: every reader and
@@ -90,8 +90,9 @@ ORDER_REL = f"{ORDER_DIR}/{ORDER_FILE}"
 # same rule a record's rationale obeys.
 ENTRY_FIELDS = ("issue", "decision", "confirmed", WHY_FIELD)
 
-# The key the item store used to give an entry its citation. Named here so the writer,
-# the arbiter and the census all refuse the same key with one sentence, and so the
+# The key the item store used to give an entry its citation, and the repair sentence
+# every reader gives a file that still carries it. Named here so the writer, the
+# arbiter and the census all refuse the same key with one sentence, and so the
 # migration message is spelled in one place rather than three.
 ITEM_FIELD = "item"
 MIGRATION_HINT = ("item entries are no longer supported: re-add each one with "
@@ -134,7 +135,7 @@ def migration_problems(value: object) -> list[str]:
     """Why ``value`` is a pre-removal order that no verb may rewrite, [] when it is not.
 
     Two shapes, both answered with the one repair sentence: a document that still
-    states the item version's marker, and an entry that still carries the item key.
+    states the removed version's marker, and an entry that still carries the item key.
     Neither is read as a ``/1`` order and neither is quietly restamped -- the writer
     rebuilds the whole list on every verb, so accepting either would delete the
     operator's entry. The answer is a refusal naming the repair, and it is asked by
@@ -169,7 +170,7 @@ def order_bytes(body: dict) -> bytes:
     newline. ``allow_nan=False`` is the whole refusal of a non-finite number.
 
     The version is the body's own ``schema``, and each entry is projected through the
-    fields the version documents -- ``issue``, then the optional ``why`` last when the
+    fields the artifact documents -- ``issue``, then the optional ``why`` last when the
     entry carries one. A projection named from a constant rather than the entry's own
     keys is what makes the canonical comparison mean something: a renderer that handed
     back the file's keys verbatim would certify any bytes, and a renderer that dropped
@@ -179,8 +180,8 @@ def order_bytes(body: dict) -> bytes:
     """
     schema = body.get("schema")
     # The projection is the whole point of the renderer: a document's bytes are its
-    # version's documented keys and nothing else, so an entry written by hand with a
-    # key the version never declared cannot be rendered and is refused as non-canonical
+    # documented keys and nothing else, so an entry written by hand with a
+    # key it never declared cannot be rendered and is refused as non-canonical
     # rather than quietly reformatted. Dropping the unknown key on the way out would let
     # the canonical comparison certify bytes the reader itself had just changed.
     entries = [{field: e[field] for field in ENTRY_FIELDS if field in e}
@@ -234,7 +235,7 @@ def problems(value: object) -> list[str]:
         found.append("unknown field(s): " + ", ".join(extra))
     if "schema" in value and value["schema"] not in ORDER_SCHEMAS:
         found.append("schema is " + repr(value["schema"]) + ", not "
-                     + " or ".join(repr(name) for name in ORDER_SCHEMAS))
+                     + repr(ORDER_SCHEMA))
     if "entries" not in value:
         # The document's own fields are the whole answer: there is nothing to
         # check inside a list the file does not have.
@@ -382,7 +383,7 @@ def load_json_checked(raw: bytes, depth: int | None = None) -> object:
     """The value ``raw`` holds, refusing what this writer could never have written.
 
     The strict reader lives in :mod:`noni.order_json` beside the four refusals it
-    applies; this is the name every reader of an artifact, an item or a decision
+    applies; this is the name every reader of an artifact or a decision
     record calls, so the contract has one entry point and the file that explains it
     is the file that implements it. ``depth`` defaults to the reader's own bound.
     """

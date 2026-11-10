@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "noni-noni"
 dynamic = ["version"]
-description = "Attachable product-direction layer: steering ledger, backlog ordering, item store, census"
+description = "Attachable product-direction layer: steering ledger, backlog ordering, census"
 requires-python = ">=3.11"
 dependencies = []
 
@@ -70,7 +70,7 @@ where = ["src"]
 version = { attr = "noni.__version__" }
 
 # One console command, one subcommand per tool (census, decide, order, intent,
-# item, brief). The dispatch module holds no behaviour of its own.
+# brief). The dispatch module holds no behaviour of its own.
 [project.scripts]
 noni = "noni.cli:main"
 
@@ -136,14 +136,7 @@ include = [
     "src/noni/census_hygiene.py",
     "src/noni/census_hygiene_rows.py",
     "src/noni/census_intent.py",
-    "src/noni/census_items.py",
-    "src/noni/census_items_citations.py",
-    "src/noni/census_items_names.py",
-    "src/noni/census_items_probe.py",
-    "src/noni/census_items_run.py",
-    "src/noni/census_items_gate.py",
-    "src/noni/census_items_ledger_reads.py",
-    "src/noni/census_items_readers.py",
+    "src/noni/census_group_gate.py",
     "src/noni/census_intent_readers.py",
     "src/noni/census_json.py",
     "src/noni/census_row.py",
@@ -169,13 +162,6 @@ include = [
     "src/noni/intent.py",
     "src/noni/intentschema.py",
     "src/noni/intentschema_headings.py",
-    "src/noni/item.py",
-    "src/noni/item_guard.py",
-    "src/noni/item_cli.py",
-    "src/noni/item_reads.py",
-    "src/noni/item_reads_order.py",
-    "src/noni/itemschema.py",
-    "src/noni/item_write.py",
     "src/noni/labels.py",
     "src/noni/order.py",
     "src/noni/order_gitwrite.py",
@@ -184,8 +170,6 @@ include = [
     "src/noni/order_json.py",
     "src/noni/order_plan.py",
     "src/noni/order_read.py",
-    "src/noni/item_promote.py",
-    "src/noni/item_promote_verb.py",
     "src/noni/order_probe.py",
     "src/noni/orderschema.py",
     "src/noni/orderstate.py",

@@ -32,8 +32,8 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import census_intent as _intent
 from . import census_group_gate as _group_gate
+from . import census_intent as _intent
 from . import census_json as _census_json
 from . import census_ordering as _ordering
 from . import census_ordering_readers as _ordering_readers

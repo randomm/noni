@@ -27,7 +27,7 @@ from pathlib import Path
 
 from _harness import ORDER, REPO, _git, git_pin_date, subprocess_env
 
-from noni.itemschema import WHY_MAX
+from noni._why import WHY_MAX
 
 CENSUS = REPO / "skills" / "census" / "scripts" / "census.py"
 ORDER_REL = "noni/direction/order.json"
@@ -73,18 +73,8 @@ def _entries(raw_entries: str) -> str:
     return '{"schema": "noni.order/1", "entries": ' + raw_entries + "}"
 
 
-def _entries_v2(raw_entries: str) -> str:
-    """``_entries`` at the item version, for the shapes only ``/2`` can carry.
-
-    The version is the document's own claim about its entries' shape, so a ``/2``
-    shape has to be spelled as a ``/2`` document: an ``item`` inside a ``/1`` file is
-    a different defect (the unknown-field rule) and is tabled separately.
-    """
-    return '{"schema": "noni.order/2", "entries": ' + raw_entries + "}"
-
-
-# The two fields every entry has always carried, spelled once for the ``/2`` shapes so
-# a table row says what differs about the entry rather than repeating what does not.
+# The two fields every entry carries beside its subject, spelled once so a table row
+# says what differs about the entry rather than repeating what does not.
 _ENTRY_TAIL = '"decision": "2026-10-01-baseline", "confirmed": "2026-10-26T00:00:00Z"'
 
 
@@ -201,29 +191,16 @@ MALFORMED_SHAPES: dict[str, tuple[str, str]] = {
     "why is null": (_entries(
         '[{"issue": 1, "decision": "2026-10-01-baseline", '
         '"confirmed": "2026-10-26T00:00:00Z", "why": null}]'), "why"),
-    # --- the ``noni.order/2`` entries, where an entry may cite an item ------------
-    # The whole ``/2`` set is tabled here rather than only in the item suites because
-    # this table is what holds the two rule sets together: a ``/2`` file the writer
-    # emits and the arbiter calls malformed is the drift these rows exist to catch,
-    # and it is exactly the bug a ``/2`` entry that owes *both* subjects produced.
-    "item listed twice": (_entries_v2(
-        '[{"item": "idea-0001", ' + _ENTRY_TAIL + '}, '
-        '{"item": "idea-0001", ' + _ENTRY_TAIL + '}]'),
-        "appears more than once"),
-    "item names both subjects": (_entries_v2(
-        '[{"item": "idea-0001", "issue": 7, ' + _ENTRY_TAIL + '}]'),
-        "exactly one"),
-    "item names neither subject": (_entries_v2(
-        '[{' + _ENTRY_TAIL + '}]'), "exactly one"),
-    "item is not an id": (_entries_v2(
-        '[{"item": "Not An Id", ' + _ENTRY_TAIL + '}]'), "is not an item id"),
-    "item ends in .json": (_entries_v2(
-        '[{"item": "idea-0001.json", ' + _ENTRY_TAIL + '}]'), "is not an item id"),
-    # The field its version never declared: the unknown-field rule, on both sides, and
-    # not the subject rule -- which is what keeps "the writer emits ``/2``" the only
-    # way a ``/2`` artifact ever appears.
-    "item inside a v1 document": (_entries(
-        '[{"item": "idea-0001", ' + _ENTRY_TAIL + '}]'), "unknown field"),
+    # The removed item store's two shapes, tabled on both sides of the writer/arbiter
+    # split: a file that states the retired version, and an entry that still carries the
+    # retired key. Both are refusals that name the repair rather than the wrong-schema
+    # or unknown-field sentence, and neither is a defect the entry rules describe twice.
+    "an order that still states the item version": (
+        '{"schema": "noni.order/2", "entries": [{' + _ENTRY_TAIL + ', "issue": 1}]}',
+        "item entries are no longer supported"),
+    "an entry that still carries the item key": (_entries(
+        '[{"item": "idea-0001", ' + _ENTRY_TAIL + '}]'),
+        "item entries are no longer supported"),
 }
 
 
@@ -232,17 +209,10 @@ def _clean_shapes() -> dict[str, str]:
 
     The other half of the agreement: a table of refusals only proves the two sides
     agree about what is wrong. These are the shapes the writer emits and the arbiter
-    must never call ``ordering-malformed`` -- and the ``/2`` item entry is the shape
-    whose refusal by one side alone would make every queue of ideas a permanent
-    refusal, since no verb can rewrite a file it cannot re-render.
+    must never call ``ordering-malformed``.
     """
     return {
-        "a v2 entry that cites an item": _entries_v2(
-            '[{"item": "idea-0001", ' + _ENTRY_TAIL + '}]'),
-        "a v2 file that mixes an item entry and an issue entry": _entries_v2(
-            '[{"item": "idea-0001", ' + _ENTRY_TAIL + '}, '
-            '{"issue": 7, ' + _ENTRY_TAIL + '}]'),
-        "a v2 file holding nothing": _entries_v2("[]"),
+        "a file holding nothing": _entries("[]"),
         # An entry that carries the optional rationale, at the bound and inside it: the
         # shape ``add --why`` emits, which neither side may call malformed -- a refusal
         # here would be an order no verb can rewrite.
@@ -253,8 +223,6 @@ def _clean_shapes() -> dict[str, str]:
             '[{"issue": 1, "decision": "2026-10-01-baseline", '
             '"confirmed": "2026-10-26T00:00:00Z", "why": "' + "a" * WHY_MAX
             + '"}]'),
-        "a v2 entry citing an item and carrying a reason": _entries_v2(
-            '[{"item": "idea-0001", ' + _ENTRY_TAIL + ', "why": "filed, not scheduled"}]'),
     }
 
 

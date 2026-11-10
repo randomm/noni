@@ -7,7 +7,7 @@
 
     top 10
     1. #7
-    2. item idea-0001
+    2. #12
 
     summary: 1 warning(s); 1 finding(s); verdict ok
 
@@ -16,9 +16,8 @@ census's own words: the last line of stdout is the final ``summary:`` line of th
 human report for the same ``--repo`` and the same ``--now``, echoed as the census printed it
 (see :func:`_summary_line`). The census's ``note:`` lines and its finding rows are not part
 of the brief -- the screen is three blocks and a verdict, and the report is one command
-away. The page names the order's subjects and stops there: an entry citing an item prints
-the citation it holds and never opens the item store, because a screen of what to work on
-next does not need the store's prose to say which idea the operator queued.
+away. The page names the order's subjects and stops there. The reader wants to know which
+issues come next, not what each one is about, and the tracker holds that prose.
 
 Three rules the tool is built around:
 
@@ -32,8 +31,7 @@ Three rules the tool is built around:
   order comes from the artifact's own list order or from a sort over ``created`` and
   ``id``, and nothing in the brief reads the clock or the cwd: ``--repo`` is resolved once
   and every path is taken from it, and the instant is the caller's or taken once here.
-- **Read-only.** Every read is an ``open`` or an ``lstat``; the item store is not read at
-  all. The tool writes no file,
+- **Read-only.** Every read is an ``open`` or an ``lstat``. The tool writes no file,
   stages no commit, and runs no git call of its own; the census it launches runs in
   process with its output captured, so the census's own read-only promise is this tool's.
 
@@ -60,7 +58,6 @@ from . import (
     brief_intent,
     census_run,
     intentschema,
-    itemschema,
     labels,
     orderschema,
     orderstate,
@@ -72,13 +69,12 @@ from .brief_page import (
     TEXT_LIMIT,
     block_rows,
     close_block,
-    page_line,
     page_lines,
 )
 
 # The two codes of this tool, published by this docstring and named nowhere else
 # (docs/PRODUCT.md 7 gives ``brief`` 2 for a wrong command line, beside ``intent``,
-# ``order``, ``item``, ``register`` and the census). There is no third: a census verdict
+# ``order``, ``register`` and the census). There is no third: a census verdict
 # is reported in the summary line rather than copied into the brief's exit code, because
 # the brief's own job is to render and the census's job is to judge. Only the refusal code
 # is named: a run that rendered returns 0 from the return statements that end :func:`main`,
@@ -318,14 +314,10 @@ def _purpose_block(root: Path) -> list[str]:
 def _order_block(root: Path) -> list[str]:
     """The ``top 10`` block: the head of the order, in the artifact's own order.
 
-    The read is :func:`noni.orderstate.read_order` and the entries are rendered without
-    branching on the document's schema version: an entry naming an issue prints
-    ``{position}. #{issue}``, one citing an item prints ``{position}. item {id}``, and one
-    citing neither prints ``{position}. (unnamed entry)``. Neither shape opens an item file:
-    the row says which idea the operator queued and leaves the store's prose to the tools
-    that read the store. Both shapes are asked through
-    :func:`noni.orderschema.entry_issue` / :func:`noni.orderschema.entry_item`, which is
-    where the two versions' one-subject rule lives.
+    The read is :func:`noni.orderstate.read_order` and each entry prints
+    ``{position}. #{issue}``. An entry naming neither subject prints
+    ``{position}. (unnamed entry)``: the reader refuses such a document, so the branch is
+    the shape a row always has rather than a state a file can put it in.
 
     ``decision`` and ``confirmed`` are not printed: this is a screen, and the order writer's
     own listing is the tool that shows the provenance of a position. A refusal or a fault of
@@ -343,39 +335,15 @@ def _order_block(root: Path) -> list[str]:
 
 
 def _order_row(root: Path, position: int, entry: dict) -> str:
-    """One line of the ``top 10`` block, whichever version the entry is of.
+    """One line of the ``top 10`` block.
 
-    The subject is the issue or the cited item; a document naming neither was refused by
-    the reader before this line was reached, so the third branch is the shape a row always
+    The subject is the issue; a document naming neither was refused by
+    the reader before this line was reached, so the fallback is the shape a row always
     has rather than a state a file can put it in, and it exists so a row is one line instead
-    of an exception. The item branch reads no file: an id is a token somebody typed, so it
-    goes through the page's renderer (control bytes out, whitespace collapsed, the store's own
-    id bound applied) and nothing else. The bound cannot leave nothing, because the bound of a
-    field this wide is wider than the longest sequence it can delete; a citation that renders to
-    nothing at all is named by the tool's own word rather than by a row with a hole in it.
+    of an exception.
     """
     issue = orderschema.entry_issue(entry)
-    if issue is not None:
-        return f"{position}. #{issue}"
-    cited = orderschema.entry_item(entry)
-    if cited is None:
-        return f"{position}. (unnamed entry)"
-    # A name the strict JSON reader let through can still carry control bytes, and a row that
-    # carried them would put an escape sequence on the terminal and could add lines to the page,
-    # so the citation is rendered by the page's rule rather than printed as the artifact's bytes.
-    return f"{position}. item {_citation(cited)}"
-
-
-def _citation(cited: str) -> str:
-    """One cited item id as the page prints it: no control bytes, no host path, bounded.
-
-    The renderer of the page's body lines with the one difference a citation needs: where a body
-    line that scrubbed to nothing is dropped (a row of three fields is no row), a citation that
-    scrubbed to nothing still marks the position it holds, so it answers with the tool's word for
-    text it could not print. The bound is the store's own id bound, which is what makes the row
-    no longer than an id can be.
-    """
-    return page_line(cited, itemschema.ID_MAX, PAGE_RESERVED) or NOT_READ
+    return f"{position}. #{issue}" if issue is not None else f"{position}. (unnamed entry)"
 
 
 def _summary_line(root: Path, stamp: str) -> str:

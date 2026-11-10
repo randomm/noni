@@ -32,7 +32,7 @@ def run_census_json(clone: Path, now: str, stale_after: str) -> tuple[int, list[
     --strict would turn that always-report into an exit 50 that masks the
     planted codes. The hygiene class has its own tests in
     tests/test_census_hygiene.py; this fixture measures the
-    ledger/item/ordering arbiter. ``--ordering`` and ``--issue-state`` are
+    ledger/ordering arbiter. ``--ordering`` and ``--issue-state`` are
     passed explicitly rather than left to the defaults: the closed check is not
     evaluated at all without a state file, so an implicit run would silently
     leave one of the three ordering classes unasked.
@@ -54,8 +54,8 @@ def run_census_json(clone: Path, now: str, stale_after: str) -> tuple[int, list[
 def _mask(value: str) -> str:
     """A subject as the scenario states it: no masking rule is needed today.
 
-    Every subject this fixture plants is fixed at build time (an item id, a
-    record id, an issue number), so two builds normalize identically without a
+    Every subject this fixture plants is fixed at build time (a
+    record id, an issue number, an artifact path), so two builds normalize identically without a
     rule. The hook is kept because a fixture that later plants a subject with a
     random component needs one place to say so.
     """

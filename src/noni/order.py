@@ -8,9 +8,8 @@ integer, so the core stays viable with no adapter installed.
 
 The file holds two fields:
 
-  schema   -- "noni.order/1", or "noni.order/2" for an order that cites an item
-  entries  -- [{issue, decision, confirmed, why}] in the order the operator wants,
-              where an entry of a /2 order names item instead of issue
+  schema   -- "noni.order/1"
+  entries  -- [{issue, decision, confirmed, why}] in the order the operator wants
 
 ``decision`` is the id of the decision record that set the entry's position and
 is never empty: an entry whose ``decision`` is a JSON null, a blank string or
@@ -24,7 +23,7 @@ with --now when given); a run never leaves it empty. ``why`` is optional: an ent
 written without it holds the three fields it held before the field existed, byte for
 byte, and ``add --why REASON`` records the operator's one line of reason for the
 position. It is the same rule a decision record's rationale obeys: one non-blank
-line within the bound ``itemschema.WHY_MAX`` states, refused at the flag (exit 2) and
+line within the bound ``_why.WHY_MAX`` states, refused at the flag (exit 2) and
 reported by both censuses naming the field ``why``. A move or a confirm restamps an
 entry and never drops the reason it carries. A correction of the order
 is another run of this command, so the file keeps one owner.
@@ -37,17 +36,16 @@ record that is missing or superseded), the entry's ``confirmed`` is restamped as
 always restamps it, and a run that changes no byte commits nothing. ``--to`` is required
 only when ``--decision`` is absent: a move of neither is not a move.
 
-An entry may cite a filed idea instead of an issue: ``add --item ID`` writes an
-``item`` entry, which is what makes the artifact ``noni.order/2``. The two subjects are
-exclusive -- an entry names one of them, never both and never neither -- and the id is
-the store's own, checked against ``noni/items/`` before a position is granted to it. The
-writer emits ``/2`` for a run that has an item entry to write and ``/1`` for every run
-over an order that holds none, so a queue of issues is never restamped into a version it
-does not use; both versions are read.
+An order that still names the removed item store is refused, never rewritten. A file
+whose ``schema`` is ``noni.order/2``, or an entry that carries an ``item`` key, is
+reported by every reader and by the census as ``ordering-malformed`` with a message that
+says item entries are no longer supported and names the repair (re-add each entry with
+``add ISSUE --decision ID`` after filing it as an issue). Nothing is silently dropped and
+no file is restamped down to ``/1``, because every verb rebuilds the whole list and an
+accepting reader would delete the operator's entry.
 
 Usage:
     order.py --repo REPO add ISSUE [--at N] [--decision ID] [--why REASON] [--now ISO-8601] [--no-commit]
-    order.py --repo REPO add --item ID [--at N] --decision ID [--why REASON] [--now ISO-8601] [--no-commit]
     order.py --repo REPO move ISSUE [--to N] [--decision ID] [--now ISO-8601] [--no-commit]
     order.py --repo REPO remove ISSUE [--now ISO-8601] [--no-commit]
     order.py --repo REPO confirm [ISSUE] [--now ISO-8601] [--no-commit]
@@ -56,8 +54,7 @@ Exit codes:
     0  the order was written (and committed unless --no-commit)
     2  invalid input: an argparse failure, a subcommand outside add/move/remove/confirm,
        an issue that is not a positive integer, a missing --decision on add, a move that
-       names neither --to nor --decision, an add that
-       names both an issue and --item or neither, an --item that is not an item id, an
+       names neither --to nor --decision, an
        empty, multi-line or over-long --why or a --why handed to a verb that is not
        add, an --at or
        --to that is not a 1-based position of the resulting list, a flag passed to the
@@ -70,19 +67,17 @@ Exit codes:
     3  a path this writer needs could not be read or written, or a git call failed or
        timed out: the order file is not a regular file at its path (a symlink, a
        directory, an unreadable file), the decision ledger could not be looked in, a
-       decision record it must read is unreadable, the item store could not be listed
-       for an --item check or an item file it must read is unreadable, the artifact could not be written, or the commit step failed (the file is left written and named, never claimed as
+       decision record it must read is unreadable, the artifact could not be written, or the commit step failed (the file is left written and named, never claimed as
        committed), or the freshness probe could not answer (a ``git show`` that
        timed out or failed for a reason that told us nothing)
     4  what the order itself refuses: the issue is already listed (add), absent from the
        order (move, remove, confirm), no file under noni/decisions/ carries the given
        --decision id (add or move), the record it finds is superseded (the hint names its
        successor),
-       no item of that id is filed under noni/items/ or the one it finds is dropped
-       (add --item),
        an entry of the existing file whose decision is null, blank or absent (the refusal
        names the entry), or the existing order file is not the artifact this writer writes
-       (unparseable, wrong schema, or malformed entries) so overwriting it would destroy an
+       (unparseable, wrong schema, an order still carrying the removed item store, or
+       malformed entries) so overwriting it would destroy an
        order, or nothing this run planned from is what it read: the committed
        order bytes moved ("the order changed since it was read; re-run", so the
        caller's re-run plans against what the other writer committed), or the file
@@ -99,7 +94,7 @@ command wrote (git add -- <path> then git commit --only -- <path>), so a file
 somebody else had staged is neither committed nor unstaged. --no-commit writes
 through the same chain, leaves the file uncommitted and prints one line saying
 so. Every run prints the resulting order, one line per entry: the 1-based
-position, the issue (or the item an entry of a /2 order cites), and the decision
+position, the issue, and the decision
 (or -) and confirmed timestamp it carries.
 The path the success line names (wrote, committed, or left uncommitted) is the
 artifact's real location as seen from the caller's working directory: ``--repo``
@@ -123,7 +118,6 @@ from pathlib import Path
 
 from . import (
     _path_kind,
-    itemschema,
     labels,
     order_add,
     order_commit,
@@ -234,24 +228,16 @@ DESCRIPTION = ("Write the ordered list of issues the operator wants worked next 
                "(noni/direction/order.json) and commit it.")
 
 
-def _subject_tokens(subcommand: str, issue_token: str | None,
-                    item: str | None, label: str,
+def _subject_tokens(subcommand: str, issue_token: str | None, label: str,
                     fail) -> tuple[int | str | None, int | str | int | None]:
     """The verb's ``(issue, subject_or_code)``: the token the plan reaches by.
 
     A positive integer in ASCII decimal digits, asked before the file is opened, so a
     typo cannot decide which entry of a real order gets touched. ``confirm`` may omit it,
-    which means every entry at once. An ``--item`` names an entry for the three
-    rearranging verbs too, and then the token is the id: the type of ``subject`` tells the
-    plan which kind of entry to reach, so ``move 7`` cannot move an item's position. A
-    refused token leaves the exit code of the refusal ``fail`` already printed in the
-    second slot, which the caller returns.
+    which means every entry at once. A refused token leaves the exit code of the refusal
+    ``fail`` already printed in the second slot, which the caller returns.
     """
-    if subcommand == "confirm" and issue_token is None and item is None:
-        return None, None
-    if subcommand != "add" and item is not None:
-        return None, item
-    if subcommand == "add" and item is not None:
+    if subcommand == "confirm" and issue_token is None:
         return None, None
     if issue_token is None:
         return None, fail(EXIT_USAGE, f"{subcommand} needs an issue number",
@@ -263,14 +249,13 @@ def _subject_tokens(subcommand: str, issue_token: str | None,
     return int(issue_token), int(issue_token)
 
 
-def _repo_refusals(repo: Path, repo_arg: str, verb: str,
-                   item: str | None) -> int | None:
+def _repo_refusals(repo: Path, repo_arg: str, verb: str) -> int | None:
     """The exit-2 refusal for a ``--repo`` this run may not read or write, or None.
 
-    Three questions about the one path the caller passed, in this order, all before the
-    first read: that it is a directory at all; that the directories it leads to are plain
-    paths (:func:`_refuse_linked_state` gives the reason each is asked of ``lstat`` ahead
-    of the reads); and, for an ``add --item``, that the item store is too. A ``--repo``
+    Two questions about the one path the caller passed, in this order, both before the
+    first read: that it is a directory at all; and that the directories it leads to are
+    plain paths (:func:`_refuse_linked_state` gives the reason each is asked of ``lstat``
+    ahead of the reads). A ``--repo``
     naming no directory is the usage error every other flag mistake
     takes -- not a missing order and not an absent decision -- and the message names the
     argument as the caller passed it, the shape every writer in this package
@@ -280,19 +265,7 @@ def _repo_refusals(repo: Path, repo_arg: str, verb: str,
         return _fail(EXIT_USAGE, f"--repo {repo_arg} is not a directory",
                      "pass the repository root that holds (or will hold) "
                      "noni/direction/order.json")
-    linked = _refuse_linked_state(repo, verb)
-    if linked is not None:
-        return linked
-    if item is not None and verb == "add":
-        # The item store joins the guarded list only for a run that names one, so a
-        # store that is a link is refused as a bad ``--repo`` rather than reached
-        # through: the same walk, the same code and the same wording the writer already
-        # applies to ``noni`` and ``noni/direction``.
-        refused = _path_kind.refuse_state_root(repo, True,
-                                               (*_GUARDED_DIRS, itemschema.ITEM_DIR))
-        if refused is not None:
-            return _fail(EXIT_USAGE, *refused)
-    return None
+    return _refuse_linked_state(repo, verb)
 
 
 def _read_entries(order_path: Path):
@@ -350,10 +323,6 @@ def main(argv: list[str] | None = None) -> int:
                         help="decision record id that set this entry's position "
                              "(required for add; move replaces the entry's decision "
                              "with it)")
-    parser.add_argument("--item", default=None, metavar="ID",
-                        help="the id of a filed item to order instead of an issue "
-                             "(add only; an entry naming an item makes the artifact "
-                             "noni.order/2)")
     parser.add_argument("--why", default=None, metavar="REASON",
                         help="the operator's one line of reason for the position "
                              "(add only; a non-empty single line within the "
@@ -378,20 +347,8 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(EXIT_USAGE, *misplaced)
 
 
-    # The subject token, asked of the two tokens before either is validated, so a run
-    # naming two subjects is told which it meant rather than which is malformed.
-    if args.issue is not None and args.item is not None:
-        # Asked of every verb: a run naming two subjects has to be told which it meant.
-        problem = order_add.subject_problems(args.issue, args.item)
-        if problem is not None:
-            return _fail(EXIT_USAGE, *problem)
-    if subcommand == "add":
-        problem = order_add.subject_problems(args.issue, args.item)
-        if problem is not None:
-            return _fail(EXIT_USAGE, *problem)
-
-    issue, subject = _subject_tokens(subcommand, args.issue, args.item,
-                                     labels.ORDER, _fail)
+    # The subject token: an issue number, or nothing at all for a bare ``confirm``.
+    issue, subject = _subject_tokens(subcommand, args.issue, labels.ORDER, _fail)
     if isinstance(subject, int) and issue is None:
         # The slot holds a refusal's exit code, not an issue number: see the helper.
         return subject
@@ -408,9 +365,8 @@ def main(argv: list[str] | None = None) -> int:
 
     repo = Path(args.repo)
     # The state root is asked about before the artifact is read or the decision looked
-    # up, so a bad path cannot be reported as a missing order. The item store joins the
-    # guarded list only for a run that names one.
-    refused = _repo_refusals(repo, args.repo, subcommand, args.item)
+    # up, so a bad path cannot be reported as a missing order.
+    refused = _repo_refusals(repo, args.repo, subcommand)
     if refused is not None:
         return refused
     order_path = repo / orderschema.ORDER_REL
@@ -424,7 +380,7 @@ def main(argv: list[str] | None = None) -> int:
     verb: str
     if subcommand == "add":
         assert args.decision is not None
-        planned = order_add.plan_add(repo, entries, issue, args.item, args.decision,
+        planned = order_add.plan_add(repo, entries, issue, args.decision,
                                      args.at, stamp, _fail, EXIT_IO, EXIT_USAGE,
                                      EXIT_REFUSAL, why=args.why)
         if planned.refusal is not None:
@@ -443,11 +399,9 @@ def main(argv: list[str] | None = None) -> int:
     entries, verb = planned.entries, planned.verb
 
     # --- the write: every check above has passed -----------------------------
-    # The version the plan's own entries describe, never a constant: a queue of issues
-    # stays ``/1`` and an order holding an item entry is ``/2``, which is the whole rule
-    # for how a ``/2`` artifact ever comes to exist. Restamping a document into the
-    # version its contents do not use would make the marker say nothing.
-    body = {"schema": orderschema.schema_for(entries), "entries": entries}
+    # The one version the artifact has, stated as a constant: a run can no longer plan an
+    # entry of any other shape, and a file that holds one was refused by the read above.
+    body = {"schema": orderschema.ORDER_SCHEMA, "entries": entries}
     # The state module's own renderer, the same call ``orderstate.read_order`` makes when
     # it compares a file it read against the form this writer writes, so the two halves
     # cannot drift apart on the canonical contract. Not bytes this writer can produce is a

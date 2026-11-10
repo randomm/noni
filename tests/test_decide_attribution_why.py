@@ -76,7 +76,7 @@ BAD_WHY_SHAPES = {
 }
 
 # The files that read the rationale rule and so may not carry a copy of its number.
-# ``itemschema`` is the owner and is absent by role; ``census_ordering`` holds the one
+# ``_why`` is the owner and is absent by role; ``census_ordering`` holds the one
 # documented copy (it loads by path and imports nothing), which
 # ``tests/test_order_writer_arbiter.py`` holds to the owner.
 # The character sets and the two bound helpers live in one shared module so the
@@ -84,6 +84,10 @@ BAD_WHY_SHAPES = {
 # either. The arbiter's own copy of the bound is asserted beside the owner by
 # ``tests/test_order_writer_arbiter.py``: it loads by path and imports nothing, so it
 # is the one spelling in the product a reader must check by reading it back.
+#
+# The owner is named by role and not by path, and it is absent from the walk rather
+# than excused within it: the module that declares the number is the one place the
+# digits are allowed to appear, so walking it would fault the owner for owning.
 BOUND_LITERATURE = (
     "tests/ledger_schema_fixtures.py",
     "tests/test_decide_attribution_fields.py",
@@ -91,7 +95,6 @@ BOUND_LITERATURE = (
     "tests/test_ledger_closed_key_set.py",
     "tests/test_decide_skill.py",
     "src/noni/_decide_flags.py",
-    "src/noni/_why.py",
     "src/noni/census_ledger_checks.py",
     "src/noni/decide.py",
     "src/noni/ledger_schema.py",
@@ -374,11 +377,11 @@ def test_no_reader_of_the_rule_spells_the_bound_as_a_literal():
 
     Read off the shipped files rather than asserted against a constant, because the
     failure mode is a *literal*, and a legitimate read of the product's number looks
-    the same as a stale copy until the number moves. The owner (``itemschema``, which
+    the same as a stale copy until the number moves. The owner (``_why``, which
     declares it) is absent by role, as is ``census_ordering``, whose copy is documented
     and held to the owner by the shared shape table.
     """
-    from noni.itemschema import WHY_MAX as owner
+    from noni._why import WHY_MAX as owner
 
     assert owner == WHY_MAX, (
         f"the fixtures' bound ({WHY_MAX}) is not the product's ({owner}): the helper "

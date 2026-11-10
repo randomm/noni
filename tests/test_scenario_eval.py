@@ -49,7 +49,7 @@ def test_healthy_baseline(tmp_path: Path) -> None:
 
 
 def test_faulted_variant_findings(tmp_path: Path) -> None:
-    """Faulted variant: baseline plus planted faults (52, 53, 12, 20).
+    """Faulted variant: baseline plus planted faults (54, 12, 20).
     Census on a fresh clone reports the normalized finding multiset exactly
     matching the planted set."""
     base = _clean_base(tmp_path, "faulted")
@@ -59,17 +59,14 @@ def test_faulted_variant_findings(tmp_path: Path) -> None:
     code, rows = run_census_json(clone, NOW, STALE_AFTER)
     findings = normalize_findings(rows)
 
-    # The planted set: {52 on the malformed item, 53 on the held idea, 12, 20}.
-    # The ordering-closed cannot-tell row is the honest consequence of the 53
-    # fault: a ``/2`` entry cites an idea and names no issue, so the
-    # ``--issue-state`` map the fixture hands the census cannot answer the
-    # closed question for it, and --strict promotes that row to 46.
+    # The planted set: {54 on the order the removal left behind, 12, 20}. The
+    # ordering-malformed row is the migration refusal: the committed artifact still
+    # states the retired schema version and carries an entry with the retired key, so
+    # no reader accepts it and no verb rewrites it.
     expected = {
-        ("item-malformed", 52, "fail", "malformed-idea"),
-        ("item-dropped-in-order", 53, "fail", "held-idea"),
+        ("ordering-malformed", 15, "fail", "noni/direction/order.json"),
         ("ledger-edited", 12, "fail", "2026-10-01-d1"),
         ("ledger-chain", 20, "fail", "2026-10-03-d3"),
-        ("ordering-closed", 46, "fail", "entry 3"),
     }
     actual = set(findings)
     assert actual == expected, f"findings mismatch:\nexpected: {expected}\nactual: {actual}"

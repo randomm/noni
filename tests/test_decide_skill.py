@@ -98,7 +98,7 @@ def test_the_skill_pages_state_the_rationale_bound_the_product_states():
 
     Each page must state ``str(WHY_MAX)`` next to the field's own row, and none of
     them may hold a *different* three-figure bound: the check is that the number on
-    the page is the number ``itemschema`` owns, so widening the bound reddens the
+    the page is the number ``_why`` owns, so widening the bound reddens the
     pages that pin their claim to it instead of leaving them to be discovered.
     """
     bound = str(WHY_MAX)
@@ -120,7 +120,7 @@ def test_the_skill_pages_state_the_rationale_bound_the_product_states():
             f"the product's bound {bound}")
     # The bound is the product's, read here rather than compared to a literal: this
     # assertion is what reddens when the owner moves and a page keeps the old number.
-    from noni.itemschema import WHY_MAX as owner
+    from noni._why import WHY_MAX as owner
 
     assert owner == WHY_MAX == int(bound)
 
@@ -182,7 +182,7 @@ def test_the_reference_documents_the_rationale_and_the_target_refusal():
     text = REFERENCES.read_text(encoding="utf-8")
     row = "\n".join(_field_rows(text, WHY_FIELD))
     for phrase in ("single-line", "code points", "exit 2", "exit 10", "exit 4",
-                   f"`{WHY_FIELD}", "`itemschema.WHY_MAX`"):
+                   f"`{WHY_FIELD}", "`_why.WHY_MAX`"):
         assert phrase in row, (
             f"references/decisions.md: the `{WHY_FIELD}` row omits {phrase!r}: {row}")
 

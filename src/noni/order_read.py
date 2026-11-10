@@ -3,7 +3,7 @@
 ``census_ordering.py`` is loaded by path and imports nothing from the writer's package
 (``noni.orderschema`` and ``noni.orderstate`` are the writer's own modules, and a census
 that imported them would trust any lookalike earlier on ``sys.path``). That is why the
-census's copies of the field lists, the version names and the item id rule live in
+census's copies of the field lists and the version name live in
 ``census_ordering`` itself. This module is the other half of that arrangement: the same
 two questions the *writer* answers -- is this document the artifact, and what are its
 canonical bytes -- answered for a caller that cannot ask the writer.
@@ -14,7 +14,7 @@ outcomes differ:
 
 1. the strict reader, for the bytes no noni writer emits (a non-finite number, a
    duplicate key, nesting past the bound);
-2. ``problems``, for the document's shape, of either version;
+2. ``problems``, for the document's shape;
 3. the canonical comparison, because a file the writer would render differently is
    refused rather than reformatted -- an order the operator committed is not this run's
    to rewrite.
@@ -65,12 +65,11 @@ def load_strict(raw: bytes) -> object:
 def _repair_hint(why: str) -> str:
     """The 'repair the artifact' hint, naming the versions a repair may use.
 
-    Both versions are named because both are readable: telling someone to repair a file
-    to ``noni.order/1`` when it is a well-formed ``/2`` would send them to change a field
-    that is not the defect.
+    The one version is named because it is the only one a reader accepts: a file that
+    states another is refused for what it says, not repaired by this reader.
     """
     return (f"repair the file {why} (it must hold "
-            + " or ".join(repr(name) for name in orderschema.ORDER_SCHEMAS)
+            + repr(orderschema.ORDER_SCHEMA)
             + ") or remove it and rebuild the order with the order writer")
 
 

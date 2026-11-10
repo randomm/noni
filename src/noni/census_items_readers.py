@@ -48,8 +48,7 @@ class ItemsProbe:
     is how an unlistable store reports the clean verdict of a project that never
     filed an idea.
 
-    It is the sessions probe's shape (see ``census_sessions_probe.SessionsProbe``)
-    and the ledger probe's minus their ``state`` fields: this group words no
+    It is the ledger probe's shape minus its ``state`` field: this group words no
     states, so there is no state word here for a fault to be mistaken for.
 
     ``fault`` comes from ``census_text.fault_text``, which reads the exception's

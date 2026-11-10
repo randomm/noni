@@ -45,23 +45,20 @@ def test_the_module_route_without_a_subcommand_is_the_same_refusal():
     assert_same(run_noni(), run_module(), "noni with no subcommand")
 
 
-def test_noni_names_exactly_the_seven_subcommands():
-    """The subcommand set is the settled one: census, register, claim, close,
-    release, decide, order.
+def test_noni_names_exactly_the_settled_subcommands():
+    """The subcommand set is the settled one: census, decide, order, intent, brief.
 
-    close and release are #27's session-lifecycle verbs, not placeholders: each
-    names a module under ``src/noni/`` and a wrapper under the skill, and both
-    are asserted dispatchable below. ``session`` remains refused — it is a noun
-    for the state, not a tool, and a subcommand that vague would let a typo look
-    like a real command.
+    Each names a module under ``src/noni/`` and is asserted dispatchable below.
+    The session verbs of #27 are gone (issue #155), and ``session`` remains
+    refused -- it is a noun for the state, not a tool, and a subcommand that
+    vague would let a typo look like a real command.
     """
     proc = run_noni("--help")
     assert proc.returncode == 0
     listed = proc.stdout + proc.stderr
-    for name in ("census", "register", "claim", "close", "release",
-                 "decide", "order"):
+    for name in ("census", "decide", "order"):
         assert f"{name}  " in listed, f"noni --help omits {name}: {listed}"
-    for absent in ("session",):
+    for absent in ("session", "register", "claim", "close", "release"):
         assert f"{absent}  " not in listed, f"noni grew a {absent} placeholder: {listed}"
 
 
@@ -76,9 +73,10 @@ def test_the_module_route_names_the_same_subcommands():
     console, module = run_noni("--help"), run_module("--help")
     assert_same(console, module, "noni --help via -m noni")
     assert module.returncode == 0, module.stderr
-    for name in ("census", "register", "claim", "close", "release",
-                 "decide", "order", "intent"):
+    for name in ("census", "decide", "order", "intent"):
         assert f"{name}  " in module.stdout, f"-m noni --help omits {name}"
+    for absent in ("register", "claim", "close", "release"):
+        assert f"{absent}  " not in module.stdout, f"-m noni grew a {absent} verb"
 
 
 def test_noni_console_script_is_installed_in_this_environment():

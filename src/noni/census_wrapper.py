@@ -1,8 +1,7 @@
-"""What the two shell census entry points run: the unified census, one group.
+"""What the shell census entry point runs: the unified census, one group.
 
-``skills/steering-ledger/scripts/census.sh`` and
-``skills/sessions-claims/scripts/census-sessions.sh`` are bash wrappers that
-carry no rules of their own. Each takes the one directory its caller names,
+``skills/steering-ledger/scripts/census.sh`` is a bash wrapper that
+carries no rules of its own. It takes the one directory its caller names,
 resolves it, and hands it here; this module turns that (directory, options)
 pair into the argv of a unified-census run restricted to the group the entry
 point belongs to, and calls ``census.main`` with it. The wrapper's exit code is
@@ -64,7 +63,7 @@ import os
 import sys
 from pathlib import Path
 
-from .census import LEDGER_CHECKS, SESSION_CHECKS, main
+from .census import LEDGER_CHECKS, main
 from .census_report import CLASS_CODE, EXIT_USAGE
 
 # Whether the wrapper's help, its refusals and its usage line are spelled with
@@ -72,14 +71,12 @@ from .census_report import CLASS_CODE, EXIT_USAGE
 # terminal they typed into.
 _ENTRY_POINTS: dict[str, tuple[str, frozenset[str]]] = {
     "census.sh": ("decisions", LEDGER_CHECKS),
-    "census-sessions.sh": ("sessions", SESSION_CHECKS),
 }
 
 # The flag each group's directory reaches the census through, keyed by the
 # group's own class set rather than by a name a caller could mistype.
 _GROUP_FLAG: dict[frozenset[str], str] = {
     LEDGER_CHECKS: "ledger",
-    SESSION_CHECKS: "sessions",
 }
 
 # The options a caller may type at an entry point. Everything outside these two
@@ -117,7 +114,7 @@ def _only(checks: frozenset[str]) -> list[str]:
 def argv_for(target: str, options: list[str], checks: frozenset[str]) -> list[str]:
     """The unified census's argv for one group's census of ``target``.
 
-    ``target`` reaches ``--ledger`` / ``--sessions`` exactly as the caller
+    ``target`` reaches ``--ledger`` exactly as the caller
     spelled it — including the empty string, which the census names in its own
     refusal — while ``--repo`` is built from the resolved path, the only form
     whose parent reliably means the directory above it. ``options`` is the
@@ -371,8 +368,3 @@ def run_entry(label: str, argv: list[str] | None = None) -> int:
 def run_ledger(argv: list[str] | None = None) -> int:
     """The steering-ledger entry point: the unified census over one named ledger."""
     return run_entry("census.sh", argv)
-
-
-def run_sessions(argv: list[str] | None = None) -> int:
-    """The sessions entry point: the unified census over one named register."""
-    return run_entry("census-sessions.sh", argv)

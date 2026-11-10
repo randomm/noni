@@ -6,17 +6,17 @@ route's ``--no-commit`` output as a stray ``noni/`` having appeared beside the
 project, because the uncommitted line and the committed line named the same file in
 two shapes -- one carrying the ``--repo`` component, one not.
 
-``tests/test_session_relative_repo.py`` pins the *git* half of that route (which
-pathspec reaches the commit); this file pins the *wording* half. For each of the six
-writers, a run with a relative ``--repo`` names the file by the same token on the
-committed line and on the ``left uncommitted`` line: ``--repo`` joined to the path
-under the state root, which is the string that actually locates the file from the
-directory the command ran in. Exit codes and the refusal wording of a commit git
-declined are the other suite's business; nothing here re-asserts them.
+This file pins the *wording* half of that route. For each of the three writers that
+survive -- ``order``, ``intent`` and ``decide`` -- a run with a relative ``--repo``
+names the file by the same token on the committed line and on the ``left uncommitted``
+line: ``--repo`` joined to the path under the state root, which is the string that
+actually locates the file from the directory the command ran in. Exit codes and the
+refusal wording of a commit git declined are the state-root suite's business; nothing
+here re-asserts them.
 
 Each pair runs against its own fixture tree, because the writers are not idempotent
-across the pair: a close that landed leaves nothing for the next close to name, and
-release removes the row the second run would ask for.
+across the pair: a write that landed leaves nothing for the next run to name, so the
+committed and ``--no-commit`` routes each get a fresh clone.
 """
 
 from __future__ import annotations
@@ -25,22 +25,8 @@ import json
 import subprocess
 from pathlib import Path
 
-from _harness import (
-    CLAIM,
-    CLOSE,
-    DECIDE,
-    INTENT,
-    ORDER,
-    REGISTER,
-    RELEASE,
-    _git_ok,
-    run_from,
-)
+from _harness import DECIDE, INTENT, ORDER, _git_ok, run_from
 from order_fixtures import BASELINE_ID, NOW
-from session_git_support import STATE_DIR, _nested_state
-
-SID = "2026-10-01-cccccc"
-TASK = "#1"
 
 # Each writer's success line, spelled the way the writer spells it. ``_UNCOMMITTED``
 # is the shared tail of every writer's --no-commit line.
@@ -49,7 +35,7 @@ _UNCOMMITTED = "left uncommitted"
 # The paths a Route B caller must see named: --repo joined to the path under the
 # state root. The state-root-relative spelling alone is what let a reader conclude a
 # stray ``noni/`` had appeared beside the project.
-SESSION_TOKEN = f"{STATE_DIR}/noni/sessions/{SID}.md"
+STATE_DIR = ".noni-state"
 ORDER_TOKEN = f"{STATE_DIR}/noni/direction/order.json"
 INTENT_TOKEN = f"{STATE_DIR}/noni/direction/intent.md"
 
@@ -78,8 +64,8 @@ def _between(text: str, start: str, end: str | None = None) -> str:
     """The token ``text`` carries between two of its own literals.
 
     Splitting on a separator the surrounding prose also contains (a path carries
-    ``/``, the claim line carries ``;``) would cut the token short, so the caller
-    names both bounds and the helper takes what lies between them.
+    ``/``) would cut the token short, so the caller names both bounds and the helper
+    takes what lies between them.
     """
     assert start in text, f"{start!r} not in {text!r}"
     tail = text.split(start, 1)[1]
@@ -126,87 +112,6 @@ def _with_date(argv: list[str], day: str) -> list[str]:
     return argv[:at] + ["--date", day] + argv[at:]
 
 
-# --- the four session writers -------------------------------------------------
-
-
-def test_register_names_the_same_path_committed_and_uncommitted(tmp_path):
-    """``registered session <id> -> <path>`` and ``<path> left uncommitted`` agree.
-
-    register allocates a fresh id per run, so the two runs name two different files;
-    what must agree is the form, and that neither one ever drops the ``--repo``
-    component the bug dropped on one of the two routes.
-    """
-    project, _state, _session = _nested_state(tmp_path, SID, name="register")
-    committed = _run_ok(project, REGISTER, "--repo", STATE_DIR, "--identity",
-                        "developer")
-    uncommitted = _run_ok(project, REGISTER, "--repo", STATE_DIR, "--identity",
-                          "reviewer", "--no-commit")
-
-    committed_path = _between(committed.stdout, "->")
-    uncommitted_path = _between(_one_line(uncommitted.stdout, _UNCOMMITTED), " ",
-                                " left uncommitted")
-    # The claim stated plainly: both tokens are the state clone's sessions directory
-    # as reached from the project cwd, and both are file names inside it. The id
-    # differs between the runs (register mints one per run); the form may not.
-    for label, token in (("committed", committed_path),
-                         ("uncommitted", uncommitted_path)):
-        assert token.startswith(f"{STATE_DIR}/noni/sessions/"), (label, token)
-        assert token.endswith(".md"), (label, token)
-        assert not token.startswith("/"), (label, token)
-    assert committed_path.count("/") == uncommitted_path.count("/") == 3, (
-        committed_path, uncommitted_path)
-
-
-def test_close_names_the_same_path_committed_and_uncommitted(tmp_path):
-    """``closed session <id> in <path>`` and ``<path> left uncommitted`` agree.
-
-    Two fixture trees, one per route: a close that landed leaves the session closed,
-    and the second close would report "already closed" instead of naming a path.
-    """
-    project_a, _state_a, _session_a = _nested_state(tmp_path, SID, name="close-committed")
-    project_b, _state_b, _session_b = _nested_state(tmp_path, SID, name="close-no-commit")
-
-    committed = _run_ok(project_a, CLOSE, "--repo", STATE_DIR, "--session-id", SID)
-    uncommitted = _run_ok(project_b, CLOSE, "--repo", STATE_DIR, "--session-id", SID,
-                          "--no-commit")
-    assert _between(committed.stdout, " in ") == SESSION_TOKEN, committed.stdout
-    assert _between(_one_line(uncommitted.stdout, _UNCOMMITTED), " ",
-                    " left uncommitted") == SESSION_TOKEN, uncommitted.stdout
-
-
-def test_release_names_the_same_path_committed_and_uncommitted(tmp_path):
-    """``released <task> from <path>`` and ``<path> left uncommitted`` agree."""
-    project_a, _state_a, _session_a = _nested_state(tmp_path, SID, name="rel-committed")
-    project_b, _state_b, _session_b = _nested_state(tmp_path, SID, name="rel-no-commit")
-
-    committed = _run_ok(project_a, RELEASE, "--repo", STATE_DIR, "--session-id", SID,
-                        "--task", TASK)
-    uncommitted = _run_ok(project_b, RELEASE, "--repo", STATE_DIR, "--session-id", SID,
-                          "--task", TASK, "--no-commit")
-    assert _between(committed.stdout, " from ") == SESSION_TOKEN, committed.stdout
-    assert _between(_one_line(uncommitted.stdout, _UNCOMMITTED), " ",
-                    " left uncommitted") == SESSION_TOKEN, uncommitted.stdout
-
-
-def test_claim_names_the_same_path_committed_and_uncommitted(tmp_path):
-    """``committed claim <task> in <path>`` and ``appended ... to <path>`` agree.
-
-    claim.py names its file on both lines; the shape that differs between them (the
-    id-without-directory on one, the full path on the other) is exactly what AC2
-    forbids, and what the pilot read as a second ``noni/`` tree.
-    """
-    project_a, _state_a, _session_a = _nested_state(tmp_path, SID, name="claim-committed")
-    project_b, _state_b, _session_b = _nested_state(tmp_path, SID, name="claim-no-commit")
-
-    committed = _run_ok(project_a, CLAIM, "--repo", STATE_DIR, "--session-id", SID,
-                        "--task", "#42")
-    uncommitted = _run_ok(project_b, CLAIM, "--repo", STATE_DIR, "--session-id", SID,
-                          "--task", "#7", "--no-commit")
-    assert _between(committed.stdout, " in ") == SESSION_TOKEN, committed.stdout
-    row = _one_line(uncommitted.stdout, _UNCOMMITTED)
-    assert _between(row, " to ", "; left uncommitted") == SESSION_TOKEN, row
-
-
 # --- the two direction writers and the ledger writer --------------------------
 
 
@@ -241,7 +146,7 @@ def test_intent_names_the_same_path_committed_and_uncommitted(tmp_path):
     committed = _run_ok(project, INTENT, *argv)
     # The committed route lands the file, so a --no-commit run over the same clone
     # would find identical bytes and answer "unchanged" instead of naming a path:
-    # the two routes get their own clone, as the sessions pairs above do.
+    # the two routes get their own clone, as the pairs below do.
     uncommitted = _run_ok(project_b, INTENT, *argv, "--no-commit")
     assert _between(committed.stdout, "committed ", " (decision") == INTENT_TOKEN, \
         committed.stdout

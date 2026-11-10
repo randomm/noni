@@ -15,8 +15,8 @@ because the wrapper now *is* the census.
 It is a bash script, so it runs under `bash` or through its own executable bit
 and its bash shebang — never under `python3`, which reads its braces as Python
 and dies on a syntax error before any check runs. This is the one page that
-states that rule for this shim; `SKILL.md` and the sessions shim's reference
-point here. The wrapper needs a Python 3 that can import the package
+states that rule for this shim; `SKILL.md`
+points here. The wrapper needs a Python 3 that can import the package
 (`NONI_PYTHON`, `python3` by default); a missing interpreter or an unimportable
 package is named on one plain line and exits 3. `jq` is not required by anything
 in noni: the record rules live in the package, which is what the shim runs.
@@ -58,8 +58,8 @@ other option, prefix or stray token is refused with `2` and the census is not
 run. Filters and everything else need `noni census`, which takes `--only` /
 `--skip`, the state-path flags and the rest, and refuses what it does not define.
 
-The sessions register is not this entry point's subject. It has its own wrapper,
-`skills/sessions-claims/scripts/census-sessions.sh`, over the same census.
+The sessions register is not this entry point's subject: that subsystem was
+removed, and a leftover `noni/sessions/` directory is ignored by the census.
 
 ## Reading the report
 

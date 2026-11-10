@@ -49,10 +49,7 @@ for _alias, _pkg_name in (
     # package's copy under one route and fail under the other, which is the drift the
     # module exists to prevent.
     ("_why", "_why"),
-    ("_session_git", "_session_git"),
     ("ledger_schema", "ledger_schema"),
-    ("close", "close"),
-    ("release", "release"),
     ("census", "census"),
     ("census_hygiene", "census_hygiene"),
     ("census_hygiene_rows", "census_hygiene_rows"),
@@ -64,12 +61,9 @@ for _alias, _pkg_name in (
     ("census_ordering", "census_ordering"),
     ("census_render", "census_render"),
     ("census_ordering_readers", "census_ordering_readers"),
-    ("census_sessions_checks", "census_sessions_checks"),
-    ("census_sessions_probe", "census_sessions_probe"),
     ("census_wrapper", "census_wrapper"),
     ("wrapper_bash", "wrapper_bash"),
     ("census_text", "census_text"),
-    ("claim", "claim"),
     ("decide", "decide"),
     ("gitenv", "gitenv"),
     ("gitwrite", "gitwrite"),
@@ -88,7 +82,6 @@ for _alias, _pkg_name in (
     # the loader (its default path, its parse) must reach the one object
     # ``noni.public_safety`` bound, not a second copy imported by path.
     ("public_safety_allowlist", "public_safety_allowlist"),
-    ("register", "register"),
     ("targetschema", "targetschema"),
 ):
     _module = importlib.import_module(f"noni.{_pkg_name}")
@@ -120,19 +113,6 @@ def load_package_module(name: str) -> object:
     sys.modules[private] = fresh
     spec.loader.exec_module(fresh)
     return fresh
-
-
-def _claim_module() -> object:
-    """The claim module, for the tests that drive its internals.
-
-    Defined here, next to the wrapper path the subprocess tests launch. It is
-    the package module, imported under its real name, so a seam a test puts on
-    it is visible to the console route too. ``claim_fixtures``
-    re-exports it so the name resolves inside those files' globals.
-    """
-    from noni import claim
-
-    return claim
 
 
 def _decide_module() -> object:

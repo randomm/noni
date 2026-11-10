@@ -1,5 +1,0 @@
-{
-  "exit_code": 3,
-  "note": "python3 absent from PATH; the bash wrapper exits 3 before running the Python core.",
-  "files": {}
-}

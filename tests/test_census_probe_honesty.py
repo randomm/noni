@@ -1,10 +1,10 @@
 """Probe-honesty tests for the unified census.
 
 A census probe that fails to read its input must never be reported as clean.
-These tests cover the three probe-failure shapes:
-  - unreadable sessions file (non-UTF-8 bytes)
-  - symlinked sessions file (never read through a link)
+These tests cover the probe-failure shapes:
+  - a record with non-UTF-8 bytes (schema finding, never a crash)
   - git history unavailable (no commits, or no git repo at all)
+  - a git subprocess that hangs past its timeout
 
 In each case the census reports a probe failure (warn by default, fail under
 --strict) and never exits 0 silently.
@@ -18,12 +18,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 import census  # noqa: E402
-from _harness import _fault_the_sessions_listing, _git, _init_repo  # noqa: E402
-
-
-def _session_body(identity: str) -> str:
-    return (f"- identity: {identity}\n- host/worktree: ws\n"
-            "- started: 2026-10-01T10:00:00Z\n- status: active\n- claims:\n")
+from _harness import _git, _init_repo  # noqa: E402
 
 
 def _valid_record(rec_id: str = "2026-10-01-alpha", status: str = "decided", supersedes=None) -> dict:
@@ -44,142 +39,6 @@ def _run(repo: Path, *args: str) -> tuple[int, str, str]:
     return rc, out.getvalue(), err.getvalue()
 
 
-def test_non_utf8_session_file_is_malformed_not_crash(tmp_path):
-    """A session file with non-UTF-8 bytes is reported as malformed (exit 32),
-    not a crash and not a silent clean."""
-    repo = _init_repo(tmp_path / "repo")
-    (repo / "noni" / "sessions").mkdir(parents=True)
-    (repo / "noni/sessions/2026-10-01-aaaaaa.md").write_bytes(b"\xff\xfe\x00\x01not-utf8")
-    _git(repo, "add", "noni/sessions/")
-    _git(repo, "commit", "-q", "--allow-empty", "-m", "add bad file")
-    rc, out, err = _run(repo)
-    assert rc == 32, f"expected exit 32 for non-UTF-8, got {rc}\nstderr: {err}\nstdout: {out}"
-
-
-def test_symlinked_session_file_is_probe_failure_not_read(tmp_path):
-    """A symlinked session file is reported as a probe failure (warn by
-    default), and the target is never read through the link."""
-    repo = _init_repo(tmp_path / "repo")
-    (repo / "noni" / "sessions").mkdir(parents=True)
-    target = repo / "outside-session.md"
-    target.write_text(_session_body("dev"))
-    (repo / "noni/sessions/2026-10-01-aaaaaa.md").symlink_to(target)
-    _git(repo, "add", "noni/sessions/")
-    _git(repo, "commit", "-q", "--allow-empty", "-m", "add symlink")
-    # Without --strict: warn (exit 0) but the output must name the probe failure
-    rc, out, err = _run(repo)
-    assert rc == 0, f"probe failure is warn (exit 0) without --strict, got {rc}\nstderr: {err}"
-    assert "symlink" in out.lower() or "symlink" in err.lower(), (
-        f"expected symlink in output: stdout={out!r} stderr={err!r}"
-    )
-    # With --strict: fail (exit 41)
-    rc, out, err = _run(repo, "--strict")
-    assert rc == 41, f"expected exit 41 (probe under --strict), got {rc}\nstderr: {err}\nstdout: {out}"
-
-
-def test_no_git_history_is_cannot_tell_not_clean(tmp_path):
-    """A sessions dir with an active session but no git history (the session
-    was never committed) is cannot-tell (warn), never silently clean."""
-    repo = _init_repo(tmp_path / "repo")
-    (repo / "noni" / "sessions").mkdir(parents=True)
-    # Write the file but do NOT commit it
-    (repo / "noni/sessions/2026-10-01-aaaaaa.md").write_text(_session_body("dev"))
-    rc, out, err = _run(repo)
-    # cannot-tell is a warn: exit 0 without --strict
-    assert rc == 0, f"cannot-tell is warn (exit 0), got {rc}\nstderr: {err}\nstdout: {out}"
-    combined = (out + err).lower()
-    assert "cannot-tell" in combined or "no commit" in combined, (
-        f"expected cannot-tell or no-commit in output: stdout={out!r} stderr={err!r}"
-    )
-
-
-def test_probe_failure_never_reports_clean_under_strict(tmp_path):
-    """Under --strict, any probe failure (unreadable file, symlink, git
-    failure) becomes a failure and the census never exits 0."""
-    repo = _init_repo(tmp_path / "repo")
-    (repo / "noni" / "sessions").mkdir(parents=True)
-    target = repo / "outside.md"
-    target.write_text(_session_body("dev"))
-    (repo / "noni/sessions/2026-10-01-aaaaaa.md").symlink_to(target)
-    _git(repo, "add", "noni/sessions/")
-    _git(repo, "commit", "-q", "--allow-empty", "-m", "add symlink")
-    rc, out, err = _run(repo, "--strict")
-    assert rc != 0, f"probe failure under --strict must not exit 0, got {rc}"
-    assert rc == 41, f"expected exit 41, got {rc}\nstderr: {err}\nstdout: {out}"
-
-
-def test_missing_sessions_dir_is_clean(tmp_path):
-    """A repo with no noni/sessions/ directory is clean (nothing to check)."""
-    repo = _init_repo(tmp_path / "repo")
-    _git(repo, "commit", "-q", "--allow-empty", "-m", "no sessions dir")
-    rc, out, err = _run(repo)
-    assert rc == 0, f"no sessions dir is clean, got {rc}\nstderr: {err}\nstdout: {out}"
-
-
-def test_unlistable_sessions_dir_is_cannot_tell_not_clean(tmp_path, monkeypatch):
-    """A noni/sessions/ that exists and cannot be listed is not an empty register.
-
-    The register was listed with ``Path.glob``, which swallows the ``OSError``
-    readdir raises and yields nothing: a directory the run could not read earned
-    the same exit 0 and the same silence as a project that had never opened a
-    session, which is the one shape of "clean" the census is not allowed to
-    invent. The listing is an ``iterdir`` now, the fault propagates to the group,
-    and the group answers with the cannot-tell row of the class its deletion
-    check already uses for cannot-tells.
-
-    The fault is injected at the census's own ``iterdir`` of the register and not
-    at a mode bit, because a root-equivalent runner reads a 000-mode directory
-    and a chmod fixture would assert nothing. The errno words are slash-free so
-    the scrubber leaves them standing and the test can ask for them verbatim.
-    """
-    repo = _init_repo(tmp_path / "repo")
-    (repo / "noni" / "sessions").mkdir(parents=True)
-    _git(repo, "add", "noni/sessions/")
-    _git(repo, "commit", "-q", "--allow-empty", "-m", "add empty register")
-    _fault_the_sessions_listing(monkeypatch, repo / "noni" / "sessions")
-
-    rc, out, err = _run(repo, "--skip", "hygiene", "--json")
-    assert rc == 0, f"cannot-tell is a warn (exit 0), got {rc}\nstderr: {err}\nstdout: {out}"
-    rows = [json.loads(line) for line in out.splitlines()
-            if line.strip() and json.loads(line).get("check") == "session-deleted"]
-    assert len(rows) == 1, f"expected one cannot-tell row, got {rows}"
-    row = rows[0]
-    assert row["severity"] == "warn", f"a fault is not a violation: {row}"
-    assert row["message"].startswith("cannot-tell: "), row["message"]
-    assert "could not be listed" in row["message"], row["message"]
-    assert "input/output error" in row["message"], (
-        f"the OSError text is the finding the row exists to print: {row['message']}"
-    )
-    assert "noni/sessions" in row["message"], (
-        f"the row must name the register it could not read: {row['message']}"
-    )
-    assert not row["subject"].startswith("/"), (
-        f"no machine-local path in the row: {row}"
-    )
-
-
-def test_unlistable_sessions_dir_fails_under_strict(tmp_path, monkeypatch):
-    """The cannot-tell of an unreadable register is promoted by --strict.
-
-    ``--only session-deleted`` and ``--skip hygiene`` leave this row as the only
-    one that can decide the exit code, so 44 here proves the promotion ran
-    through the row factory's severity override and the run's ``strict`` flag
-    rather than through a word hard-coded for the class.
-    """
-    repo = _init_repo(tmp_path / "repo")
-    (repo / "noni" / "sessions").mkdir(parents=True)
-    _git(repo, "add", "noni/sessions/")
-    _git(repo, "commit", "-q", "--allow-empty", "-m", "add empty register")
-    _fault_the_sessions_listing(monkeypatch, repo / "noni" / "sessions")
-
-    rc, out, err = _run(repo, "--only", "session-deleted", "--strict",
-                        "--skip", "hygiene")
-    assert rc == 44, (
-        "an unreadable register under --strict must be the class's 44, not the "
-        f"silent 0 the swallow used to return: got {rc}\nstderr: {err}\nstdout: {out}"
-    )
-
-
 # --- Byte-exact edit-after-commit integrity checks ------------------------------
 #
 # The edit check compares the committed blob bytes (git cat-file blob) against
@@ -194,6 +53,91 @@ def _commit_record_bytes(repo: Path, rel: str, content: bytes) -> None:
     target.write_bytes(content)
     _git(repo, "add", rel)
     _git(repo, "commit", "-q", "--allow-empty", "-m", f"add {rel}")
+
+
+# --- A leftover noni/sessions/ is not the census's business --------------------
+#
+# The sessions and claims subsystem was removed (issue #155), but a state
+# repository that ran it keeps its committed register files. The census must
+# ignore that directory outright: no row, no error, no warning, and no hygiene
+# regression. Two trees are censused and compared so the promise is observed
+# rather than read off the absence of a call site.
+
+_LEFTOVER_SESSION_REL = "noni/sessions/2026-10-01-aaaaaa.md"
+
+# A register file in the shape the removed writer wrote, with one claim row:
+# the content a double-claim or malformed check used to read.
+_LEFTOVER_SESSION_BODY = ("- identity: developer\n- host/worktree: ws\n"
+                          "- started: 2026-10-01T10:00:00Z\n- status: active\n"
+                          "- claims:\n  - claim: #42\n")
+
+
+def _censused_repo(tmp_path: Path, name: str, *, with_sessions: bool) -> Path:
+    """A state root with one committed record, and optionally the leftover register.
+
+    The two trees carry the same ledger so the only difference between their runs
+    is the ``noni/sessions/`` directory; the record is committed so neither run
+    adds the ``ledger-empty`` warn and competes with the comparison.
+    """
+    repo = _init_repo(tmp_path / name)
+    _commit_record_bytes(repo, "noni/decisions/2026-10-01-alpha.json",
+                         json.dumps(_valid_record(), indent=2).encode("utf-8"))
+    if with_sessions:
+        _commit_record_bytes(repo, _LEFTOVER_SESSION_REL,
+                             _LEFTOVER_SESSION_BODY.encode("utf-8"))
+    return repo
+
+
+def test_a_leftover_sessions_directory_censuses_exactly_like_its_absence(tmp_path):
+    """A committed ``noni/sessions/`` changes no byte of the census's answer.
+
+    The operator's own state repository still holds two closed session files from
+    before the subsystem was removed. Pointing the census at it must return the
+    verdict the same tree without the directory would: the same exit code, the same
+    rows, and no cannot-tell row standing in for the group that no longer runs. The
+    hygiene class is skipped in both runs for the reason every other class test here
+    gives -- an isolated fixture repo has no deny-list, and its always-reporting row
+    would be the same in both trees and prove nothing.
+    """
+    plain = _censused_repo(tmp_path, "plain", with_sessions=False)
+    leftover = _censused_repo(tmp_path, "leftover", with_sessions=True)
+    assert (leftover / _LEFTOVER_SESSION_REL).is_file(), (
+        "the fixture planted no register file, so the comparison proves nothing")
+
+    plain_code, plain_out, plain_err = _run(plain, "--skip", "hygiene", "--json")
+    left_code, left_out, left_err = _run(leftover, "--skip", "hygiene", "--json")
+
+    assert (left_code, left_out, left_err) == (plain_code, plain_out, plain_err), (
+        "a leftover noni/sessions/ moved the census's answer:\n"
+        f"plain:   rc={plain_code} out={plain_out!r} err={plain_err!r}\n"
+        f"leftover: rc={left_code} out={left_out!r} err={left_err!r}"
+    )
+    rows = [json.loads(line) for line in left_out.splitlines()
+            if line.strip() and json.loads(line).get("kind") == "finding"]
+    assert rows == [], f"the leftover register earned rows of its own: {rows}"
+    for row in json.loads(left_out.splitlines()[-1])["not_evaluated"] or []:
+        assert "sessions" not in str(row).lower(), (
+            f"the census worded something about the directory it must ignore: {row}")
+
+
+def test_a_leftover_sessions_directory_is_not_a_hygiene_regression(tmp_path):
+    """The leftover register's own text does not earn a hygiene row of its own.
+
+    The hygiene class scans every tracked file of the audited tree, so a register
+    file a census no longer reads must still not turn a clean tree into a finding:
+    the same tree with and without it reports the hygiene class identically.
+    """
+    plain = _censused_repo(tmp_path, "plain-hy", with_sessions=False)
+    leftover = _censused_repo(tmp_path, "leftover-hy", with_sessions=True)
+
+    plain_code, plain_out, plain_err = _run(plain, "--json")
+    left_code, left_out, left_err = _run(leftover, "--json")
+
+    assert (left_code, left_out, left_err) == (plain_code, plain_out, plain_err), (
+        "the leftover register changed the hygiene-bearing run:\n"
+        f"plain:   rc={plain_code} out={plain_out!r} err={plain_err!r}\n"
+        f"leftover: rc={left_code} out={left_out!r} err={left_err!r}"
+    )
 
 
 def test_edit_check_non_ascii_utf8_unchanged_is_not_edited(tmp_path):

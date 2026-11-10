@@ -13,8 +13,7 @@ way: ``order add --decision ID`` answered "no record carries that id" from bytes
 through a linked ``noni/``, and the committed route leaked first and only then heard
 git say a path was "beyond a symbolic link".
 
-The session writers refused all of this already (_session_guard / _session_paths,
-issue #68). They keep their own wording: the direction guard answers the same
+The direction writers refuse all of this (issue #68). They keep their own wording: the direction guard answers the same
 directory question from :func:`noni._path_kind.direction_refusal`, in sentences that
 name a directory and no session file, and each writer prints the pair through its own
 failure printer with its own code.

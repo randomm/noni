@@ -29,17 +29,6 @@ def _valid_record(rec_id="2026-10-01-alpha", status="decided", supersedes=None) 
     }
 
 
-
-
-def _session_body(identity: str, claims: list[str] | None = None) -> str:
-    lines = [f"- identity: {identity}", "- host/worktree: ws",
-             "- started: 2026-10-01T10:00:00Z", "- status: active", "- claims:"]
-    for c in claims or []:
-        lines.append(f"  - claim: {c}")
-    return "\n".join(lines) + "\n"
-
-
-
 def _run(repo: Path, *args: str) -> int:
     import io
     from contextlib import redirect_stderr, redirect_stdout

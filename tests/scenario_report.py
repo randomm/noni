@@ -18,7 +18,7 @@ import tempfile
 from pathlib import Path
 
 from scenario_build import build_scenario, fresh_clone
-from scenario_core import _CENSUS, ISSUE_STATE_REL, SESSION_ID_RE
+from scenario_core import _CENSUS, ISSUE_STATE_REL
 from scenario_faults import _plant_fault_12
 
 
@@ -32,7 +32,7 @@ def run_census_json(clone: Path, now: str, stale_after: str) -> tuple[int, list[
     --strict would turn that always-report into an exit 50 that masks the
     planted codes. The hygiene class has its own tests in
     tests/test_census_hygiene.py; this fixture measures the
-    ledger/session/ordering arbiter. ``--ordering`` and ``--issue-state`` are
+    ledger/item/ordering arbiter. ``--ordering`` and ``--issue-state`` are
     passed explicitly rather than left to the defaults: the closed check is not
     evaluated at all without a state file, so an implicit run would silently
     leave one of the three ordering classes unasked.
@@ -52,17 +52,22 @@ def run_census_json(clone: Path, now: str, stale_after: str) -> tuple[int, list[
 
 
 def _mask(value: str) -> str:
-    """Mask the random session-id suffix so two builds normalize identically."""
-    return SESSION_ID_RE.sub("<session>", value)
+    """A subject as the scenario states it: no masking rule is needed today.
+
+    Every subject this fixture plants is fixed at build time (an item id, a
+    record id, an issue number), so two builds normalize identically without a
+    rule. The hook is kept because a fixture that later plants a subject with a
+    random component needs one place to say so.
+    """
+    return value
 
 
 def normalize_findings(rows: list[dict]) -> list[tuple[str, int, str, str]]:
     """The normalized finding multiset: (check, code, severity, subject).
 
-    The subject is the census row's subject with the random 6-hex session-id
-    suffix masked; a session finding is identified by its build-time-known
-    identity (the register file's identity field names it), never by the
-    random id.
+    The subject is the census row's subject, passed through :func:`_mask`, so a
+    finding is identified by what the census named rather than by anything
+    per-build a fixture might have allocated.
     """
     return [
         (row["check"], row["code"], row["severity"], _mask(row["subject"]))

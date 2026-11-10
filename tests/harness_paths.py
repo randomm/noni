@@ -30,26 +30,14 @@ PRODUCT_MODULES = (
     "integrations/adapter_protocol.py",
     "integrations/github-issues/github_issues_adapter.py",
     "src/noni/__main__.py",
-    "src/noni/_session_git.py",
-    "src/noni/_session_fields.py",
-    "src/noni/_session_body.py",
     "src/noni/_path_kind.py",
     "src/noni/_safe_text.py",
-    "src/noni/_session_guard.py",
-    "src/noni/_session_paths.py",
-    "src/noni/_session_walk.py",
-    "src/noni/_session_rebase_state.py",
-    "src/noni/_commit_cause.py",
-    "src/noni/_marker.py",
-    "src/noni/_session_push.py",
     "src/noni/_decide_flags.py",
     "src/noni/_why.py",
     "src/noni/_decide_state_root.py",
     "src/noni/brief.py",
     "src/noni/brief_intent.py",
     "src/noni/brief_page.py",
-    "src/noni/close.py",
-    "src/noni/release.py",
     "src/noni/census.py",
     "src/noni/census_git.py",
     "src/noni/census_hygiene.py",
@@ -78,11 +66,8 @@ PRODUCT_MODULES = (
     "src/noni/census_run.py",
     "src/noni/census_render.py",
     "src/noni/census_report.py",
-    "src/noni/census_sessions_checks.py",
-    "src/noni/census_sessions_probe.py",
     "src/noni/census_wrapper.py",
     "src/noni/census_text.py",
-    "src/noni/claim.py",
     "src/noni/cli.py",
     "src/noni/decide.py",
     "src/noni/gitenv.py",
@@ -115,7 +100,6 @@ PRODUCT_MODULES = (
     "src/noni/public_safety_io.py",
     "src/noni/public_safety_allowlist.py",
     "src/noni/public_safety_scan.py",
-    "src/noni/register.py",
     "src/noni/shim_help.py",
     "src/noni/wrapper_bash.py",
     "src/noni/targetschema.py",
@@ -136,7 +120,6 @@ COVERAGE_PROCESS_START = str(REPO / "pyproject.toml")
 # must not change the bytes argparse emits.
 HELP_COLUMNS = "100"
 
-SESSIONS_SKILL = REPO / "skills" / "sessions-claims" / "scripts"
 STEERING_SKILL = REPO / "skills" / "steering-ledger" / "scripts"
 DIRECTION_SKILL = REPO / "skills" / "direction" / "scripts"
 CENSUS_SKILL = REPO / "skills" / "census" / "scripts"
@@ -144,12 +127,6 @@ CENSUS_SKILL = REPO / "skills" / "census" / "scripts"
 # compatibility route, and the paired test compares each of them against the
 # console route, so the paths are the product's public surface, not a detail.
 CENSUS_SH = STEERING_SKILL / "census.sh"
-CENSUS_SESSIONS = SESSIONS_SKILL / "census-sessions.sh"
-CENSUS_SESSIONS_PY = SESSIONS_SKILL / "census-sessions.py"
-REGISTER = SESSIONS_SKILL / "register.py"
-CLAIM = SESSIONS_SKILL / "claim.py"
-CLOSE = SESSIONS_SKILL / "close.py"
-RELEASE = SESSIONS_SKILL / "release.py"
 DECIDE = STEERING_SKILL / "decide.py"
 ORDER = DIRECTION_SKILL / "order.py"
 INTENT = DIRECTION_SKILL / "intent.py"
@@ -162,14 +139,12 @@ CENSUS = CENSUS_SKILL / "census.py"
 # ``noni item`` print the same bytes.
 ITEM = REPO / "scripts" / "item.py"
 
-# The seven tools the ``noni`` command dispatches: subcommand -> the wrapper that
-# must produce the same bytes. The two shell census entry points are the other
-# half of the wrapper surface: each is compared against the package route in
-# tests/test_console_routes.py, so the paths are pinned here as well.
+# The four tools the ``noni`` command dispatches: subcommand -> the wrapper that
+# must produce the same bytes. The shell census entry point is the other
+# half of the wrapper surface: it is compared against the package route in
+# tests/test_console_equivalence.py, so the path is pinned here as well.
 TOOL_WRAPPERS: tuple[tuple[str, Path], ...] = (
     ("census", CENSUS),
-    ("register", REGISTER),
-    ("claim", CLAIM),
     ("decide", DECIDE),
     ("order", ORDER),
     ("intent", INTENT),

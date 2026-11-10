@@ -16,7 +16,6 @@ from pathlib import Path
 from _harness import REPO, subprocess_env
 
 CENSUS_SH = REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"
-CENSUS_SESSIONS_SH = REPO / "skills" / "sessions-claims" / "scripts" / "census-sessions.sh"
 FIXTURES = REPO / "tests" / "fixtures" / "census-sh"
 
 
@@ -46,10 +45,3 @@ def test_census_sh_help_matches_header_fixture():
     out = _run_help(CENSUS_SH)
     for line in (FIXTURES / "usage.txt").read_text().splitlines():
         assert line in out, f"census.sh --help missing {line!r}:\n{out}"
-
-
-def test_census_sessions_sh_help_matches_header_fixture():
-    """census-sessions.sh --help carries the documented usage line."""
-    out = _run_help(CENSUS_SESSIONS_SH)
-    for line in (FIXTURES / "sessions-usage.txt").read_text().splitlines():
-        assert line in out, f"census-sessions.sh --help missing {line!r}:\n{out}"

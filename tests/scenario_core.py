@@ -13,7 +13,6 @@ imports, which is why this file stays importable without ``conftest.py``.
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -28,9 +27,9 @@ _CENSUS = REPO / "skills" / "census" / "scripts" / "census.py"
 # scale, so the scenario is identical across builds and hosts.
 BASE = datetime(2026, 10, 1, 0, 0, 0, tzinfo=timezone.utc)
 NOW = (BASE + timedelta(days=3)).isoformat().replace("+00:00", "Z")
-STALE_AFTER = "2"  # days: agent-c's commit (day 0) is 3 days old at --now
+STALE_AFTER = "2"  # days: the planted item's commit (day 0) is 3 days old at --now
 
-# The committed ordering, one entry per claimed task: issue 1 holds position 1
+# The committed ordering, one entry per worked issue: issue 1 holds position 1
 # and issue 2 position 2, each citing the decision record that set its position.
 # Both cite d2, the one live record of the healthy chain (d1 stands superseded,
 # so citing it would be an ``ordering-malformed`` row, not a healthy entry). One
@@ -74,7 +73,44 @@ def _order_healthier(clone: Path) -> None:
     _push(clone, NOW)
 
 
-SESSION_ID_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}-[0-9a-f]{6}(?:\.md)?")
+def _item_body(item_id: str, status: str = "candidate") -> str:
+    """An item-store file in the noni.item/1 shape, as JSON text.
+
+    Used for the planted faults, which need bytes the real writer would not
+    produce. A healthy file goes through ``item.py add`` instead.
+    """
+    return json.dumps({"schema": "noni.item/1", "id": item_id,
+                       "status": status, "title": item_id.title(),
+                       "created": NOW}, indent=2) + "\n"
+
+
+def _item_healthier(clone: Path) -> None:
+    """The healthy item store, produced by the real writer.
+
+    Two ideas filed through ``item.py add`` (the product's own writer, which
+    commits each file itself), then pushed. Neither is ordered, referenced or
+    past its cap, so a healthy store earns no census row.
+    """
+    _run_item(clone, "add", "first-idea", "--title", "First idea")
+    _run_item(clone, "add", "second-idea", "--title", "Second idea")
+    _push(clone, NOW)
+
+
+def _run_item(repo: Path, *args: str) -> subprocess.CompletedProcess:
+    """Run the real item.py writer in repo; returns the completed process.
+
+    Goes through the harness launcher (deterministic git identity, coverage
+    hook). The writer commits the one item path itself, which is what makes the
+    fixture's store a writer product rather than something this file rendered.
+    """
+    from _harness import run_item
+
+    proc = run_item(repo, *args)
+    assert proc.returncode == 0, (
+        f"item.py {' '.join(args)} failed ({proc.returncode}):\n"
+        f"{proc.stdout}\n{proc.stderr}"
+    )
+    return proc
 
 
 def _ts(day: int, hour: int = 0) -> str:
@@ -83,7 +119,7 @@ def _ts(day: int, hour: int = 0) -> str:
 
 
 # The commit date every planted fault carries: day 0, hour 4 of the scenario
-# timeline, which is the clock agent-c's session is stale against at --now.
+# timeline, which is the clock the planted item is stale against at --now.
 # Named here, beside the timeline it sits on, so the builder and the planters
 # cannot drift apart on it.
 FAULT_CLOCK = _ts(0, 4)
@@ -91,15 +127,12 @@ FAULT_CLOCK = _ts(0, 4)
 
 @dataclass
 class Scenario:
-    """One built scenario: a bare origin plus its agent clones and session ids."""
+    """One built scenario: a bare origin plus its agent clones."""
 
     base: Path
     origin: Path
     clone_a: Path
     clone_b: Path
-    sid_a: str = ""
-    sid_b: str = ""
-    sid_c: str = ""
     faults: list[str] = field(default_factory=list)
 
     @property
@@ -173,41 +206,6 @@ def _run_order(repo: Path, *args: str) -> subprocess.CompletedProcess:
         f"{proc.stdout}\n{proc.stderr}"
     )
     return proc
-
-
-def _register(repo: Path, identity: str, clone_name: str, *,
-              no_commit: bool = False) -> str:
-    """Register a session via the real register.py; return the session id.
-
-    ``no_commit`` asks the writer to leave the file in the work tree (the
-    documented form for a caller that commits it itself, and the only way to
-    plant a second session in a working copy already marked for another);
-    the id then comes from the path in the "left uncommitted" line rather than
-    the "registered session" one.
-    """
-    from _harness import run_register
-
-    # The clone's own absolute path, passed explicitly: the builder runs with
-    # the suite's cwd inside the repository, so a path derived from the repo's
-    # basename would name the *real* repository and the session would be
-    # written (and committed) there instead of in the fixture clone.
-    kwargs = {"no-commit": None} if no_commit else {}
-    proc = run_register(repo, identity, host=clone_name, worktree=str(repo.resolve()),
-                        **kwargs)
-    assert proc.returncode == 0, f"register {identity} failed: {proc.stderr}"
-    line = proc.stdout.strip()
-    if no_commit:
-        tail = line.split(" -> ")[-1].rsplit(" left uncommitted", 1)[0]
-        return tail.rsplit("/", 1)[-1].removesuffix(".md")
-    return line.split("->")[0].split("registered session ")[1].strip()
-
-
-def _claim(repo: Path, session_id: str, task: str) -> None:
-    """Claim a task via the real claim.py --push (fetch-rebase-push)."""
-    from _harness import run_claim
-
-    proc = run_claim(repo, session_id, task, push=True)
-    assert proc.returncode == 0, f"claim {task} by {session_id} failed: {proc.stderr}"
 
 
 def _ensure_branch(repo: Path, branch: str) -> None:

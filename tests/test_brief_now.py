@@ -1,6 +1,6 @@
 """The brief suite, part 2 of 6: the instant handed to the census.
 
-``--now`` reaches the census, so the verdict follows the stall window rather than the
+``--now`` reaches the census, so the verdict follows the instant handed to it rather than the
 clock, and an instant the tool will not act on is a usage error on exit 2.
 """
 
@@ -12,28 +12,17 @@ from pathlib import Path
 import pytest
 from brief_fixtures import (
     NOW,
-    SESSION_REL,
-    commit_at,
     plant_brief_tree,
-    plant_session,
-    restore_history,
     run_brief,
-    run_brief_with_history,
 )
 from brief_support import (
     LABEL,
     census_summary,
-    counts_more,
     is_refusal,
     summary_line,
 )
 
 from noni import brief as brief_module
-
-# The instant the stall case commits a session's register file at, and the two instants the
-# page is asked about around it: inside the census's 14-day stall window on one side and past
-# it on the other. Spelled here because the case's whole claim is the distance between them.
-STALL_MOMENT = "2026-10-01T09:00:00+00:00"
 
 
 def test_brief_summary_line_equals_the_census_summary_line(tmp_path: Path) -> None:
@@ -46,42 +35,6 @@ def test_brief_summary_line_equals_the_census_summary_line(tmp_path: Path) -> No
     code, out, _ = run_brief(root, "--now", NOW)
     assert code == 0
     assert summary_line(out) == census_summary(root, NOW)
-
-
-def test_brief_forwards_now_so_the_verdict_follows_the_stall_window(tmp_path: Path) -> None:
-    """The same tree at two instants differs in the verdict line and in nothing else.
-
-    The ``--now`` the brief is handed is the ``--now`` the census is run with. A session whose
-    register file was committed on 2026-10-01 is past the census's 14-day stall window at
-    2026-10-27 and inside it at 2026-10-05; if the stamp were accepted and dropped, one verdict
-    would print for two states of one tree, and the page would be a report about a moment it did
-    not name.
-
-    The session file and the commit that carries it are planted here rather than held in the
-    committed fixture: the file's history has to predate one instant and postdate another within
-    the same case, and a fixture commit could not do both.
-    """
-    root = plant_brief_tree(tmp_path)
-    path = plant_session(root)
-    assert path.exists()
-    with restore_history(root):
-        commit_at(root, [SESSION_REL], STALL_MOMENT, "register: briefly")
-    early = run_brief_with_history(root, "--now", "2026-10-05T09:00:00Z")
-    late = run_brief_with_history(root, "--now", NOW)
-    assert early[0] == late[0] == 0
-    # The blocks are the page's own reads and take no clock: identical bytes either side.
-    assert (early[1].splitlines()[:-1] == late[1].splitlines()[:-1])
-    assert summary_line(early[1]) != summary_line(late[1])
-    # And the two verdicts are the census's own, at the two instants, unchanged.
-    with restore_history(root):
-        assert summary_line(late[1]) == census_summary(root, NOW)
-        assert summary_line(early[1]) == census_summary(root, "2026-10-05T09:00:00Z")
-    # The late verdict is the stalled one and the early one is not, so the difference this case
-    # rests on is the census saying something it was not saying at the other instant -- not two
-    # rows that were always going to disagree.
-    # The census counts findings in its summary line, so a stalled session is visible there:
-    # the word names what the two verdicts differ about.
-    assert "stalled" in summary_line(late[1]) or counts_more(late[1], early[1])
 
 
 @pytest.mark.parametrize("bad, why", [

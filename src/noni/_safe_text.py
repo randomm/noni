@@ -19,8 +19,7 @@ and escapes a backslash the name itself carries as ``\\\\``, so that one path ca
 never print as another path's escape.
 
 This module imports nothing from the package: the text renderers are the bottom of the
-dependency order, and both ``_session_git`` and ``_session_paths`` reach them without
-importing each other.
+dependency order, so every writer reaches them without importing another module.
 """
 
 from __future__ import annotations
@@ -107,8 +106,7 @@ def safe_path(text: object, limit: int = TEXT_LIMIT) -> str:
     refusal reads -- or replaces -- a file nobody named. Backslash is also the one
     character that makes the two orders of a refusal differ, which is why the guard
     renders every path through this function once and composes its sentences with it,
-    never with :func:`safe_text` over a line that already holds a rendered path (see
-    :func:`noni._session_paths._answer`).
+    never with :func:`safe_text` over a line that already holds a rendered path.
     """
     backslashed = str(text).replace("\\", "\\\\")
     return safe_text(backslashed.replace("\n", "\\n").replace("\r", "\\r"), limit)

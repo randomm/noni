@@ -4,10 +4,10 @@ The page tells a team to run one census line in a build and to gate the build on
 two sets of exit codes. This module settles that half by running it: each route is
 driven twice on the same tree -- once as the page's own steps leave it, where the
 documented verdict is exit 0, and once with a violation planted under the ``noni/``
-tree that route's ``--repo`` names, where the verdict is the ``session-double``
-code. The planted shape is the double claim the exit-code contract test commits --
-two committed register files, two identities, one task -- so the exit code here is
-earned by the same shape that test pins.
+tree that route's ``--repo`` names, where the verdict is the ``ledger-record``
+code. The planted shape is the malformed record the exit-code contract test commits
+-- a ledger file missing its ``question`` field -- so the exit code here is earned
+by the same shape that test pins.
 
 The commands are the page's own: they come from
 :func:`quickstart_runner.route_commands`, which compares the page's fences against
@@ -26,12 +26,12 @@ the table agreement there read the same page through one reader.
 from __future__ import annotations
 
 import ast
+import json
 from pathlib import Path
 
 import census
 import quickstart_ci_page
 from _harness import _commit_file
-from census_fixtures import _session_body
 from docs_commands import read
 from docs_promises import QUICKSTART, STATE_DIR
 from quickstart_ci_page import (
@@ -51,13 +51,12 @@ from quickstart_runner import (
     run_route_b,
 )
 
-# The planted violation: the task both identities claim, and the two session ids
-# the committed files carry. The names are the shape
-# ``tests/test_census_exit_codes_contract.py::test_exit_30_double_claim`` commits,
-# so the fixture here is the same double claim the exit-code contract already
-# pins, not a shape this module invented.
-_CLAIMED_TASK = "#42"
-_CLAIMANT_IDS = ("2026-10-01-aaaaaa", "2026-10-01-bbbbbb")
+# The planted violation: a ledger record missing the field the schema requires.
+# It is the shape
+# ``tests/test_census_exit_codes_contract.py::test_exit_10_malformed_record``
+# commits, so the fixture here is the same violation the exit-code contract
+# already pins, not a shape this module invented.
+_MALFORMED_RECORD_ID = "2026-10-01-alpha"
 
 
 def _import_helper_clean(launch_modules: tuple[str, ...]) -> list[str]:
@@ -98,29 +97,29 @@ def _ci_census_command(*, state: bool) -> list[str]:
     return matches[0]
 
 
-def _committed_double_claim(tree: Path, env: dict[str, str]) -> None:
-    """Plant the double claim under ``tree`` and commit it, as a CI checkout has it.
+def _committed_malformed_record(tree: Path, env: dict[str, str]) -> None:
+    """Plant the malformed record under ``tree`` and commit it, as a CI checkout has it.
 
-    Both files are committed because the census reports the register as git sees
-    it; an uncommitted pair would be a tree no build checks out. The writer is the
+    The file is committed because the census reports the ledger as git sees
+    it; an uncommitted file would be a tree no build checks out. The writer is the
     harness's own ``_commit_file`` (one commit, one identity, no GPG), which is what
-    ``tests/test_census_exit_codes_contract.py::test_exit_30_double_claim`` plants,
-    so the census here reads the same shape that test's exit code is earned by.
+    ``tests/test_census_exit_codes_contract.py::test_exit_10_malformed_record``
+    plants, so the census here reads the same shape that test's exit code is earned
+    by.
     """
-    for session_id in _CLAIMANT_IDS:
-        identity = "dev" if session_id.endswith("aaaaaa") else "rev"
-        # ``claims`` is the third parameter, not the second: passed positionally it
-        # would land in ``status`` and the pair would census as a malformed register
-        # rather than as one task claimed twice.
-        body = _session_body(identity, claims=[_CLAIMED_TASK])
-        _commit_file(tree, f"noni/sessions/{session_id}.md", body)
+    record = {"id": _MALFORMED_RECORD_ID, "status": "decided",
+              "context": "planted for the CI step", "decision": "planted",
+              "rejected": [], "source": "free chat", "confirmed_by": "operator",
+              "confirmed_at": "2026-10-01T09:00:00Z", "tags": []}
+    _commit_file(tree, f"noni/decisions/{_MALFORMED_RECORD_ID}.json",
+                 json.dumps(record, indent=2) + "\n")
     # A leftover worktree entry would be an uncommitted file, and the census reads
-    # the register as git sees it: the verdict below would then be earned by a tree
+    # the ledger as git sees it: the verdict below would then be earned by a tree
     # no CI checkout has. The page's own Route A steps leave the project clean, so
-    # this holds whatever the planted pair adds.
+    # this holds whatever the planted record adds.
     dirty = git(tree, "status", "--porcelain", env=env).stdout.splitlines()
     assert not [line for line in dirty if line.strip()], (
-        f"planting the double claim left {tree} dirty: {dirty}")
+        f"planting the malformed record left {tree} dirty: {dirty}")
 
 
 def _run_route_a(world: World, argv: list[str]) -> tuple[int, str]:
@@ -203,22 +202,22 @@ def test_the_ci_step_exits_zero_on_a_clean_route_a_tree(world: World) -> None:
         "the documented CI step left the tree dirty")
 
 
-def test_the_ci_step_fails_a_route_a_build_on_a_planted_double_claim(
+def test_the_ci_step_fails_a_route_a_build_on_a_planted_malformed_record(
     world: World,
 ) -> None:
     """The same step, same tree, one planted violation: the documented fail code.
 
     The pair with the test above is the whole of the page's promise: nothing but
-    the planted ``noni/sessions`` pair differs between the two runs, so the exit
-    code that changed is the census reading the claim it was sent to read.
+    the planted ``noni/decisions`` record differs between the two runs, so the exit
+    code that changed is the census reading the ledger it was sent to read.
     """
     for argv in route_commands(("Route A",)):
         checked(launch(world, argv, world.project), f"Route A command {argv}")
-    _committed_double_claim(world.project, world.env)
+    _committed_malformed_record(world.project, world.env)
     code, stdout = _run_route_a(world, _ci_census_command(state=False))
-    lines = _assert_verdict(code, stdout, census.CLASS_CODE["session-double"],
-                            "the CI census step on a planted double claim")
-    assert "session-double" in _verdict_line(lines, "; verdict fail"), lines[-1]
+    lines = _assert_verdict(code, stdout, census.CLASS_CODE["ledger-record"],
+                            "the CI census step on a planted malformed record")
+    assert "ledger-record" in _verdict_line(lines, "; verdict fail"), lines[-1]
 
 
 def test_the_ci_step_exits_zero_on_a_clean_route_b_tree(world: World) -> None:
@@ -228,30 +227,30 @@ def test_the_ci_step_exits_zero_on_a_clean_route_b_tree(world: World) -> None:
     assert _verdict_line(lines, "verdict ok"), lines[-1]
 
 
-def test_the_ci_step_fails_a_route_b_build_on_a_planted_double_claim(
+def test_the_ci_step_fails_a_route_b_build_on_a_planted_malformed_record(
     world: World,
 ) -> None:
-    """The planted pair goes under the tree Route B's ``--repo`` names.
+    """The planted record goes under the tree Route B's ``--repo`` names.
 
     The placement is the point: the census reads only the tree ``--repo`` names,
     so a fixture written beside the project instead of inside the clone would exit
     0 here and the test would pass without the census having read anything. The
-    decoy half of that claim is the same planted pair left out of the state clone's
+    decoy half of that record is the same planted file left out of the state clone's
     own history by the project's ignore rule.
     """
     _run_route_b(world, _ci_census_command(state=True))
-    _committed_double_claim(world.state, world.env)
+    _committed_malformed_record(world.state, world.env)
     argv = _ci_census_command(state=True)
     proc = launch(world, argv, world.project)
     lines = _assert_verdict(proc.returncode, proc.stdout,
-                            census.CLASS_CODE["session-double"],
+                            census.CLASS_CODE["ledger-record"],
                             "the CI step on a state clone holding a planted "
-                            "double claim")
-    assert "session-double" in _verdict_line(lines, "; verdict fail"), lines[-1]
-    # The project's own tree never carried the pair, which is what the route's
+                            "malformed record")
+    assert "ledger-record" in _verdict_line(lines, "; verdict fail"), lines[-1]
+    # The project's own tree never carried the record, which is what the route's
     # ignore rule buys and what the census must not be blamed for missing.
-    assert not list((world.project / "noni" / "sessions").glob("*.md")), (
-        "the planted claim was written into the code repository, so the route's "
+    assert not list((world.project / "noni" / "decisions").glob("*.json")), (
+        "the planted record was written into the code repository, so the route's "
         "--repo no longer decides which tree was read")
 
 

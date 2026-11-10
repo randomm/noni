@@ -9,9 +9,9 @@ re-exports both ``main`` and ``_build_parser`` so the census stays the module it
 wrappers, ``python -m noni census``, ``noni census`` and its tests import.
 
 The parser builds its own help from the check contract: ``--strict`` names the
-warn classes through ``_warn_class_names()`` and ``--stale-after`` quotes the three
+warn classes through ``_warn_class_names()`` and ``--stale-after`` quotes the two
 defaults declared in ``census_render.py``, so neither line is a copy that can drift
-from the table. The store's own path override is declared here beside the other four
+from the table. The store's own path override is declared here beside the other two
 so one parser remains the whole flag surface. ``prog`` is the label from ``labels``, never a name derived
 from ``__file__``, which is what lets the in-place wrapper and the console route
 print the same bytes.
@@ -29,7 +29,6 @@ from .census_render import (
     ITEM_STALE_AFTER_DEFAULT,
     ORDERING_CLOSED_NOT_EVALUATED,  # noqa: F401  (doc scraper)
     ORDERING_STALE_AFTER_DEFAULT,
-    SESSION_STALE_AFTER_DEFAULT,
     _warn_class_names,
 )
 
@@ -38,12 +37,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=labels.CENSUS,
         description="The unified noni census: read-only checks over the steering "
-        "ledger, the session register and the ordering artifact, with an honest "
+        "ledger, the ordering artifact and the item store, with an honest "
         "exit code.",
     )
     parser.add_argument("--repo", default=".", help="the repository (or directory) to audit (default: current directory)")
     parser.add_argument("--ledger", default=None, help="ledger directory (default: <repo>/noni/decisions)")
-    parser.add_argument("--sessions", default=None, help="sessions directory (default: <repo>/noni/sessions)")
     parser.add_argument("--ordering", default=None,
                         help="ordering artifact (default: "
                              "<repo>/noni/direction/order.json)")
@@ -63,11 +61,11 @@ def _build_parser() -> argparse.ArgumentParser:
                              "or the operator; without it the ordering-closed check is not "
                              "evaluated (the census never contacts a tracker)")
     parser.add_argument("--now", default=None, metavar="ISO-8601", help="fixed timestamp for time-based checks (reproducible output)")
-    parser.add_argument("--stale-after", default=SESSION_STALE_AFTER_DEFAULT, metavar="DAYS",
+    parser.add_argument("--stale-after", default=ORDERING_STALE_AFTER_DEFAULT,
+                        metavar="DAYS",
                         help=f"staleness threshold in positive whole days as `<N>` or `<N>d` "
                              f"(e.g. `7` or `7d`); each class keeps its own default "
-                             f"({SESSION_STALE_AFTER_DEFAULT} for active sessions, "
-                             f"{ORDERING_STALE_AFTER_DEFAULT} for order entries and "
+                             f"({ORDERING_STALE_AFTER_DEFAULT} for order entries and "
                              f"{ITEM_STALE_AFTER_DEFAULT} for filed ideas), and a "
                              "given value applies to all stale classes")
     parser.add_argument("--strict", action="store_true",

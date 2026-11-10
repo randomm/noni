@@ -249,7 +249,7 @@ def test_the_cited_record_link_survives_a_filter_that_named_no_intent_class(tmp_
     exited 0, which is a clean verdict bought by a path nobody opened.
     """
     repo = _planted_record_link(tmp_path, "filter", dangling=True)
-    rows = _rows(repo, "--only", "session-double")
+    rows = _rows(repo, "--only", "item-unlistable")
     intent_rows = _intent_rows(rows)
     assert subjects(intent_rows) == ["cannot-tell"]
     assert intent_rows[0]["severity"] == "warn"

@@ -2,11 +2,11 @@
 
 The builder constructs a bare origin plus two agent clones in a throwaway
 directory (a tmp_path in the tests; its own temp dir when run standalone
-with no argument), drives the real register.py / claim.py scripts
-(fetch-rebase-push), the real order.py writer for the ordering artifact, and
-commits a healthy steering decision chain. In the faulted variant it plants
-five disjoint faults (census codes 30, 31, 20, 40 committed to origin, and 12
-planted in the fresh clone's working tree), each in its own artifact. Every
+with no argument), drives the real item.py and order.py writers through their
+fetch-rebase-push commit path, and commits a healthy steering decision chain.
+In the faulted variant it plants four disjoint faults (census codes 52, 53 and
+20 committed to origin, and 12 planted in the fresh clone's working tree), each
+in its own artifact. Every
 commit runs with pinned GIT_AUTHOR_DATE / GIT_COMMITTER_DATE, so a rebuilt
 scenario is identical, and the census runs against a FRESH clone of the bare
 origin with a fixed --now and --stale-after.
@@ -20,9 +20,9 @@ whatever the census would have guessed.
 
 Determinism is asserted on the normalized finding multiset — the multiset of
 (check, code, severity, masked-subject) tuples from the census --json output —
-because session ids carry a random 6-hex suffix per build; a session finding
-is identified by its build-time-known identity (agent-a / agent-b / agent-c),
-which its register file carries, never by the random id.
+through :func:`scenario_report._mask`, the one place a subject that later gains a
+random component would say so. Every subject this fixture plants is fixed at build
+time, so two builds normalize identically.
 
 Deletion is confined to what this run created: the builder and the standalone
 no-arg path create their own directories and remove only those; a directory
@@ -63,18 +63,18 @@ from scenario_core import (
     NOW,
     ORDER_ISSUES,
     ORDER_PLANS,
-    SESSION_ID_RE,
     STALE_AFTER,
     Scenario,
-    _claim,
     _commit,
     _ensure_branch,
     _git_pinned,
     _issue_state,
+    _item_body,
+    _item_healthier,
     _order_healthier,
     _push,
     _record,
-    _register,
+    _run_item,
     _run_order,
     _ts,
 )
@@ -87,22 +87,22 @@ __all__ = [
     "NOW",
     "ORDER_ISSUES",
     "ORDER_PLANS",
-    "SESSION_ID_RE",
     "STALE_AFTER",
     "Scenario",
     "_CENSUS",
-    "_claim",
     "_commit",
     "_ensure_branch",
     "_git_pinned",
     "_issue_state",
+    "_item_body",
+    "_item_healthier",
     "_mask",
     "_order_healthier",
     "_plant_fault_12",
     "_plant_faults",
     "_push",
     "_record",
-    "_register",
+    "_run_item",
     "_run_order",
     "_ts",
     "build_scenario",

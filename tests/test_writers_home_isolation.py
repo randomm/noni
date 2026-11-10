@@ -26,8 +26,6 @@ from pathlib import Path
 from _harness import REPO, _git_env_with_identity, subprocess_env
 from env_isolation_support import (
     BASELINE_DECISION_ID,
-    DECOY_SID,
-    DECOY_TASK,
     _home_snapshot,
     _home_state_repo,
     _hostile_home,
@@ -37,14 +35,6 @@ WRITER_LAUNCHERS = {
     # tool -> (script, argv after --repo). The argv is the smallest one each
     # writer accepts: an argument the writer requires must be present or the
     # run fails on usage and measures nothing.
-    "register": ("skills/sessions-claims/scripts/register.py",
-                 ["--identity", "developer"]),
-    "claim": ("skills/sessions-claims/scripts/claim.py",
-              ["--session-id", DECOY_SID, "--task", DECOY_TASK]),
-    "close": ("skills/sessions-claims/scripts/close.py",
-              ["--session-id", DECOY_SID]),
-    "release": ("skills/sessions-claims/scripts/release.py",
-                ["--session-id", DECOY_SID, "--task", "#7"]),
     "decide": ("skills/steering-ledger/scripts/decide.py",
                ["--slug", "scheduler", "--date", "2026-10-26",
                 "--scope", "release ordering", "--asked-by", "developer",
@@ -91,10 +81,8 @@ def test_no_writer_reads_or_writes_under_home(tmp_path, monkeypatch):
     root: the decoy's bytes are unchanged and no noni/ appears under the cwd.
 
     This is the HOME half of the isolation pair. The cwd half lives in each
-    tool's own state-root test (``tests/test_claim_validation_guards.py``,
-    ``tests/test_decide_state_root.py``,
-    ``tests/test_order_writer_state_root.py``, ``tests/test_session_close.py``
-    and ``tests/test_session_release.py``); this one covers the directory a
+    tool's own state-root test (``tests/test_decide_state_root.py`` and
+    ``tests/test_order_writer_state_root.py``); this one covers the directory a
     caller never names, which is
     the one a tool reaches by accident rather than by argument.
     """
@@ -125,24 +113,7 @@ def test_each_writer_actually_wrote_in_the_state_root(tmp_path, monkeypatch):
     """
     _home, _before, _results, _cwd = _writers_under_a_hostile_home(tmp_path, monkeypatch)
     root = tmp_path / "state-root"
-    sessions = root / "noni" / "sessions"
 
-    register_files = sorted(p.name for p in sessions.glob("*.md"))
-    assert len(register_files) == 2, (
-        f"register.py allocates one new session beside the one that was there: "
-        f"{register_files}"
-    )
-    claim_body = (sessions / f"{DECOY_SID}.md").read_text(encoding="utf-8")
-    assert f"- claim: {DECOY_TASK}" in claim_body, (
-        f"claim.py did not append its row to the state root's register:\n"
-        f"{claim_body}"
-    )
-    assert "- status: closed" in claim_body, (
-        "close.py did not move the state root's own session to closed"
-    )
-    assert "- claim: #7" not in claim_body, (
-        "release.py did not remove the row it was given from the state root"
-    )
     assert (root / "noni" / "direction" / "order.json").is_file(), (
         "order.py wrote its artifact somewhere other than the state root"
     )
@@ -160,12 +131,8 @@ def test_the_hostile_home_decoy_is_readable(tmp_path):
     """
     home = _hostile_home(tmp_path)
     assert (home / "noni" / "decisions" / "2026-10-01-home-decoy.json").is_file()
-    body = (home / "noni" / "sessions" / f"{DECOY_SID}.md").read_text(
-        encoding="utf-8")
-    assert f"- claim: {DECOY_TASK}" in body, (
-        "the decoy register must carry the row a run makes")
     order = json.loads((home / "noni" / "direction" / "order.json").read_text(
         encoding="utf-8"))
     assert order[0]["issue"] == 999
-    for rel in ("noni/decisions", "noni/sessions", "noni/direction"):
+    for rel in ("noni/decisions", "noni/direction"):
         assert (home / rel).is_dir(), rel

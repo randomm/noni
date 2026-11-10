@@ -11,7 +11,7 @@ claims remain here, each of which was the cause of a real first-run failure an
 agent hit by following only the docs:
 
 - **The shell shims are shown as shell.** ``census.sh`` and
-  ``census-sessions.sh`` are bash scripts; a page that shows one under
+  ``census.sh`` is a bash script; a page that shows one under
   ``python3`` hands the reader a Python traceback instead of the exit-code
   contract the same page documents. Conversely the ``.py`` entry points are
   shown under an interpreter, because that is how the README launches them.
@@ -65,8 +65,8 @@ def _command_lines(path: object, text: str) -> list[str]:
 def test_no_doc_page_runs_a_shell_script_under_python() -> None:
     """No page names an interpreter in front of a ``.sh`` entry point.
 
-    The two shims are bash (``census.sh`` and ``census-sessions.sh`` both resolve
-    ``NONI_PYTHON`` themselves). Running either under ``python3`` dies on a
+    The shim is bash (``census.sh`` resolves
+    ``NONI_PYTHON`` itself). Running it under ``python3`` dies on a
     brace before any check runs, so the reader gets a traceback where the page
     promised an exit code.
     """
@@ -76,7 +76,7 @@ def test_no_doc_page_runs_a_shell_script_under_python() -> None:
     assert not offenders, f"pages run a shell script under python3: {offenders}"
 
 
-@pytest.mark.parametrize("name", ("census.sh", "census-sessions.sh"))
+@pytest.mark.parametrize("name", ("census.sh",))
 def test_every_page_that_shows_a_shim_shows_it_as_bash(name: str) -> None:
     """Where a page prints one of the shims as a command, it prints it under
     ``bash`` or as a direct invocation -- never bare in a way that leaves the
@@ -101,32 +101,32 @@ def test_every_page_that_shows_a_shim_shows_it_as_bash(name: str) -> None:
     )
 
 
-def test_the_sessions_shim_exit_3_row_names_its_own_interpreter() -> None:
-    """The sessions census's exit-3 row names the interpreter it execs.
+def test_the_ledger_shim_exit_3_row_names_its_own_interpreter() -> None:
+    """The ledger census's exit-3 row names the interpreter it execs.
 
     Read as a plain "python3 not found", that row is what made the wrapper look
     like a Python script. It is not: exit 3 is the wrapper failing to find the
     interpreter it is about to exec, which is ``NONI_PYTHON`` when that is set.
 
     Scoped to a page that documents this shim's own exit-code table (a row
-    rendering ``3`` and the double-claim row together): a page that mentions the
+    rendering ``3`` and a failing ledger row together): a page that mentions the
     shim in passing owes no table, and demanding one would push prose into
     places it does not belong.
     """
-    table_marks = ("`30`", "double-claim")
+    table_marks = ("`10`", "ledger-record")
     offenders = [_label(path) for path in SKILL_PAGES
                  if (page := read(path))
-                 and "census-sessions" in page
+                 and "census.sh" in page
                  and all(mark in page for mark in table_marks)
                  and "NONI_PYTHON" not in page]
     assert not offenders, (
-        f"pages table the sessions shim's exit codes without naming NONI_PYTHON, "
+        f"pages table the ledger shim's exit codes without naming NONI_PYTHON, "
         f"which is the interpreter exit 3 is about: {offenders}")
 
 
-# --- the per-artifact wrappers report one group, not the whole census -------
+# --- the per-artifact wrapper reports one group, not the whole census -------
 
-# The one sentence each wrapper page owes about what it does not report. Kept as
+# The one sentence the wrapper page owes about what it does not report. Kept as
 # data here so the page text and the test that pins it cannot drift apart, and so
 # a page that drops the qualifier (or reworded it into "runs everything") fails
 # rather than reading plausibly.
@@ -134,26 +134,22 @@ _WRAPPER_SCOPE_SENTENCE = (
     "reports no `hygiene`, `ordering-*` or `intent` row \u2014 `noni census` "
     "is the whole picture")
 
-# Each wrapper page, with the group it does run: the qualifier is only true of a
+# The wrapper page, with the group it does run: the qualifier is only true of a
 # page that names its own group, so the test checks both halves of the sentence.
 _WRAPPER_SCOPE_PAGES: tuple[tuple[Path, str], ...] = (
     (REPO / "skills" / "steering-ledger" / "SKILL.md", "ledger group"),
-    (REPO / "skills" / "sessions-claims" / "references" / "census.md",
-     "session group"),
-    (REPO / "skills" / "sessions-claims" / "SKILL.md", "session group"),
 )
 
 
 @pytest.mark.parametrize("page,group", _WRAPPER_SCOPE_PAGES,
-                         ids=("steering-ledger", "sessions-claims-census",
-                              "sessions-claims"))
+                         ids=("steering-ledger",))
 def test_each_wrapper_page_scopes_its_report_to_its_own_group(page: Path,
                                                               group: str) -> None:
     """Each per-artifact wrapper page says, in one sentence, that it reports only
     its own group and that `noni census` is the whole picture.
 
-    The product ruling is that the two wrappers run one check group each (ledger,
-    sessions) and never a `hygiene`, `ordering-*` or `intent` row. A reader who
+    The product ruling is that the wrapper runs one check group (the ledger) and
+    never a `hygiene`, `ordering-*` or `intent` row. A reader who
     took a clean wrapper run for a clean census would ship an unhygienic state
     tree, so the page that advertises the wrapper owes the qualifier next to the
     promise that it is 'the same census'. Matched on whitespace-collapsed text:
@@ -168,18 +164,18 @@ def test_each_wrapper_page_scopes_its_report_to_its_own_group(page: Path,
 
 
 def test_the_census_page_qualifies_its_hygiene_always_reports_claim() -> None:
-    """`hygiene` always reports under `noni census`, not under the wrappers, and
+    """`hygiene` always reports under `noni census`, not under the wrapper, and
     the census page says which of the two the promise is about.
 
     The sentence used to read 'always reports' with no subject, which is read as
-    a property of every entry point — including the two wrappers that filter to
-    one group and print no hygiene row at all.
+    a property of every entry point — including the wrapper that filters to
+    one group and prints no hygiene row at all.
     """
     text = read(REPO / "skills" / "census" / "SKILL.md")
     line = next((line for line in text.splitlines() if "always reports" in line), "")
     assert "`noni census`" in line, (
         f"the hygiene 'always reports' claim must be qualified to the whole "
-        f"census, not the per-artifact wrappers: {line!r}")
+        f"census, not the per-artifact wrapper: {line!r}")
 
 
 # --- AC3: the deny-list is named where a reader meets --strict --------------

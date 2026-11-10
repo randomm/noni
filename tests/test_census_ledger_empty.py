@@ -34,7 +34,7 @@ import sys
 from pathlib import Path
 
 from _harness import REPO, _commit_file, _init_repo, subprocess_env
-from census_fixtures import _ndjson_rows, _session_body, _valid_record
+from census_fixtures import _ndjson_rows, _valid_record
 from census_run import _run_census
 from ledger_schema_fixtures import no_package_env
 
@@ -300,25 +300,6 @@ class TestLedgerRowsAreSilentWhenThereIsSomethingToRead:
     just the exit code, are the claim: exit 0 is also what a run that reported
     nothing at all looks like.
     """
-
-    def test_sessions_present_without_a_ledger_is_exactly_one_ledger_empty_row(
-        self, tmp_path
-    ):
-        """The two layers stay independent: sessions/ present and decisions/
-        absent is one ledger-empty row and no ledger-record failure.
-
-        A register is not a ledger. The run must still report the missing ledger
-        once -- a census that stayed quiet here could not tell "nothing to
-        census" apart from "the ledger went missing" -- and must not turn the
-        present register into a record complaint or a second row of its own.
-        """
-        repo = _init_repo(tmp_path / "repo")
-        _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md",
-                     _session_body("developer"))
-        rc, out, err = _run_census(repo, json_out=True, skip_hygiene=True)
-        assert rc == 0, f"expected 0, got {rc}\nstderr: {err}"
-        rows = [r for r in _ndjson_rows(out) if r.get("kind") == "finding"]
-        assert [r["check"] for r in rows] == ["ledger-empty"], f"unexpected rows: {rows}"
 
     def test_a_ledger_holding_a_record_produces_no_ledger_rows(self, tmp_path):
         """A ledger that holds a valid record emits no ledger-empty row (and no

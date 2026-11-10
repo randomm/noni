@@ -26,10 +26,6 @@ CONFTEST = Path(__file__).resolve().parent / "conftest.py"
 # one planted note's content line (public_safety matches line content).
 DECOY_DENYLIST_ENTRY = "decoy-denylist-probe"
 
-# The identity the decoy session registers carry, and the task a writer run
-# would claim or release: the row the snapshot comparison catches.
-DECOY_SID = "2026-10-01-aaaaaa"
-DECOY_TASK = "#42"
 BASELINE_DECISION_ID = "2026-10-01-baseline"
 
 
@@ -100,30 +96,9 @@ def _capture_census(census_mod, repo: Path) -> tuple[str, str]:
     return out.getvalue(), err.getvalue()
 
 
-# The decoy register under HOME: an active session already holding the row
-# claim.py would append and release.py would remove -- the row a writer driven
-# by HOME would have produced, planted so the snapshot comparison catches it.
-_DECOY_SESSION = """# session 2026-10-01-aaaaaa
-
-- identity: decoy
-- host/worktree: decoy-ws
-- started: 2026-10-01T10:00:00Z
-- status: active
-- claims:
-  - claim: #42
-"""
-
-# The register in the real state root: active and unclaimed, so claim.py has a
-# row to append and release.py has one to remove (its own row, named below).
-_STATE_SESSION = """# session 2026-10-01-aaaaaa
-
-- identity: developer
-- host/worktree: ws-1
-- started: 2026-10-01T10:00:00Z
-- status: active
-- claims:
-  - claim: #7
-"""
+# The decoy register under HOME and the register in the real state root were
+# removed with the sessions subsystem: the census reads no claim files, so
+# neither tree can produce a claim row for a writer to have landed.
 
 _DECOY_RECORD = {
     "id": "2026-10-01-home-decoy",
@@ -137,26 +112,28 @@ _DECOY_RECORD = {
     "supersedes": None,
 }
 
+# The decoy register under HOME and the register in the real state root were
+# removed with the sessions subsystem: the census reads no claim files, so
+# neither tree can produce a claim row for a writer to have landed.
+
 _DECOY_ORDER = [{"issue": 999, "decision": BASELINE_DECISION_ID,
                  "confirmed": "2026-10-01T00:00:00Z"}]
 
 
 def _hostile_home(tmp_path: Path) -> Path:
-    """A HOME carrying a complete decoy state root: all three noni/ directories.
+    """A HOME carrying a complete decoy state root: the noni/ directories.
 
-    The three directories are the whole layout (direction, decisions, sessions),
-    so every writer in WRITER_LAUNCHERS has a plausible place to have landed
-    here -- and none of them may.
+    The two directories are the layout the kept writers write into (decisions and
+    direction), each holding a decoy artifact, so every writer in
+    WRITER_LAUNCHERS still has a plausible place to have landed here -- and none
+    of them may.
     """
     home = tmp_path / "hostile-home"
     state = home / "noni"
     (state / "decisions").mkdir(parents=True)
-    (state / "sessions").mkdir(parents=True)
     (state / "direction").mkdir(parents=True)
     (state / "decisions" / "2026-10-01-home-decoy.json").write_text(
         json.dumps(_DECOY_RECORD, indent=2), encoding="utf-8")
-    (state / "sessions" / f"{DECOY_SID}.md").write_text(
-        _DECOY_SESSION, encoding="utf-8")
     (state / "direction" / "order.json").write_text(
         json.dumps(_DECOY_ORDER, indent=2), encoding="utf-8")
     return home
@@ -169,14 +146,14 @@ def _home_snapshot(home: Path) -> dict[str, str]:
 
 
 def _home_state_repo(tmp_path: Path) -> Path:
-    """The real state root: a git repo with an identity, the session the three
-    session writers act on, and the decision record order.py's --decision cites.
+    """The real state root: a git repo with an identity and the decision record
+    order.py's ``--decision`` cites.
 
     The state root starts as the mirror image of the decoy under HOME: it holds
-    the session (at ``active`` with one ``#7`` row) but no ordering artifact,
-    while HOME holds an ordering artifact and no session of the writer's.
-    A writer that landed in the wrong tree therefore had something to write
-    there, so a clean result can only mean it went to --repo.
+    the decision record but no ordering artifact, while HOME holds an ordering
+    artifact and no record of the writer's. A writer that landed in the wrong
+    tree therefore had something to write there, so a clean result can only mean
+    it went to --repo.
     """
     from _harness import _init_repo
 
@@ -190,9 +167,4 @@ def _home_state_repo(tmp_path: Path) -> Path:
         json.dumps(decision, indent=2), encoding="utf-8")
     _git(root, "add", f"noni/decisions/{BASELINE_DECISION_ID}.json")
     _git(root, "commit", "-q", "-m", "baseline decision")
-    (root / "noni" / "sessions").mkdir(parents=True, exist_ok=True)
-    (root / "noni" / "sessions" / f"{DECOY_SID}.md").write_text(
-        _STATE_SESSION, encoding="utf-8")
-    _git(root, "add", f"noni/sessions/{DECOY_SID}.md")
-    _git(root, "commit", "-q", "-m", "session")
     return root

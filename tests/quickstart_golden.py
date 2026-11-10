@@ -97,9 +97,6 @@ GOLDEN: dict[tuple[str, ...], list[list[str]]] = {
         ["noni", "order", "--repo", ".noni-state", "add", "12", "--decision",
          "<record-id>"],
         ["noni", "census", "--repo", ".noni-state"],
-        ["noni", "register", "--repo", ".noni-state", "--identity", "developer"],
-        ["noni", "claim", "--repo", ".noni-state", "--session-id", "<session-id>",
-         "--task", "#12"],
         # The state clone's own scrub deny-list, and the rule that keeps it
         # untracked, both printed before the first push: the file the deny-list
         # section documents lives at the root of the audited tree, and on this

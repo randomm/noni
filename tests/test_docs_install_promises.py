@@ -1,6 +1,6 @@
 """The install precondition every page that prints a script command has to state.
 
-The claim: a reader who copies ``scripts/claim.py --repo REPO --session-id SID`` out
+The claim: a reader who copies ``scripts/item.py --repo REPO add ID --title TITLE`` out
 of a ``SKILL.md`` meets ``the noni package is not importable`` on a machine where noni
 was never installed, because every wrapper under ``skills/*/scripts/`` is a shim that
 imports the package and exits 3 when that import fails. So the pages that print such a
@@ -223,7 +223,7 @@ def test_the_reader_does_not_read_prose_as_a_command() -> None:
     prose = (
         "# A page\n\n"
         "Records are written with `scripts/decide.py`, which is the only writer, and\n"
-        "`scripts/census.sh` is the ledger shim. The table lists `scripts/claim.py`.\n\n"
+        "`scripts/census.sh` is the ledger shim. The table lists `scripts/item.py`.\n\n"
         "- run it as `bash scripts/census.sh <dir>`, never under `python3`\n"
     )
     assert script_entry_points(prose) == [], script_entry_points(prose)
@@ -260,7 +260,7 @@ def test_the_gate_refuses_a_command_page_with_no_sentence(
     skill.mkdir(parents=True)
     command_page = (
         "# Claiming\n\n"
-        "```\nscripts/claim.py --repo REPO --session-id SID --task TASK\n```\n\n"
+        "```\nscripts/item.py --repo REPO add ID --title TITLE\n```\n\n"
         "The writer appends one row and commits it.\n"
     )
     page = skill / "SKILL.md"
@@ -369,8 +369,8 @@ def test_the_link_gate_refuses_a_link_the_reader_cannot_follow(
         # The right file, the wrong section: lands on the top of a long page.
         "no-anchor": "[docs/QUICKSTART.md](../../../docs/QUICKSTART.md)",
     }[form])
-    page = page_dir / "claim.md"
-    page.write_text("# Claiming\n\n" + sentence + "\n", encoding="utf-8")
+    page = page_dir / "items.md"
+    page.write_text("# Filing items\n\n" + sentence + "\n", encoding="utf-8")
     _commit_tree(repo)
     assert not quickstart_install_link(page.read_text(encoding="utf-8"), path=page), (
         f"the gate accepted {form}, which leaves the reader no link to follow")

@@ -273,8 +273,8 @@ def _repo_refusals(repo: Path, repo_arg: str, verb: str,
     of the reads); and, for an ``add --item``, that the item store is too. A ``--repo``
     naming no directory is the usage error every other flag mistake
     takes -- not a missing order and not an absent decision -- and the message names the
-    argument as the caller passed it, the shape ``register.py``, ``close.py``, ``release.py``
-    and ``claim.py`` all take at the same step.
+    argument as the caller passed it, the shape every writer in this package
+    takes at the same step.
     """
     if not repo.is_dir():
         return _fail(EXIT_USAGE, f"--repo {repo_arg} is not a directory",

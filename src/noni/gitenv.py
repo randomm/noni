@@ -29,10 +29,10 @@ read-only census, which pins the config files and leaves the location variables
 alone because it must answer for whatever tree the ambient environment resolves
 to, a writer commits, and a commit must go where the caller pointed.
 
-This is why ``register.py`` builds its reuse marker as a literal path from
-``--repo`` instead of asking git where the git directory is: a marker resolved
+This is why every writer builds its state paths as literal paths from
+``--repo`` instead of asking git where the git directory is: a path resolved
 through ``git rev-parse`` would follow an inherited ``GIT_DIR`` to another
-repository's state and answer the reuse question about the wrong session.
+repository's state and answer the writer's questions about the wrong tree.
 
 The module carries no other responsibility and imports nothing but ``os``.
 """

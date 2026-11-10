@@ -32,8 +32,8 @@ GIT_TIMEOUT_SECONDS = 60
 class Git:
     """A read-only view over the git history of a repository.
 
-    All history is resolved by commit time, never by wall clock: a session's
-    "last commit" is the latest commit whose tree contains the session file,
+    All history is resolved by commit time, never by wall clock: a file's
+    "last commit" is the latest commit whose tree contains that file,
     taken from ``git log`` output. ``available`` is False when the tree is not
     a git repository or git itself fails: callers then report cannot-tell,
     never a silent pass.

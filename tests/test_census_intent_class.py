@@ -128,7 +128,7 @@ def test_the_filter_cannot_drop_the_intent_class_can_never_read(tmp_path):
 
     Every ``cannot-tell`` this class raises comes from a read of the file itself,
     and ``keep`` only spares a row the group actually appended. Gating the group on
-    its own class names alone therefore let ``--only session-double`` report
+    its own class names alone therefore let ``--only item-unlistable`` report
     ``verdict ok`` on a tree whose intent it never opened -- the same inversion
     ``skills/census/SKILL.md`` promises against, and the one the ordering group
     pins in ``tests/test_census_ordering_malformed.py``. The row must arrive at its
@@ -147,10 +147,10 @@ def test_the_filter_cannot_drop_the_intent_class_can_never_read(tmp_path):
     assert warns[0]["severity"] == "warn"
 
     filtered = [(r["check"], r["subject"])
-                for r in _rows(repo, "--only", "session-double")
+                for r in _rows(repo, "--only", "item-unlistable")
                 if r["check"] == "intent"]
     assert filtered == [("intent", "cannot-tell")], filtered
-    assert _run(repo, "--only", "session-double")[0] == 0
+    assert _run(repo, "--only", "item-unlistable")[0] == 0
 
     # The filter is still a filter, and so is the gate. An absent intent earns no
     # row for any run, filtered or not: the group is entered on a path that holds
@@ -158,7 +158,7 @@ def test_the_filter_cannot_drop_the_intent_class_can_never_read(tmp_path):
     quiet = repo_with_record(tmp_path, subdir="quiet")
     _commit(quiet, "README.md", "hello\n")
     assert [r for r in _rows(quiet) if r["check"] == "intent"] == []
-    assert [r for r in _rows(quiet, "--only", "session-double")
+    assert [r for r in _rows(quiet, "--only", "item-unlistable")
             if r["check"] == "intent"] == []
 
     # And a well-formed intent the filter never named still yields only its own
@@ -167,7 +167,7 @@ def test_the_filter_cannot_drop_the_intent_class_can_never_read(tmp_path):
     cited = repo_with_record(tmp_path, subdir="cited")
     install_intent(cited)
     commit_intent(cited)
-    assert [r for r in _rows(cited, "--only", "session-double")
+    assert [r for r in _rows(cited, "--only", "item-unlistable")
             if r["check"] == "intent"] == []
 
 

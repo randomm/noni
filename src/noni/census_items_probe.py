@@ -15,8 +15,8 @@ from pathlib import Path
 
 from . import census_items_readers as _items_probe
 
-# Re-exported as the one object, not a copy, for the same reason as ``LedgerProbe``
-# and ``SessionsProbe``: a caller (and the census's own tests) still names the type
+# Re-exported as the one object, not a copy, for the same reason as ``LedgerProbe``:
+# a caller (and the census's own tests) still names the type
 # through the module it already imports.
 ItemsProbe = _items_probe.ItemsProbe
 
@@ -24,7 +24,7 @@ ItemsProbe = _items_probe.ItemsProbe
 def _items_listing(items: Path) -> ItemsProbe:
     """The store's one listing, taken by the census exactly once per run.
 
-    The ``_sessions_listing`` and ``_ledger_probe`` twin: the body is the sibling's,
+    The ``_ledger_probe`` twin: the body is the sibling's,
     this is the seam the census's tests patch and the one place the body asks for the
     store. An explicit ``Path.iterdir`` and never ``Path.glob``, because a store the
     run could not list must not answer as the empty store of a project that filed no

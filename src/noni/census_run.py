@@ -31,7 +31,6 @@ import shutil
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from . import census_intent as _intent
 from . import census_items_gate as _items_gate
@@ -40,7 +39,6 @@ from . import census_items_run as _items_run
 from . import census_json as _census_json
 from . import census_ordering as _ordering
 from . import census_ordering_readers as _ordering_readers
-from . import census_sessions_checks as _sessions_checks
 from . import census_text as _text
 from . import intentschema
 from .census_cli import _build_parser
@@ -61,13 +59,9 @@ from .census_report import (
     INTENT_CHECKS,
     LEDGER_CHECKS,
     ORDERING_CHECKS,
-    SESSION_CHECKS,
     WHOLE_ARTIFACT_KEY,
     _known_checks,
 )
-
-if TYPE_CHECKING:  # pragma: no cover - typing only, nothing imported at runtime
-    from .census_git import Git
 
 
 def _census():
@@ -83,46 +77,6 @@ def _census():
     seam rule in this file's docstring promises.
     """
     return importlib.import_module("noni.census")
-
-
-def _check_sessions(
-    sessions: Path, git: "Git" | None, root: Path, now: datetime, stale_after: timedelta,
-    strict: bool, findings: list[dict], probe
-) -> None:
-    """The session group, run by the module beside the census.
-
-    The row factory, the classifier a probe row is built from, the root-relative
-    identifier, the faulted-listing row and the deletion check are read off the
-    census at the call rather than closed over at import, so the row shape, its
-    visibility marker and the machine-local-path rule keep their single owner in
-    ``census.py`` (see the sibling's docstring for the group's own rules) and a
-    seam a test puts on any of them is the one the moved reporters use. The
-    deletion check is this module's own helper, reached directly rather than
-    through the census's sibling wrapper.
-    """
-    census = _census()
-    _sessions_checks.check_sessions(
-        sessions, git, root, now, stale_after, strict, findings, probe,
-        row=census._row, file_kind=census._file_kind,
-        rel_to=census._rel_to,
-        append_listing_fault=census._append_sessions_listing_fault,
-        check_sessions_deleted=_check_sessions_deleted)
-
-
-def _check_sessions_deleted(
-    sessions: Path, git: "Git" | None, root: Path, strict: bool, findings: list[dict]
-) -> None:
-    """The deleted-session-file check, composed in ``census_sessions_checks``.
-
-    The row factory, the root-relative identifier and the cannot-tell row are the
-    census's own and are read off it at the call, so the row shape and the
-    cannot-tell severity rule keep their single owner there.
-    """
-    census = _census()
-    _sessions_checks.check_sessions_deleted(
-        sessions, git, root, strict, findings,
-        row=census._row, rel_to_root=census._rel_to_root,
-        append_cannot_tell=census._append_cannot_tell)
 
 
 def _load_issue_state(issue_state_path: Path | None):
@@ -254,17 +208,14 @@ def _run(argv: list[str] | None = None) -> int:
     # The flag's *presence* decides, not its value: an argparse default cannot
     # tell a caller who typed the number from one who did not, and treating the
     # literal `7d` as absent would quietly run the ordering check at 30 days on
-    # a command line that promises 7. The sessions group keeps the one default
-    # the flag has always carried, and the ordering group gets its own when the
-    # flag was not used.
+    # a command line that promises 7.
     supplied = [a for a in (sys.argv[1:] if argv is None else argv)
                 if a == "--stale-after" or a.startswith("--stale-after=")]
     ordering_stale_after = (stale_after if supplied
                             else _threshold(ORDERING_STALE_AFTER_DEFAULT))
     # The item threshold, chosen by the same presence rule and for the same reason:
     # an explicit ``--stale-after 7`` must move the candidates as well as the order
-    # entries, and an absent flag must leave the store at its own thirty days rather
-    # than at the session register's seven.
+    # entries, and an absent flag must leave the store at its own thirty days.
     item_stale_after = (stale_after if supplied
                         else _threshold(ITEM_STALE_AFTER_DEFAULT))
 
@@ -280,13 +231,12 @@ def _run(argv: list[str] | None = None) -> int:
         print(f"error: repo path does not exist: {args.repo}", file=sys.stderr)
         return EXIT_USAGE
     ledger = Path(args.ledger) if args.ledger else root / "noni" / "decisions"
-    sessions = Path(args.sessions) if args.sessions else root / "noni" / "sessions"
     ordering = (Path(args.ordering) if args.ordering
                 else root / "noni" / "direction" / "order.json")
     intent = (Path(args.intent) if args.intent
               else root / intentschema.INTENT_REL)
     # The store's default is <repo>/noni/items, and the flag replaces the path under
-    # the state root exactly as the other four overrides do. Nothing else about the
+    # the state root exactly as the other three overrides do. Nothing else about the
     # flag matters to the run: whether a read is owed is answered by what stands at
     # the path (see the gate at the group's call below), not by whether the caller
     # named it, so an absent store is silence named or unnamed and a store that exists
@@ -294,7 +244,6 @@ def _run(argv: list[str] | None = None) -> int:
     items = Path(args.items) if args.items else root / "noni" / "items"
     issue_state_path = Path(args.issue_state) if args.issue_state else None
     ledger = Path(os.path.expanduser(str(ledger)))
-    sessions = Path(os.path.expanduser(str(sessions)))
     ordering = Path(os.path.expanduser(str(ordering)))
     intent = Path(os.path.expanduser(str(intent)))
     items = Path(os.path.expanduser(str(items)))
@@ -349,11 +298,12 @@ def _run(argv: list[str] | None = None) -> int:
     # probe already answers that state (``absent`` is answered only when ``noni/``
     # itself is missing), so the note keys on it and on nothing else -- not the clock,
     # not the cwd, and not a row. It rides the notes channel, so no check class and no
-    # NDJSON row kind is added and every exit code is unchanged. Suppressed whenever
-    # any of the four path overrides is in effect: with a ``--ledger`` (or sessions,
-    # ordering, intent) pointing elsewhere, the state does not live under --repo and
-    # "no noni/ under --repo" would be a true sentence about an irrelevant tree.
-    if ledger_probe.state == "absent" and not (args.ledger or args.sessions
+    # NDJSON row kind is added and every exit code is unchanged. Suppressed
+    # whenever any of the three path overrides is in effect: with a ``--ledger``
+    # (or ordering, intent) pointing elsewhere, the state does not live under
+    # --repo and "no noni/ under --repo" would be a true sentence about an
+    # irrelevant tree.
+    if ledger_probe.state == "absent" and not (args.ledger
                                                or args.ordering or args.intent):
         notes.append(no_state_root_note(args.repo))
 
@@ -370,22 +320,6 @@ def _run(argv: list[str] | None = None) -> int:
         # the moved code uses.
         census._check_ledger(ledger, git, root, findings, args.strict,
                              ledger_probe)
-        findings[:] = keep(findings)
-
-    # One readdir of the register per run, taken here before the group is gated
-    # on its answer, so the gate and the rows are the same read. It is
-    # unconditional, and so costs one readdir plus its sort even on a run whose
-    # filter named no session class: a register the run could not list must be
-    # reportable whatever the filter asked for, and one read is what keeps the
-    # gate and the rows from disagreeing about whether that read happened.
-    sessions_probe = census._sessions_listing(sessions)
-
-    # The same field, tested the same way as `_check_sessions` tests it, so the
-    # gate cannot open a group whose reporter would say nothing, nor leave a
-    # faulted read unreported.
-    if (SESSION_CHECKS & requested) or sessions_probe.fault is not None:
-        _check_sessions(sessions, git, root, now, stale_after,
-                        args.strict, findings, sessions_probe)
         findings[:] = keep(findings)
 
     if ORDERING_CHECKS & requested:
@@ -409,7 +343,7 @@ def _run(argv: list[str] | None = None) -> int:
     # ledger's listing is not handed down -- the group reads the one record the
     # citation names and reads the answer for itself. Like every other group its
     # path defaults under --repo and ``census_cli`` gives it the same kind of path
-    # override the ledger, sessions and ordering groups have.
+    # override the ledger and ordering groups have.
     #
     # The group is entered whenever a class of it was asked for, and also whenever
     # the census's own classifier says a read is owed: every cannot-tell row this
@@ -433,12 +367,11 @@ def _run(argv: list[str] | None = None) -> int:
     # (does the cited record stand, does the order hold the issue) answered from the
     # ledger listing and the order read this run already has. Like every other group
     # its path defaults under --repo and ``census_cli`` gives it the same kind of
-    # path override the ledger, sessions, ordering and intent groups have.
+    # path override the ledger, ordering and intent groups have.
     #
     # The gate is the store's own probe, taken here before the group is gated on its
-    # answer so the gate and the rows are one readdir (the sessions group's rule), and
-    # the probe alone decides the entry -- exactly as the sessions group's fault does
-    # above. Two states let the group run and both are needed:
+    # answer so the gate and the rows are one readdir, and the probe alone decides
+    # the entry. Two states let the group run and both are needed:
     #
     # - a store this run could not list is owed its ``item-unlistable`` row whatever
     #   the filter named, because that row is the probe-honesty one ``keep`` never
@@ -466,7 +399,7 @@ def _run(argv: list[str] | None = None) -> int:
         findings[:] = keep(findings)
 
     # hygiene is its own check group: it scans the tracked files of the census's
-    # own git tree (never the --ledger/--sessions overrides). The group is entered
+    # own git tree (never the --ledger override). The group is entered
     # through the census's own wrapper, as the other three are, so the row factory
     # and the message bounder it hands the scanner are read off that module at the
     # call and a seam on either is the one the scanner uses.

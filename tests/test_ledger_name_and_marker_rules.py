@@ -391,7 +391,8 @@ def test_census_sh_exits_three_when_the_package_is_not_importable(tmp_path):
     # interpreter the wrapper names is a stub starting the real one ``-S -I``,
     # with the empty PYTHONPATH as the second route closed. The wrapper still
     # resolves a real interpreter, so this is the package half of the refusal and
-    # not the interpreter half (which tests/test_sessions_census_exits.py pins).
+    # not the interpreter half (which tests/test_census_ledger_empty.py
+    # ``TestToolMissingIsTheCensusNotTheWrapper`` pins).
     env = no_package_env(tmp_path, "no-import")
     code, out = _run_sh_from(CENSUS_SH, ledger, env)
     assert code == 3, f"expected 3 with no importable package, got {code}:\n{out}"

@@ -1,11 +1,8 @@
-"""One bash preamble for the two shell census wrappers.
+"""One bash preamble for the shell census wrapper.
 
-Both ``census.sh`` and ``census-sessions.sh`` have to find an interpreter, prove
-the package imports, and exec the in-place wrapper beside them. That sequence is
-byte-identical in the two files, and a preamble two scripts each grew on their
-own is exactly how the two entry points drifted apart before: the census gained a
-verdict, one script found out. So the preamble lives here as one string, and
-``tests/test_census_wrapper_preamble.py`` asserts the shipped files still carry
+``census.sh`` has to find an interpreter, prove the package imports, and exec the
+in-place wrapper beside it. So the preamble lives here as one string, and
+``tests/test_census_wrapper_preamble.py`` asserts the shipped file still carries
 it -- the same way the help fixtures pin the usage text.
 
 What the preamble does, and why each line is there:
@@ -18,8 +15,8 @@ What the preamble does, and why each line is there:
   needs flags for that program -- an isolated interpreter, say -- sets ``PATH``,
   ``PYTHONHOME`` or a wrapper of their own, which is the portable way to say it:
   a space in the value means a program by that name, and a program by that name
-  does not exist. Naming the variable and its default in one place keeps the two
-  wrappers and the tests from disagreeing about which variable a caller sets.
+  does not exist. Naming the variable and its default in one place keeps the
+  wrapper and the tests from disagreeing about which variable a caller sets.
 - It probes the import with the interpreter's stderr swallowed. A traceback is
   not a diagnostic a reader can act on; one line naming the fault is, and exit 3
   is the census's own code for a tool the reading machine does not have.
@@ -85,7 +82,7 @@ def preamble(label: str, noun: str, script: str) -> str:
     """The bash preamble for one wrapper.
 
     ``label`` is the name the diagnostics print (the script's own name), ``noun``
-    the directory the caller must name (``decisions`` or ``sessions``), and
+    the directory the caller must name (``decisions``), and
     ``script`` the in-place ``.py`` beside it to exec.
     """
     text = _PRELUDE + _INTERPRETER + _PROBE

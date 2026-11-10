@@ -18,13 +18,12 @@ from pathlib import Path
 from scenario_core import (
     FAULT_CLOCK,
     Scenario,
-    _claim,
     _commit,
     _ensure_branch,
+    _item_healthier,
     _order_healthier,
     _push,
     _record,
-    _register,
     _ts,
 )
 
@@ -50,14 +49,13 @@ def build_scenario(base: Path, faulted: bool = False) -> Scenario:
     pre-existing, non-empty base must clean it up themselves, and only if
     they know the contents are their own.
 
-    Healthy baseline: a bare origin plus two clones; session A (identity
-    "agent-a") in clone 1 and session B (identity "agent-b") in clone 2
-    register via the real register.py; A claims task #1 and B claims task #2
-    via the real claim.py --push (fetch-rebase-push; both commits land
-    linearly on origin); a healthy steering decision chain (d1 superseded by
-    d2) sets the ordering between the two tasks; the ordering artifact itself is
+    Healthy baseline: a bare origin plus two clones; clone-a seeds the shared
+    starting point and both clones push through the fetch-rebase-push loop; a
+    healthy steering decision chain (d1 superseded by d2) sets the ordering
+    between the two issues; the ordering artifact itself is
     written by the real order.py writer and stamped healthy by one confirm run;
-    every commit uses a pinned recent date.
+    the item store is written by the real item.py writer; every commit uses a
+    pinned recent date.
     """
     from _harness import _git_ok
 
@@ -95,14 +93,13 @@ def build_scenario(base: Path, faulted: bool = False) -> Scenario:
 
     # Build clone_b as a clone of origin, on main by name: the suite's
     # sandboxed HOME carries no init.defaultbranch, so a plain clone would
-    # check out git's own default (master) and register.py's own commit would
+    # check out git's own default (master) and clone-b's own commit would
     # land there, leaving nothing on main to push.
     clone_b.mkdir(parents=True, exist_ok=True)
     _git_ok(base, "clone", "-q", "-b", "main", str(origin), str(clone_b))
     _ensure_branch(clone_b, "main")
 
     t_task = _ts(0)
-    t_reg = _ts(0, 1)
     t_d1 = _ts(0, 6)
     t_d2 = _ts(0, 8)
     t_c = FAULT_CLOCK
@@ -111,21 +108,12 @@ def build_scenario(base: Path, faulted: bool = False) -> Scenario:
     _commit(clone_a, "tasks/1.md", "# task 1\n", "task: #1", t_task)
     _push(clone_a, t_task)
 
-    # Both agents register through the real register.py, which commits its own
-    # session file under the caller's identity. The fixture cannot pin that
-    # commit's date (the writer makes it), so the census clock sits after every
-    # commit in the scenario: NOW is day 3 and the writer runs on the host's
-    # clock today. The writer owns these commits, so this fixture never
-    # restages what it wrote; each clone pushes its own file and the two paths
-    # never collide.
-    sid_a = _register(clone_a, "agent-a", "clone-a")
-    sid_b = _register(clone_b, "agent-b", "clone-b")
-    _push(clone_a, t_reg)
-    _push(clone_b, t_reg)
-
-    # Distinct-task claims via the real claim.py --push (fetch-rebase-push).
-    _claim(clone_a, sid_a, "#1")
-    _claim(clone_b, sid_b, "#2")
+    # clone-b does the concurrency work the fixture exists for: it commits its
+    # own file and pushes through the same fetch-rebase-push loop, so the
+    # two-clone topology still exercises concurrent writers on one origin and
+    # both commits land linearly.
+    _commit(clone_b, "tasks/2.md", "# task 2\n", "task: #2", _ts(0, 1))
+    _push(clone_b, _ts(0, 1))
 
     # Healthy steering decision chain: d1 superseded by d2; d2 sets the
     # ordering (task #1 before task #2).
@@ -141,10 +129,11 @@ def build_scenario(base: Path, faulted: bool = False) -> Scenario:
     _push(clone_a, t_d2)
 
     # The ordering artifact, written by the real writer and stamped healthy by
-    # one confirm run, then the issue-state map the census is handed.
+    # one confirm run, then the issue-state map the census is handed, then the
+    # item store, written by its own real writer.
     _order_healthier(clone_a)
-    scenario = Scenario(base=base, origin=origin, clone_a=clone_a, clone_b=clone_b,
-                        sid_a=sid_a, sid_b=sid_b)
+    _item_healthier(clone_a)
+    scenario = Scenario(base=base, origin=origin, clone_a=clone_a, clone_b=clone_b)
 
     if faulted:
         _plant_faults(scenario, t_c)

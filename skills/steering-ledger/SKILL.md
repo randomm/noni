@@ -216,12 +216,10 @@ cannot see whether the operator confirmed an answer, so it never claims to
 How to read the report — the rows the ledger group prints and what each check
 reads — is in `references/census.md`.
 
-The sessions register has its own entry point in its own skill,
-`skills/sessions-claims/scripts/census-sessions.sh`; it is the same kind of
-wrapper over the same census, and this script no longer dispatches to it. A
-command line that still types the retired form (`census.sh --sessions DIR`) is
-refused with this script's own usage code, naming the option and pointing at the
-entry point that runs the register.
+This script is the only shell entry point the product ships. A command line that
+still types a retired sessions form (`census.sh --sessions DIR`) is refused with
+this script's own usage code, naming the option: the sessions and claims subsystem
+it belonged to has been removed, so no entry point runs a register.
 
 ## Rules
 

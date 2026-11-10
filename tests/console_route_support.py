@@ -96,17 +96,6 @@ def identity_repo(tmp_path: Path) -> Path:
     return repo
 
 
-def sid_of_uncommitted(stdout: str) -> str:
-    """The session id in a ``--no-commit`` register line.
-
-    The line names the file it left in the work tree
-    (``register.py: <path>/<id>.md left uncommitted``); the id is that path's
-    stem, which is the session id.
-    """
-    tail = stdout.strip().split(" -> ")[-1].rsplit(" left uncommitted", 1)[0]
-    return tail.rsplit("/", 1)[-1].removesuffix(".md")
-
-
 def assert_same(left: subprocess.CompletedProcess[str],
                 right: subprocess.CompletedProcess[str], label: str) -> None:
     """Both routes: same exit code, same stdout, same stderr, byte for byte.

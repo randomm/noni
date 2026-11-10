@@ -36,8 +36,8 @@ def refuse_target_fields(record: dict, target_id: str,
 
 
 GIT_TIMEOUT = 60
-# The word a refusal uses for a path that is a link, so the file and the directory question
-# (noni._session_paths) spell it alike.
+# The word a refusal uses for a path that is a link, so the file and the directory
+# question spell it alike.
 # What run_git hands back for a call that never answered. No caller may read a
 # git answer from it: every probe treats it as a refusal, never as rc 0.
 GIT_TIMEOUT_RC = 124
@@ -118,8 +118,8 @@ def file_mode(path: Path) -> int:
 
 
 def write_atomic(path: Path, text: str) -> None:
-    """Write ``text`` via a same-directory temp file and os.replace (claim.py's
-    idiom): a crash mid-write leaves the old bytes, never a truncated record. The
+    """Write ``text`` via a same-directory temp file and os.replace: a crash
+    mid-write leaves the old bytes, never a truncated record. The
     temp file's mode is set before the replace, so what lands is the mode the file
     should have, not mkstemp's owner-only default."""
     mode = file_mode(path)

@@ -447,7 +447,7 @@ def test_the_try_it_census_reports_a_failure_it_found(tmp_path: Path) -> None:
 
     The page sells the census's "honest exit codes", and the clean-run test above
     pins only the exit-0 half, so a regression that turned a finding into a clean
-    verdict would pass it. One malformed register file is planted in the same
+    verdict would pass it. One malformed record is planted in the same
     scratch tree and the same census command from the block is run against it, so
     the failing rendering (non-zero exit, a fail verdict line, the class word and
     the row's own subject) is observed rather than assumed.
@@ -455,23 +455,24 @@ def test_the_try_it_census_reports_a_failure_it_found(tmp_path: Path) -> None:
     clone = tmp_path / NONI_DIR
     _materialise_clone(clone)
     repo = _reader_repository(tmp_path)
-    sessions = repo / "noni" / "sessions"
-    sessions.mkdir(parents=True)
-    # An allocated register name is <YYYY-MM-DD>-<6 hex>.md; this one is not.
-    (sessions / "2026-10-01-not-hex.md").write_text("- identity: x\n", encoding="utf-8")
+    decisions = repo / "noni" / "decisions"
+    decisions.mkdir(parents=True)
+    # The eight required fields of the record schema; this one carries none of
+    # them, so the class that reports a record that is not the artifact fires.
+    (decisions / "2026-10-01-not-a-record.json").write_text("{}\n", encoding="utf-8")
 
     census = [argv for argv in _try_it_commands() if _script_name(argv) == "census.py"]
     assert census, "the try-it block does not run the census"
     proc = _run_documented(_argv_for_run(census[0], clone, repo), repo, _reader_env())
     assert proc.returncode != 0, (
-        f"a malformed register file did not fail the census: rc={proc.returncode}, "
+        f"a malformed record did not fail the census: rc={proc.returncode}, "
         f"stdout: {proc.stdout}"
     )
     lines = proc.stdout.splitlines()
     assert lines and lines[-1].startswith("summary: ") and lines[-1].endswith("; verdict fail"), (
         f"the failing run did not end with a fail verdict line: {lines[-1:]!r}"
     )
-    assert any("session-malformed" in line and "2026-10-01-not-hex.md" in line
+    assert any("ledger-record" in line and "2026-10-01-not-a-record.json" in line
                for line in lines), (
         f"the malformed register file was not reported by name: {proc.stdout}"
     )

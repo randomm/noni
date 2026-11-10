@@ -194,7 +194,7 @@ def check_intent(
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
         # The bytes are foreign content and a row must not echo them: the class
-        # and its own words are the finding, exactly as for a session register or
+        # and its own words are the finding, exactly as for
         # a decision record that is not UTF-8.
         add(SUBJECT_CANNOT_TELL,
             f"cannot-tell: {rel} is not valid UTF-8, so its sections and its "

@@ -4,16 +4,16 @@
 target it is about to write: "is this a plain file I may replace, or is it absent?"
 Absent is an acceptable answer there, because the caller is about to create the file.
 
-A writer that is about to READ or REPLACE a session file needs the stricter answer.
+A writer that is about to READ or REPLACE a tracked file needs the stricter answer.
 Only ``ENOENT`` and ``ENOTDIR`` mean "no file here" -- the two errno values a guard may
 legitimately read as absence. Every other failure is the filesystem declining to
 answer: ``EACCES`` from a parent the operator cannot read (a state clone left owned by
 another user), ``ELOOP`` from a chain of links, ``ENAMETOOLONG`` from a name the
 filesystem will not name. A guard that reads a declined answer as "absent" prints
-"register file not found" about a session it never looked at, and the writer that
+"file not found" about a file it never looked at, and the writer that
 creates reports success about a position it could not inspect. So
 :func:`inspected_file_kind` refuses those, naming the path's verdict and the error,
-and the session guard asks that question of every path a write touches.
+and every guard asks that question of each path a write touches.
 
 Both questions are asked of the same ``lstat`` exactly once, by :func:`kind_of`, so the
 two cannot give two readings of one path.
@@ -23,9 +23,8 @@ is the same ``lstat``, read the same way, and it must not give a third reading o
 path. :func:`direction_refusal` asks it of every component of a ``noni/`` directory
 under a state root -- ``noni`` itself and the directory below it a writer reads or
 writes -- and hands back a ``(headline, hint)`` pair for the caller to print. The
-three direction writers (``decide``, ``order``, ``intent``) have no session guard to
-borrow: :mod:`noni._session_paths`' sentences are about a session file and stay the
-session writers', so the direction question is answered here, beside the file
+three direction writers (``decide``, ``order``, ``intent``) answer the direction
+question here, beside the file
 question, in words that name a directory and nothing else.
 
 The fourth question is the STATE-ROOT one: "is this ``--repo`` a noni state root at
@@ -47,8 +46,8 @@ from pathlib import Path
 
 from ._safe_text import safe_path
 
-# The word a refusal uses for a path that is a link. Spelled once, here and in
-# :mod:`noni._session_paths`, because both ask the same question of the same bits.
+# The word a refusal uses for a path that is a link. Spelled once, here, because
+# every guard asks the same question of the same bits.
 SYMLINK_WORD = "symlink"
 
 # The two errno values that mean "nothing of mine exists at that path". A refusal of
@@ -57,8 +56,8 @@ SYMLINK_WORD = "symlink"
 ABSENT_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR})
 
 # The head of the verdict :func:`_declined` renders for an ``lstat`` the filesystem
-# refused to answer. The same words :mod:`noni._session_paths` renders for a declined
-# directory, so one declined syscall reads the same way to every guard in the family.
+# refused to answer. One wording, so one declined syscall reads the same way to every
+# guard in the family.
 _DECLINED_PREFIX = "could not be inspected"
 
 
@@ -71,7 +70,7 @@ def refusal_reason(exc: BaseException) -> str:
     character in path"``). Both are rendered as what the filesystem said rather than
     an invented cause, with the class name as the tail for an exception that said
     nothing. Shared by :func:`kind_of` and
-    :func:`noni._session_paths._directory_kind` so the file and the directory
+    :func:`_directory_kind` so the file and the directory
     question describe one declined syscall in one set of words.
     """
     reason = getattr(exc, "strerror", None) or str(exc).split(":")[0]
@@ -87,7 +86,7 @@ def kind_of(path: Path) -> tuple[str | None, str | None]:
     let them disagree about what is at the path.
 
     ``ValueError`` is caught beside ``OSError``: ``os.lstat`` raises it, and not an
-    ``OSError``, for a path carrying a NUL -- which the session guard refuses by name
+    ``OSError``, for a path carrying a NUL -- which every guard refuses by name
     at its entry point, so catching it here is the last line of defence behind that
     rather than the ordinary route. Both are the same answer to the same question,
     "the filesystem declined to say what is at this path", and a caller that reads
@@ -311,10 +310,8 @@ def direction_refusal(root: Path, rels) -> tuple[str, str] | None:
 
     Two bounds hold it in place. It never climbs above ``root`` -- the parts of each
     ``rel`` are joined to the normalised root, so ``..``, an absolute name or the
-    root itself can name nothing outside it, and no ancestor is ever examined: a
-    project *reached through* a link stays a normal run, which
-    :func:`noni._session_git.linked_state_root` keeps as its own separate refusal of
-    a ``--repo`` that is itself a link. And the path in both sentences is the root as
+    root itself can name nothing outside it, and no ancestor is ever examined.
+    And the path in both sentences is the root as
     the caller spelled it joined to the rel, rendered once here through
     :func:`noni._safe_text.safe_path` -- the finished lines are never run through a
     second renderer, which would double every backslash an operator then copies.

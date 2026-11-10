@@ -118,14 +118,14 @@ def test_the_state_re_rooting_is_applied_to_the_commands_that_name_the_clone(
                if argv[0] == "echo" and STATE_DIR in " ".join(argv)]
     assert [argv[-1] for argv in payload] == [".gitignore",
                                               f"{STATE_DIR}/.gitignore"], payload
-    # The placeholders are the page's literal tokens, and the launcher's own
-    # substitution fills every one of them: both values come off the running tree
-    # (see ``World.collect_record_id`` / ``World.collect_session_id``), so the world
-    # that fills them is one that has walked Route B. The check runs over every
-    # golden command, so a page that gained a third placeholder with nothing to fill
+    # The placeholder is the page's literal token, and the launcher's own
+    # substitution fills it: the value comes off the running tree
+    # (see ``World.collect_record_id``), so the world
+    # that fills it is one that has walked Route B. The check runs over every
+    # golden command, so a page that gained a second placeholder with nothing to fill
     # it fails here -- ``substitute`` refuses an unfilled token rather than returning
     # it, which is the launcher's reading and the one a writer would have seen.
-    assert set(_PLACEHOLDERS_ON_PAGE) == {"<record-id>", "<session-id>"}, _PLACEHOLDERS_ON_PAGE
+    assert set(_PLACEHOLDERS_ON_PAGE) == {"<record-id>"}, _PLACEHOLDERS_ON_PAGE
     # The collectors are what fill the placeholders, so the world must have walked
     # the route; the walk's own exit codes are asserted by tests/test_quickstart.py.
     run_route_b(world)

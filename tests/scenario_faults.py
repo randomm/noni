@@ -14,45 +14,32 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scenario_core import Scenario, _claim, _commit, _push, _record, _register, _ts
+from scenario_core import NOW, Scenario, _commit, _item_body, _push, _record, _run_item, _ts
 
 
 def _plant_faults(scenario: Scenario, t_c: str) -> None:
-    """The planted faults, each in its own disjoint artifact (30, 31, 20, 40
+    """The planted faults, each in its own disjoint artifact (52, 53, 20
     committed to origin; 12 is planted in the fresh clone at test time).
 
-    30  session B additionally claims task #1 via the real claim.py --push —
-        both claims on #1 sit in origin's linear history;
-    31  a separate session file with a claim row but no identity field,
-        committed to origin;
+    52  a separate item file that is not the noni.item/1 shape, committed to
+        origin (the item census reads it as a store of one);
+    53  the order and the store disagree: an ordered item the store has dropped;
     20  a separate decision chain with a dangling supersedes, disjoint from
-        the healthy chain, committed to origin;
-    40  a third session (identity "agent-c", no claims) whose last commit is
-        older than --stale-after relative to --now: register.py commits the file
-        itself, and the commit that leaves this session stale is this fixture's
-        own commit with the date pinned, which leaves no commit a healthy build
-        would not have.
+        the healthy chain, committed to origin.
+
+    Every commit here carries the pinned fault clock or the record's own date,
+    so no commit is one a healthy build would not also have made.
     """
 
-    # 30: the double claim on #1 (real claim.py --push, fetch-rebase-push).
-    _claim(scenario.clone_b, scenario.sid_b, "#1")
-    scenario.faults.append("30")
-
-    # 31: a separate session file with a claim row but no identity field.
-    orphan_body = (
-        "- host/worktree: orphan (plant-31)\n"
-        f"- started: {t_c}\n"
-        "- status: active\n"
-        "- claims:\n"
-        "  - claim: #7\n"
-    )
-    _commit(scenario.clone_a, "noni/sessions/2026-10-01-cccccc.md",
-            orphan_body, "plant: claim without identity", t_c)
+    # 52: a store file that is not the item shape (here: an id that is not its
+    # own file name, one of the schema's two id rules).
+    _commit(scenario.clone_a, "noni/items/malformed-idea.json",
+            _item_body("another-name"), "plant: malformed item", t_c)
     _push(scenario.clone_a, t_c)
-    scenario.faults.append("31")
+    scenario.faults.append("52")
 
     # 20: a separate decision chain with a dangling supersedes, disjoint from
-    # the healthy chain.
+    # the healthy chain. It comes first because 53 cites one of its records.
     t_d3 = _ts(0, 7)
     dangling = _record("2026-10-03-d3", t_d3, "decided",
                        "2026-10-99-nonexistent", "release ordering",
@@ -62,27 +49,33 @@ def _plant_faults(scenario: Scenario, t_c: str) -> None:
     _push(scenario.clone_a, t_d3)
     scenario.faults.append("20")
 
-    # 40: a third session (identity "agent-c", no claims) whose only commit
-    # is pinned older than --stale-after relative to --now.
-    #
-    # clone_a is already marked as agent-a's working copy, and that session is
-    # still active, so a plain register there would be a reuse of agent-a's
-    # session rather than an allocation for agent-c — which is the writer being
-    # honest about one working copy having one live session. This row wants a
-    # second session file in the same tree, so the fixture asks for the file
-    # without a commit and makes the (re-dated) commit itself below.
-    scenario.sid_c = _register(scenario.clone_a, "agent-c", "clone-a", no_commit=True)
-    session_rel = f"noni/sessions/{scenario.sid_c}.md"
-    # The stale clock IS the fault this row plants, and only the commit that
-    # touched this file can carry it: --strict fails the census on an active
-    # session whose last commit is older than --stale-after, so the file is
-    # committed once, here, with the date pinned -- one commit, no content
-    # change after it, and no second commit a healthy build would not have.
-    _commit(scenario.clone_a, session_rel,
-            (scenario.clone_a / session_rel).read_text(encoding="utf-8"),
-            f"register: {scenario.sid_c}", t_c)
+    # 53: an item the order still cites after the store dropped it. The drop is
+    # a real ``item.py drop`` (a drop needs a decision the ledger holds, and d3
+    # is that record, which 20 already commits). The order half is a hand-
+    # committed byte change to the artifact rather than an ``order.py add --item``
+    # run: the writer refuses to place an idea the store has already dropped, so
+    # the ordered-but-dropped state only exists as a disagreement between two
+    # committed artifacts. The entry is a one-line append to the writer-committed
+    # file, in the writer's own shape (a ``noni.order/2`` entry citing the item id,
+    # as ``order.py add --item`` writes it). Its ``confirmed`` rides on the
+    # scenario clock at --now rather than the fault clock, which is the date the
+    # writer would have stamped on a placement made when the census is run: at the
+    # fault clock the same entry also reads ``ordering-stale``, a second row this
+    # build never planted.
+    _run_item(scenario.clone_a, "add", "held-idea", "--title", "Held idea")
+    order_rel = "noni/direction/order.json"
+    order = json.loads((scenario.clone_a / order_rel).read_text(encoding="utf-8"))
+    order["schema"] = "noni.order/2"
+    order["entries"].append({"item": "held-idea",
+                             "decision": "2026-10-02-d2",
+                             "confirmed": NOW})
+    _commit(scenario.clone_a, order_rel,
+            json.dumps(order, indent=2) + "\n",
+            "plant: order still cites the dropped item", t_c)
+    _run_item(scenario.clone_a, "drop", "held-idea", "--decision",
+              "2026-10-03-d3", "--why", "planted: dropped while ordered")
     _push(scenario.clone_a, t_c)
-    scenario.faults.append("40")
+    scenario.faults.append("53")
 
 
 def _plant_fault_12(fresh: Path) -> None:

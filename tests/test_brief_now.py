@@ -24,6 +24,7 @@ from brief_support import (
 
 from noni import brief as brief_module
 
+
 def test_brief_summary_line_equals_the_census_summary_line(tmp_path: Path) -> None:
     """The brief's last line is the census's last line, byte for byte, for one tree.
 

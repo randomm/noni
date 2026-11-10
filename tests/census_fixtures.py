@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from _harness import _commit_file, _git, _init_repo
+from _harness import _git
 
 
 def _commit_dir_state(repo: Path, dirname: str) -> None:

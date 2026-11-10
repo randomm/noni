@@ -31,7 +31,6 @@ import shutil
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from . import census_intent as _intent
 from . import census_items_gate as _items_gate
@@ -63,9 +62,6 @@ from .census_report import (
     WHOLE_ARTIFACT_KEY,
     _known_checks,
 )
-
-if TYPE_CHECKING:  # pragma: no cover - typing only, nothing imported at runtime
-    from .census_git import Git
 
 
 def _census():

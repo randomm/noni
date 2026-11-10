@@ -79,8 +79,8 @@ class TestCheckContractIsDerived:
                 assert name in strict.help, f"--strict help omits warn class {name}: {strict.help}"
         # No fail class leaks into the list a reader uses to decide what
         # --strict changes. Match the id as a whole word, not as a substring:
-        # "session-double" is contained in "session-double-…" style ids and
-        # would pass an `in` test for the wrong reason.
+        # an id that is a prefix of another would pass an ``in`` test for the
+        # wrong reason.
         listed = set(re.findall(r"[a-z][a-z-]+", strict.help))
         for name, (_code, sev, _fix) in census.CHECKS.items():
             if sev == "fail":

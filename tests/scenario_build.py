@@ -93,7 +93,7 @@ def build_scenario(base: Path, faulted: bool = False) -> Scenario:
 
     # Build clone_b as a clone of origin, on main by name: the suite's
     # sandboxed HOME carries no init.defaultbranch, so a plain clone would
-    # check out git's own default (master) and register.py's own commit would
+    # check out git's own default (master) and clone-b's own commit would
     # land there, leaving nothing on main to push.
     clone_b.mkdir(parents=True, exist_ok=True)
     _git_ok(base, "clone", "-q", "-b", "main", str(origin), str(clone_b))
@@ -108,7 +108,7 @@ def build_scenario(base: Path, faulted: bool = False) -> Scenario:
     _commit(clone_a, "tasks/1.md", "# task 1\n", "task: #1", t_task)
     _push(clone_a, t_task)
 
-    # clone-b does the work the sessions layer used to occupy: it commits its
+    # clone-b does the concurrency work the fixture exists for: it commits its
     # own file and pushes through the same fetch-rebase-push loop, so the
     # two-clone topology still exercises concurrent writers on one origin and
     # both commits land linearly.

@@ -14,8 +14,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scenario_core import (NOW, Scenario, _commit, _item_body, _push, _record,
-                           _run_item, _ts)
+from scenario_core import NOW, Scenario, _commit, _item_body, _push, _record, _run_item, _ts
 
 
 def _plant_faults(scenario: Scenario, t_c: str) -> None:

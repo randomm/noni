@@ -149,8 +149,8 @@ its own per-issue state. The position, the layers such a team runs and the reaso
 [Using noni alongside a driver that keeps its
 own claims](../../docs/QUICKSTART.md#using-noni-alongside-a-driver-that-keeps-its-own-claims)
 section, and this page deliberately does not restate it. What this page adds is the
-local consequence: the claim step below is the driver's own claim, so a team that
-carries its claims elsewhere skips that line and runs the census on the direction
+local consequence: noni keeps no claim state of its own, so a team whose driver
+already owns claims has nothing to skip here -- it runs the census on the direction
 layer alone.
 
 ## Usage

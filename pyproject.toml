@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "noni-noni"
 dynamic = ["version"]
-description = "Attachable product-direction layer: steering ledger, backlog ordering, session claims, census"
+description = "Attachable product-direction layer: steering ledger, backlog ordering, item store, census"
 requires-python = ">=3.11"
 dependencies = []
 
@@ -69,8 +69,8 @@ where = ["src"]
 [tool.setuptools.dynamic]
 version = { attr = "noni.__version__" }
 
-# One console command, one subcommand per tool (census, register, claim, decide,
-# order). The dispatch module holds no behaviour of its own.
+# One console command, one subcommand per tool (census, decide, order, intent,
+# item, brief). The dispatch module holds no behaviour of its own.
 [project.scripts]
 noni = "noni.cli:main"
 

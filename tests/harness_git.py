@@ -15,7 +15,6 @@ from datetime import datetime
 from pathlib import Path
 
 
-
 def _git_e2(
     repo: Path, *args: str, env: Mapping[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:

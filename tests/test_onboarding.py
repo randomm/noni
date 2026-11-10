@@ -128,8 +128,8 @@ def test_the_page_states_each_protocol_step_and_its_owning_skill() -> None:
     """Every step of the protocol is on the page, and each links its owner.
 
     A step is located word by word, so the page's line wrapping is not part of the
-    contract, and its owner is located on the same table row: a page that named the
-    claim step without pointing at the sessions-claims skill would satisfy a
+    contract, and its owner is located on the same table row: a page that named a
+    step without pointing at the skill that owns it would satisfy a
     step-exists check and leave the agent with a step it cannot carry out.
     """
     rows = [line for line in page_text().splitlines()

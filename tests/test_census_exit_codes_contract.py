@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 
-import census
 from _harness import (
     _commit_file,
     _fault_the_ledger_listing,

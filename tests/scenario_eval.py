@@ -20,9 +20,9 @@ whatever the census would have guessed.
 
 Determinism is asserted on the normalized finding multiset — the multiset of
 (check, code, severity, masked-subject) tuples from the census --json output —
-because session ids carry a random 6-hex suffix per build; a session finding
-is identified by its build-time-known identity (agent-a / agent-b / agent-c),
-which its register file carries, never by the random id.
+through :func:`scenario_report._mask`, the one place a subject that later gains a
+random component would say so. Every subject this fixture plants is fixed at build
+time, so two builds normalize identically.
 
 Deletion is confined to what this run created: the builder and the standalone
 no-arg path create their own directories and remove only those; a directory

@@ -16,10 +16,10 @@ import json
 from pathlib import Path
 
 from order_fixtures import _order, _order_path
+from order_fixtures import _repo as _writer_repo
 from ordering_fixtures import _order as _commit_artifact
 from ordering_fixtures import _repo as _census_repo
 from ordering_fixtures import _run
-from order_fixtures import _repo as _writer_repo
 from ordering_shapes import NOW
 
 from noni.orderschema import MIGRATION_HINT

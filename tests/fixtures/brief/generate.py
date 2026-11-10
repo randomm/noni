@@ -58,7 +58,6 @@ from brief_fixtures import (
 
 from noni import ledger_schema, orderschema
 
-
 # The instant every file and tar member of the fixture carries. A fixed stamp, not the building
 # clock: a tar whose mtimes moved with each run could not be compared member by member against the
 # committed copy, which is the check that keeps this script and ``brief.tar`` from drifting.

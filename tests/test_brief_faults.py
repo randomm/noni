@@ -7,7 +7,6 @@ nothing else, and the verdict line prints whatever the census said a moment late
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 from brief_fixtures import (

@@ -140,6 +140,102 @@ def test_a_leftover_sessions_directory_is_not_a_hygiene_regression(tmp_path):
     )
 
 
+# --- A leftover noni/items/ is not the census's business ----------------------
+#
+# The item store was removed (issue #158) by a project that ran it, so its state
+# repository keeps its committed item files. The census must ignore that directory
+# outright, and one of the files in it is deliberately malformed: the promise is not
+# only that no item class runs, but that nothing reaches for the directory at all.
+
+_LEFTOVER_ITEM_REL = "noni/items/idea-0001.json"
+_LEFTOVER_ITEM_BAD_REL = "noni/items/not-an-item.json"
+
+# A document in the shape the removed writer wrote, so the census's silence is
+# about the directory and not about a file it could not have read anyway.
+_LEFTOVER_ITEM_BODY = (
+    '{"schema": "noni.item/1", "id": "idea-0001", "title": "Ship the census",\n'
+    ' "created": "2026-10-01T10:00:00Z", "status": "open"}\n')
+
+
+def _censused_repo_with_items(tmp_path: Path, name: str, *, with_items: bool) -> Path:
+    """A state root with one committed record, and optionally the leftover store.
+
+    The two trees carry the same ledger, so the only difference between their runs
+    is the ``noni/items/`` directory. The record is committed so neither run adds
+    the ``ledger-empty`` warn and competes with the comparison. The store holds one
+    document the removed writer wrote and one file that is not JSON at all: a
+    census that listed the directory would have to answer for the bad file.
+    """
+    repo = _init_repo(tmp_path / name)
+    _commit_record_bytes(repo, "noni/decisions/2026-10-01-alpha.json",
+                         json.dumps(_valid_record(), indent=2).encode("utf-8"))
+    if with_items:
+        _commit_record_bytes(repo, _LEFTOVER_ITEM_REL,
+                             _LEFTOVER_ITEM_BODY.encode("utf-8"))
+        _commit_record_bytes(repo, _LEFTOVER_ITEM_BAD_REL,
+                             b"{not json at all")
+    return repo
+
+
+def test_a_leftover_items_directory_censuses_exactly_like_its_absence(tmp_path):
+    """A committed ``noni/items/`` changes no byte of the census's answer.
+
+    A state repository that ran the item store still holds its committed item
+    files, one of them malformed. Pointing the census at it must return the verdict
+    the same tree without the directory would: the same exit code, the same rows and
+    the same stderr, with no item row and no cannot-tell row standing in for a group
+    that no longer runs. The hygiene class is skipped in both runs for the reason
+    every other class test here gives: an isolated fixture repo has no deny-list,
+    and its always-reporting row would be the same in both trees and prove nothing.
+    """
+    plain = _censused_repo_with_items(tmp_path, "items-plain", with_items=False)
+    leftover = _censused_repo_with_items(tmp_path, "items-leftover", with_items=True)
+    assert (leftover / _LEFTOVER_ITEM_REL).is_file(), (
+        "the fixture planted no item file, so the comparison proves nothing")
+    assert (leftover / _LEFTOVER_ITEM_BAD_REL).is_file(), (
+        "the fixture planted no malformed file, so a census that listed the "
+        "directory would have nothing to trip over")
+
+    plain_code, plain_out, plain_err = _run(plain, "--skip", "hygiene", "--json")
+    left_code, left_out, left_err = _run(leftover, "--skip", "hygiene", "--json")
+
+    assert (left_code, left_out, left_err) == (plain_code, plain_out, plain_err), (
+        "a leftover noni/items/ moved the census's answer:\n"
+        f"plain:    rc={plain_code} out={plain_out!r} err={plain_err!r}\n"
+        f"leftover: rc={left_code} out={left_out!r} err={left_err!r}"
+    )
+    rows = [json.loads(line) for line in left_out.splitlines()
+            if line.strip() and json.loads(line).get("kind") == "finding"]
+    assert rows == [], f"the leftover store earned rows of its own: {rows}"
+    for row in json.loads(left_out.splitlines()[-1])["not_evaluated"] or []:
+        assert "item" not in str(row).lower(), (
+            f"the census worded something about the directory it must ignore: {row}")
+
+
+def test_the_census_refuses_the_removed_items_flag_as_a_usage_error():
+    """``--items`` is no longer an argument of the census, and says so at exit 2.
+
+    The flag was removed with the six item classes, so a scripted call that still
+    passes it is a caller working from an old page: argparse's own refusal of the
+    name comes back on the census's usage code, not as an ignored flag and not as a
+    silent run. ``SystemExit`` is what argparse's ``error`` raises, so the launcher
+    catches it and reads the code it carried -- the same answer the wrapper gives a
+    shell.
+    """
+    import io
+    from contextlib import redirect_stderr
+
+    err = io.StringIO()
+    try:
+        with redirect_stderr(err):
+            rc = census.main(["--items", "noni/items"])
+    except SystemExit as exit_:
+        rc = exit_.code
+    assert rc == 2, f"an unknown flag must be the usage exit, got {rc}"
+    assert "--items" in err.getvalue(), (
+        f"the refusal does not name the flag it refused: {err.getvalue()!r}")
+
+
 def test_edit_check_non_ascii_utf8_unchanged_is_not_edited(tmp_path):
     """(1a) A valid record with non-ASCII UTF-8 content, unchanged on disk,
     must not produce an exit-12 finding — the committed bytes and the working

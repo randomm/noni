@@ -208,7 +208,7 @@ def _refuse_linked_state(repo: Path, verb: str) -> int | None:
     return None if refused is None else _fail(EXIT_USAGE, *refused)
 
 
-def _plan_move(repo: Path, entries: list, subject: int | str, to: str | None,
+def _plan_move(repo: Path, entries: list, subject: int, to: str | None,
                decision: str | None,
                stamp: str) -> order_plan.Planned:
     """The move's plan, called with this writer's codes and its own printer.

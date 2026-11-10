@@ -223,6 +223,16 @@ def _clean_shapes() -> dict[str, str]:
             '[{"issue": 1, "decision": "2026-10-01-baseline", '
             '"confirmed": "2026-10-26T00:00:00Z", "why": "' + "a" * WHY_MAX
             + '"}]'),
+        # The shape the migration arm must still accept: an entry of the current
+        # schema that simply omits the retired ``item`` key. The refusal of a
+        # pre-removal file turns on that key being *present*, so a table that held
+        # only entries carrying it would let the migration arm grow into a rule that
+        # refuses every entry -- an order no verb can write and the census faults.
+        # Spelled as raw text (rather than through ``entry()``) so the key's absence
+        # is a fact of the fixture and not of a builder's default.
+        "an entry that names only its issue": _entries(
+            '[{"issue": 1, "decision": "2026-10-01-baseline", '
+            '"confirmed": "2026-10-26T00:00:00Z"}]'),
     }
 
 

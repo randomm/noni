@@ -87,7 +87,7 @@ class Planned(NamedTuple):
     refusal: int | None
 
 
-def plan_move(repo: Path, entries: list, subject: int | str, to: str | None,
+def plan_move(repo: Path, entries: list, subject: int, to: str | None,
               stamp: str, decision: str | None, report,
               exit_io: int, exit_usage: int, exit_refusal: int) -> Planned:
     """The list ``move`` writes, or the refusal naming why it writes none.
@@ -147,7 +147,7 @@ def plan_move(repo: Path, entries: list, subject: int | str, to: str | None,
     return Planned(rest, _move_name(subject, position, to, decision), None)
 
 
-def _move_name(subject: int | str, position: int, to: str | None,
+def _move_name(subject: int, position: int, to: str | None,
                decision: str | None) -> str:
     """The sentence a move run is printed and committed under.
 
@@ -162,7 +162,7 @@ def _move_name(subject: int | str, position: int, to: str | None,
     return f"move {subject} to {position} with decision {decision}"
 
 
-def _restamped(moved: dict, subject: int | str, stamp: str,
+def _restamped(moved: dict, subject: int, stamp: str,
                decision: str | None = None) -> dict:
     """``moved`` with a fresh ``confirmed`` (and a new decision when one was given),
     in the key order its subject writes.
@@ -238,7 +238,7 @@ def plan_remove(entries: list, subject: int, report,
     return Planned(kept, f"remove {subject}", None)
 
 
-def plan_confirm(entries: list, subject: int | str | None, stamp: str, report,
+def plan_confirm(entries: list, subject: int | None, stamp: str, report,
                  exit_refusal: int) -> Planned:
     """The list ``confirm`` writes: the same entries, with ``confirmed`` restamped.
 

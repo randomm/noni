@@ -65,6 +65,28 @@ def test_the_arbiter_copies_of_the_line_rule_are_the_writer_s(tmp_path):
         f"{''.join(ledger_schema.BLANKS)!r}")
 
 
+def test_the_migration_hint_is_one_sentence_written_once():
+    """The repair sentence is held to its owner the same way the bound and the
+    character sets are.
+
+    The writer and the arbiter each keep their own copy of the migration sentence
+    (the arbiter loads by path and imports nothing from the writer's package), and
+    the sentence is the whole of what a pre-removal order tells its operator to do.
+    A copy that drifted would not change any verdict -- both sides still refuse the
+    same two shapes -- and only the words the reader would follow would differ, so
+    no behavioural test would notice. Comparing the two constants is the pin that
+    keeps the refusal one sentence.
+    """
+    from harness_module import load_package_module
+
+    owner = load_package_module("orderschema").MIGRATION_HINT
+    copy = load_package_module("census_ordering").MIGRATION_HINT
+    assert copy == owner, (
+        f"the ordering arbiter words the repair {copy!r} and the writer's schema "
+        f"module owns {owner!r}: the census and the writer answer the same artifact "
+        "with two different instructions")
+
+
 def test_the_git_helper_is_bounded_hardened_and_makes_no_signing_promise(tmp_path):
     """The helper's own contract, tested where it lives: one call, a timeout, and
     the four -c overrides that keep hooks, signing, fsmonitor and external

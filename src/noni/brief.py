@@ -329,12 +329,12 @@ def _order_block(root: Path) -> list[str]:
         return [ORDER_HEADER, NOT_READ]
     entries = read.entries[:TOP_ENTRIES]
     rows, withheld = block_rows(
-        (_order_row(root, position, entry)
+        (_order_row(position, entry)
          for position, entry in enumerate(entries, 1)), TOP_ENTRIES)
     return close_block([ORDER_HEADER, *rows], withheld)
 
 
-def _order_row(root: Path, position: int, entry: dict) -> str:
+def _order_row(position: int, entry: dict) -> str:
     """One line of the ``top 10`` block.
 
     The subject is the issue; a document naming neither was refused by

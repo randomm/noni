@@ -115,21 +115,6 @@ def test_brief_a_purpose_line_shaped_like_a_header_is_dropped(tmp_path: Path) ->
     assert body[-1] == f"{DROPPED_PREFIX}6 line(s)"
 
 
-def assert_no_control_bytes(page: str) -> None:
-    """No control byte of a planted artifact reaches stdout, in any of its forms.
-
-    The check is a predicate over the whole page rather than a list of the bytes one case planted:
-    the point of the page's renderer is that no category-C character leaves it, so a case that only
-    looked for the bytes it happened to plant would pass while the renderer leaked any other. The
-    page's own newlines are the tool's doing, not the artifact's bytes.
-    """
-    from noni import _safe_text
-
-    leaked = sorted({char for char in page
-                     if char != "\n" and _safe_text.is_control_char(char)})
-    assert leaked == [], [hex(ord(char)) for char in leaked]
-
-
 def test_brief_a_blank_purpose_line_costs_nothing_but_its_line(tmp_path: Path) -> None:
     """A purpose line of only whitespace is not a line of the page; the block is intact."""
     root = plant_brief_tree(tmp_path)

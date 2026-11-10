@@ -161,6 +161,15 @@ def test_the_run_survives_a_path_it_cannot_classify(tmp_path, monkeypatch):
     # assertion is about the gate itself, not the file that calls it.
     gate = (SRC / "noni" / "census_group_gate.py").read_text(encoding="utf-8")
     body = gate[gate.index("def _intent_present"):]
+    # The clip at the next top-level def is what makes the two assertions below say
+    # something about this gate rather than about whatever function follows it: the
+    # file grew a second def once the gate was split from the run body, and an
+    # unclipped slice read every one of them. ``+ 1`` keeps the newline that opens
+    # the clip so a slice of the whole file is what is searched. A gate that is the
+    # file's last def has no next def to clip at, which is the same file and no
+    # finding, so the absence of the marker is the answer there too.
+    end = body.find("\ndef ", 1)
+    body = body if end == -1 else body[:end + 1]
     assert "_file_kind" in body, "the gate stopped asking the census's classifier"
     assert ".exists()" not in body, (
         "the intent gate re-derives the path state itself: a link it follows and a "

@@ -1,11 +1,11 @@
 """The install precondition every page that prints a script command has to state.
 
-The claim: a reader who copies ``scripts/item.py --repo REPO add ID --title TITLE`` out
-of a ``SKILL.md`` meets ``the noni package is not importable`` on a machine where noni
-was never installed, because every wrapper under ``skills/*/scripts/`` is a shim that
-imports the package and exits 3 when that import fails. So the pages that print such a
-command owe one sentence naming the precondition, and the link to the page that owns
-the install.
+The claim: a reader who copies ``scripts/order.py --repo REPO add ISSUE --decision ID``
+out of a ``SKILL.md`` meets ``the noni package is not importable`` on a machine where
+noni was never installed, because every wrapper under ``skills/*/scripts/`` is a shim
+that imports the package and exits 3 when that import fails. So the pages that print
+such a command owe one sentence naming the precondition, and the link to the page that
+owns the install.
 
 This is the third file the docs promise suite has grown on the same seam:
 ``tests/test_docs_promises.py`` pins what the pages print, and split its install
@@ -223,7 +223,7 @@ def test_the_reader_does_not_read_prose_as_a_command() -> None:
     prose = (
         "# A page\n\n"
         "Records are written with `scripts/decide.py`, which is the only writer, and\n"
-        "`scripts/census.sh` is the ledger shim. The table lists `scripts/item.py`.\n\n"
+        "`scripts/census.sh` is the ledger shim. The table lists `scripts/order.py`.\n\n"
         "- run it as `bash scripts/census.sh <dir>`, never under `python3`\n"
     )
     assert script_entry_points(prose) == [], script_entry_points(prose)
@@ -260,7 +260,7 @@ def test_the_gate_refuses_a_command_page_with_no_sentence(
     skill.mkdir(parents=True)
     command_page = (
         "# Claiming\n\n"
-        "```\nscripts/item.py --repo REPO add ID --title TITLE\n```\n\n"
+        "```\nscripts/order.py --repo REPO add ISSUE --decision ID\n```\n\n"
         "The writer appends one row and commits it.\n"
     )
     page = skill / "SKILL.md"

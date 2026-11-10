@@ -176,9 +176,21 @@ def closed_state_verdict(notes: tuple[str, ...],
     """
     if ORDERING_CLOSED_NOT_EVALUATED not in notes:
         return ""
-    owed = any(f["check"] == ORDERING_CLOSED_CHECK
-               and f["message"].startswith(CLOSED_STATE_UNASKED_PREFIX) for f in findings)
+    owed = closed_state_verdict_carried(findings)
     return f" {ORDERING_CLOSED_CHECK} not checked" if owed else ""
+
+
+def closed_state_verdict_carried(findings: list[dict] | tuple[dict, ...]) -> bool:
+    """Whether ``findings`` hold the row saying the closed question went unasked.
+
+    The one reader of that test, shared by the verdict clause above and the headline
+    below: the two lines of one report must call the same rows by the same name, and a
+    second copy of the prefix test would let one line learn a new wording while the
+    other kept the old one.
+    """
+    return any(f["check"] == ORDERING_CLOSED_CHECK
+               and f["message"].startswith(CLOSED_STATE_UNASKED_PREFIX)
+               for f in findings)
 
 
 def _not_evaluated_headline(notes: tuple[str, ...],
@@ -204,9 +216,9 @@ def _not_evaluated_headline(notes: tuple[str, ...],
     """
     named = [ORDERING_CLOSED_CHECK for note in notes
              if note == ORDERING_CLOSED_NOT_EVALUATED]
-    unchecked = bool(named) and closed_state_verdict(notes, findings)
+    unchecked = bool(named) and closed_state_verdict_carried(findings)
     if unchecked:
-        return f"{', '.join(named)} not checked"
+        return f" — {', '.join(named)} not checked"
     unknown = sum(1 for note in notes
                   if note != ORDERING_CLOSED_NOT_EVALUATED and not note.strip())
     if not named:

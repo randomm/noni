@@ -22,6 +22,7 @@ than the one it replaced: it would fault a project for a layer it never used.
 from __future__ import annotations
 
 import json
+import re
 
 from _harness import _commit_file
 from ordering_fixtures import (
@@ -183,6 +184,28 @@ def test_the_row_is_an_ordinary_finding_of_its_class(tmp_path):
     named = _run(repo, "--only", "ordering-closed")
     assert len(_unasked(named[1])) == 1, named[1]
     assert named[0] == 0, (named[0], named[1])
+
+
+def test_the_headline_separates_the_clause_from_the_counts_it_qualifies(tmp_path):
+    """The clause is appended to a count, so it has to open with a separator.
+
+    The first cut of the clause carried no leading space and the headline printed
+    it flush against the count, which rendered as one garbled token
+    (``2 finding(s)ordering-closed not checked``). A test that only asked whether
+    the class was *named* passed on that output, so what is pinned here is the
+    shape of the line: the counts stay their own two tokens and the clause is a
+    third, separated, with the class named once and not twice.
+    """
+    repo = _tree(tmp_path, "separator", ISSUE)
+    code, out, err = _human(repo)
+    assert code == 0, (code, out, err)
+    first = out.splitlines()[0]
+    # The counts are the ordering group's own (the human helper confines the run to
+    # it); what matters below is their shape, not their number.
+    assert re.match(r"^census: \d+ warning\(s\), \d+ finding\(s\)", first), first
+    assert "finding(s)ordering" not in first.replace(" ", ""), first
+    assert first.endswith("ordering-closed not checked"), first
+    assert first.count("ordering-closed") == 1, first
 
 
 def test_the_row_never_invents_a_closed_issue(tmp_path):

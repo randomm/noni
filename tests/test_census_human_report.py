@@ -89,24 +89,45 @@ class TestHumanVerdict:
     def test_not_evaluated_note_suppresses_the_all_checks_passed_line(
         self, tmp_path,
     ):
-        """Zero rows plus a note is not "nothing to see".
+        """A class that went unasked is said by the report while it has no row.
 
-        This is the state the bug hid best: nothing fired, so the banner was the
-        truth of the rows and a lie about the run -- the closed class was never
-        asked. The headline has to say a check did not run, and it has to say so
-        with the product's own class name rather than a paraphrase.
+        The headline clause and the row are not two ways of saying one thing, and this
+        case pins the state where only the clause is left: an order that names no issue
+        owes the note and no row, so the run prints rows of no class that could name the
+        closed one, and the headline's clause is the only thing saying which check did not
+        run. That is also the state the bug hid best -- nothing fired, so the banner was
+        the truth of the rows and a lie about the run. An emptied order is the tree for it
+        (an absent order answers "nothing was ordered" and owes no note at all, and an
+        order of blanks is the malformed class's to answer), and the counter-cases are
+        pinned below so the clause is not "always say unchecked".
+
+        Issue #148 gave the stricter case -- an order that does hold issues -- a row of its
+        own, which is what gives ``--strict`` a code to return; that run's headline is the
+        row-bearing one, and its verdict line is pinned in
+        :meth:`test_the_verdict_line_names_the_class_whose_row_it_carries`.
         """
-        from ordering_fixtures import _entry, _repo, _seed
+        from ordering_fixtures import ORDER_REL, _commit, _entry, _repo, _seed
         from quickstart_page import ordering_note_from_product
 
         repo = _repo(tmp_path, "note-only")
         _seed(repo, _entry(7, "2026-10-01-baseline"))
-        rc, out, err = _run_census(
-            repo, "--only", "ordering-closed", "--now", "2026-10-27T12:00:00Z")
-        assert rc == 0, f"a run that skipped a class exits 0, got {rc}\n{out}\n{err}"
+        # The rowless half, built by the tree and not the filter: an order that names no
+        # issue owes no row of the class, so the run prints a note and rows of no class
+        # that could name it, and the headline's clause is the only thing saying which
+        # check did not run. An emptied order is the tree for it -- an absent order answers
+        # "nothing was ordered" and owes no note at all, and an order of blanks is the
+        # malformed class's to answer -- and the counter-cases are pinned below.
+        empty = _repo(tmp_path, "note-only-empty")
+        _seed(empty, _entry(7, "2026-10-01-baseline"))
+        _commit(empty, ORDER_REL, '{"schema": "noni.order/1", "entries": []}')
+        rc, out, err = _run_census(empty, "--skip", "hygiene",
+                                   "--now", "2026-10-27T12:00:00Z")
+        assert rc == 0, f"an order naming no issue asks no closed question: {rc}"
         assert "note: " in out, f"the note line is what this run reports: {out}"
         assert ordering_note_from_product() in out, (
             f"the note is not the product's own sentence: {out}")
+        assert "closed state not checked" not in out, (
+            f"an order that names no issue owes no row of the class: {out}")
         first = self._first_line(out)
         assert first != self.ALL_CLEAR, (
             f"a run that skipped a check printed the all-clear banner: {first!r}")
@@ -116,6 +137,77 @@ class TestHumanVerdict:
         assert "ordering-closed" in first, (
             f"the headline did not name the class that did not run: {first!r}")
         assert out.splitlines()[-1].endswith("verdict ok"), out
+
+        # The rowless run's counter-cases, so the clause is not "always say unchecked".
+        # A run given the state map asked its question, and a run whose class was skipped
+        # by name is not an unchecked one: neither may carry the clause.
+        state = repo.parent / "state-note-only.json"
+        state.write_text('{"7": "open"}', encoding="utf-8")
+        rc, out, err = _run_census(repo, "--now", "2026-10-27T12:00:00Z",
+                                   "--issue-state", str(state))
+        assert rc == 0, f"a closed check that was answered: {rc}\n{out}\n{err}"
+        assert "not checked" not in out.splitlines()[-1], (
+            f"a run that asked its closed question was worded as one that did not: "
+            f"{out.splitlines()[-1]!r}")
+        rc, out, err = _run_census(repo, "--now", "2026-10-27T12:00:00Z",
+                                   "--skip", "ordering-closed")
+        assert rc == 0, f"a run that skipped the class: {rc}\n{out}\n{err}"
+        assert "not checked" not in out.splitlines()[-1], (
+            f"a skipped class is not an unchecked one: {out.splitlines()[-1]!r}")
+        assert "ordering-closed was not evaluated" not in out, (
+            f"a class the operator asked away must not be reported as unasked: {out}")
+
+        # The other half: the run that carries the row, whose headline must count it and
+        # still name the class. Same tree, no filter, so the class reports itself.
+        rc, out, err = _run_census(repo, "--now", "2026-10-27T12:00:00Z")
+        assert rc == 0, f"an unasked closed check is a warn, not a failure: {rc}\n{out}"
+        assert "closed state not checked" in out, (
+            f"the tree must carry the class's own row for this half: {out}")
+        rowed = self._first_line(out)
+        assert rowed != self.ALL_CLEAR, rowed
+        assert "all checks passed" not in rowed, rowed
+        assert out.splitlines()[-1].endswith("verdict ok"), out
+
+    def test_the_verdict_line_names_the_class_whose_row_it_carries(self, tmp_path):
+        """The verdict line says the closed state went unchecked, on the last line.
+
+        A CI step that greps the verdict -- rather than reading rows -- judged this run
+        clean for the whole of issue #148's lifetime, because everything it could match
+        sat above the rows. The clause names the class by id, so it cannot be a paraphrase
+        of the note that drifted from it, and it appears only on a run that really owes the
+        row: the counter-cases below are what stop "always say unchecked" from passing.
+        """
+        from ordering_fixtures import _entry, _repo, _seed
+
+        repo = _repo(tmp_path, "verdict-unchecked")
+        _seed(repo, _entry(7, "2026-10-01-baseline"))
+        rc, out, err = _run_census(repo, "--now", "2026-10-27T12:00:00Z")
+        assert rc == 0, f"an unasked closed check stays a warn: {rc}\n{out}\n{err}"
+        last = out.splitlines()[-1]
+        assert last.startswith("summary:"), last
+        assert "clean" not in last, (
+            f"the verdict called a run with a row clean: {last!r}")
+        assert "ordering-closed not checked" in last, (
+            f"the verdict did not say the closed state went unchecked: {last!r}")
+        assert last.endswith("verdict ok"), last
+
+        # Counter-case one: a run given the state map asked its question, so the
+        # verdict must read exactly as it did before the clause existed.
+        state = repo.parent / "state-verdict.json"
+        state.write_text('{"7": "open"}', encoding="utf-8")
+        rc, out, err = _run_census(repo, "--now", "2026-10-27T12:00:00Z",
+                                   "--issue-state", str(state))
+        assert rc == 0, f"a closed check that was answered: {rc}\n{out}\n{err}"
+        assert "not checked" not in out.splitlines()[-1], (
+            f"a run that asked its closed question was worded as one that did not: "
+            f"{out.splitlines()[-1]!r}")
+
+        # Counter-case two: the class skipped outright owes neither row nor clause.
+        rc, out, err = _run_census(repo, "--now", "2026-10-27T12:00:00Z",
+                                   "--skip", "ordering-closed")
+        assert rc == 0, f"a run that skipped the class: {rc}\n{out}\n{err}"
+        assert "not checked" not in out.splitlines()[-1], (
+            f"a skipped class is not an unchecked one: {out.splitlines()[-1]!r}")
 
     def test_a_run_with_nothing_to_report_still_reads_all_clear(self, tmp_path):
         """The counter-case, so the fix cannot be "never say all-clear".

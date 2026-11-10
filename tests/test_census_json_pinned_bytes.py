@@ -44,12 +44,14 @@ _JSON_CONTRACT: tuple[tuple[str, tuple[str, ...], str], ...] = (
     (
         "a check was not evaluated",
         ("--skip", "hygiene", "--only", "ordering-closed", "--now", NOW),
-        "68b86e0615cb6bf4ad404d49d7e68ec1c4716c19c75b69ffacee753ffe9ca602",
+        # Re-pinned for issue #148, which gave this run its own row of the class: the
+        # summary row's ``not_evaluated`` field is unchanged and the run still exits 0.
+        "bf33523c8d478eada62eef1a636b9d9db6a84595fd487825e7d0ddceb5ce8936",
     ),
     (
         "the whole run, hygiene included",
         ("--json",),
-        "8281b57008dac9fea6bb095acbde3c42525cf00b9d6b358b631ea899b237644f",
+        "0bc8445fb48c30f6c129a470ba21c67ff3eff173893b01548a897e2393f99c57",
     ),
 )
 

@@ -379,9 +379,16 @@ def test_the_closed_class_says_so_when_no_state_file_is_given(tmp_path):
     assert proc.returncode == 0, proc.stderr
     assert "ordering-closed was not evaluated" in proc.stdout, proc.stdout
     assert "never contacts a tracker" in proc.stdout, proc.stdout
-    # The same run in --json mode: no notice line in the NDJSON stream.
+    # The same run in --json mode: no notice line in the NDJSON stream, and the class's
+    # own row. Issue #148 made the unasked question a verdict the exit code can carry, so
+    # a rowless stream is no longer what this state prints: warn without --strict (hence
+    # code 0, which is the half that keeps this test from being a pass on a run that
+    # failed its own check), and pinned to the artifact rather than an issue, because the
+    # fact is about the run and not about any one ordered issue.
     code, rows, _ = _census_ordering(repo)
-    assert code == 0 and rows == [], (code, rows)
+    assert code == 0, (code, rows)
+    assert [(r["check"], r["severity"], r["subject"]) for r in rows] == [
+        ("ordering-closed", "warn", ORDER_REL)], rows
 
 
 # --- A linked ledger above the citation read (issue #104) --------------------

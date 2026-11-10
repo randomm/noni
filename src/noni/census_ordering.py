@@ -24,7 +24,10 @@ brought are gone, so a file that still states that version or holds an entry wit
 migration (re-add each entry as an issue entry) rather than read as a valid ``/1``.
 
 Nothing here prints or exits: every answer is appended to the caller's
-``findings`` list through the ``row`` factory it supplies.
+``findings`` list through the ``row`` factory it supplies. The one row the group raises
+about itself -- the closed question it could not ask -- is raised by
+``census_ordering_closed.py`` beside this file, which this module asks at the point where
+it holds the artifact read.
 """
 
 from __future__ import annotations
@@ -32,6 +35,17 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
+
+#
+# The one package import this module makes. It is absolute rather than relative for
+# the same reason the module carries no relative siblings: the tests that hold this
+# file's copies of the writer's contract equal to their owner exec it from source
+# under a test-private name, with no package bound (``load_package_module``), and a
+# relative import there would be an ImportError instead of a comparison. The module
+# loaded is the package's own -- the same object every other route imports -- so the
+# seam a test puts on either name is the one this group uses.
+from noni import census_ordering_closed as _closed
+
 
 # The artifact's shape, the census's side of the contract order.py writes to. The
 # version lives here rather than being imported from the writer's schema module: the
@@ -95,28 +109,9 @@ STATUS_SUPERSEDED = "superseded"
 ORDER_DEFAULT_SUBJECT = "noni/direction/order.json"
 ISSUE_STATE_SUBJECT = "issue-state"
 
-# The class whose rows below this file reports, spelled here rather than imported
-# (``census_render`` names the same id beside the note that says it did not run). The
-# subject of the row a run raises when it had an order to check and no way to ask
-# whether its issues are closed is the group's whole-file subject, not an entry's, and
-# the row carries the ``whole_artifact`` marker: that marker is what keeps it through
-# ``census_run.keep`` under any ``--only`` set -- the "no ordering rows" reading that
-# left the pilot's CI green (issue #148). A subject is an id, never a path, so no
-# machine-local path reaches the report.
+
 CLOSED_STATE_CHECK = "ordering-closed"
 ORDER_WHOLE_ARTIFACT_SUBJECT = ORDER_DEFAULT_SUBJECT
-
-# The message of that row: cause and fix in the class's own terms. Deliberately not the
-# ``note:`` sentence, which belongs to the class that did not run and is pinned verbatim
-# by ``tests/test_census_ordering_json_note.py``; this row is a finding of the class, so
-# it is worded as one. The census still never contacts a tracker: the file the remedy
-# names is an adapter's or an operator's to produce.
-CLOSED_STATE_UNASKED = (
-    "closed state not checked: the order holds entries and no --issue-state FILE was "
-    "given, so no entry's closed state was asked and a dead order reads as a live one "
-    "(the census never contacts a tracker: produce the map with an adapter, or pass "
-    "--issue-state)")
-
 
 def _why_problems(entry: dict) -> list[str]:
     """The census's copy of the rationale rule for one entry's ``why``.
@@ -274,47 +269,6 @@ def _entry_problems(entries: list, problems: list[str], parse_iso, names_zone) -
                                      or parse_iso(confirmed) is None
                                      or not names_zone(confirmed)):
             problems.append(f"entry {index} confirmed {confirmed!r} is not a UTC timestamp")
-
-
-def closed_state_unasked_row(entries: list[dict] | None, root: Path, strict: bool,
-                             findings: list[dict], *, row: Callable[..., dict],
-                             order: Path, requested: set[str] | frozenset[str],
-                             rel_to_root: Callable[[Path, Path], str]) -> None:
-    """Append the run's one row for a closed question it could not ask, if it owes one.
-
-    A note is not a verdict. ``check_ordering`` answers the closed question from the
-    ``--issue-state`` map alone and says nothing when the map never came; the run prints
-    that as a ``note:`` line (and on the ``--json`` summary row), but a CI step gating
-    on the exit code stayed green for days over an order whose issues had all closed
-    (issue #148). So the same fact is also a row of the class: ``warn``, its own 46
-    under ``--strict``, no row and no exit otherwise.
-
-    ``entries`` is the pair ``check_ordering`` got from ``readers.load_order``, never
-    re-read here: a second read would double the cost and let this group answer from a
-    later view of the tree than the rows above it. Three states owe nothing, because a
-    run never invents a finding where the reader has nothing to repair: a faulted
-    artifact (``None``) already earned its fail-class ``ordering-malformed`` row, and a
-    warn must not second-guess it; an empty list, which is also what an absent artifact
-    answers, is a project that never ordered anything, and the ordering layer is
-    optional; entries that name no issue leave no closed state unstated.
-
-    ``requested`` is the run's ``--only``/``--skip`` set: the row carries the
-    ``whole_artifact`` marker, which exempts a row from that filter as the probe-honesty
-    rule does (``census_run.keep``), so the class is tested here too -- ``--skip
-    ordering-closed`` still means no row of the class. ``strict`` goes to the row factory
-    and nowhere else, so its severity is the one rule the whole report reads
-    (``census_render._promote``) and its fix hint is the table's: a row this run raises
-    never words its own remedy.
-    """
-    owed = (CLOSED_STATE_CHECK in requested and bool(entries)
-            and any(isinstance(entry.get("issue"), int) for entry in entries))
-    if not owed:
-        return
-    findings.append(row(CLOSED_STATE_CHECK, strict,
-                        ORDER_WHOLE_ARTIFACT_SUBJECT, rel_to_root(root, order),
-                        CLOSED_STATE_UNASKED, root, whole_artifact=True))
-
-
 def check_ordering(
     order: Path, ledger: Path, root: Path, now: datetime, ordering_stale_after: timedelta,
     issue_state, strict: bool, findings: list[dict], *,
@@ -324,7 +278,6 @@ def check_ordering(
     ledger_name: Callable[[str], str],
     names: tuple[str, ...] | None = None,
     closed_state_unasked: bool = False,
-    requested: set[str] | frozenset[str] = frozenset({CLOSED_STATE_CHECK}),
 ) -> None:
     """Check the ordering artifact; append its findings to ``findings``.
 
@@ -410,8 +363,9 @@ def check_ordering(
         # the question is unasked and the run owes it a verdict and not only a note
         # (issue #148). Decided from the map rather than the flag alone so a run given a
         # state file never raises it, whatever the caller passed.
-        closed_state_unasked_row(entries, root, strict, findings, row=row, order=order,
-                                 requested=requested, rel_to_root=rel_to_root)
+        _closed.append(entries, root, strict, findings, row=row, order=order,
+                       rel_to_root=rel_to_root, check=CLOSED_STATE_CHECK,
+                       whole_artifact_subject=ORDER_WHOLE_ARTIFACT_SUBJECT)
 
     rel_ledger = rel_to_root(root, ledger)
     records, ledger_readable, unreadable_records, listed, listing_fault = \

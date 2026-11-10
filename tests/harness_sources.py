@@ -68,12 +68,19 @@ def _harness_source(path: Path) -> str:
     return _product_source(path).read_text(encoding="utf-8")
 
 
-def _product_source(path: Path) -> Path:
+def _product_source(path: Path, name: str | None = None) -> Path:
     """The package source behind a wrapper path (identity for a package path).
 
     A wrapper is recognised by the package module it imports, so the mapping is a
     property of the file rather than a table of paths that can go stale when a
     tool is renamed.
+
+    ``name`` is the module the caller asked for, and where it is given the mapping is
+    bounded by it: a module that imports a sibling of its own (the ordering group
+    loads its closed-row module beside the census's own code) is not a wrapper for
+    that sibling, and trusting the file's first import alone would hand the caller the
+    sibling's source under the name it asked for -- a copy of the wrong file, tested as
+    though it were the right one. Where the two disagree, the path is the answer.
     """
     text = path.read_text(encoding="utf-8")
     match = re.search(r"from noni import ([a-z_][a-z_0-9]*)\b", text)
@@ -84,4 +91,6 @@ def _product_source(path: Path) -> Path:
         raise AssertionError(
             f"{path} imports noni.{match.group(1)} but {candidate} does not exist"
         )
+    if name is not None and candidate != SRC / "noni" / f"{name}.py":
+        return path
     return candidate

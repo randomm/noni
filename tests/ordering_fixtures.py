@@ -134,6 +134,31 @@ def _run(repo: Path, *extra: str) -> tuple[int, list[dict], str, str]:
     return proc.returncode, [r for r in rows if r.get("kind") == "finding"], \
         proc.stdout, proc.stderr
 
+def rows_without_unasked_closed(rows: list[dict]) -> list[dict]:
+    """``rows`` with the run's own not-evaluated row taken out, and only that row.
+
+    A run over an order that holds issues and got no ``--issue-state`` owes one
+    ``ordering-closed`` row saying the closed state was never checked (issue #148 -- the
+    row is what gives ``--strict`` its 46, where the bare ``note:`` line left a CI step
+    green). A test of some *other* thing -- a stale entry, a bad citation, a faulted
+    ledger read, the strictness of the state file -- states the rows it expects exactly,
+    and that one row is a property of how the fixture invoked the census, not of the case
+    under test. Those tests call this.
+
+    It is an opt-in filter with a match strict enough to fail loudly rather than swallow:
+    the class id and the row's opening words, both read from the product, so a census that
+    reworded the row leaves the filter matching nothing and the calling test red, instead
+    of quietly passing on a row it no longer looks at. A test of the closed-class
+    behaviour itself does not call it and asserts on the row.
+    """
+    from noni import census_ordering, census_ordering_closed
+
+    prefix = census_ordering_closed.CLOSED_STATE_UNASKED.split(":", 1)[0]
+    return [r for r in rows
+            if not (r["check"] == census_ordering.CLOSED_STATE_CHECK
+                    and r["message"].startswith(prefix))]
+
+
 def _code(repo: Path, *extra: str) -> int:
     """The exit code of a run used only as a precondition (root can read a
     000-mode file, where the unreadable-record fault cannot be produced)."""

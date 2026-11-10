@@ -41,6 +41,7 @@ from . import census_text as _text
 from . import intentschema
 from .census_cli import _build_parser
 from .census_render import (
+    ORDERING_CLOSED_CHECK,
     ORDERING_CLOSED_NOT_EVALUATED,
     ORDERING_STALE_AFTER_DEFAULT,
     STALE_AFTER_RE,
@@ -93,7 +94,7 @@ def _load_issue_state(issue_state_path: Path | None):
 def _check_ordering(
     order: Path, ledger: Path, root: Path, now: datetime, ordering_stale_after: timedelta,
     issue_state, strict: bool, findings: list[dict],
-    names: tuple[str, ...] | None, requested: set[str],
+    names: tuple[str, ...] | None,
     closed_state_unasked: bool = False,
 ) -> None:
     """The ordering group, run by the module beside the census.
@@ -112,8 +113,8 @@ def _check_ordering(
     skipped": no ``--issue-state`` came in. It is passed in rather than read here so the
     group and the run's ``note:`` line key on one decision, and it is what makes the group
     append the row that turns that note into a verdict the exit code carries (see
-    ``closed_state_unasked_row``). ``requested`` is the run's class set, handed down so
-    that row obeys ``--skip ordering-closed`` the way every other row of the class does.
+    ``census_ordering_closed``). That row is filtered by ``keep`` below like any other:
+    the group is not told which classes the caller named.
     """
     census = _census()
     _ordering.check_ordering(order, ledger, root, now, ordering_stale_after,
@@ -128,8 +129,7 @@ def _check_ordering(
                              load_json_strict=_census_json.load_json_strict,
                              names_zone=_ordering_readers.names_zone,
                              ledger_name=census._ledger_name,
-                             closed_state_unasked=closed_state_unasked,
-                             requested=requested)
+                             closed_state_unasked=closed_state_unasked)
 
 
 def _check_intent(
@@ -319,7 +319,7 @@ def _run(argv: list[str] | None = None) -> int:
     if ORDERING_CHECKS & requested:
         _check_ordering(ordering, ledger, root, now, ordering_stale_after,
                         _load_issue_state(issue_state_path),
-                        args.strict, findings, ledger_probe.names, requested,
+                        args.strict, findings, ledger_probe.names,
                         issue_state_path is None)
         findings[:] = keep(findings)
         # The closed check's question comes only from --issue-state, which an
@@ -330,7 +330,16 @@ def _run(argv: list[str] | None = None) -> int:
         # ``not_evaluated`` field in --json mode (see ``_render``), so a CI run
         # that gates on the rows loses the information no more than one that
         # reads the human report.
-        if issue_state_path is None and "ordering-closed" in requested:
+        if issue_state_path is None and ORDERING_CLOSED_CHECK in requested:
+            # The note is owed whenever the class belonged to the run and no state map
+            # came in, and ``--skip`` takes the class out of the run rather than merely
+            # out of the report: a skipped check is not an unchecked one, and a note the
+            # operator asked away would keep the headline saying it. The row of the class
+            # (``census_ordering_closed``) is the stricter half -- an order that holds
+            # issues -- and ``keep`` filters it like any other finding, so a run whose
+            # filter named the class but whose rows were all dropped is exactly the run
+            # the note is for: with no row beneath it, the note and the headline's clause
+            # on it are the report's only account of the check.
             notes.append(ORDERING_CLOSED_NOT_EVALUATED)
 
     # The intent class is its own group: one file, one cited record, and the

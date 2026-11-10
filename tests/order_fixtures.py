@@ -260,10 +260,40 @@ def _census_ordering(repo: Path, *extra: str) -> tuple[int, list[dict], str]:
     return proc.returncode, findings, proc.stdout + proc.stderr
 
 
+def _closed_state_unasked_row(rows: list[dict]) -> list[dict]:
+    """The whole-artifact row of a run that held entries and no ``--issue-state``.
+
+    Issue #148 gave that run one row of its own -- ``ordering-closed``, ``warn``, code 46
+    under ``--strict``, whose message starts with the words below -- because the bare
+    ``note:`` line the class already printed left a CI step gating on the exit code green
+    over an order whose issues had all been closed. The wording is read from the product
+    rather than copied here, so a row that drifts away from these words stops being
+    filtered rather than quietly disappearing from a test's view.
+    """
+    prefix = "closed state not checked"
+    return [r for r in rows
+            if r["check"] == "ordering-closed" and r["message"].startswith(prefix)]
+
+
+def _rows_about_something_else(rows: list[dict]) -> list[dict]:
+    """``rows`` with the not-evaluated row of a no-``--issue-state`` run taken out.
+
+    The writer tests call the census over the three ordering classes with no
+    ``--issue-state`` -- they exercise the writer, never a tracker -- so that one row is a
+    property of how the census was invoked, not of the case under test. Every caller here
+    has asked for it by name; a test that pins the closed-class behaviour itself leaves
+    the row in place and asserts on it.
+    """
+    unasked = _closed_state_unasked_row(rows)
+    assert len(unasked) <= 1, f"the class promised one not-evaluated row, got {unasked}"
+    return [r for r in rows if r not in unasked]
+
+
 def _assert_census_clean(repo: Path, context: str, *extra: str) -> None:
     code, rows, output = _census_ordering(repo, *extra)
     assert code == 0, f"ordering census not clean after {context} (exit {code}):\n{output}"
-    assert not rows, f"unexpected ordering rows after {context}: {rows}"
+    assert not _rows_about_something_else(rows), (
+        f"unexpected ordering rows after {context}: {rows}")
 
 
 def _head_paths(repo: Path) -> list[str]:

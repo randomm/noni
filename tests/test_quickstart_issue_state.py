@@ -33,7 +33,7 @@ from pathlib import Path
 
 from docs_promises import issue_state_from_page
 from harness_runners import run_noni
-from ordering_fixtures import BASELINE_ID, _entry, _repo, _seed
+from ordering_fixtures import BASELINE_ID, ORDER_REL, _entry, _repo, _seed
 from quickstart_runner import ORDERING_NOW, recipe_gh_argv, run_env
 
 # The verdicts a census run that was asked about ``ordering-closed`` can honestly
@@ -199,10 +199,13 @@ def _census_verdict(repo: Path, path: Path, expected: int) -> list[dict]:
 def test_the_census_run_reads_the_map_the_recipe_produces(tmp_path: Path) -> None:
     """The census answers the closed class only when the recipe's file is given.
 
-    The observable difference the flag makes on one tree: no flag, no closed row;
-    the recipe's map, a closed row naming the issue the map says is closed. Both
-    runs are pinned to their exit code, so the half that says "the row appeared"
-    cannot be vacuous about a run that read nothing.
+    The observable difference the flag makes on one tree: no flag, no closed row about an
+    issue; the recipe's map, a closed row naming the issue the map says is closed. Both
+    runs are pinned to their exit code, so the half that says "the row appeared" cannot be
+    vacuous about a run that read nothing. The unasked run does carry a row now -- one
+    whole-artifact row saying the closed state was never checked, which is what gives
+    ``--strict`` its 46 (issue #148) -- and it is excluded by that exact wording, so a run
+    that answered the class about an issue would still fail here.
     """
     repo = _repo(tmp_path)
     _seed(repo, _entry(7, BASELINE_ID), _entry(12, BASELINE_ID))
@@ -212,9 +215,11 @@ def test_the_census_run_reads_the_map_the_recipe_produces(tmp_path: Path) -> Non
     assert without.returncode == EXIT_MAP_ACCEPTED, (
         f"the run with no --issue-state did not reach its verdict: "
         f"{without.returncode} {without.stdout!r} {without.stderr!r}")
-    assert not [line for line in without.stdout.splitlines()
-                if '"check": "ordering-closed"' in line], (
-        f"a run with no --issue-state answered the closed class: {without.stdout!r}")
+    unasked = json.dumps(_closed_state_unasked_row(), ensure_ascii=False, sort_keys=True)
+    assert [line for line in without.stdout.splitlines()
+            if '"check": "ordering-closed"' in line] == [unasked], (
+        f"a run with no --issue-state answered the class about an issue, or lost its own "
+        f"not-evaluated row: {without.stdout!r}")
     # The human-mode ``note:`` line stays off the NDJSON stream, and the class
     # still has to say it was skipped: it does so on the summary row (issue #97),
     # which is what stops ``"counts": {}`` reading as "nothing is closed".
@@ -234,6 +239,30 @@ def test_the_census_run_reads_the_map_the_recipe_produces(tmp_path: Path) -> Non
     assert [r["subject"] for r in closed] == ["#12"], (
         f"the map the recipe's filter produces did not reach the census through "
         f"its own --issue-state flag: {with_flag.stdout!r}")
+
+
+def _closed_state_unasked_row() -> dict:
+    """The one row a run with entries and no ``--issue-state`` owes about the class.
+
+    Built from the product's own constants so this file pins the row's shape -- class,
+    severity, whole-artifact subject, warn code -- and not a sentence the census may
+    reword. A row whose ``subject`` is an issue number is a row about an issue, which is
+    what the run without the map must not produce.
+    """
+    from noni.census_report import CHECKS, CLASS_FIX
+
+    return {"artifact": ORDER_REL, "check": "ordering-closed",
+            "code": CHECKS["ordering-closed"][0], "kind": "finding",
+            "fix": CLASS_FIX["ordering-closed"],
+            "message": _closed_state_unasked_message(), "schema": "noni.census/1",
+            "severity": "warn", "subject": ORDER_REL}
+
+
+def _closed_state_unasked_message() -> str:
+    """The row's message, read out of the census rather than copied into this test."""
+    from noni import census_ordering
+
+    return census_ordering.CLOSED_STATE_UNASKED
 
 
 def _census_json_run(repo: Path, issue_state: str | None):

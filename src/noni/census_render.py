@@ -181,8 +181,9 @@ def closed_state_verdict(notes: tuple[str, ...],
     return f" {ORDERING_CLOSED_CHECK} not checked" if owed else ""
 
 
-def _not_evaluated_headline(notes: tuple[str, ...]) -> str:
-    """The clause of a no-rows headline that says which checks went unasked.
+def _not_evaluated_headline(notes: tuple[str, ...],
+                            findings: list[dict] | tuple[dict, ...] = ()) -> str:
+    """The clause of a headline that says which checks went unasked.
 
     A note is a sentence the product wrote for a reader, and this clause is a
     class id, so the two are not derived from each other: a note whose class this
@@ -192,9 +193,20 @@ def _not_evaluated_headline(notes: tuple[str, ...]) -> str:
     back to a count rather than print a sentence as a class name — and because the
     known note is counted before that test, a known note can never be swallowed by
     the fallback. Several notes read as a list.
+
+    ``findings`` is the clause's second half, and the reason the headline is not
+    simply "count + note count": the closed class reports its own row when an order
+    held issues and the question went unasked (issue #148), and a reader scanning the
+    first line must learn the class from it either way. A rowless run gets "did not
+    run" -- nothing was asked of it -- and a run carrying the class's own row gets
+    "not checked", which is the same words the verdict line uses for the same fact, so
+    the two halves of the report cannot name the state differently.
     """
     named = [ORDERING_CLOSED_CHECK for note in notes
              if note == ORDERING_CLOSED_NOT_EVALUATED]
+    unchecked = bool(named) and closed_state_verdict(notes, findings)
+    if unchecked:
+        return f"{', '.join(named)} not checked"
     unknown = sum(1 for note in notes
                   if note != ORDERING_CLOSED_NOT_EVALUATED and not note.strip())
     if not named:
@@ -335,7 +347,8 @@ def _render_human(findings: list[dict], counts: dict[str, int], ok: bool,
         # that is true of this run: no rows, and these checks unasked.
         print(f"census: no findings; {_not_evaluated_headline(notes)}")
     else:
-        print(f"census: {warns} warning(s), {len(findings)} finding(s)")
+        print(f"census: {warns} warning(s), {len(findings)} finding(s)"
+              + _not_evaluated_headline(notes, findings))
         for f in sorted(findings, key=_finding_sort_key):
             tag = {"fail": "FAIL", "warn": "WARN"}.get(f["severity"], "?")
             print(f"{f['check']:<16} {tag:<4} {f['subject']}: {f['message']}")

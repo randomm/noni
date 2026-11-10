@@ -112,6 +112,13 @@ keyed to what the run found:
 | no rows, no note | `census: no findings; all checks passed` | `clean` |
 | rows counted | `census: W warning(s), N finding(s)` | `W warning(s)` |
 | no rows, a note | `census: no findings; <class> did not run` | `clean` |
+| the unasked-closed row is carried | `census: …, N finding(s) — ordering-closed not checked` | `ordering-closed not checked` |
+
+The last row is the one state in which the word `clean` is displaced by a class
+id: the run that holds issues and got no `--issue-state` carries the class's own
+row, and both of its key lines say so. A run that owes no such row -- an empty or
+absent order, a run given the map, a run that skipped the class by name -- keeps
+the verdict word of the rows above and is described by the rows before it.
 
 So the all-clear banner and the word `clean` are reserved for a report that
 carried nothing at all: a run whose only findings are warnings names how many it
@@ -252,7 +259,10 @@ The same rule extends to the classes that report their own absence:
   carrying the sentence on the one summary record's `not_evaluated` list instead, so
   a machine consumer has both the verdict (the row) and the record of the unasked
   question (the field). The row is an ordinary finding of its class, so `--skip
-  ordering-closed` silences it and `--only` of another class leaves it out. An
+  ordering-closed` silences it and `--only` of another class leaves it out. A CI job
+  that gates on the exit code must therefore not name `ordering-closed` in `--skip`,
+  nor use `--only` to name another class: either filter silences the row and its code,
+  and the job is back to reading a dead order as a live one. An
   order that holds no issue owes no row: a recipe that produces the state file with
   a tracker command line and `jq` is in `docs/QUICKSTART.md`.
   A missing `noni/direction/order.json` is not a finding at all — the ordering

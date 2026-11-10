@@ -213,6 +213,13 @@ def test_the_forge_example_runs_the_page_s_own_census_commands() -> None:
     census by the step that writes it. That one line is the only place in this
     repository where the census is run with ``--issue-state`` in an example, and a
     reader who copies it gets a closed check that was actually asked.
+
+    The map's path is pinned to the runner's temporary directory rather than to a file
+    of the workspace: the census's hygiene class reads every tracked file of the tree
+    ``--repo`` names, so a map written into that tree is a tracker snapshot the reader
+    is one ``git add -A`` away from committing. The pin is on the exact value the page
+    prints, quoted path and all, so a page that moved the map back into the audited tree
+    reddens this test instead of shipping the recipe that leaks.
     """
     page = [argv for argv in route_commands(CI) if argv[:2] == ["noni", "census"]]
     steps = [argv for block in fenced_blocks(read(FORGE_CI_README), info="yaml")
@@ -229,7 +236,7 @@ def test_the_forge_example_runs_the_page_s_own_census_commands() -> None:
     assert len(state_step) == 1, f"the map step is not the one census line: {steps}"
     argv = state_step[0]
     assert argv[3] == ".", f"the map step must audit the tree the page prints: {argv}"
-    assert argv[argv.index("--issue-state") + 1] == "issue-state.json", argv
+    assert argv[argv.index("--issue-state") + 1] == '$RUNNER_TEMP/issue-state.json', argv
     producer = [a for a in steps if a[:2] == ["gh", "issue"]]
     assert producer, "the forge example passes a map no step of the page produces"
     assert steps.index(producer[0]) < steps.index(argv), \

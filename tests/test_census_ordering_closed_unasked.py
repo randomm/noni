@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 from _harness import _commit_file
 from ordering_fixtures import (
@@ -67,6 +68,26 @@ def _tree(tmp_path, name: str, entries: list[dict] | None):
         _seed(repo, *[_entry(**e) for e in entries])
     elif entries == []:
         _order_of(repo, [])
+    return repo
+
+
+def _outside_repo(tmp_path, name: str, entries: list[dict]) -> Path:
+    """A tree whose order lives outside it, so the run is asked for it by ``--ordering``.
+
+    The artifact of a group row is normally derived from the path under ``--repo``, so
+    the only way to put a path the census cannot root into that field is to hand the run
+    one: this tree's ``noni/direction`` is a symlink to a directory that is not under the
+    tree, which is the shape a relocated or symlinked state directory really takes.
+    """
+    repo = _repo(tmp_path / name, "repo")
+    stored = _repo(tmp_path / name / "stored", "order")
+    direction = repo / "noni" / "direction"
+    direction.parent.mkdir(parents=True, exist_ok=True)
+    direction.symlink_to(stored / "dir", target_is_directory=True)
+    (stored / "dir").mkdir(parents=True, exist_ok=True)
+    order = stored / "dir" / "order.json"
+    order.write_text(json.dumps({"schema": "noni.order/1",
+                                 "entries": entries}, indent=2), encoding="utf-8")
     return repo
 
 
@@ -258,3 +279,58 @@ def test_the_row_carries_no_machine_local_path(tmp_path):
     assert row["artifact"] == ORDER_REL, row
     assert str(tmp_path) not in json.dumps(row), row
     assert "/home/" not in row["message"], row["message"]
+
+
+def test_an_order_path_through_a_symlinked_parent_still_names_the_fixed_id(tmp_path):
+    """A symlinked or out-of-root order path may not become the row's artifact.
+
+    The row's artifact is the group's fixed root-relative id, not a spelling of the path
+    the run was handed: ``_rel_to_root`` returns that path verbatim when it cannot be made
+    relative to the root, so a row that named its artifact that way could print an
+    absolute directory into a report the public-repo hygiene class exists to keep free of
+    them. Here the order stands behind a symlinked parent that is not under ``--repo``,
+    which is how an out-of-root ``--ordering`` reaches the group.
+    """
+    repo = _outside_repo(tmp_path, "symlinked", ISSUE)
+    code, rows, out, err = _run(repo, "--ordering",
+                                str(repo / "noni" / "direction" / "order.json"))
+    assert code == 0, (code, rows, err)
+    row = _unasked(rows)[0]
+    assert row["artifact"] == ORDER_REL, row
+    assert row["subject"] == ORDER_REL, row
+    stream = json.dumps(rows) + out
+    assert str(tmp_path) not in stream, stream
+    assert "/" + str(tmp_path).lstrip("/") not in stream, stream
+    assert not any(part.startswith("/") for part in (row["artifact"], row["subject"])), row
+    assert "stored" not in stream, stream
+
+
+def test_an_entry_whose_issue_is_json_true_owes_no_row(tmp_path):
+    """``true`` is not an issue number, and a row about it would be an invented one.
+
+    JSON has no integer type of its own apart from its booleans, so ``true`` arrives
+    through the reader as Python ``True`` and ``isinstance(True, int)`` is true. The
+    entry arbiter refuses the value as an issue for exactly that reason, so the document
+    is malformed whichever reader asks; what this run must not do is answer the same file
+    as if it held an issue and owe the class a row -- and under ``--strict`` a code -- for
+    an order that names no issue at all. That would be a verdict on a fact the run never
+    observed.
+    """
+    from noni.census_ordering_closed import owed
+
+    assert owed([{"issue": True, "decision": BASELINE_ID,
+                  "confirmed": "2026-10-26T00:00:00Z"}]) is False
+    assert owed([{"issue": 7, "decision": BASELINE_ID,
+                  "confirmed": "2026-10-26T00:00:00Z"}]) is True
+
+    repo = _repo(tmp_path, "json-true")
+    _order_of(repo, [{"issue": True, "decision": BASELINE_ID,
+                      "confirmed": "2026-10-26T00:00:00Z"}])
+    # The value is the malformed class's to answer (a boolean is no positive integer), so
+    # the code is pinned at 15 and the row assertion below is about what this run does not
+    # owe: a not-evaluated row beside it would be a second verdict on one document, and
+    # the second one would be about an issue the order does not name.
+    code, rows, out, err = _run(repo)
+    assert code == 15, (code, rows, err)
+    assert [r["check"] for r in rows] == ["ordering-malformed"], rows
+    assert _unasked(rows) == [], rows

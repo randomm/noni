@@ -141,11 +141,12 @@ def _warn_count(findings: list[dict]) -> int:
     return sum(1 for f in findings if f["severity"] == "warn")
 
 
-# The opening words of the row ``census_ordering.closed_state_unasked_row`` raises for
-# an order whose closed state went unasked. The verdict line recognises that row by this
-# prefix rather than by a second copy of the sentence: the row's wording is the product's
-# and lives with the class that raises it, and a clause matched on a literal typed here
-# would go quietly stale the next time that sentence was reworded.
+# The opening words of the row ``census_ordering_closed.append`` raises (asked of it by
+# ``census_ordering.check_ordering``) for an order whose closed state went unasked. The
+# verdict line recognises that row by this prefix rather than by a second copy of the
+# sentence: the row's wording is the product's and lives with the class that raises it,
+# and a clause matched on a literal typed here would go quietly stale the next time that
+# sentence was reworded.
 CLOSED_STATE_UNASKED_PREFIX = "closed state not checked:"
 
 
@@ -162,7 +163,8 @@ def closed_state_verdict(notes: tuple[str, ...],
     It is keyed on the closed row of this run's own rows, not on the note alone: the note
     says only that no state map came in, which is true of a tree that ordered nothing at
     all, and a verdict that called such a tree unchecked would say something the run did
-    not observe. ``census_ordering.closed_state_unasked_row`` raises that row for exactly
+    not observe. ``census_ordering_closed.append``, asked by
+    ``census_ordering.check_ordering``, raises that row for exactly
     the orders whose closed state really was left unstated, so the clause and the row
     cannot disagree about which run was asked to check a closed order.
 

@@ -103,16 +103,21 @@ ISSUE_STATE_STATES = (ISSUE_STATE_OPEN, ISSUE_STATE_CLOSED)
 RECORD_STATUSES = ("decided", "open", "superseded")
 STATUS_SUPERSEDED = "superseded"
 
-# The two subjects the ordering class uses for the rows that are not about one
-# entry: a whole-file malformation, and the --issue-state file that did not
-# parse. Like hygiene's `deny-list` / `hygiene scan` subjects, they are the
-# machine-readable discriminator between whole-artifact and per-entry rows.
+# The subjects the ordering group gives the rows that are not about one entry: a
+# whole-file malformation, and the --issue-state file that did not parse. Like hygiene's
+# `deny-list` / `hygiene scan` subjects, they are the machine-readable discriminator
+# between whole-artifact and per-entry rows. The order's id is a fixed root-relative
+# path rather than a spelling of whatever path this run was handed, so no out-of-root
+# ``--ordering`` can reach a report; ``census_ordering_closed`` names its row by the same
+# constant, which is what makes one file have one name across the group.
 ORDER_DEFAULT_SUBJECT = "noni/direction/order.json"
 ISSUE_STATE_SUBJECT = "issue-state"
 
-
+# The class this group's rows belong to, spelled once here for the call into
+# ``census_ordering_closed`` (the row module itself stays ignorant of the id, and
+# ``census_render`` names the same word beside the note that says the class did not run).
 CLOSED_STATE_CHECK = "ordering-closed"
-ORDER_WHOLE_ARTIFACT_SUBJECT = ORDER_DEFAULT_SUBJECT
+
 
 def _why_problems(entry: dict) -> list[str]:
     """The census's copy of the rationale rule for one entry's ``why``.
@@ -364,9 +369,9 @@ def check_ordering(
         # the question is unasked and the run owes it a verdict and not only a note
         # (issue #148). Decided from the map rather than the flag alone so a run given a
         # state file never raises it, whatever the caller passed.
-        _closed.append(entries, root, strict, findings, row=row, order=order,
-                       rel_to_root=rel_to_root, check=CLOSED_STATE_CHECK,
-                       whole_artifact_subject=ORDER_WHOLE_ARTIFACT_SUBJECT)
+        _closed.append(entries, root, strict, findings, row=row,
+                       check=CLOSED_STATE_CHECK,
+                       whole_artifact_subject=ORDER_DEFAULT_SUBJECT)
 
     rel_ledger = rel_to_root(root, ledger)
     records, ledger_readable, unreadable_records, listed, listing_fault = \

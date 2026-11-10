@@ -261,16 +261,28 @@ def _census_ordering(repo: Path, *extra: str) -> tuple[int, list[dict], str]:
 
 
 def _closed_state_unasked_row(rows: list[dict]) -> list[dict]:
-    """The whole-artifact row of a run that held entries and no ``--issue-state``.
+    """The not-evaluated rows of a no-``--issue-state`` run, taken out of ``rows``.
 
-    Issue #148 gave that run one row of its own -- ``ordering-closed``, ``warn``, code 46
-    under ``--strict``, whose message starts with the words below -- because the bare
-    ``note:`` line the class already printed left a CI step gating on the exit code green
-    over an order whose issues had all been closed. The wording is read from the product
-    rather than copied here, so a row that drifts away from these words stops being
-    filtered rather than quietly disappearing from a test's view.
+    Named for what it hands back -- the rows of something else, the caller's own case --
+    and that name is what its one caller subtracts, so a filter that returned the rows
+    it drops would make the subtraction a no-op and every writer test that uses it would
+    assert on a row the fixture was built to remove.
+
+    Issue #148 gave such a run one row of its own -- ``ordering-closed``, ``warn``, code
+    46 under ``--strict`` -- because the bare ``note:`` line the class already printed
+    left a CI step gating on the exit code green over an order whose issues had all been
+    closed. The caller keeps the rows of its own case and drops that one.
+
+    The row is recognised by the product's own words, read from the module that raises
+    the row (``noni.census_ordering_closed.CLOSED_STATE_UNASKED``) exactly as
+    ``ordering_fixtures.rows_without_unasked_closed`` does, rather than by a copy typed
+    here: a copy would keep filtering a row the product had reworded, and the caller
+    would then assert on a stream it no longer recognised. Two filters of one row are
+    kept identical by both reading one constant.
     """
-    prefix = "closed state not checked"
+    from noni import census_ordering_closed
+
+    prefix = census_ordering_closed.CLOSED_STATE_UNASKED.split(":", 1)[0]
     return [r for r in rows
             if r["check"] == "ordering-closed" and r["message"].startswith(prefix)]
 

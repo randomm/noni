@@ -155,26 +155,31 @@ command line and `jq` write it; the three details that decide its correctness
 [`--issue-state` map](../../docs/QUICKSTART.md#the---issue-state-map-and-what-the-census-skips-without-it)
 section.
 
-Put the step before the census step, in the same job, and pass the file it wrote:
+Put the step before the census step, in the same job, and pass the file it wrote.
+Write the map outside the tree the census audits, in a runner's temporary directory:
 
 ```yaml
   - name: Closed-state map
     run: |
       gh issue list --state all --json number,state --jq \
         'map({key: (.number | tostring), value: (.state | ascii_downcase)}) | from_entries' \
-        > issue-state.json
+        > "$RUNNER_TEMP/issue-state.json"
   - name: Census
     run: |
-      noni census --repo . --issue-state issue-state.json
+      noni census --repo . --issue-state "$RUNNER_TEMP/issue-state.json"
 ```
 
-Two things about that pair are worth stating because they are where the recipe
-fails quietly. The map is a build artifact, never a commit: it is a snapshot of a
-tracker's state at checkout time, so it goes in the workspace and no ignore rule
-is needed for it on a runner that starts clean. And the map is written by the
+Three things about that pair are worth stating because they are where the recipe
+fails quietly. The map goes outside the audited tree because the census's hygiene
+class reads every tracked file of the tree `--repo` names, and a map committed there
+would have the issue numbers and states of your tracker in the repository's history.
+A runner's temporary directory is not a path anyone can hand to `--repo`, and no
+ignore rule is needed for it. The map is a build artifact and never a commit: it is a
+snapshot of a tracker's state at checkout time. And the map is written by the
 tracker's command line, which is why the step belongs to this page and not to the
 generic CI section: the census itself stays offline, and so does every test of
-it.
+it. A job with no runner temp directory passes any path outside the tree that
+`--repo` does not name.
 
 ### When a work driver already keeps its own claims
 

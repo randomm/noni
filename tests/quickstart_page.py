@@ -115,32 +115,6 @@ def product_adapters_section() -> str:
     return body
 
 
-def closed_state_unasked_prefix_from_product() -> str:
-    """The opening words of the census's "closed state was not checked" row.
-
-    The sentence is a constant of ``census_ordering_closed.py``, the module that raises
-    the row, and is read out of that file rather than copied here, on the same rule as
-    :func:`ordering_note_from_product`: a test that restated the wording would keep
-    passing after the product reworded it and would then be pinning a sentence nothing
-    prints. The prefix is the whole value -- a row's message is built from the constant,
-    and callers compare a prefix, never a whole row, so a reworded tail stays a green
-    test and a reworded head reddens one. The prefix is also the one test every filter
-    that removes this row reads: a test that matched the row by some other words would
-    keep filtering after the product renamed it and would then be silent about a row it
-    no longer recognises, which is why the filter helpers import the constant instead of
-    spelling the words.
-    """
-    from _harness import REPO
-
-    source = (REPO / "src" / "noni" / "census_ordering_closed.py").read_text(
-        encoding="utf-8")
-    match = re.search(r'CLOSED_STATE_UNASKED\s*=\s*\(\s*"([^"]+)"', source)
-    assert match, "the census no longer holds the closed-state-unasked row this test cites"
-    prefix = match.group(1).split(":", 1)[0]
-    assert prefix.endswith("not checked"), prefix
-    return prefix
-
-
 def ordering_note_from_product() -> str:
     """The census's own ``ordering-closed`` note, assembled from its source.
 

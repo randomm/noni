@@ -325,20 +325,19 @@ the `ordering-closed` (46) class is not evaluated at all, so a run with no rows
 from it does not mean every ordered issue is open.
 
 The census says so out loud whichever mode you read it in, and it says it in the
-part of the report a gate reads. Over an order that holds issues, the class
+part of the report a gate reads. Over an order that holds issues the class
 reports itself: one `ordering-closed` row whose subject is the order file, saying
 the closed state was not checked. Without `--strict` it is a `warn` and the exit
 code stays 0; under `--strict` it is promoted and earns its own 46, so a CI step
 that gates on the exit code cannot stay green over an order whose issues have all
-been closed. A run over an empty order, an absent order, or one whose class you
-skipped by name prints no such row and no code, because nothing was left
-unasked.
+been closed. An empty order, an absent order, or a run that skipped the class by
+name prints no row and no code, because nothing was left unasked.
 
 In human-readable mode the report also says it in its first line and in one
-`note:` line, so a person scanning a terminal learns the same thing. A run that
-carries no row of the class opens `census: no findings; <class> did not run`, and
-one that carries the row names the class on the count line; either way the
-summary line ends `ordering-closed not checked` rather than the word `clean`:
+`note:` line. The two lines branch on the row: a run that carries it names the
+class on the count line and on the summary line in place of `clean`; a run that
+owes none keeps the verdict word its rows earned (`clean` when it printed no row
+at all) and opens `census: no findings; ordering-closed did not run`:
 
 ```text
 note: ordering-closed was not evaluated: no --issue-state FILE was given, so whether an ordered issue is closed is not asked (the census never contacts a tracker)

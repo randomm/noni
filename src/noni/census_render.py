@@ -29,17 +29,16 @@ from .census_report import (
 
 STALE_AFTER_RE = re.compile(r"^\d+d?$")
 
-# One threshold flag, three thresholds: --stale-after pins every class to the number
+# One threshold flag, two thresholds: --stale-after pins every class to the number
 # the caller named, and without it each class gets the default that belongs to it
 # (see the threshold block in the run's body for why the flag's presence decides, and
 # :func:`_threshold` for how a default is parsed).
-SESSION_STALE_AFTER_DEFAULT = "7d"
 ORDERING_STALE_AFTER_DEFAULT = "30d"
 
-# The item threshold, beside the other two because one flag selects among all three.
+# The item threshold, beside the ordering's because one flag selects between the two.
 # An unmoved candidate is an idea nobody has taken up, so its default matches the
-# ordering queue's rather than the session register's: thirty days is "this is not
-# waiting on anyone", seven would report every fresh idea the week it was filed.
+# ordering queue's: thirty days is "this is not waiting on anyone", seven would
+# report every fresh idea the week it was filed.
 ITEM_STALE_AFTER_DEFAULT = "30d"
 
 # The one wording of the note that ``ordering-closed`` was not evaluated, declared
@@ -72,7 +71,7 @@ ORDERING_CLOSED_NOT_EVALUATED = (
 # collapsed into this sentence. The path is --repo as the caller spelled it, never a
 # resolved absolute path (see the machine-local-path rule in ``census.py``).
 NO_STATE_ROOT_NOTE = ("no noni/ directory was found under --repo {repo}: this tree "
-                      "holds no noni state, so the ledger, sessions, ordering and "
+                      "holds no noni state, so the ledger, ordering and "
                       "intent groups had nothing to read (pass --repo naming the "
                       "state root, the directory that holds noni/)")
 
@@ -334,6 +333,6 @@ def _render_human(findings: list[dict], counts: dict[str, int], ok: bool,
 __all__ = [name for name in dir() if name.startswith("_")] + [
     "ITEM_STALE_AFTER_DEFAULT", "NO_STATE_ROOT_NOTE", "NO_STATE_ROOT_PREFIX",
     "ORDERING_CLOSED_CHECK", "ORDERING_CLOSED_NOT_EVALUATED",
-    "ORDERING_STALE_AFTER_DEFAULT", "SESSION_STALE_AFTER_DEFAULT", "STALE_AFTER_RE",
+    "ORDERING_STALE_AFTER_DEFAULT", "STALE_AFTER_RE",
     "no_state_root_note",
 ]

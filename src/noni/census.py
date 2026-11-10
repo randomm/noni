@@ -1,11 +1,11 @@
-"""The unified census: one read-only entry point over the steering ledger and
-the session register.
+"""The unified census: one read-only entry point over the steering ledger,
+the ordering artifact and the item store.
 
 The census is the arbiter of the noni protocol invariants. It reads the git
 history plus the committed files under ``noni/`` (decision records under
-``noni/decisions/``, session registers under ``noni/sessions/``, and the
-ordering artifact at ``noni/direction/order.json``), flags protocol
-violations, and returns an honest exit code. It never writes
+``noni/decisions/``, the ordering artifact at ``noni/direction/order.json``,
+the standing intent file and the item store under ``noni/items/``), flags
+protocol violations, and returns an honest exit code. It never writes
 anything: running it leaves ``git status --porcelain`` empty, and no digest
 file or report directory is produced — results are recomputed on demand.
 
@@ -50,10 +50,8 @@ path rule keep one owner.
 
 from __future__ import annotations
 
-import re
 import sys
 from collections.abc import Callable
-from datetime import datetime, timedelta
 from pathlib import Path
 
 # The census's git view lives in census_git.py beside this file; its names are
@@ -97,7 +95,6 @@ from .census_render import (  # noqa: F401  (re-exported: the census is their ho
     ORDERING_CLOSED_CHECK,
     ORDERING_CLOSED_NOT_EVALUATED,
     ORDERING_STALE_AFTER_DEFAULT,
-    SESSION_STALE_AFTER_DEFAULT,
     STALE_AFTER_RE,
     _finding_sort_key,
     _promote,
@@ -125,7 +122,6 @@ from .census_report import (  # noqa: F401  (re-exported: the census is home)
     LEDGER_CHECKS,
     ORDERING_CHECKS,
     SCHEMA_VERSION,
-    SESSION_CHECKS,
     WHOLE_ARTIFACT_KEY,
 )
 
@@ -145,15 +141,6 @@ _check_ledger_deleted = check_ledger_deleted
 _check_ledger_chain = check_ledger_chain
 _check_ledger_empty = check_ledger_empty
 _check_ledger_records = check_ledger_records
-
-
-SESSION_REQUIRED_FIELDS = ("identity", "host/worktree", "started", "status", "claims")
-INACTIVE_STATUSES = {"closed", "done", "superseded", "ended"}
-
-
-# Session register files follow the allocated shape <YYYY-MM-DD>-<6 hex>.md;
-# anything else is reported as malformed, never treated as an allocated file.
-SESSION_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[0-9a-f]{6}\.md$")
 
 
 def _file_kind(path: Path, kind: str = "file") -> tuple[str, str | None]:
@@ -251,9 +238,9 @@ def _ledger_name(rel: str) -> str:
     return _ledger.ledger_name(rel)
 
 
-# --- Ledger, sessions-probe and hygiene splits ---------------------------------
-# The ledger probe, the sessions register's probe and the hygiene class live in
-# census_ledger.py, census_sessions_probe.py and census_hygiene.py beside this
+# --- Ledger and hygiene splits --------------------------------------------------
+# The ledger probe and the hygiene class live in census_ledger.py and
+# census_hygiene.py beside this
 # file. All are ordinary package imports: inside an installed wheel there is no
 # sibling file to load by path, and the census's trust in its checker is module
 # identity (see census_hygiene._trusted_public_safety), not a resolved filesystem
@@ -267,40 +254,6 @@ from . import census_text as _text  # noqa: E402
 # one object rather than a copy, so a caller (and the census's own tests) still
 # names it through the module it already imports.
 LedgerProbe = _ledger.LedgerProbe
-
-# The sessions probe lives in census_sessions_probe.py beside this file, with the
-# same split census_ledger made: the module owns the register's one readdir and
-# the one row a faulted listing earns, and the row mechanics it uses are handed
-# in at the call so the row shape keeps its one owner here. The census's
-# `_sessions_listing` below is the sibling's `sessions_listing` one call site, so
-# the run's gate and its rows are the answer of one readdir.
-from . import census_sessions_probe as _sessions_probe  # noqa: E402
-
-# Re-exported as the one object, not a copy, for the same reason as LedgerProbe.
-SessionsProbe = _sessions_probe.SessionsProbe
-
-
-def _sessions_listing(sessions: Path) -> SessionsProbe:
-    """The register's one listing, taken by the census exactly once per run.
-
-    The census's own `_ledger_probe` twin: the body is the sibling's, this is the
-    seam the census's tests patch and the one place `main` asks for the register.
-    """
-    return _sessions_probe.sessions_listing(sessions)
-
-
-def _append_sessions_listing_fault(
-    sessions: Path, root: Path, strict: bool, findings: list[dict], fault: str
-) -> None:
-    """The register's one faulted-listing row, composed in ``census_sessions_probe``.
-
-    The row mechanics are the census's own and are handed in at the call, so the
-    row shape keeps its single owner here (see the sibling's docstring for the
-    row itself and ``census_ledger.append_listing_fault`` for its composition).
-    """
-    _sessions_probe.append_sessions_listing_fault(
-        sessions, root, strict, findings, fault,
-        row=_row, rel_to_root=_rel_to_root, bounded=_bounded, clipped=_clipped)
 
 
 # The hygiene class's own parts stay reachable as members of the census: they are
@@ -322,46 +275,6 @@ _bounded = _text._bounded
 _stripped = _text._stripped
 _clipped = _text._clipped
 
-# --- Session checks -------------------------------------------------------------
-# The register's classes live in census_sessions_checks.py beside this file, the
-# way the ledger's live in census_ledger.py and the ordering's in
-# census_ordering.py: this file keeps the row shape and the group wiring, and the
-# sibling keeps the per-file loop of the register and the verdicts built from it.
-# Its register constants (SESSION_NAME_RE and the two tables beside it above) stay
-# declared here, the file that owns the check contract, and the sibling reads them
-# through this module rather than copying them, so a compiled pattern has one
-# definition.
-
-# `_parse_session` / `_is_non_terminal` are NOT re-exported here: the register's
-# own module reads `parse_session` and `is_non_terminal` off
-# ``census_sessions_checks`` directly, the census's helpers use that sibling's own
-# row pass, and neither wrapper had a caller or a test.
-
-# The composition of the session group (``_check_sessions`` and its deletion
-# check) lives in ``census_run.py`` beside this file with the body of the run that
-# calls it; the sibling keeps the per-file loop and the verdicts built from it.
-# The two wrappers below are the census's own seams for its tests: each delegates
-# to the run's composition, which reads the row mechanics back off this module at
-# the call, so the row shape keeps its one owner here.
-
-
-def _check_sessions(
-    sessions: Path, git: Git | None, root: Path, now: datetime, stale_after: timedelta,
-    strict: bool, findings: list[dict], probe: SessionsProbe
-) -> None:
-    """The session group, composed by ``census_run._check_sessions``."""
-    from .census_run import _check_sessions as _compose
-    _compose(sessions, git, root, now, stale_after, strict, findings, probe)
-
-
-def _check_sessions_deleted(
-    sessions: Path, git: Git | None, root: Path, strict: bool, findings: list[dict]
-) -> None:
-    """The deleted-session-file check, by ``census_run._check_sessions_deleted``."""
-    from .census_run import _check_sessions_deleted as _compose
-    _compose(sessions, git, root, strict, findings)
-
-
 # The three ordering classes live in census_ordering.py beside this file, their
 # reads in census_ordering_readers.py (which obeys the strict JSON rule of
 # census_json.py). Their composition, the ``--issue-state`` read and the row
@@ -369,8 +282,8 @@ def _check_sessions_deleted(
 # body of the run, which reads the mechanics back off this module at the call.
 
 # The six item classes live in census_items.py beside this file, their reads in
-# census_items_readers.py, and the store's one readdir in census_items_probe.py (the
-# ``_sessions_listing`` twin), re-exported here as the census's own seam so the
+# census_items_readers.py, and the store's one readdir in census_items_probe.py,
+# re-exported here as the census's own seam so the
 # group's tests patch a name of the module they already import and the run reaches
 # one definition of the readdir.
 from .census_items_probe import ItemsProbe, _items_listing  # noqa: E402,F401

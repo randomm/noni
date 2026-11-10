@@ -8,8 +8,7 @@ bytes of every record (valid or unparseable) against the bytes on disk;
 ``check_ledger_deleted`` asks HEAD-reachable history which paths were ever added
 and reports the ones the working tree no longer holds — the append-only rule of
 the steering ledger. ``check_ledger_chain`` settles the supersede chain, and
-``append_cannot_tell`` is the one cannot-tell row both the ledger and the
-session group's deletion check borrow.
+``append_cannot_tell`` is the one cannot-tell row the ledger's checks share.
 
 Everything a row is built from — the census's own ``row`` factory, its
 root-relative identifier, its content digest — is handed in at the call, so the
@@ -96,8 +95,8 @@ def append_cannot_tell(check: str, reason: str, strict: bool,
     Cannot-tell severity is derived, never inherited from the class: a fail
     class's cannot-tell is a warn by default (an environment that cannot be
     read is not itself a protocol violation) and --strict escalates it, while a
-    warn class keeps its own default — which is why session-deleted's
-    cannot-tell exits 44 under --strict and ledger-edited's exits 41. The
+    warn class keeps its own default — which is why a deleted ledger record's
+    cannot-tell exits 12 under --strict and ledger-edited's exits 41. The
     unreachable-blob row of the edit check follows the same rule through
     ``_row``'s explicit ``severity`` argument rather than through this helper,
     because it names the record it could not verify instead of the check.
@@ -140,15 +139,11 @@ def check_ledger_deleted(ledger: Path, git: Git | None, root: Path, findings: li
     state it never answered. A path that was never committed is not a deletion —
     there is nothing in history to have been removed, and the ledger's own
     record pass is what reports a record that exists on disk: this check only
-    reports paths history shows and the working tree does not hold. Session
-    files are intentionally NOT checked here: ending a session via its status
-    field is the protocol, and deleting a session file is not a violation.
+    reports paths history shows and the working tree does not hold.
 
-    Unlike `_check_sessions_deleted`, this check asks git even when the ledger
+    This check asks git even when the ledger
     directory is gone: records are append-only, so a committed ``decisions/``
-    directory deleted whole is the deletion the operator must be told about,
-    while a session register is expected to hold no file at all for a project
-    that has never opened a session.
+    directory deleted whole is the deletion the operator must be told about.
 
     The out-of-tree cannot-tell names the ledger by
     ``ledger_name(rel_to_root(root, ledger))``, the identifier every other row of
@@ -171,7 +166,7 @@ def check_ledger_deleted(ledger: Path, git: Git | None, root: Path, findings: li
         prefix = ledger.resolve().relative_to(top.resolve()).as_posix()
     except ValueError:
         # The append-only question cannot be answered for an --ledger override
-        # that points outside the audited tree. Unlike the sessions layer, the
+        # that points outside the audited tree. The
         # ledger group's cannot-tell is the only row this run produces about
         # the override, so it is reported here — at the cannot-tell severity,
         # not the class's fail severity, because the same condition is a

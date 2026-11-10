@@ -36,8 +36,8 @@ def refuse_target_fields(record: dict, target_id: str,
 
 
 GIT_TIMEOUT = 60
-# The word a refusal uses for a path that is a link, so the file and the directory question
-# (noni._session_paths) spell it alike.
+# The word a refusal uses for a path that is a link, so the file and the directory
+# question spell it alike.
 # What run_git hands back for a call that never answered. No caller may read a
 # git answer from it: every probe treats it as a refusal, never as rc 0.
 GIT_TIMEOUT_RC = 124

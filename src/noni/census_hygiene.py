@@ -197,7 +197,7 @@ def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
     in-process (an import, never a subprocess) over the census's own git tree.
 
     Scope follows the git tree the census already reads (``top``), never the
-    ``--ledger``/``--sessions`` overrides: the hygiene rule is about tracked
+    ``--ledger`` override: the hygiene rule is about tracked
     files of a repository, which is what the other git-backed checks use too.
 
     The class always reports, a clean tree included: when the deny-list class

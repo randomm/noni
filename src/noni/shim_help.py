@@ -1,8 +1,8 @@
-"""The --help text of the two shell census entry points, as package constants.
+"""The --help text of the shell census entry point, as a package constant.
 
-Both entry points print one of these constants verbatim, so the bytes a reader
+The entry point prints the constant verbatim, so the bytes a reader
 sees have exactly one owner and no hard-coded line range drifts when the text
-grows. ``tests/fixtures/census-sh/usage.txt`` and ``sessions-usage.txt`` hold the
+grows. ``tests/fixtures/census-sh/usage.txt`` holds the
 lines the tests both routes are compared against must keep.
 
 The text states the wrapper's shape and nothing else. It names the group the
@@ -47,56 +47,15 @@ The wrapper names that fault on one plain line and exits 3 rather than letting a
 traceback stand as the diagnostic. The census is read-only: running it leaves
 `git status --porcelain` empty."""
 
-CENSUS_SESSIONS_SH_HELP = """The sessions census: the session register's own entry point.
-
-  census-sessions.sh <state-root>/noni/sessions
-
-It is a thin wrapper. It carries no rules and no exit-code table: it runs the
-unified noni census (``noni census``, ``skills/census/scripts/census.py``) over
-the session group alone — `session-double`, `session-claim`, `session-malformed`
-and the register's warn classes — and exits with the census's own code. The
-census itself is the arbiter, and `skills/census/SKILL.md` is the single
-reference for its check classes and exit codes; read that page, not this one,
-when a run tells you something.
-
-The census is the deterministic arbiter for the claim protocol. Two active
-claims on the same task from different identities are a double-claim: git
-delays the second claimant, it does not lock them out, so the census is the
-check that catches it at read time. A claim committed without a register file
-is reported but the session's work is not blocked — the census is report-only.
-
-The one argument is the sessions directory of the state root — the directory
-`--repo` names for the writers, with `noni/sessions` under it. Pass the sessions
-directory of the clone you want to audit. There is no current-directory
-default: a run with no argument is a usage error (2), because a relative default
-would census whatever `noni/sessions` happened to sit next to the caller and
-report a clean the caller never pointed at. Two directories are the same
-refusal — one run audits one register.
-
-Beyond the one directory this entry point takes `--json` for the NDJSON rows,
-`--strict` to promote the warn classes, and `--now` for a fixed timestamp (in
-the `--now VALUE` or `--now=VALUE` form) and nothing else. Every other option,
-prefix or stray token is refused with the usage error (2) and the census is not
-run: `noni census` is the tool that takes `--only` / `--skip`, the state-path
-flags and the rest.
-
-Requires the `noni` package importable to the interpreter the wrapper runs
-(``NONI_PYTHON``, ``python3`` by default: a program name, resolved on ``PATH``).
-The wrapper names that fault on one plain line and exits 3 rather than letting a
-traceback stand as the diagnostic. The census is read-only: running it leaves
-`git status --porcelain` empty."""
-
-
 def _constant(label: str) -> str:
     """The help constant an entry point prints, chosen by the label it runs under.
 
-    One table keyed by the label rather than two near-identical branches: the
-    label is what the wrapper passes and what a reader of the refusal sees.
+    One entry point remains, so the label is checked rather than looked up: a
+    wrapper that names another label is a caller bug, and the refusal says so.
     """
-    table = {"census.sh": CENSUS_SH_HELP, "census-sessions.sh": CENSUS_SESSIONS_SH_HELP}
-    if label not in table:
+    if label != "census.sh":
         raise KeyError(f"no help text for the entry point {label!r}")
-    return table[label]
+    return CENSUS_SH_HELP
 
 
 def print_help(label: str) -> int:

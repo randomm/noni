@@ -29,12 +29,6 @@ SCHEMA_VERSION = "noni.census/1"
 # not the ledger-record failure — operator decision on issue #33); it never
 # weakens a malformed-record failure.
 LEDGER_CHECKS = frozenset({"ledger-record", "ledger-edited", "ledger-chain"})
-# The session register group, likewise: the checks share one read of the
-# register, so the group runs together and the row filter decides what is kept.
-SESSION_CHECKS = frozenset({
-    "session-double", "session-claim", "session-malformed", "session-stalled",
-    "session-same-identity", "session-deleted", "probe",
-})
 WHOLE_ARTIFACT_KEY = "_whole_artifact"
 
 # The ordering group: the three checks share one read of the order artifact, so
@@ -50,7 +44,7 @@ WHOLE_ARTIFACT_KEY = "_whole_artifact"
 ORDERING_CHECKS = frozenset({"ordering-malformed", "ordering-stale", "ordering-closed"})
 
 # The intent group is one check over one file, so it needs no group set beside it
-# the way the ledger, sessions and ordering groups do: the run's one --only rule
+# the way the ledger and ordering groups do: the run's one --only rule
 # (a group runs when any class of its reporting set was asked for) is decided for
 # it by the name itself. The fourth subject of the class, `cannot-tell`, is a row
 # of `intent` rather than a class of its own — it answers the citation question —
@@ -99,22 +93,6 @@ CHECKS: dict[str, tuple[int, str, str]] = {
         20, "fail",
         "repair the supersede chain so it resolves to exactly one live record per chain",
     ),
-    "session-double": (
-        30, "fail",
-        "release the claim on the task in one session, or record who keeps it as a ledger decision",
-    ),
-    "session-claim": (
-        31, "fail",
-        "register the session (add the identity field) or move the orphan claim into a registered session file",
-    ),
-    "session-malformed": (
-        32, "fail",
-        "restore the missing field or add the missing task reference to the claim row",
-    ),
-    "session-stalled": (
-        40, "warn",
-        "close the session or commit a fresh register update if the work is still in flight",
-    ),
     "probe": (
         41, "warn",
         "fix the unreadable file or the git tree; a census that cannot read its input reports "
@@ -124,16 +102,6 @@ CHECKS: dict[str, tuple[int, str, str]] = {
         42, "warn",
         "record at least one dated decision under the ledger directory (steer a question and "
         "commit the record), or pass the ledger directory of the clone that holds the decisions",
-    ),
-    "session-same-identity": (
-        43, "warn",
-        "give each session file its own identity, or close the stale session files so only one "
-        "non-terminal file carries that identity",
-    ),
-    "session-deleted": (
-        44, "warn",
-        "restore the session file (git checkout <commit> -- <path>) — ending a session goes "
-        "through its status field, never through deleting the register file",
     ),
     "hygiene": (
         50, "warn",

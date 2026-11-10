@@ -18,8 +18,8 @@ What the preamble does, and why each line is there:
   needs flags for that program -- an isolated interpreter, say -- sets ``PATH``,
   ``PYTHONHOME`` or a wrapper of their own, which is the portable way to say it:
   a space in the value means a program by that name, and a program by that name
-  does not exist. Naming the variable and its default in one place keeps the two
-  wrappers and the tests from disagreeing about which variable a caller sets.
+  does not exist. Naming the variable and its default in one place keeps the
+  wrapper and the tests from disagreeing about which variable a caller sets.
 - It probes the import with the interpreter's stderr swallowed. A traceback is
   not a diagnostic a reader can act on; one line naming the fault is, and exit 3
   is the census's own code for a tool the reading machine does not have.

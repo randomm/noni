@@ -1,9 +1,8 @@
 """The ``noni`` console command: dispatch only.
 
-One command, one subcommand per shipped tool: ``census``, ``register``,
-``claim``, ``close``, ``release``, ``decide`` (a supersede is ``decide``'s
-``--supersedes`` flag), ``order``, ``intent``, ``item`` and ``brief``. The argv after the subcommand
-is handed to that tool's own ``main`` verbatim, so flags, output, exit codes and
+One command, one subcommand per shipped tool: ``census``, ``decide`` (a
+supersede is ``decide``'s ``--supersedes`` flag), ``order``, ``intent``, ``item``
+and ``brief``. The argv after the subcommand is handed to that tool's own ``main`` verbatim, so flags, output, exit codes and
 ``--help`` bytes are exactly what the in-place script produces — which is what
 the paired wrapper-vs-console test asserts.
 
@@ -21,10 +20,6 @@ from collections.abc import Callable, Sequence
 # docstring, parser and exit-code table; nothing is re-declared here.
 TOOLS: dict[str, tuple[str, str]] = {
     "census": ("noni.census", "main"),
-    "register": ("noni.register", "main"),
-    "claim": ("noni.claim", "main"),
-    "close": ("noni.close", "main"),
-    "release": ("noni.release", "main"),
     "decide": ("noni.decide", "main"),
     "order": ("noni.order", "main"),
     "intent": ("noni.intent", "main"),
@@ -35,11 +30,7 @@ TOOLS: dict[str, tuple[str, str]] = {
 # One line per subcommand, for this command's own --help. Each tool's flags and
 # exit codes are its own --help's business, not a second copy here.
 SUMMARIES: dict[str, str] = {
-    "census": "read-only checks over the ledger, register and ordering artifact",
-    "register": "allocate a session-id and write its register file",
-    "claim": "append a claim row to a session's register file",
-    "close": "set a session's status to closed",
-    "release": "remove one claim row from a session's register file",
+    "census": "read-only checks over the ledger, ordering artifact and item store",
     "decide": "write one dated steering decision record (supersede with --supersedes)",
     "order": "write the ordered list of issues to work next",
     "intent": "write the standing intent file the agents read first",

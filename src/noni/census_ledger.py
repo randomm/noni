@@ -80,7 +80,7 @@ def ledger_name(rel: str) -> str:
     """The identifier a row uses for a directory it could not read.
 
     The root-relative path when the census could root it: a plain path below the
-    repo root (``noni/decisions``, ``noni/sessions``) -- two or more segments, a
+    repo root (``noni/decisions``) -- two or more segments, a
     real name in each (no empty segment, no ``.`` or ``..``, nothing longer than a
     directory is ever named), the first not opening with ``~``. That is the only
     form the census wrote itself, and it is the form a caller joins on, so it is
@@ -96,7 +96,7 @@ def ledger_name(rel: str) -> str:
     location in the two fields the row is joined on.
 
     It is the census's one answer to "which directory did this run fail to read",
-    shared by the ledger, sessions and ordering rows for the same fault.
+    shared by the ledger and ordering rows for the same fault.
     """
     parts = rel.rstrip("/").split("/")
     if any(p in ("", ".", "..") or len(p) > _ROOT_SEGMENT_MAX for p in parts):
@@ -241,8 +241,7 @@ def append_listing_fault(dir_: Path, root: Path, findings: list[dict],
                          clipped: Callable[[str], str]) -> None:
     """The row for a directory this run could not list.
 
-    The one composition of this row, shared by the ledger group and (for its
-    register) the sessions group: two copies is how two rows that mean the same
+    The one composition of this row: two copies is how two rows that mean the same
     thing come to disagree about shape, bound or severity. It is built on the
     probe-honesty rule -- the alternative to saying so is calling an unreadable
     directory an empty one, the verdict a project that has never steered anything

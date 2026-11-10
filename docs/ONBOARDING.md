@@ -14,16 +14,17 @@ to correct when a writer changes.
 
 ## Making the skills available to your agents
 
-noni ships three core skills, one directory each, and each one's entry point is
-its `SKILL.md`. All three are named below, each by the path a loader reads.
+noni ships four core skills, one directory each, and each one's entry point is
+its `SKILL.md`. All four are named below, each by the path a loader reads.
 
 | skill | its page | what it owns |
 |---|---|---|
+| noni | [`skills/noni/SKILL.md`](../skills/noni/SKILL.md) | the start-here read an agent runs first, and the route from it to the pages below |
 | steering-ledger | [`skills/steering-ledger/SKILL.md`](../skills/steering-ledger/SKILL.md) | the dated decision records under `noni/decisions/` |
 | direction | [`skills/direction/SKILL.md`](../skills/direction/SKILL.md) | the standing intent and the ordered list under `noni/direction/` |
 | census | [`skills/census/SKILL.md`](../skills/census/SKILL.md) | the read-only arbiter that reads all of the above |
 
-The mechanism is the plain one: put those three directories where your agent runtime
+The mechanism is the plain one: put those four directories where your agent runtime
 loads skills from, by copying or linking them from the noni clone into your own
 skills directory, and have your agents read the `SKILL.md` in each. The Agent Skills
 frontmatter is what a loader reads, and nothing noni does depends on the copy being
@@ -34,16 +35,18 @@ That is the whole instruction. **No runtime-specific installer ships here:** not
 in this repository detects a runtime, writes a runtime's config file or installs a
 skill for you, and no page here names the runtimes a team might use. Where your
 loader expects a layout other than `skills/<name>/SKILL.md`, the copy is yours to
-shape; the three `SKILL.md` paths above are the product surface it has to preserve.
+shape; the four `SKILL.md` paths above are the product surface it has to preserve.
 
 ## The per-session protocol
 
 One agent session in an attached project follows three steps. Each row names the
 skill that owns the step, and the link is where the how lives. Every team takes
-all three.
+all three. The start-here page is what the agent reads before any of them: it is
+the read that tells the agent what the three steps are for.
 
 | when | step | owning skill |
 |---|---|---|
+| at start | read the start-here page, and the screen it tells you to run | [`skills/noni/SKILL.md`](../skills/noni/SKILL.md) |
 | at start | read the standing intent first, when the project has written one | [`skills/direction/SKILL.md`](../skills/direction/SKILL.md) |
 | at start | read the current order, so you work on what the operator put first | [`skills/direction/SKILL.md`](../skills/direction/SKILL.md) |
 | during work | record a decision through the steering-ledger writer when the operator steers you | [`skills/steering-ledger/SKILL.md`](../skills/steering-ledger/SKILL.md) |

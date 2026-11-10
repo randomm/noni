@@ -52,8 +52,10 @@ import git_bytes
 from brief_fixtures import (
     CONFIRMED,
     NOW,
+    OPEN_RECORD_ID,
     PURPOSE_LINES,
     RECORD_ID,
+    SUPERSEDED_ID,
 )
 
 from noni import ledger_schema, orderschema
@@ -151,6 +153,34 @@ def order_document() -> dict:
     return {"schema": orderschema.ORDER_SCHEMA, "entries": entries}
 
 
+# The two extra records the ledger holds beside the committed one live in
+# :mod:`tests.brief_fixtures` beside :data:`~tests.brief_fixtures.RECORD_ID`: the builder reads
+# their ids and the page cases read the same two names, so a rename cannot leave the committed
+# tar and the assertions about it describing different files.
+
+
+def record_documents() -> dict[str, dict]:
+    """Every record file of the ledger, as ``{record id: document}``.
+
+    The committed record beside the pair that exercises the block's two filters. The
+    brief's ``recent decisions`` block prints the records whose own ``status`` is ``decided``
+    and nothing else, so a fixture holding one decided record proves only that a row can be
+    built: the superseded record is the case that a closed chain stays off the screen, and the
+    open one is the case that a question the operator has not answered is not printed as an
+    answer either.
+
+    The three are one timeline: the superseded record is decided, then superseded by the
+    committed one, so the chain the census's ``ledger-chain`` class walks is intact and no new
+    census row joins the verdict line the read-only cases assert byte for byte. An ``open``
+    record is what :func:`noni.ledger_schema.status_for` makes of a question carrying a
+    ``null`` answer, so its ``status`` is written with the writer's own rule rather than typed.
+    """
+    records = {RECORD_ID: record_document()}
+    records[SUPERSEDED_ID] = _superseded_document()
+    records[OPEN_RECORD_ID] = _open_document()
+    return records
+
+
 def record_document() -> dict:
     """``noni/decisions/<record-id>.json``: the one decided record the fixture commits.
 
@@ -170,6 +200,48 @@ def record_document() -> dict:
                            "options": ["the three newest", "the oldest"], "answer": "the three newest"}],
             "by": "Replay", "scope": "the brief surface",
             "status": ledger_schema.STATUS_DECIDED, "supersedes": None}
+
+
+# The ids of the two records the block must never print are declared in
+# :mod:`tests.brief_fixtures` beside :data:`~tests.brief_fixtures.RECORD_ID`, and this builder
+# writes them from there: one record the committed one closed, and one whose question no operator
+# answered. Named there rather than here because the page cases read the same two names off the
+# same module, so a rename cannot leave the committed tar and the assertions about it describing
+# different files.
+
+
+def _superseded_document() -> dict:
+    """A decided record the committed one supersedes: the closed end of one chain.
+
+    Dated before :data:`~tests.brief_fixtures.RECORD_ID` and marked
+    :data:`~noni.ledger_schema.STATUS_SUPERSEDED` with its ``supersedes`` naming the record that
+    closed it, which is the shape the ledger's own chain rules expect of a superseded record and
+    the reason no ``ledger-chain`` row arrives. Being the older record it is also the one a
+    newest-first block would print had it stayed live, which is what makes its absence the
+    assertion it is.
+    """
+    return {"id": SUPERSEDED_ID, "date": f"{SUPERSEDED_ID[:10]}T00:00:00Z",
+            "asked_by": "developer",
+            "questions": [{"id": "q1", "text": "Brief the oldest decisions first?",
+                           "options": ["yes", "no"], "answer": "yes"}],
+            "by": "Replay", "scope": "the brief surface",
+            "status": ledger_schema.STATUS_SUPERSEDED, "supersedes": None}
+
+
+def _open_document() -> dict:
+    """A chain-root record whose question carries no answer, so its status is ``open``.
+
+    The status is derived by :func:`noni.ledger_schema.status_for` from the unanswered id rather
+    than written as a word: an ``open`` record is exactly what the writer produces for a question
+    nobody answered, and a fixture that typed the status by hand could state a combination no
+    writer can build.
+    """
+    questions = [{"id": "q1", "text": "Which instant does the suite brief at?",
+                  "options": ["the fixture's", "the clock"], "answer": None}]
+    return {"id": OPEN_RECORD_ID, "date": f"{OPEN_RECORD_ID[:10]}T00:00:00Z",
+            "asked_by": "developer", "questions": questions,
+            "by": "Replay", "scope": "the brief surface",
+            "status": ledger_schema.status_for(["q1"]), "supersedes": None}
 
 
 def intent_text() -> str:
@@ -218,7 +290,8 @@ def documents() -> dict[str, bytes]:
     stop compiling rather than quietly write a file the tool refuses.
     """
     tree: dict[str, object] = {
-        "noni/decisions": {f"{RECORD_ID}.json": record_document()},
+        "noni/decisions": {f"{record_id}.json": document
+                           for record_id, document in record_documents().items()},
         "noni/direction": {"intent.md": intent_text(), "order.json": order_document()},
     }
     files: dict[str, bytes] = {}
@@ -371,6 +444,7 @@ def main(argv: list[str]) -> int:
         return 0
     print(f"{len(documents())} files, {len(COMMIT_SUBJECTS)} commits, briefed at {NOW}")
     print(f"{ORDER_ENTRIES} order entries citing {RECORD_ID}")
+    print(f"{len(record_documents())} decision records, 1 of them live to the brief")
     return 0
 
 

@@ -49,6 +49,16 @@ FIXTURE = REPO / "tests" / "fixtures" / "brief.tar"
 # the whole tree's provenance and the census reports no ``intent`` row for it.
 RECORD_ID = "2026-10-01-brief"
 
+# The two records the committed fixture holds beside :data:`RECORD_ID`, both of which the
+# ``recent decisions`` block must print nothing for: the one the committed record closed, and
+# the one whose question carries no answer. They live in the ledger the same way
+# :data:`RECORD_ID` does -- :func:`tests.fixtures.brief.generate` writes them and the page cases
+# name them -- so the committed tree and the assertions about it read one table. Their dates
+# precede and follow :data:`RECORD_ID`'s so the block's newest-first order, its live filter and
+# its treatment of an unanswered question are each observable in the committed fixture alone.
+SUPERSEDED_ID = "2026-09-20-brief-draft"
+OPEN_RECORD_ID = "2026-10-05-brief-open"
+
 # The instant every brief run in the suite fixes. ``--now`` is passed verbatim to the
 # census, so this is the one stamp both the brief's blocks and the verdict line are
 # computed against, and the byte-equality cases depend on it appearing in both commands.
@@ -159,6 +169,62 @@ def intent_path(root: Path) -> Path:
 def record_path(root: Path) -> Path:
     """The one decision record the fixture's order and intent both cite."""
     return root / DECISIONS_REL / f"{RECORD_ID}.json"
+
+
+def ledger_dir(root: Path) -> Path:
+    """The decision ledger directory of one planted tree."""
+    return root / DECISIONS_REL
+
+
+def ledger_record_path(root: Path, record_id: str) -> Path:
+    """One record of one planted tree, by its id."""
+    return ledger_dir(root) / f"{record_id}.json"
+
+
+def write_record(root: Path, record: dict) -> Path:
+    """Plant one decision record in ``root``'s ledger and hand back its path.
+
+    Written in the canonical form the ledger writer writes -- two-space indent, one trailing
+    newline, the record's own key order -- which is the shape the committed fixture's records
+    carry. The brief reads a record without asking the writer whether it would render it the
+    same way (the ledger's append-only question is the census's), so a case planting a variant
+    writes bytes rather than going through the writer, which would also want a git tree, an
+    identity and a commit it has no use for.
+    """
+    import json
+
+    path = ledger_record_path(root, str(record["id"]))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8")
+    return path
+
+
+def record_document(record_id: str, date: str, *, answer: str | None = "yes",
+                    question: str = "Ship the candidate?", options: list[str] | None = None,
+                    why: str | None = None, status: str = "decided",
+                    supersedes: str | None = None, extra_questions: list[dict] | None = None,
+                    single_option: bool = False) -> dict:
+    """One decision record in the shape :mod:`noni.ledger_schema` requires.
+
+    The eight required fields in the writer's own order, plus ``why`` when the caller gave a
+    reason, plus ``single_option`` when the caller said the one-option question was asked on
+    purpose. A case that wants a hostile field overrides the one it cares about rather than
+    rebuilding the document, so the field under test is the only difference between a planted
+    record and a well-formed one.
+    """
+    questions = [{"id": "q1", "text": question,
+                  "options": options if options is not None else ["yes", "no"],
+                  "answer": answer}]
+    questions += extra_questions or []
+    record = {"id": record_id, "date": date, "asked_by": "developer",
+              "questions": questions, "by": "Replay", "scope": "the brief surface",
+              "status": status, "supersedes": supersedes}
+    if why is not None:
+        record["why"] = why
+    if single_option:
+        record["single_option"] = True
+    return record
 
 
 def run_brief(root: Path, *extra: str) -> tuple[int, str, str]:

@@ -195,8 +195,9 @@ census is read-only: running it leaves `git status --porcelain` empty. Trends,
 if ever wanted, are recomputed from git history.
 
 The brief is the other read-only tool, and the only one that answers a person
-rather than a check: `noni brief --repo DIR` prints three parts and exits — the
-standing intent's `Purpose`, the head of the order, and the census's own `summary:`
+rather than a check: `noni brief --repo DIR` prints four parts and exits — the
+standing intent's `Purpose`, the head of the order, the five newest live decision
+records with their questions, answers and reasons, and the census's own `summary:`
 line, echoed and never recomposed. An order row names its subject and reads no
 further: an entry that names an issue prints `#N` and nothing else. It writes nothing, so running it
 leaves `git status --porcelain`
@@ -209,8 +210,9 @@ are the fail-closed pair: 0 whenever the page rendered, whatever it said about t
 tree, and 2 for a command line it will not act on (no `--repo`, a `--repo` that is
 not a directory, or an `--now` that is not a UTC instant), with the report on
 stdout and the refusal on stderr so a caller can tell the two apart by stream.
-The page is bounded: at most 20 lines of purpose, ten order entries and 200 lines
-in all, with the order entries the first thing the budget withholds.
+The page is bounded: at most 20 lines of purpose, ten order entries, five recent
+decisions and 200 lines in all, with the recent decisions the first thing the budget
+withholds and the order entries next, so the head of the order outlasts them.
 
 Metrics are derived, never self-reported: the census reads git history and
 these files. An adapter may additionally join its own run analytics to noni

@@ -52,12 +52,12 @@ DOC_PAGES: tuple[Path, ...] = (
     PUBLISHING,
 )
 
-# The three core skills, each named by the path of the page a loader reads. The
-# onboarding page has to name all three literally (issue #73 AC1), so the names
-# live here as data beside the page set rather than as strings inside one test:
-# the reader that builds a skill directory list and the test that pins the page
-# then agree on one list, and a fourth core skill is a failure in both places.
-SKILL_NAMES: tuple[str, ...] = ("steering-ledger", "direction", "census")
+# The core skills, each named by the path of the page a loader reads. The onboarding
+# page has to name every one of them literally (issue #73 AC1), so the names live
+# here as data beside the page set rather than as strings inside one test: the
+# reader that builds a skill directory list and the test that pins the page then
+# agree on one list, and a further core skill is a failure in both places.
+SKILL_NAMES: tuple[str, ...] = ("steering-ledger", "direction", "census", "noni")
 SKILL_PAGE_PATHS: tuple[str, ...] = tuple(f"skills/{name}/SKILL.md"
                                           for name in SKILL_NAMES)
 SKILL_PAGES: tuple[Path, ...] = tuple(sorted((REPO / "skills").rglob("*.md")))

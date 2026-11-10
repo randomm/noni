@@ -76,7 +76,6 @@ PRODUCT_MODULES = (
     "src/noni/order_commit.py",
     "src/noni/order_json.py",
     "src/noni/order_plan.py",
-    "src/noni/order_read.py",
     "src/noni/order_probe.py",
     "src/noni/orderschema.py",
     "src/noni/orderstate.py",

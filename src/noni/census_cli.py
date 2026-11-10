@@ -11,8 +11,9 @@ wrappers, ``python -m noni census``, ``noni census`` and its tests import.
 The parser builds its own help from the check contract: ``--strict`` names the
 warn classes through ``_warn_class_names()`` and ``--stale-after`` quotes the two
 defaults declared in ``census_render.py``, so neither line is a copy that can drift
-from the table. The store's own path override is declared here beside the other two
-so one parser remains the whole flag surface. ``prog`` is the label from ``labels``, never a name derived
+from the table. The three path overrides of the groups a run reads are declared here
+beside the other flags so one parser remains the whole flag surface.
+``prog`` is the label from ``labels``, never a name derived
 from ``__file__``, which is what lets the in-place wrapper and the console route
 print the same bytes.
 
@@ -36,7 +37,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=labels.CENSUS,
         description="The unified noni census: read-only checks over the steering "
-        "ledger, the ordering artifact and the item store, with an honest "
+        "ledger, the ordering artifact and the standing intent, with an honest "
         "exit code.",
     )
     parser.add_argument("--repo", default=".", help="the repository (or directory) to audit (default: current directory)")
@@ -49,12 +50,6 @@ def _build_parser() -> argparse.ArgumentParser:
                              "<repo>/noni/direction/intent.md); its citation is "
                              "answered against the --ledger of this run, so the "
                              "override moves the file and not the ledger")
-    parser.add_argument("--items", default=None, metavar="DIR",
-                        help="item store (default: <repo>/noni/items); absent is "
-                             "not a finding, since an idea nobody filed earns no "
-                             "row, but a store named here that cannot be listed is "
-                             "reported by item-unlistable rather than reading as an "
-                             "empty store")
     parser.add_argument("--issue-state", default=None, metavar="FILE",
                         help='JSON map {"<issue>": "open"|"closed"} produced by an adapter '
                              "or the operator; without it the ordering-closed check is not "

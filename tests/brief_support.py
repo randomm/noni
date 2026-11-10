@@ -19,9 +19,10 @@ from harness_runners import subprocess_env
 from noni import brief as brief_module
 from noni import labels as labels_module
 
-# The two block headers, in print order, and the prefix of the line the tool appends when
+# The three block headers, in print order, and the prefix of the line the tool appends when
 # its own budget forced it to withhold block lines.
-HEADERS = [brief_module.PURPOSE_HEADER, brief_module.ORDER_HEADER]
+HEADERS = [brief_module.PURPOSE_HEADER, brief_module.ORDER_HEADER,
+           brief_module.RECENT_DECISIONS_HEADER]
 DROPPED_PREFIX = "dropped: "
 
 # The label every refusal of this tool opens with. The tool builds it from its own label
@@ -163,7 +164,7 @@ def page_owed_lines(root: Path, owed: int) -> str:
 
     The budget is a count of the page's lines, so a case that wants a page ``owed`` lines shorter
     than the tree's own page asks for the tree's own length less the debt. Both halves come from the
-    tool: the child prints what ``noni.brief._page_lines`` charges the tree's two blocks for, then
+    tool: the child prints what ``noni.brief._page_lines`` charges the tree's three blocks for, then
     renders the page at the cap that length leaves. Asked of the tool rather than restated from
     ``PURPOSE_MAX_LINES`` and ``TOP_ENTRIES``, because a case that kept its own arithmetic would go
     quietly wrong the day a block gained a line.
@@ -177,7 +178,7 @@ def page_owed_lines(root: Path, owed: int) -> str:
 
 
 def _page_lines(root: Path) -> int:
-    """What the budget charges the tree's two blocks for, before any cut.
+    """What the budget charges the tree's three blocks for, before any cut.
 
     The measurement a budget case cuts its debt from, asked of the renderer's own rule and taken in a
     process that briefed no other tree. A rendered page would do for it too, but a page also carries
@@ -188,7 +189,7 @@ def _page_lines(root: Path) -> int:
 
 # The child's program, as one string. With nothing in its environment it prints the page, which is
 # what the launched route of the suite is for. ``NONI_BRIEF_TEST_LINES`` set, it prints what the
-# budget charges the tree's two blocks for before any cut, which is what a budget case cuts its debt
+# budget charges the tree's three blocks for before any cut, which is what a budget case cuts its debt
 # from; the verdict line is outside the measurement because the census prints it, it is not budgeted,
 # and it would move with the tree's faults.
 _CHILD = """
@@ -201,7 +202,8 @@ cap = os.environ.get("NONI_BRIEF_TEST_CAP")
 if cap:
     brief.BRIEF_MAX_LINES = int(cap)
 if os.environ.get("NONI_BRIEF_TEST_LINES"):
-    print(brief._page_lines([brief._purpose_block(root), brief._order_block(root)]))
+    print(brief._page_lines([brief._purpose_block(root), brief._order_block(root),
+                             brief._decisions_block(root)]))
     sys.exit(0)
 sys.exit(brief.main(["--repo", str(root), "--now", os.environ["NONI_BRIEF_TEST_NOW"]]))
 """
@@ -210,7 +212,7 @@ sys.exit(brief.main(["--repo", str(root), "--now", os.environ["NONI_BRIEF_TEST_N
 def _run_child(root: Path, cap: int | None, *, count: bool):
     """One brief run in an interpreter of its own, optionally at the budget ``cap``.
 
-    ``count`` asks the child for the number the budget charges the tree's two blocks for instead of
+    ``count`` asks the child for the number the budget charges the tree's three blocks for instead of
     for the page. Either way the run has to come from a process that briefed no other tree, so the
     page a budget case measures is the page of the tree the case named.
     """

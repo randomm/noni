@@ -116,10 +116,11 @@ def test_brief_a_hundred_order_entries_render_ten(tmp_path: Path) -> None:
 
 
 def test_brief_the_page_never_exceeds_the_cap(tmp_path: Path) -> None:
-    """Every cap at once: the page is 34 lines, and the cap is a backstop none of them reaches.
+    """Every cap at once: the page is 39 lines, and the cap is a backstop none of them reaches.
 
-    The expected count is built from the tool's own constants -- two headers, the purpose body
-    and its ellipsis, 10 order rows, one separator, one verdict -- so the case
+    The expected count is built from the tool's own constants -- three headers, the purpose body
+    and its ellipsis, 10 order rows, the five decision rows the committed ledger's one live record
+    leaves at one, the two separators, one verdict -- so the case
     follows a change to a cap instead of pinning a number nobody chose. The order is filled
     with 200 entries on the way: the page reads no list past its cap, so the count must not
     move.
@@ -132,8 +133,13 @@ def test_brief_the_page_never_exceeds_the_cap(tmp_path: Path) -> None:
         {"schema": orderschema.ORDER_SCHEMA, "entries": entries}))
     code, out, _ = run_brief(root, "--now", NOW)
     assert code == 0
-    expected = (2 + brief_module.PURPOSE_MAX_LINES + 2 + brief_module.TOP_ENTRIES
-                + 1 + 1)
+    # The committed fixture's ledger holds three records and exactly one of them is live, so the
+    # decisions block prints one row: the count below reads that fact off the tool's own cap and
+    # the fixture's one live record rather than from a number typed here.
+    decisions_rows = len(rows(out, brief_module.RECENT_DECISIONS_HEADER))
+    assert decisions_rows == 1
+    expected = (3 + brief_module.PURPOSE_MAX_LINES + 2 + brief_module.TOP_ENTRIES
+                + decisions_rows + 2 + 1)
     assert len(out.splitlines()) == expected <= brief_module.BRIEF_MAX_LINES
     assert DROPPED_PREFIX in out
 
@@ -141,37 +147,43 @@ def test_brief_the_page_never_exceeds_the_cap(tmp_path: Path) -> None:
 def test_brief_the_budget_drops_order_entries_and_not_the_purpose(tmp_path: Path) -> None:
     """The block that gives way is the one the spec names, and the count says how much.
 
-    The truncation order is order entries first, then the purpose body. A budget the order can pay
-    for on its own leaves the purpose block whole and every one of its lines on the screen, so the
-    debt never reaches the prose: the lines the reader misses are order rows, and the tool counts
-    exactly the rows that came off the list.
+    The truncation order is the recent decisions first, then the order entries, then the purpose
+    body. A budget deeper than the decisions block can pay for on its own reaches into the order
+    rows -- and leaves the purpose block whole, every one of its lines on the screen: the debt
+    never reaches the prose, and the tool counts exactly the lines that came off the page.
     """
     root = plant_brief_tree(tmp_path)
     out = page_owed_lines(root, 3)
-    assert len(rows(out, brief_module.ORDER_HEADER)) == TOP - 3
+    assert len(rows(out, brief_module.ORDER_HEADER)) == TOP - 2
     assert len(stripped(sections(out), brief_module.PURPOSE_HEADER)) == PURPOSE_MAX + 2
+    # The decisions block paid its one row first: the debt of three took the row, the separator
+    # above it and one order row, and the count line says three, which is what the reader misses.
+    assert rows(out, brief_module.RECENT_DECISIONS_HEADER) == []
     assert dropped_of(out) == 3
 
 
 def test_brief_a_dropped_block_takes_its_separator_with_it(tmp_path: Path) -> None:
     """The count names the separator too, which is the line the debt arithmetic did not know.
 
-    The budget charges the blank line between the two blocks as a line of the page, so a cut that
-    empties the order block takes that separator away with the last of its rows: the reader misses
-    the header, the ten rows and the blank above them, one line more than the debt named. A count
-    read off the arithmetic of the debt printed the smaller number, and a reader who counted the
-    screen and the sentence got two answers. This case is that line: it pins the count to the rows
-    that came off the list plus the separator that went with the last of them.
+    The budget charges the blank line above a block as a line of the page, so a cut that empties a
+    block takes that separator away with its last row: the reader misses the header, its rows and
+    the blank above them, one line more than the debt named for the rows alone. A count read off the
+    arithmetic of the debt printed the smaller number, and a reader who counted the screen and the
+    sentence got two answers. This case is that line, and the block it cuts is the order block --
+    the decisions block ahead of it is emptied first (the case below pins that), so by the time the
+    debt reaches the queue the separator above it is the line the debt cannot see coming.
     """
     root = plant_brief_tree(tmp_path)
-    # Ten lines off the page, which is the point the order block runs out: its ten rows go, the block
-    # is left at its header alone, and the separator above it goes with the last of them -- so the
-    # tool owes one line more than the ten rows it took, and the purpose block still prints whole.
-    out = page_owed_lines(root, TOP)
+    # Eleven lines off the page: the decisions block's row and the separator above it, then the
+    # order block's ten rows. The queue is left at its header alone and the separator above it goes
+    # with the last of its rows, so the tool owes one line more than the eleven it took by the
+    # arithmetic -- the count names twelve, which is what the reader counts missing.
+    out = page_owed_lines(root, TOP + 1)
     assert rows(out, brief_module.ORDER_HEADER) == []
+    assert rows(out, brief_module.RECENT_DECISIONS_HEADER) == []
     # The purpose block pays nothing: its header, its twenty lines and the ellipsis all print.
     assert len(stripped(sections(out), brief_module.PURPOSE_HEADER)) == PURPOSE_MAX + 2
-    assert dropped_of(out) == TOP + 1
+    assert dropped_of(out) == TOP + 2
     # The verdict survives the deepest cut the content caps leave reachable.
     assert out.splitlines()[-1].startswith("summary:")
 
@@ -183,11 +195,38 @@ def test_brief_the_budget_never_swallows_the_verdict(tmp_path: Path) -> None:
     whatever the budget was, the last line of the page is the arbiter's.
     """
     root = plant_brief_tree(tmp_path)
-    # A budget three lines long: every line of both blocks is past it, so the debt runs through the
-    # order block and on into the Purpose body, which is the shape where the tool is left printing
-    # two headers and its own count line.
+    # A budget three lines long: every line of all three blocks is past it, so the debt runs
+    # through the order block, on through the recent decisions and into the Purpose body, which is
+    # the shape where the tool is left printing three headers and its own count line.
     out = page_owed_lines(root, 30)
     lines = out.splitlines()
     assert lines[0] == brief_module.PURPOSE_HEADER
     assert dropped_line(out).startswith(DROPPED_PREFIX)
     assert lines[-1] == census_summary(root, NOW)
+
+
+def test_brief_the_recent_decisions_block_drops_before_the_order(
+        tmp_path: Path) -> None:
+    """The spec's precedence, stated: the queue outlasts the decisions block.
+
+    The tool's rule is that a block's tail is what goes, and the block that prints newest-first
+    has its oldest record at that tail -- so the positional rule alone decides which block empties
+    first, and the page puts the decisions last precisely so it is the decisions that go. The head
+    of the order is what to work on next, which is the question the screen exists to answer, and a
+    budget deep enough to cost a decision row must not cost an order row as well until the
+    decisions block has given everything it has. The purpose block, which holds the operator's
+    prose, is last in line either way.
+    """
+    root = plant_brief_tree(tmp_path)
+    # A debt of one: the decisions block's one row goes and no order row does.
+    out = page_owed_lines(root, 1)
+    assert rows(out, brief_module.RECENT_DECISIONS_HEADER) == []
+    assert len(rows(out, brief_module.ORDER_HEADER)) == TOP
+    assert dropped_of(out) == 1
+    # A debt of two has taken the separator above the block too, so the block is empty and one
+    # order row has gone with it: the decisions block gave up the two lines it had left to give
+    # before the queue was touched at all, and the purpose prose is untouched.
+    deeper = page_owed_lines(root, 2)
+    assert rows(deeper, brief_module.RECENT_DECISIONS_HEADER) == []
+    assert len(rows(deeper, brief_module.ORDER_HEADER)) == TOP - 1
+    assert len(stripped(sections(deeper), brief_module.PURPOSE_HEADER)) == PURPOSE_MAX + 2

@@ -7,19 +7,25 @@ nothing else, and the verdict line prints whatever the census said a moment late
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from brief_fixtures import (
     NOT_READ,
     NOW,
     intent_path,
+    ledger_dir,
+    ledger_record_path,
     order_path,
     plant_brief_tree,
+    record_document,
     run_brief,
+    write_record,
 )
 from brief_support import (
     HEADERS,
     census_summary,
+    rows,
     sections,
     stripped,
     summary_line,
@@ -162,3 +168,134 @@ def test_brief_an_empty_state_root_is_a_page_not_a_failure(tmp_path: Path) -> No
     assert err == ""
     assert list(sections(out)) == HEADERS
     assert summary_line(out).startswith(brief_module.SUMMARY_PREFIX)
+
+
+# --- the decision ledger's own fault arms -----------------------------------
+
+# The words the brief has for the two states of an artifact it reads: nothing to
+# list and nothing readable. The ledger block has one of them and not the other, which
+# is what the arms below pin from both sides.
+
+
+def test_brief_ledger_absent_prints_an_empty_decisions_block(tmp_path: Path) -> None:
+    """No ledger directory is no decisions -- the state a freshly attached project is in.
+
+    The whole directory goes, which is the shape of a tree that has never been steered. The
+    header prints alone, nothing on the page reads :data:`NOT_READ`, and the exit code is 0: the
+    census's ``ledger-empty`` class is the row that says a ledger is missing, and this page says
+    only that it has nothing to show.
+    """
+    root = plant_brief_tree(tmp_path)
+    shutil.rmtree(ledger_dir(root))
+    code, out, _ = run_brief(root, "--now", NOW)
+    assert code == 0
+    assert stripped(sections(out), brief_module.RECENT_DECISIONS_HEADER) == []
+    assert NOT_READ not in out
+    assert len(stripped(sections(out), brief_module.ORDER_HEADER)) == \
+        brief_module.TOP_ENTRIES
+
+
+def test_brief_ledger_empty_prints_an_empty_decisions_block(tmp_path: Path) -> None:
+    """A ledger directory holding no record is the same answer as no directory at all.
+
+    The census draws the distinction (``absent`` against ``empty``) and the brief does not: a
+    project that has attached and not yet steered has no decision to show, and that is the
+    honest content of the block rather than a fault in it.
+    """
+    root = plant_brief_tree(tmp_path)
+    for path in ledger_dir(root).iterdir():
+        path.unlink()
+    assert ledger_dir(root).is_dir()
+    code, out, _ = run_brief(root, "--now", NOW)
+    assert code == 0
+    assert stripped(sections(out), brief_module.RECENT_DECISIONS_HEADER) == []
+    assert NOT_READ not in out
+
+
+def test_brief_ledger_of_no_json_records_prints_an_empty_block(tmp_path: Path) -> None:
+    """A directory of files that are not records holds no records, and costs no row.
+
+    The reader lists ``*.json`` and nothing else, which is the same closed set the census's
+    ledger classes read. A stray note or a backup file beside the records is not a decision and
+    does not earn a line of the screen.
+    """
+    root = plant_brief_tree(tmp_path)
+    for path in ledger_dir(root).iterdir():
+        path.unlink()
+    (ledger_dir(root) / "notes.md").write_text("not a record\n", encoding="utf-8")
+    (ledger_dir(root) / "record.json.bak").write_text("{}\n", encoding="utf-8")
+    assert stripped(sections(run_brief(root, "--now", NOW)[1],
+                            ), brief_module.RECENT_DECISIONS_HEADER) == []
+
+
+def test_brief_ledger_that_is_a_symlink_prints_an_empty_block(tmp_path: Path) -> None:
+    """A ledger reached through a link is refused, never followed, and prints no row.
+
+    The link's target is a ledger of two live records held outside the state root. A reader that
+    classified with :meth:`pathlib.Path.is_dir` would follow the link and print those records as
+    the tree's own decisions; the ``lstat`` classifier the whole family uses refuses the path
+    instead, and the block says nothing rather than printing somebody else's decisions.
+    """
+    outside = tmp_path / "outside-ledger"
+    outside.mkdir()
+    for index, record_id in enumerate(("2026-10-20-linked-one", "2026-10-21-linked-two")):
+        write_record(outside.parent / "outside-seed", record_document(
+            record_id, f"2026-10-2{index}T00:00:00Z"))
+    root = plant_brief_tree(tmp_path)
+    shutil.rmtree(ledger_dir(root))
+    ledger_dir(root).symlink_to(ledger_dir(outside.parent / "outside-seed"))
+    code, out, _ = run_brief(root, "--now", NOW)
+    assert code == 0
+    body = stripped(sections(out), brief_module.RECENT_DECISIONS_HEADER)
+    assert body == []
+    assert "linked" not in out
+
+
+def test_brief_ledger_that_is_a_plain_file_prints_an_empty_block(tmp_path: Path) -> None:
+    """A non-directory at the ledger path is not a ledger, and the block says nothing.
+
+    The census's ``ledger-empty`` class words that state (``not a directory``); the page's answer
+    is the header alone, because there is no record to print and no half-read ledger to warn about.
+    """
+    root = plant_brief_tree(tmp_path)
+    shutil.rmtree(ledger_dir(root))
+    ledger_dir(root).write_text("not a directory\n", encoding="utf-8")
+    assert stripped(sections(run_brief(root, "--now", NOW)[1]),
+                    brief_module.RECENT_DECISIONS_HEADER) == []
+
+
+def test_brief_ledger_records_that_are_unreadable_cost_only_their_rows(
+        tmp_path: Path) -> None:
+    """Every unreadable shape costs its own record its row and nothing else.
+
+    Four records planted beside the fixture's live one: bytes that are not UTF-8, text that is not
+    JSON, a JSON array where an object belongs, and a record that is a symlink out of the tree.
+    None of them reaches the screen, none of them prints its own bytes or an exception's text, and
+    the live record beside them still prints -- the brief's rule that a read failure costs its own
+    row, applied to a ledger the page has no verdict about.
+    """
+    root = plant_brief_tree(tmp_path)
+    # The fixture's own record stays in the ledger and is the newest live one after the planted
+    # row, so it is the second line of the block: the fault of an unreadable neighbour must not
+    # cost a readable record its row either.
+    live = write_record(root, record_document("2026-10-25-live", "2026-10-25T00:00:00Z",
+                                              answer="the live answer"))
+    ledger_record_path(root, "2026-10-24-not-utf8").write_bytes(b"{\"a\": \xff\xfe}\n")
+    ledger_record_path(root, "2026-10-23-not-json").write_text("{ nope\n", encoding="utf-8")
+    ledger_record_path(root, "2026-10-22-array").write_text("[1, 2, 3]\n", encoding="utf-8")
+    outside = tmp_path / "outside-record.json"
+    outside.write_text('{"id": "2026-10-21-linked", "questions": '
+                       '[{"text": "THE LINKED RECORD", "answer": "yes"}]}\n',
+                       encoding="utf-8")
+    ledger_record_path(root, "2026-10-21-linked").symlink_to(outside)
+    code, out, _ = run_brief(root, "--now", NOW)
+    assert code == 0
+    body = rows(out, brief_module.RECENT_DECISIONS_HEADER)
+    assert body == [f"{live.stem}: Ship the candidate?: the live answer",
+                    "2026-10-01-brief: What should the run brief first?: the three newest"]
+    for marker in ("THE LINKED RECORD", "not-utf8", "not-json", "array"):
+        assert marker not in out
+    # Four records were asked for and none could be rendered, and the block says so on its own
+    # count line: a ledger fault leaves a mark on the page rather than passing silently, which is
+    # what tells a reader who counts one row where five files sit that four of them were unreadable
+    # rather than not decided.

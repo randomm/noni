@@ -43,7 +43,8 @@ from public_safety import (  # noqa: E402
 )
 
 SKILL_DIRS = [REPO / "skills" / "steering-ledger",
-              REPO / "skills" / "census", REPO / "skills" / "direction"]
+              REPO / "skills" / "census", REPO / "skills" / "direction",
+              REPO / "skills" / "noni"]
 FIXTURES = REPO / "tests" / "fixtures"
 README = REPO / "README.md"
 PRODUCT = REPO / "docs" / "PRODUCT.md"

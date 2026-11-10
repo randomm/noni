@@ -23,21 +23,22 @@ Three rules the tool is built around:
 
 - **Bounded.** :data:`BRIEF_MAX_LINES` caps the lines the brief's own blocks print,
   headers and the blank lines between blocks included. A run that would print more drops
-  order entries first (from the tail of the list), then the Purpose body, and closes
+  the recent decisions first (from the tail of the list), then
+  order entries, then the Purpose body, and closes
   its own blocks with one ``dropped: N line(s)`` line naming the total it withheld. The
   dropped-count line and the summary line sit outside the budget, so a reader always gets
   the verdict (see :func:`_render`).
 - **Deterministic.** With one ``--now`` the bytes are the bytes of the next run. Every
-  order comes from the artifact's own list order or from a sort over ``created`` and
-  ``id``, and nothing in the brief reads the clock or the cwd: ``--repo`` is resolved once
+  order comes from the artifact's own list order, the decisions come from a sort over
+  ``date`` and ``id``, and nothing in the brief reads the clock or the cwd: ``--repo`` is resolved once
   and every path is taken from it, and the instant is the caller's or taken once here.
-- **Read-only.** Every read is an ``open`` or an ``lstat``. The tool writes no file,
-  stages no commit, and runs no git call of its own; the census it launches runs in
+- **Read-only.** Every read is an ``open``, an ``lstat`` or a directory listing. The tool writes
+  no file, stages no commit, and runs no git call of its own; the census it launches runs in
   process with its output captured, so the census's own read-only promise is this tool's.
 
 Nothing here re-derives a shape another module owns: the order is read through
 :func:`noni.orderstate.read_order`, the intent file through the reader module beside this
-file, the text of every row through
+file, the decision ledger through :func:`noni.brief_page.decision_rows`, the text of every row through
 :mod:`noni.brief_page` (control bytes out, host paths scrubbed, the field bounded), and the
 verdict through the census itself.
 
@@ -69,6 +70,7 @@ from .brief_page import (
     TEXT_LIMIT,
     block_rows,
     close_block,
+    decision_rows,
     page_lines,
 )
 
@@ -101,10 +103,17 @@ PURPOSE_MAX_LINES = 20
 # census's own clip marker (``census_text._clipped``) rather than a third spelling.
 ELLIPSIS = "..."
 
-# The two block headers, spelled once so the budget, the truncation order, the readers and the
+# How many decision records the ``recent decisions`` block prints before the budget is
+# consulted. Five is a screen's worth of the operator's settled answers: enough that a session
+# meets the standing decisions it must not re-argue, short enough that the block never crowds
+# the order -- the question the screen is for -- off the page.
+RECENT_DECISIONS = 5
+
+# The three block headers, spelled once so the budget, the truncation order, the readers and the
 # tests all name one set of words.
 PURPOSE_HEADER = "Purpose"
 ORDER_HEADER = "top 10"
+RECENT_DECISIONS_HEADER = "recent decisions"
 
 # The prefix of the line the census's human report ends with, and the line the brief
 # prints when the census printed no verdict to echo. Both are the brief's vocabulary and
@@ -120,7 +129,7 @@ NOT_RUN_SUMMARY = "summary: not-run; 0 finding(s); verdict fail"
 # make the reader count a block that is not there; the ellipsis and the verdict prefix are in the
 # set for the mirror reason -- a body line shaped like one of the tool's own lines could be read
 # as one of them.
-PAGE_RESERVED = frozenset({PURPOSE_HEADER, ORDER_HEADER,
+PAGE_RESERVED = frozenset({PURPOSE_HEADER, ORDER_HEADER, RECENT_DECISIONS_HEADER,
                            ELLIPSIS, SUMMARY_PREFIX.strip()})
 
 def _refuse(headline: str, hint: str) -> int:
@@ -202,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
                        f"pass --repo naming the state root, the directory that holds "
                        f"(or will hold) {orderstate.DECISIONS_DIR}/")
 
-    blocks = [_purpose_block(root), _order_block(root)]
+    blocks = [_purpose_block(root), _order_block(root), _decisions_block(root)]
     print(_render(blocks))
     print(_summary_line(root, stamp))
     return 0
@@ -215,22 +224,27 @@ def _render(blocks: list[list[str]]) -> str:
     them. The budget counts these lines and nothing else, so the summary line the caller prints
     after this one is never the line that tipped a run over.
 
-    The truncation order is the spec's: order entries first, then the Purpose body, and a run that
-    still owes lines after both has nothing left to give (only reachable if a header alone is past
-    the cap, which the constants above make impossible). A run whose blocks total at most the cap
-    prints no dropped-count line; a run past it prints exactly one, naming the number of lines the
-    reader does not see -- rows and the separators that went with them, not the debt alone.
+    The truncation order follows this tool's own positional rule: the last block gives way first,
+    so the recent decisions go first, then the order entries, then the Purpose body, and a run that
+    still owes lines after all three has nothing left to give (only reachable if the headers alone
+    are past the cap, which the constants above make impossible). The order of the first two is
+    the spec's decision and it outranks the reading of that rule which would empty the head of the
+    order first: the head of the order is what to work on next, which is the question the screen is
+    for, so the queue outlasts the decisions block even though the block prints newest-first and
+    its tail is therefore its oldest record. A run whose blocks total at most the cap prints no
+    dropped-count line; a run past it prints exactly one, naming the number of lines the reader
+    does not see -- rows and the separators that went with them, not the debt alone.
     """
     # A copy per block: the budget trims tails, and the blocks the caller holds are the census's own
     # reads rather than this function's to change.
     kept = [list(lines) for lines in blocks]
-    # What the page costs before anything is cut -- the lines the two blocks hold, plus the blank the
-    # renderer puts between two blocks that both hold something. This one number settles the budget
-    # and answers the count line below, so the tool's sentence and the lines a reader counts on the
-    # screen cannot drift apart.
+    # What the page costs before anything is cut -- the lines the three blocks hold, plus the
+    # blank the renderer puts between two blocks that both hold something. This one number
+    # settles the budget and answers the count line below, so the tool's sentence and the lines a
+    # reader counts on the screen cannot drift apart.
     before = _page_lines(kept)
     owed = before - BRIEF_MAX_LINES
-    for index in (1, 0):
+    for index in (2, 1, 0):
         if owed <= 0:
             break
         owed = _drop(kept[index], owed)
@@ -272,7 +286,9 @@ def _drop(lines: list[str], owed: int) -> int:
     """Remove up to ``owed`` lines from the tail of one block; the lines still owed.
 
     A block's tail is what goes, so the head of every list stays on the screen: the head of
-    the order is what to work on next, which is the question the screen is for. The header line stays too -- a
+    the order is what to work on next, which is the question the screen is for, and the recent
+    decisions -- the block that gives way first -- are the oldest of the five newest answers at
+    their tail. The header line stays too -- a
     reader who cannot tell which block went missing has lost more than one who sees an
     empty block under its own name. When a block reaches its header the remaining debt moves
     on to the next block rather than being forgiven, which is what makes a whole-block drop
@@ -332,6 +348,27 @@ def _order_block(root: Path) -> list[str]:
         (_order_row(position, entry)
          for position, entry in enumerate(entries, 1)), TOP_ENTRIES)
     return close_block([ORDER_HEADER, *rows], withheld)
+
+
+def _decisions_block(root: Path) -> list[str]:
+    """The ``recent decisions`` block: the five newest live records, newest first.
+
+    The reader lives beside the page's other foreign-text rules
+    (:func:`noni.brief_page.decision_rows`) and this block only says what it prints: one row per
+    record, holding its id, one ``text: answer`` segment per question, and the record's ``why``
+    when it carries one. Live is that reader's single predicate -- a record whose own ``status``
+    is ``decided`` -- so a ``superseded`` record never appears here, and neither does an ``open``
+    one whose operator has not answered.
+
+    Every state of the ledger that yields no row prints the header alone: absent, empty, not a
+    directory, a symlink, an unlistable directory, and records this run could not read. The brief
+    has no verdict of its own about a ledger it cannot read -- the census's ``ledger-*`` classes
+    run a moment later in this same process and are what words such a fault -- so unlike the
+    order block this one has no :data:`NOT_READ` arm: there is no half-read ledger this page can
+    show rows from, and one answer for every unreadable state is the honest one here.
+    """
+    rows, withheld = decision_rows(root / orderstate.DECISIONS_DIR, RECENT_DECISIONS)
+    return close_block([RECENT_DECISIONS_HEADER, *rows], withheld)
 
 
 def _order_row(position: int, entry: dict) -> str:

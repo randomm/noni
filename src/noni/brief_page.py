@@ -17,8 +17,210 @@ both, in the order that makes the bound mean what it says.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from . import ledger_schema, orderschema, orderstate
 from ._safe_text import safe_text
 from .census_text import _bounded
+
+# The text of the one question the decisions block asks of every record it reads. Like
+# :data:`NOT_READ` it is the tool's own sentence and never a word from a record, so no byte
+# of a file this reader did not write reaches stdout on a line that carries it.
+OPEN_ANSWER = "(open)"
+
+# The shape tests :func:`_decision_row` applies to the row it composed: the page's bound, and
+# no reserved word at all. The header is excluded on purpose. A page that refused a decision
+# whose first question happened to be titled exactly like the block would hide a decision for
+# the reason a body line shaped like the *order's* header is refused -- that one splits the
+# page for a reader -- whereas this one would silently lose the newest answer the block exists
+# to print. A row always opens with a record id, so nothing printable can collide with a header
+# anyway.
+
+# The separators of one decision row. The row is built here and printed by the caller, so the
+# two shapes the reader renders -- the join between two questions and the mark that opens the
+# reason -- are named once beside the reader rather than spelled at each end of the join.
+QUESTION_SEPARATOR = "; "
+REASON_SEPARATOR = " — "
+
+
+def decision_rows(ledger: Path, cap: int) -> tuple[list[str], int]:
+    """At most ``cap`` decision rows, newest first, and how many of them cost a line.
+
+    One read of ``noni/decisions/``, on the brief's own terms: it asks which records are live
+    and prints one line for each of the newest ``cap``, and it forms no verdict about any of
+    them. The census's ``ledger-*`` classes are the arbiter that words a fault, and they run
+    in this same process a moment later to produce the brief's last line, so every state this
+    reader cannot render -- the directory absent, empty, not a directory, reached through a
+    symlink, unlistable, or holding a record it cannot read -- costs that record its row and
+    prints nothing else. The caller renders the header either way, so a tree with no records
+    shows an empty block rather than a fault it has no way to act on.
+
+    The two answers travel together for the reason :func:`block_rows` states, over the records
+    this reader could hold in hand: a record this reader refused is a row the reader asked for
+    and did not get, and a block that withheld lines owes the count line that says so. A row
+    that :func:`page_line` refused costs a line the same way. A record that never parsed is not
+    among them: it is not a record this reader held, and the count line counts rows withheld
+    from a page rather than files the census goes on to fault. A ledger directory this run could
+    not list is the same shape one level up -- the block prints its header and pays no count
+    line, and the census is what words that fault.
+    """
+    records = _live_records(ledger)
+    rows, withheld = block_rows((_decision_row(record)
+                                 for record in _newest_first(records)), cap)
+    return rows, withheld + max(0, len(records) - cap)
+
+
+def _live_records(ledger: Path) -> list[dict]:
+    """The records the ledger directory holds whose ``status`` is ``decided``.
+
+    Live is one predicate and it is the record's own word: :func:`noni.orderstate`'s reader
+    already treats a record whose ``status`` is ``superseded`` as dead, and the census's chain
+    class is what reports a chain holding two live records. Re-deriving liveness from the
+    ``supersedes`` fields here would make the page a second arbiter that can disagree with the
+    one the same command runs a moment later, so this reads one field and asks nothing of the
+    rest of the chain.
+
+    Nothing is opened before the path has been classified. The ledger and every name in it go
+    through :func:`noni.orderstate.file_kind`, which asks ``lstat``: :meth:`pathlib.Path.is_file`
+    follows a link and reports the file at its far end as this artifact, which is the rule the
+    intent reader beside this file states the same way.
+    """
+    kind, _why = orderstate.file_kind(ledger)
+    if kind != "dir":
+        # Absent, a symlink, a plain file or a device: the block's header is the whole answer,
+        # and the census is what names which of these the tree holds.
+        return []
+    try:
+        names = sorted(path.name for path in ledger.iterdir()
+                       if path.suffix == ".json")
+    except OSError:
+        # The listing did not answer. The census's ledger group performs its own listing and
+        # words that fault; this reader has nothing to print for it.
+        return []
+    records: list[dict] = []
+    for name in names:
+        record = _read_record(ledger / name)
+        if record is not None and record.get("status") == ledger_schema.STATUS_DECIDED:
+            records.append(record)
+    return records
+
+
+def _read_record(path: Path) -> dict | None:
+    """The record ``path`` holds as a mapping, or None for anything else.
+
+    A link, a directory, a device, unreadable bytes, bytes that are not UTF-8, text that is
+    not JSON, a document past the reader's depth bound, and a value that is not an object all
+    answer None, and none of them prints: the exception text a decode fault carries quotes the
+    offending bytes, so it is not quoted anywhere here (the census's ledger reader refuses a
+    record the same reason). The strict reader is the order family's own, borrowed rather than
+    re-implemented, so a record carrying ``NaN``, a key stated twice or a pathological nesting
+    is refused here exactly as the writers refuse it.
+    """
+    kind, _why = orderstate.file_kind(path)
+    if kind != "regular":
+        return None
+    try:
+        value = orderschema.load_json_checked(path.read_bytes())
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError):
+        # ``RecursionError`` is named because it is no kind of ``ValueError``: the reader's
+        # depth bound answers for a document short of the interpreter's own ceiling, and past
+        # that ceiling the decoder raises first. A page that died with a traceback where a row
+        # was promised is worse than one that printed no row.
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _newest_first(records: list[dict]) -> list[dict]:
+    """``records`` in the order the block prints them: newest ``date`` first, then id.
+
+    The sort is total and reads no clock. Two records dated to the same instant -- what a
+    writer run twice in one second, or a ``--date`` carried over, produces -- still have one
+    order between them, the same tiebreak the candidates of the store beside this one use on
+    their own two fields. A record that carries no usable ``date`` sorts as the oldest there
+    is, which keeps it from crowding the recent records off a five-row block.
+    """
+    return sorted(records, key=lambda record: (_record_date(record),
+                                               _record_id(record)), reverse=True)
+
+
+def _record_date(record: dict) -> str:
+    """``record``'s ``date`` for the sort: the string itself, or the oldest possible one.
+
+    Compared as text, which is what an ISO-8601 stamp sorts correctly by. A record whose
+    ``date`` is absent or not a string is not this reader's to refuse (the census's record
+    class words that fault), so it sorts below every dated record rather than raising.
+    """
+    value = record.get("date")
+    return value if isinstance(value, str) else ""
+
+
+def _record_id(record: dict) -> str:
+    """``record``'s ``id`` for the tiebreak, or the empty string when it carries none."""
+    value = record.get("id")
+    return value if isinstance(value, str) else ""
+
+
+def _decision_row(record: dict) -> str | None:
+    """One decision as one line: its id, then a ``text: answer`` segment per question.
+
+    The record's own order is the order printed, all of its questions on the one line, because
+    a record is one decision and a block that showed one question of a three-question record
+    would report an answer to a question the record did not lead with. A question whose
+    ``answer`` is ``null`` prints :data:`OPEN_ANSWER`, which is the tool's word and not the
+    record's: the writer leaves an answer ``null`` on a record whose operator never answered,
+    and a row that printed nothing there would read as a question the page dropped.
+
+    The ``why`` rides at the end after its own mark when the record carries a reason. Every
+    field reaches the line through :func:`page_line`, so a control byte in a question cannot reach
+    the terminal and a host path in a reason prints as ``<path>`` here exactly as it would in
+    a census row. The whole row is bounded as one line, and a row whose rendered form is blank
+    or one of the page's own words costs the block its row.
+    """
+    id_text = _field(record.get("id"))
+    questions = record.get("questions")
+    if not isinstance(questions, list) or not questions:
+        return None
+    segments = [_question_segment(question) for question in questions]
+    if not all(segments):
+        # A question the reader cannot render is a question it cannot answer for: one malformed
+        # entry costs the whole record its row rather than printing half a decision.
+        return None
+    row = id_text + ": " + QUESTION_SEPARATOR.join(segment for segment in segments if segment)
+    why = _field(record.get("why"))
+    if why.strip() and page_line(why, TEXT_LIMIT, frozenset()):
+        # Two questions rather than one test of the raw field. The first: ``_field`` hands back a
+        # field of spaces as those spaces, and a mark with nothing after it is the mark of a
+        # reason the reader never gets. The second: a ``why`` made only of what the page's scrub
+        # deletes (a category-C character, say) is not spaces, so the first question cannot see
+        # it, and it renders to nothing for the same reason. Asking the page's own scrub is what
+        # makes the mark stand or fall on the same answer the row itself gets.
+        row += REASON_SEPARATOR + why
+    return page_line(row, TEXT_LIMIT, frozenset())
+
+
+def _question_segment(question: object) -> str:
+    """One question as ``text: answer``, or ``""`` for an entry that is not a question.
+
+    A record whose ``questions`` holds something other than an object, or a question that
+    carries no text, contributes nothing here and the caller drops the row. The answer is
+    asked for after the text and never instead of it: a row that printed an answer with no
+    question beside it would put the operator's word above a question nobody asked. "Carries no
+    text" is therefore asked of the field stripped of its whitespace and not of the raw field:
+    spaces are not a question either, and such an entry costs the record its row for exactly the
+    reason a non-object entry does.
+    """
+    if not isinstance(question, dict):
+        return ""
+    text = _field(question.get("text"))
+    if not text.strip():
+        return ""
+    answer = _field(question.get("answer"))
+    return f"{text}: {answer or OPEN_ANSWER}"
+
+
+def _field(value: object) -> str:
+    """A record's field as printable text, or ``""`` for anything that is not a string."""
+    return value if isinstance(value, str) else ""
 
 # What a block prints when the artifact it reads is not readable at all (a symlink, a directory,
 # a device, or bytes this reader refuses). The refusal text the reader carries is deliberately

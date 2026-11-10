@@ -28,7 +28,8 @@ REPO = Path(__file__).resolve().parent.parent
 from public_safety import FIXTURE_HOME_PATH_PATTERNS, HOME_PATH_PATTERNS, SECRET_PATTERNS  # noqa: E402
 
 SKILL_DIRS = [REPO / "skills" / "steering-ledger",
-              REPO / "skills" / "census", REPO / "skills" / "direction"]
+              REPO / "skills" / "census", REPO / "skills" / "direction",
+              REPO / "skills" / "noni"]
 FIXTURES = REPO / "tests" / "fixtures"
 
 

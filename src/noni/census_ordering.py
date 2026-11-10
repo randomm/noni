@@ -95,6 +95,28 @@ STATUS_SUPERSEDED = "superseded"
 ORDER_DEFAULT_SUBJECT = "noni/direction/order.json"
 ISSUE_STATE_SUBJECT = "issue-state"
 
+# The class whose rows below this file reports, spelled here rather than imported
+# (``census_render`` names the same id beside the note that says it did not run). The
+# subject of the row a run raises when it had an order to check and no way to ask
+# whether its issues are closed is the group's whole-file subject, not an entry's, and
+# the row carries the ``whole_artifact`` marker: that marker is what keeps it through
+# ``census_run.keep`` under any ``--only`` set -- the "no ordering rows" reading that
+# left the pilot's CI green (issue #148). A subject is an id, never a path, so no
+# machine-local path reaches the report.
+CLOSED_STATE_CHECK = "ordering-closed"
+ORDER_WHOLE_ARTIFACT_SUBJECT = ORDER_DEFAULT_SUBJECT
+
+# The message of that row: cause and fix in the class's own terms. Deliberately not the
+# ``note:`` sentence, which belongs to the class that did not run and is pinned verbatim
+# by ``tests/test_census_ordering_json_note.py``; this row is a finding of the class, so
+# it is worded as one. The census still never contacts a tracker: the file the remedy
+# names is an adapter's or an operator's to produce.
+CLOSED_STATE_UNASKED = (
+    "closed state not checked: the order holds entries and no --issue-state FILE was "
+    "given, so no entry's closed state was asked and a dead order reads as a live one "
+    "(the census never contacts a tracker: produce the map with an adapter, or pass "
+    "--issue-state)")
+
 
 def _why_problems(entry: dict) -> list[str]:
     """The census's copy of the rationale rule for one entry's ``why``.
@@ -252,6 +274,57 @@ def _entry_problems(entries: list, problems: list[str], parse_iso, names_zone) -
                                      or parse_iso(confirmed) is None
                                      or not names_zone(confirmed)):
             problems.append(f"entry {index} confirmed {confirmed!r} is not a UTC timestamp")
+
+
+def closed_state_unasked_row(order: Path, root: Path, strict: bool,
+                             findings: list[dict], *, row: Callable[..., dict],
+                             rel_to_root: Callable[[Path, Path], str],
+                             readers, primitives: dict) -> None:
+    """Append the run's one row for a closed question it could not ask, if it owes one.
+
+    A note is not a verdict. ``check_ordering`` answers the closed question from the
+    ``--issue-state`` map alone and says nothing when the map was never handed over; the
+    run prints that as a ``note:`` line (and on the summary row under ``--json``), but a
+    CI step gating on the exit code stayed green for days over an order whose issues had
+    all been closed (issue #148). So the same fact is also a row of ``ordering-closed``:
+    ``warn``, the class's own 46 under ``--strict``, no row and no exit otherwise. The
+    caller asks only when the flag was absent and the class was requested, so this
+    function reads no flag and no filter -- only the artifact, the one fact left to
+    decide.
+
+    The row is owed by exactly one state, and every other state is refused: a run must
+    never invent a finding where the reader has nothing to repair.
+
+    - no artifact at all: the ordering layer is optional, so a project that never
+      ordered anything is not in default of a closed check (``load_order`` answers
+      ``([], None)`` for an absent file, so the empty-entries arm covers that too).
+    - an artifact this run could not read: the group already appended its fail-class
+      ``ordering-malformed`` row, and a warn of this class must not add a second
+      verdict to a defect the run already reported as a failure.
+    - an artifact holding no entry: an operator who wants nothing ordered next has said
+      so, and no ordered issue has a closed state left unstated.
+
+    ``readers`` and the census's own path classifier, clock parser, stamp rule and
+    message bounder in ``primitives`` are handed in at the call exactly as
+    ``check_ordering`` takes them, so a seam a test puts on any of them is the seam this
+    decision uses too, and this file keeps redefining none of them. The artifact is read
+    a second time on purpose: ``check_ordering`` read it once and reported what it read,
+    and a shape this reader cannot parse is the absence of a verdict here, never a second
+    verdict of this group's own. ``strict`` goes to the row factory and nowhere else, so
+    the row's severity is the one rule the whole report reads
+    (``census_render._promote``) and its fix hint is the table's for the class: a row
+    this run raises never words its own remedy.
+    """
+    entries, problem = readers.load_order(
+        order, primitives["file_kind"], primitives["bounded"], primitives["parse_iso"],
+        lambda value: order_problems(value, primitives["parse_iso"],
+                                     readers.names_zone),
+        primitives["load_json"], primitives["clipped"])
+    if problem is not None or not entries:
+        return
+    findings.append(row(CLOSED_STATE_CHECK, strict,
+                        ORDER_WHOLE_ARTIFACT_SUBJECT, rel_to_root(root, order),
+                        CLOSED_STATE_UNASKED, root, whole_artifact=True))
 
 
 def check_ordering(

@@ -321,6 +321,21 @@ def _run(argv: list[str] | None = None) -> int:
         # reads the human report.
         if issue_state_path is None and "ordering-closed" in requested:
             notes.append(ORDERING_CLOSED_NOT_EVALUATED)
+            # The note alone is not a verdict, and a recipe-following CI that reads
+            # only the exit code saw green while its order went dead (issue #148). So
+            # the same fact is also a row of the class that owns the question, built by
+            # the group's own ``add`` helper so it shares the group's row factory,
+            # ``strict`` promotion and root-relative artifact naming: a warn without
+            # --strict, which leaves the exit exactly where the note left it, and the
+            # class's own 46 under --strict.
+            _ordering.closed_state_unasked_row(
+                ordering, root, args.strict, findings, row=census._row,
+                rel_to_root=census._rel_to_root, readers=_ordering_readers,
+                primitives={"file_kind": census._file_kind,
+                            "bounded": census._bounded,
+                            "clipped": census._clipped,
+                            "parse_iso": census._parse_iso,
+                            "load_json": _census_json.load_json_strict})
 
     # The intent class is its own group: one file, one cited record, and the
     # citation question answered from the history view this run already took. The

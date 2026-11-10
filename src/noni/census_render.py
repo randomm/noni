@@ -141,6 +141,28 @@ def _warn_count(findings: list[dict]) -> int:
     return sum(1 for f in findings if f["severity"] == "warn")
 
 
+def closed_state_verdict(notes: tuple[str, ...]) -> str:
+    """The clause of the verdict line saying the closed question went unasked, or "".
+
+    A run over an order holding entries with no ``--issue-state`` leaves the whole
+    closed question unasked, and a reader who judges the run by its last line (a CI step
+    grepping the verdict, a person scanning a terminal) must not have to reach past the
+    rows to a ``note:`` line to learn it. So the verdict carries the id of the class
+    that went unasked, keyed on the note the run itself produced: no note, no clause.
+    ``--strict`` gives the same fact its exit code (see ``census_ordering
+    .closed_state_unasked_row``); this clause is what the un-strict run says instead.
+
+    Returns ``""`` rather than folding into the caller's sentence: the caller's all-clear
+    branch is shared by every run that has nothing to report, and an empty string is what
+    keeps every run that asked its closed question -- an empty order, an absent order, a
+    run that skipped the class, or any run given ``--issue-state`` -- worded exactly as it
+    was before this clause existed. The caller appends it to the all-clear word rather
+    than replacing it: a run with no rows whose closed check went unasked still has no
+    findings to count, so it says "clean" and then says what it did not check.
+    """
+    return f" {ORDERING_CLOSED_CHECK} not checked" if ORDERING_CLOSED_NOT_EVALUATED in notes else ""
+
+
 def _not_evaluated_headline(notes: tuple[str, ...]) -> str:
     """The clause of a no-rows headline that says which checks went unasked.
 
@@ -308,7 +330,9 @@ def _render_human(findings: list[dict], counts: dict[str, int], ok: bool,
             print(f"note: {note}")
     fired = {f["check"] for f in findings}
     if ok:
-        verdict_text = (f"{warns} warning(s)" if warns else "clean")
+        # ``closed_state_verdict`` returns the empty string for every run that asked
+        # its closed question, and the all-clear word survives only when it did.
+        verdict_text = (f"{warns} warning(s)" if warns else "clean") + closed_state_verdict(notes)
     else:
         verdict_text = f"{exit_code} ({', '.join(sorted(fired))})"
     print(f"summary: {verdict_text}; {sum(counts.values())} finding(s); "

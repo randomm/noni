@@ -1,6 +1,6 @@
 ---
 name: direction
-description: Set and correct the order the operator wants issues worked next -- one committed artifact, noni/direction/order.json, written only by scripts/order.py (add, move, remove, confirm) -- and keep the standing intent the agents read first at session start, noni/direction/intent.md, written only by scripts/intent.py (set). Use when the operator says what to work on first, when the operator reorders the queue, when an ordered issue needs re-confirming, when the project's purpose or principles must be recorded or corrected, or when the census reported an ordering-malformed / ordering-stale / ordering-closed / intent row and the artifact must be repaired with its writer. Do NOT use for the steering ledger (that is the steering-ledger skill), for the session register (sessions-claims), or for reading the state (the census skill is the arbiter) -- this skill owns the ordered list, the standing intent, and the two writers that produce them.
+description: Set and correct the order the operator wants issues worked next -- one committed artifact, noni/direction/order.json, written only by scripts/order.py (add, move, remove, confirm) -- and keep the standing intent the agents read first at session start, noni/direction/intent.md, written only by scripts/intent.py (set). Use when the operator says what to work on first, when the operator reorders the queue, when an ordered issue needs re-confirming, when the project's purpose or principles must be recorded or corrected, or when the census reported an ordering-malformed / ordering-stale / ordering-closed / intent row and the artifact must be repaired with its writer. Do NOT use for the steering ledger (that is the steering-ledger skill) or for reading the state (the census skill is the arbiter) -- this skill owns the ordered list, the standing intent, and the two writers that produce them.
 ---
 
 # direction
@@ -44,8 +44,9 @@ the other two files appear to imply: the agent stops, states what it found and
 what it would do, and waits for the operator.
 
 **The per-session protocol.** At session start, read `noni/direction/intent.md`
-first when it is present -- before registering a session and before claiming a
-task. A project that has written none has no intent file and nothing to read:
+first when it is present -- before reading the order and before starting work on
+what it puts first. A project that has written none has no intent file and nothing
+to read:
 absence is a state, not a failure, and the census says nothing about it.
 
 ## The honesty line
@@ -334,7 +335,7 @@ The write itself goes to a temp file in its own directory and moves into place w
   issue and `intent.py` refuses a duplicate section. Nothing is factored between
   them, so neither file's rules leak into the other.
 - **The writers are not the arbiters.** They validate what they write; they do
-  not decide whether the ledger, the session register, the order or the intent
+  not decide whether the ledger, the order or the intent
   are sound. Run the census for that.
 
 ## The order edge cases that matter
@@ -380,7 +381,7 @@ The write itself goes to a temp file in its own directory and moves into place w
   hand-repaired file the census accepts and the writer still refuses can never
   be corrected with `order.py`, because every verb refuses to open it.
 - **The writer is not the arbiter.** It validates what it writes; it does not
-  decide whether the ledger, the session register or the order are sound. Run
+  decide whether the ledger or the order are sound. Run
   the census for that.
 - **A concurrent writer refuses; it is never merged.** The refused run of
   `the order changed since it was read; re-run` is exit 4, and the remedy is a

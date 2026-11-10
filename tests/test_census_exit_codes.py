@@ -14,7 +14,6 @@ from _harness import _commit_file, _git, _init_repo
 from census_fixtures import (
     _commit_dir_state,
     _ndjson_rows,
-    _session_body,
     _valid_record,
 )
 from census_run import _run_census
@@ -324,49 +323,3 @@ class TestExitCodes:
                       json.dumps(_valid_record("2026-10-20-b", "decided", "2026-10-01-root"), indent=2))
         rc, out, err = _run_census(repo)
         assert rc == 20, f"expected exit 20 for duplicate supersede, got {rc}\nstderr: {err}\nstdout: {out}"
-
-    def test_exit_30_double_claim(self, tmp_path):
-        repo = _init_repo(tmp_path / "repo")
-        _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md",
-                      _session_body("developer", claims=["#42"]))
-        _commit_file(repo, "noni/sessions/2026-10-01-bbbbbb.md",
-                      _session_body("reviewer", claims=["#42"]))
-        rc, out, err = _run_census(repo)
-        assert rc == 30, f"expected exit 30, got {rc}\nstderr: {err}\nstdout: {out}"
-
-    def test_exit_31_claim_without_register(self, tmp_path):
-        repo = _init_repo(tmp_path / "repo")
-        # File with claims but no identity field
-        body = ("- host/worktree: ws-1\n"
-                "- started: 2026-10-01T10:00:00Z\n"
-                "- status: active\n"
-                "- claims:\n"
-                "  - claim: #42\n")
-        _commit_file(repo, "noni/sessions/2026-10-01-cccccc.md", body)
-        rc, out, err = _run_census(repo)
-        assert rc == 31, f"expected exit 31, got {rc}\nstderr: {err}\nstdout: {out}"
-
-    def test_exit_32_malformed_claim_row(self, tmp_path):
-        repo = _init_repo(tmp_path / "repo")
-        body = ("- identity: developer\n"
-                "- host/worktree: ws-1\n"
-                "- started: 2026-10-01T10:00:00Z\n"
-                "- status: active\n"
-                "- claims:\n\n"
-                "  - claim:\n")
-        _commit_file(repo, "noni/sessions/2026-10-01-dddddd.md", body)
-        rc, out, err = _run_census(repo)
-        assert rc == 32, f"expected exit 32, got {rc}\nstderr: {err}\nstdout: {out}"
-
-    def test_lowest_code_wins(self, tmp_path):
-        """When exit 30 (double-claim) and 32 (malformed) both fire, 30 wins."""
-        repo = _init_repo(tmp_path / "repo")
-        _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md",
-                      _session_body("developer", claims=["#42"]))
-        _commit_file(repo, "noni/sessions/2026-10-01-bbbbbb.md",
-                      _session_body("reviewer", claims=["#42"]))
-        # Malformed file (missing all fields)
-        _commit_file(repo, "noni/sessions/2026-10-01-eeeeee.md",
-                      "- host/worktree: ws\n- started: 2026-10-01T10:00:00Z\n- status: active\n- claims:\n")
-        rc, out, err = _run_census(repo)
-        assert rc == 30, f"expected lowest code 30 to win, got {rc}\nstderr: {err}\nstdout: {out}"

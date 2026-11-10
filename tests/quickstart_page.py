@@ -38,8 +38,11 @@ COEXISTENCE_HEADING = "Using noni alongside a driver that keeps its own claims"
 # instead of passing on the sentences around it (the failure mode
 # ``tests/test_session_symlink_docs.py`` records for a first version that read
 # neighbouring prose). The wording these phrases pin is the product's own behaviour:
-# ``current_branch`` in ``src/noni/_session_push.py`` reads the branch the ``--repo``
-# tree has checked out, and that is the branch every writer's commit lands on.
+# The writers commit in the ``--repo`` tree's own directory and never pass a branch
+# or a ref of their own, so that tree's checked-out branch is where every writer's
+# commit lands. The
+# sessions-era module that held the branch helpers is gone; the behaviour these two
+# phrases pin is unchanged.
 ROUTE_CHOICE_START = "commits straight to the branch it finds checked out"
 ROUTE_CHOICE_CLOSE = "use Route B"
 

@@ -104,7 +104,7 @@ testpaths = ["tests"]
 # twice.
 #
 # `patch = ["subprocess"]` plus `parallel = true` are what make the gate
-# honest: register.py, claim.py and census-sessions.py are reached only as
+# honest: the entry points under ``skills/*/scripts/`` are reached only as
 # subprocesses, so without subprocess measurement their files would be read
 # but never executed. `relative_files` keeps the combined data portable, so
 # `coverage combine` finds the subprocess files written by the launched

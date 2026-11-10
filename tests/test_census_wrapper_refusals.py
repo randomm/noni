@@ -1,10 +1,10 @@
 """What the two shell census wrappers accept, what they refuse, and what they hand on.
 
 ``skills/steering-ledger/scripts/census.sh`` execs the in-place ``census.py``
-beside it, which calls ``census_wrapper.run_ledger``; the sessions skill's pair
-reaches ``run_sessions`` the same way. Those two functions are the wrappers'
-whole mind: one allowlist of options, two shape checks over the directory, and
-one call (``src/noni/census_wrapper.py``, ``run``). Everything the wrappers do
+beside it, which calls ``census_wrapper.run_ledger``. That function is the
+wrapper's whole mind: one allowlist of options, two shape checks over the
+directory, and one call (``src/noni/census_wrapper.py``, ``run``). Everything
+the wrapper does
 not list is refused before the census is reached -- which is the whole design,
 and the reason the cases below are a table rather than a conversation about
 what a token means.
@@ -36,22 +36,16 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 import pytest
-from census_probe_doubles import _RecordedCensusCall, _RecordedSessionsCall
-from census_wrapper import _VALUE_FLAG, EXIT_USAGE, run_ledger, run_sessions
+from census_probe_doubles import _RecordedCensusCall
+from census_wrapper import _VALUE_FLAG, EXIT_USAGE, run_ledger
 
-# The broken-record fixtures of the two registers, each with the code its class wins
-# the run by: an unparseable ledger record is `ledger-record` (10) and a wrongly
-# named register file is `session-malformed` (32).
-_SESSIONS_BROKEN_NAME = "not-an-allocated-session.md"
-_BROKEN_RECORD = {"decisions": ("2026-10-02-broken.json", "{ not json\n", 10),
-                  "sessions": (_SESSIONS_BROKEN_NAME, "- identity: x\n", 32)}
+"""The broken-record fixture, with the code its class wins the run by: an
+unparseable ledger record is `ledger-record` (10)."""
+_BROKEN_RECORD = ("2026-10-02-broken.json", "{ not json\n", 10)
 
-# Each entry point, with the noun its usage line uses, the function a caller
-# reaches it through, and the census double that reads its command line: one
-# table, so the cases below drive both wrappers and cannot quietly cover only the
-# ledger one.
-_WRAPPERS = ((run_ledger, "decisions", _RecordedCensusCall),
-             (run_sessions, "sessions", _RecordedSessionsCall))
+# The entry point, with the noun its usage line uses, the function a caller
+# reaches it through, and the census double that reads its command line.
+_WRAPPERS = ((run_ledger, "decisions", _RecordedCensusCall),)
 
 # The same table without the double, for the cases that run the real census.
 _WRAPPERS_REAL = ((run, noun) for run, noun, _double in _WRAPPERS)
@@ -152,7 +146,7 @@ def paths(tmp_path):
 
 # --- the allowlist passes through ----------------------------------------------
 
-@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger", "sessions"))
+@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger",))
 @pytest.mark.parametrize("options,expected", _ALLOWED_FORMS,
                          ids=("none", "json", "strict", "now", "now-equals",
                               "all", "reversed"))
@@ -180,8 +174,7 @@ def test_an_allowed_option_reaches_the_census_as_typed(tmp_path, run, noun, doub
         f"the census was handed something else: {recorded.calls}")
 
 
-@pytest.mark.parametrize("run", (run_ledger, run_sessions),
-                         ids=("ledger", "sessions"))
+@pytest.mark.parametrize("run", (run_ledger,))
 @pytest.mark.parametrize("token", ("--help", "-h"))
 def test_the_help_token_alone_prints_the_wrapper_help_and_censuses_nothing(
         run, token, capsys):
@@ -198,7 +191,7 @@ def test_the_help_token_alone_prints_the_wrapper_help_and_censuses_nothing(
 
 # --- everything else is refused, and the census never runs ---------------------
 
-@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger", "sessions"))
+@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger",))
 @pytest.mark.parametrize("token", _REFUSED_TOKENS)
 def test_a_token_off_the_allowlist_is_refused_and_the_census_never_runs(
         tmp_path, run, noun, double, token, monkeypatch):
@@ -226,7 +219,7 @@ def test_a_token_off_the_allowlist_is_refused_and_the_census_never_runs(
         f"the census ran for a refused token: {recorded.calls}")
 
 
-@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger", "sessions"))
+@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger",))
 @pytest.mark.parametrize("argv", _TRAILING_NOW,
                          ids=("dir-then-now", "now-alone", "json-now-strict",
                               "json-now-nope", "now-then-strict", "now-then-nope"))
@@ -259,7 +252,7 @@ def test_a_trailing_now_with_no_value_is_refused_and_the_census_never_runs(
         f"the census ran with no timestamp to pin: {recorded.calls}")
 
 
-@pytest.mark.parametrize("run,noun", _WRAPPERS_REAL, ids=("ledger", "sessions"))
+@pytest.mark.parametrize("run,noun", _WRAPPERS_REAL, ids=("ledger",))
 def test_a_failing_tree_with_an_unlisted_option_exits_two_never_zero(
         tmp_path, run, noun):
     """The real census, no double: a failing tree plus a refused flag is 2, not its own code.
@@ -271,7 +264,7 @@ def test_a_failing_tree_with_an_unlisted_option_exits_two_never_zero(
     false clean a scripted caller acts on. Exit 2 with the census's report absent
     is the only answer that cannot be read as a verdict.
     """
-    name, body, code = _BROKEN_RECORD[noun]
+    name, body, code = _BROKEN_RECORD
     directory = Path(_register(tmp_path, noun))
     (directory / name).write_text(body, encoding="utf-8")
     rc_alone, out_alone, _err = _run_with(run, [str(directory)])
@@ -284,7 +277,7 @@ def test_a_failing_tree_with_an_unlisted_option_exits_two_never_zero(
 
 # --- the directory checks the allowlist does not replace ------------------------
 
-@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger", "sessions"))
+@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger",))
 def test_a_second_directory_is_refused_naming_both(tmp_path, run, noun, double,
                                                    monkeypatch):
     """Two directories, however the allowed options are interleaved, are exit 2 naming both.
@@ -310,7 +303,7 @@ def test_a_second_directory_is_refused_naming_both(tmp_path, run, noun, double,
     assert recorded.calls == [], f"the census ran on two directories: {recorded.calls}"
 
 
-@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger", "sessions"))
+@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger",))
 def test_an_empty_string_is_no_directory_and_never_censuses_the_cwd(
         tmp_path, run, noun, double, monkeypatch):
     """`census.sh ""` is exit 2, not a census of whatever `noni/<noun>` sat beside.
@@ -333,7 +326,7 @@ def test_an_empty_string_is_no_directory_and_never_censuses_the_cwd(
         f"the census ran over the cwd: {recorded.calls}")
 
 
-@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger", "sessions"))
+@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger",))
 def test_a_positional_that_is_a_symlink_is_refused_never_read_through(
         tmp_path, run, noun, double, monkeypatch):
     """A directory handed to the wrapper as a link is exit 2, and the census never runs.
@@ -363,7 +356,7 @@ def test_a_positional_that_is_a_symlink_is_refused_never_read_through(
         f"the census read through a link: {recorded.calls}")
 
 
-@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger", "sessions"))
+@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger",))
 def test_a_symlinked_parent_component_is_refused_never_read_through(
         tmp_path, run, noun, double, monkeypatch):
     """A register reached through a symlinked *parent* is exit 2, census never run.
@@ -396,7 +389,7 @@ def test_a_symlinked_parent_component_is_refused_never_read_through(
         f"the census read through a symlinked parent: {recorded.calls}")
 
 
-@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger", "sessions"))
+@pytest.mark.parametrize("run,noun,double", _WRAPPERS, ids=("ledger",))
 def test_a_trailing_dot_dot_through_a_symlink_is_refused_never_read_through(
         tmp_path, run, noun, double, monkeypatch):
     """``census.sh link/..`` is exit 2, census never run, and no "all checks passed".

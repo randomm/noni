@@ -45,8 +45,8 @@ def admits_creation(root: Path, no_commit: bool) -> bool:
     the two: :func:`noni._writer.ledger_is_first` admits a run only where ``--repo``
     holds no ``noni/`` at all, which is the one tree whose record this run can genuinely
     be the first of. A ``--no-commit`` run then adds its own case -- it commits nothing
-    until its caller commits it, which is how the shim route and the session writers
-    mint a record (docs/QUICKSTART.md) -- and a run into a tree that already has a
+    until its caller commits it, which is how a caller mints a record without
+    a commit of its own (docs/QUICKSTART.md) -- and a run into a tree that already has a
     ``noni/`` is a state root by the census's own account and reaches its normal reads.
 
     Asked of the tree and never of the ledger leaf: the directory the writer is about to

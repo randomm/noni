@@ -8,11 +8,10 @@ doc line is not executable, so the assertion has to come from the launch form th
 suite itself depends on: this module reads the interpreter out of the launchers
 that run each entry point and checks that the pages agree with it.
 
-Three entry points, three forms, one rule each:
+Two entry points, two forms, one rule each:
 
-- ``skills/steering-ledger/scripts/census.sh`` and
-  ``skills/sessions-claims/scripts/census-sessions.sh`` are bash scripts. The
-  suite runs them with ``bash``; every doc line that puts one in command
+- ``skills/steering-ledger/scripts/census.sh`` is a bash script. The
+  suite runs it with ``bash``; every doc line that puts one in command
   position shows ``bash`` or the direct executable form, never an interpreter
   other than that.
 - ``skills/census/scripts/census.py`` and its sibling wrappers are Python and
@@ -31,11 +30,11 @@ import re
 from pathlib import Path
 
 import pytest
-from _harness import CENSUS, CENSUS_SESSIONS, CENSUS_SH, DECIDE, ORDER, REPO
+from _harness import CENSUS, CENSUS_SH, DECIDE, ORDER, REPO
 from docs_commands import read
 from docs_promises import DOC_PAGES, SKILL_PAGES
 
-# The two launchers that already pin the shims' interpreter, read as text. They
+# The launcher that already pins the shim's interpreter, read as text. It
 # are named by path rather than imported for their constants because the point of
 # this check is the launch form those files commit to; if either stops launching
 # with bash, the check here is no evidence of anything and says so.
@@ -49,15 +48,13 @@ _LAUNCHERS: tuple[Path, ...] = (
 # script of another skill.
 SHIMS: tuple[tuple[Path, str], ...] = (
     (CENSUS_SH, "census.sh"),
-    (CENSUS_SESSIONS, "census-sessions.sh"),
 )
 
 # The Python entry points the pages launch, by basename. The wrappers are
 # documented as ``scripts/<name>.py`` and the README launches them under
 # ``python3``; their docstrings name the same route.
 _PY_ENTRIES: frozenset[str] = frozenset({
-    "census.py", "decide.py", "register.py", "claim.py", "release.py",
-    "close.py", "order.py",
+    "census.py", "decide.py", "order.py",
 })
 
 # Any interpreter a line may name. Deliberately broader than the two this tree
@@ -81,7 +78,7 @@ def _shebang(path: Path) -> str:
 def test_the_harness_launches_the_shims_with_bash() -> None:
     """The precondition of every check below, stated as its own test.
 
-    The suite's two shims-census launchers are the reference for "bash": if
+    The suite's census launchers are the reference for "bash": if
     they ever stop launching with bash, the page-level checks against bash stop
     meaning anything, so this fails at the source rather than leaving several
     green tests reading a rule nobody enforces. The launch strings are the
@@ -91,14 +88,9 @@ def test_the_harness_launches_the_shims_with_bash() -> None:
         assert path.is_file(), f"{path.name} is missing; the launch form is unpinned"
     launchers = "\n".join(path.read_text(encoding="utf-8") for path in _LAUNCHERS)
     census_launch = '["bash", str(REPO / "skills" / "steering-ledger" / "scripts" / "census.sh")'
-    sessions_launch = '["bash", str(CENSUS_SESSIONS)'
     assert census_launch in launchers, (
         "conftest.run_census no longer launches census.sh with bash, so the doc "
         "check below has no reference to check against"
-    )
-    assert sessions_launch in launchers, (
-        "conftest.run_sessions_census no longer launches census-sessions.sh with "
-        "bash, so the doc check below has no reference to check against"
     )
 
 
@@ -159,10 +151,9 @@ def test_the_documented_wrappers_are_the_ones_the_suite_launches() -> None:
     and help tests drive -- so a page that renames a wrapper or moves it to
     another skill fails here rather than shipping a command nobody can run.
     """
-    documented = {path.name for path in (CENSUS, DECIDE, ORDER, CENSUS_SH, CENSUS_SESSIONS)}
-    assert documented == {"census.py", "decide.py", "order.py", "census.sh",
-                          "census-sessions.sh"}, documented
-    for path in (CENSUS, DECIDE, ORDER, CENSUS_SH, CENSUS_SESSIONS):
+    documented = {path.name for path in (CENSUS, DECIDE, ORDER, CENSUS_SH)}
+    assert documented == {"census.py", "decide.py", "order.py", "census.sh"}, documented
+    for path in (CENSUS, DECIDE, ORDER, CENSUS_SH):
         assert path.is_file(), f"{path.name} is missing from the tree the docs describe"
         assert path.stat().st_mode & 0o111, (
             f"{path.name} is not executable, so the direct form the pages show "

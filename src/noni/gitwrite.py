@@ -118,8 +118,8 @@ def file_mode(path: Path) -> int:
 
 
 def write_atomic(path: Path, text: str) -> None:
-    """Write ``text`` via a same-directory temp file and os.replace (claim.py's
-    idiom): a crash mid-write leaves the old bytes, never a truncated record. The
+    """Write ``text`` via a same-directory temp file and os.replace: a crash
+    mid-write leaves the old bytes, never a truncated record. The
     temp file's mode is set before the replace, so what lands is the mode the file
     should have, not mkstemp's owner-only default."""
     mode = file_mode(path)

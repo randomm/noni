@@ -132,8 +132,8 @@ for a state tree it never read.
 ```
 
 Gate the build on the census's own classes, split by default severity: fail on
-10, 12, 15, 20, 30, 31, 32, 51, 52, 53, 54 and 55, and report without failing on
-40, 41, 42, 43, 44, 45, 46, 50, 56 and 57. Run it without `--strict`: the hygiene class is inactive on a tree
+10, 12, 15, 20, 51, 52, 53, 54 and 55, and report without failing on
+41, 42, 45, 46, 50, 56 and 57. Run it without `--strict`: the hygiene class is inactive on a tree
 with no deny-list, and a CI checkout has none, so the first run ends exit 0 with
 the inactive row as its only finding. Under `--strict` that row alone would fail
 the job, which is why `--strict` is the opt-in a team adds once the tree being

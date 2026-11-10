@@ -16,15 +16,11 @@ from pathlib import Path
 
 from harness_git import _git_env_with_identity
 from harness_paths import (
-    CLAIM,
-    CLOSE,
     COVERAGE_PROCESS_START,
     DECIDE,
     HELP_COLUMNS,
     ITEM,
     ORDER,
-    REGISTER,
-    RELEASE,
     REPO,
     SRC,
 )
@@ -40,7 +36,7 @@ def subprocess_env(base: dict | None = None) -> dict:
     ``PYTHONPATH`` is pinned to this tree's ``src/`` and put first. The suite
     runs in a worktree while the venv carries an editable install of ``noni``
     pointing at the checkout it was installed from, and a wrapper resolves
-    ``from noni import register`` through the *installed* path — so without
+    ``from noni import census`` through the *installed* path — so without
     this pin the child runs another tree's modules: the worktree's tests assert
     against one copy of the product and exercise another. Prepending (not
     replacing) keeps an inherited path element that a caller put there on
@@ -178,97 +174,6 @@ def run_item(repo: Path, *args: str, env: Mapping[str, str] | None = None,
                           timeout=120, **_cwd_kwarg(cwd))
 
 
-def run_register(repo: Path, identity: str, cwd: Path | None = None,
-                 **kwargs) -> subprocess.CompletedProcess[str]:
-    """Run register.py with --repo repo --identity identity and extra kwargs.
-
-    Launched under the deterministic identity env, like the other writers that
-    commit (``run_claim``, ``_run_session_writer``): register.py makes its own
-    commit, and the suite's autouse fixture clears ``GIT_AUTHOR_*`` /
-    ``GIT_COMMITTER_*`` from the environment, so a launcher that inherited the
-    ambient env would have git refuse the commit for want of an identity — the
-    writer answers that honestly with exit 3, which is not what the fixture
-    means to be testing. A ``--no-commit`` run is unaffected by the pin.
-    """
-    extra = []
-    for key, value in kwargs.items():
-        if value is None:
-            extra.append(f"--{key}")
-        else:
-            extra.extend([f"--{key}", str(value)])
-    full_env = subprocess_env()
-    full_env.update(_git_env_with_identity())
-    return subprocess.run(
-        [sys.executable, str(REGISTER), "--repo", str(repo), "--identity", identity, *extra],
-        capture_output=True,
-        text=True,
-        env=full_env,
-        timeout=120,
-        **_cwd_kwarg(cwd),
-    )
-
-
-def run_claim(
-    repo: Path, session_id: str, task: str, push: bool = False,
-    cwd: Path | None = None, **kwargs
-) -> subprocess.CompletedProcess[str]:
-    """Run claim.py with the standard arguments and optional --push.
-
-    Runs with the deterministic identity env (claim.py commits under the
-    caller's configured identity; the harness pins one here).
-
-    A valueless flag is passed as ``**{"no-commit": None}`` (a Python name
-    cannot carry a dash, hence the dict-expansion form): a ``None`` value
-    emits the bare flag, any other value emits ``--key value``."""
-    extra = []
-    for key, value in kwargs.items():
-        if value is None:
-            extra.append(f"--{key}")
-        else:
-            extra.extend([f"--{key}", str(value)])
-    cmd = [
-        sys.executable, str(CLAIM),
-        "--repo", str(repo),
-        "--session-id", session_id,
-        "--task", task,
-        *extra,
-    ]
-    if push:
-        cmd.append("--push")
-    full_env = subprocess_env()
-    full_env.update(_git_env_with_identity())
-    return subprocess.run(cmd, capture_output=True, text=True, env=full_env,
-                          timeout=120, **_cwd_kwarg(cwd))
-
-
-def run_close(
-    repo: Path, session_id: str, push: bool = False, cwd: Path | None = None,
-    **kwargs
-) -> subprocess.CompletedProcess[str]:
-    """Run close.py with ``--repo repo --session-id SID`` and optional --push.
-
-    Mirrors :func:`run_claim`: the deterministic identity env (close.py commits
-    under the tree's configured identity, and a --no-commit run must not be
-    influenced by a host gitconfig either), and the same
-    ``**{"no-commit": None}`` form for a valueless flag.
-    """
-    return _run_session_writer(CLOSE, repo, session_id, push=push, cwd=cwd, **kwargs)
-
-
-def run_release(
-    repo: Path, session_id: str, task: str, push: bool = False,
-    cwd: Path | None = None, **kwargs
-) -> subprocess.CompletedProcess[str]:
-    """Run release.py with the standard arguments and optional --push.
-
-    Same launcher contract as :func:`run_claim` (deterministic identity env,
-    ``**{"no-commit": None}`` for a valueless flag): the two writers that name
-    a task commit under the tree's identity, so both are launched the same way.
-    """
-    return _run_session_writer(RELEASE, repo, session_id, task=task, push=push,
-                               cwd=cwd, **kwargs)
-
-
 def _cwd_kwarg(cwd: Path | None) -> dict[str, str]:
     """The ``cwd=`` keyword for a launcher's ``subprocess.run``, or none.
 
@@ -279,34 +184,6 @@ def _cwd_kwarg(cwd: Path | None) -> dict[str, str]:
     name a directory (the historical behaviour: inherit pytest's own).
     """
     return {} if cwd is None else {"cwd": str(cwd)}
-
-
-def _run_session_writer(
-    script: Path, repo: Path, session_id: str, *, task: str | None = None,
-    push: bool = False, cwd: Path | None = None, **kwargs,
-) -> subprocess.CompletedProcess[str]:
-    """One sessions writer under the running interpreter, argv built the same way.
-
-    close.py and release.py differ only in whether a ``--task`` is named, so the
-    argv build lives in one place and cannot drift from :func:`run_claim`'s.
-    """
-    extra = []
-    for key, value in kwargs.items():
-        if value is None:
-            extra.append(f"--{key}")
-        else:
-            extra.extend([f"--{key}", str(value)])
-    cmd = [sys.executable, str(script), "--repo", str(repo),
-           "--session-id", session_id]
-    if task is not None:
-        cmd += ["--task", task]
-    cmd += extra
-    if push:
-        cmd.append("--push")
-    full_env = subprocess_env()
-    full_env.update(_git_env_with_identity())
-    return subprocess.run(cmd, capture_output=True, text=True, env=full_env,
-                          timeout=120, **_cwd_kwarg(cwd))
 
 
 def run_from(cwd: Path, script: Path, *args: str,
@@ -326,8 +203,8 @@ def run_from(cwd: Path, script: Path, *args: str,
     ``script`` is either a wrapper under ``skills/*/scripts/`` or a package
     module file under ``src/noni/``: both are launched by path, which is the
     form the skills and the README document. ``identity`` applies the same
-    deterministic git identity the committing launchers use (``run_claim``,
-    ``run_order``, ``run_decide``): a writer launched from a foreign cwd still
+    deterministic git identity the committing launchers use (``run_order``,
+    ``run_decide``): a writer launched from a foreign cwd still
     commits under the harness identity, so a failure is the tool's and not the
     absence of an author. A caller that wants the bare environment (a refusal
     with no identity, say) passes ``identity=False`` and its own ``env``.

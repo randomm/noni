@@ -36,40 +36,24 @@ import pytest
 # scenario_eval.py — both a test module and a standalone build tool — can
 # import them without pulling in this file's module-level pytest import.
 from _harness import (
-    CENSUS_SESSIONS,
-    CLOSE,
     DECIDE,
-    RELEASE,
     REPO,
     _git_ok,
-    advance_origin_with_claim,
     build_bare_origin,
     git_pin_date,
     push_with_retry,
-    run_claim,
-    run_close,
     run_decide,
-    run_register,
-    run_release,
     subprocess_env,
 )
 
 __all__ = [
-    "CENSUS_SESSIONS",
-    "CLOSE",
     "DECIDE",
-    "RELEASE",
     "REPO",
     "_git_ok",
-    "advance_origin_with_claim",
     "build_bare_origin",
     "git_pin_date",
     "push_with_retry",
-    "run_claim",
-    "run_close",
     "run_decide",
-    "run_register",
-    "run_release",
     "subprocess_env",
 ]
 
@@ -118,8 +102,8 @@ NONI_ENV_VARS = (
 # must not be trusted as the census's own code).
 #
 # The same pin has to reach a *child* process, which is what makes this a conftest
-# line rather than a _harness one: the shell wrappers (census.sh, census-sessions.sh)
-# resolve noni with the plain interpreter their preamble finds, and a wrapper is a
+# line rather than a _harness one: the shell wrapper (census.sh)
+# resolves noni with the plain interpreter their preamble finds, and a wrapper is a
 # child that imports pytest never sees. With the package uninstalled -- the state of
 # a plain clone, and of CI before the wheel step -- such a child answered "the noni
 # package is not importable" and exited 3, so every test that launches a wrapper
@@ -131,12 +115,12 @@ os.environ["PYTHONPATH"] = (
     str(REPO / "src") + os.pathsep + _INHERITED_PYTHONPATH
     if _INHERITED_PYTHONPATH else str(REPO / "src"))
 
-# The interpreter the sessions-census wrapper execs. census-sessions.sh reads
+# The interpreter the census wrapper execs. census.sh reads
 # NONI_PYTHON (defaulting to python3); exporting sys.executable here makes the
 # wrapper run the same interpreter pytest itself runs under, which is the one
 # coverage's subprocess hook can measure. setdefault, not set: a caller that
-# exports its own NONI_PYTHON keeps it, and tests/test_sessions_census_exits.py::
-# test_exit_3_python_missing builds its own PATH-less env to prove exit 3.
+# exports its own NONI_PYTHON keeps it, and tests/test_decide_census_sh.py builds
+# its own PATH-less env to prove exit 3.
 os.environ.setdefault("NONI_PYTHON", sys.executable)
 
 # Clear at import time (conftest is imported before any test module is
@@ -225,32 +209,6 @@ def run_census():
         proc = subprocess.run(
             ["bash", str(REPO / "skills" / "steering-ledger" / "scripts" / "census.sh"),
              str(ledger_dir), *extra],
-            capture_output=True,
-            text=True,
-            env=full_env,
-            timeout=60,
-        )
-        return proc.returncode, proc.stdout, proc.stderr
-    return _run
-
-
-@pytest.fixture
-def run_sessions_census():
-    """Run the sessions census against a sessions dir.
-
-    Returns (exit_code, stdout, stderr). Pass a custom env dict to override
-    PATH or other variables, and ``extra`` for census flags the run should
-    carry (``--json`` for the NDJSON rows, ``--strict`` to promote the warns):
-    the wrapper passes every option through to the census, and a test that wants
-    the machine-facing stream asks the census for it.
-    """
-    def _run(sessions_dir: Path, *, env: dict | None = None,
-             extra: tuple[str, ...] = ()) -> tuple[int, str, str]:
-        full_env = subprocess_env()
-        if env:
-            full_env.update(env)
-        proc = subprocess.run(
-            ["bash", str(CENSUS_SESSIONS), str(sessions_dir), *extra],
             capture_output=True,
             text=True,
             env=full_env,

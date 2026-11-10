@@ -1,7 +1,6 @@
 """The ledger and ordering writers clear the inherited git variables (issue #39).
 
-The same contract ``tests/test_session_writer_git_env.py`` proves for the session
-writers, for the two writers that commit a JSON artifact: ``decide.py`` (a ledger
+The same contract, for the two writers that commit a JSON artifact: ``decide.py`` (a ledger
 record) and ``order.py`` (the ordering artifact). ``--repo`` is the only thing
 that names the state root, but git reads a body of variables from the environment
 before it ever consults the ``-C`` path its caller passed — the four that

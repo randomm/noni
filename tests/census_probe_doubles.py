@@ -2,9 +2,7 @@
 
 ``_UnreadableGit`` stands in for a Git object whose history read failed, which is how
 a test reaches the cannot-tell paths without a fixture repo that is broken in some
-other way. Copied verbatim from ``tests/test_census_unified.py``, whose sessions
-probe-contract tests now live in ``tests/test_census_sessions_probe_contract.py``
-and whose listing tests live in ``tests/test_census_sessions_listing_fault.py``.
+other way. Copied verbatim from ``tests/test_census_unified.py``.
 
 ``_RecordedCensusCall`` stands in for the census behind the ledger wrapper, which
 is how a test pins what the wrapper hands over without running a census over a
@@ -44,26 +42,6 @@ class _RecordedCensusCall:
         # than asserted here -- which classes a wrapper runs is the check
         # contract's business, pinned in test_census_check_contract.py.
         target = argv[argv.index("--ledger") + 1]
-        rest = argv[argv.index("--only"):] if "--only" in argv else []
-        while rest[:1] == ["--only"] and len(rest) > 1:
-            rest = rest[2:]
-        self.calls.append((target, list(rest)))
-        return 0
-
-
-class _RecordedSessionsCall(_RecordedCensusCall):
-    """The sessions twin of :class:`_RecordedCensusCall`.
-
-    The base double reads the state path out of the wrapper's ``--ledger`` flag,
-    which is the only one the ledger wrapper passes; the sessions wrapper names its
-    register with ``--sessions``, so a call read through the base double dies on a
-    flag the command line never carries. Same contract -- the path the caller
-    spelled and the options the caller named -- read from the flag this entry point
-    actually uses.
-    """
-
-    def __call__(self, argv: list[str]) -> int:
-        target = argv[argv.index("--sessions") + 1]
         rest = argv[argv.index("--only"):] if "--only" in argv else []
         while rest[:1] == ["--only"] and len(rest) > 1:
             rest = rest[2:]

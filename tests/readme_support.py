@@ -113,10 +113,10 @@ _ALLOWED_GIT_CONFIG_KEYS: frozenset[str] = frozenset({"user.name", "user.email"}
 # and not the other. ``_claim_is_documented`` proves the claiming file says so.
 _STATE_DOCS: dict[str, Path] = {
     r"noni/decisions/?": Path("skills/steering-ledger/SKILL.md"),
-    r"noni/sessions/?": Path("skills/sessions-claims/SKILL.md"),
     r"noni/direction/?": Path("skills/direction/SKILL.md"),
     r"noni/direction/order\.json": Path("skills/direction/SKILL.md"),
     r"noni/direction/intent\.md": Path("skills/direction/SKILL.md"),
+    r"noni/items/?": Path("skills/census/SKILL.md"),
     r"\.venv/bin/[\w.-]+": Path("pyproject.toml"),
 }
 

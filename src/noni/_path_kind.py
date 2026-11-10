@@ -47,7 +47,7 @@ from pathlib import Path
 from ._safe_text import safe_path
 
 # The word a refusal uses for a path that is a link. Spelled once, here, because
-every guard asks the same question of the same bits.
+# every guard asks the same question of the same bits.
 SYMLINK_WORD = "symlink"
 
 # The two errno values that mean "nothing of mine exists at that path". A refusal of
@@ -57,7 +57,7 @@ ABSENT_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR})
 
 # The head of the verdict :func:`_declined` renders for an ``lstat`` the filesystem
 # refused to answer. One wording, so one declined syscall reads the same way to every
-guard in the family.
+# guard in the family.
 _DECLINED_PREFIX = "could not be inspected"
 
 

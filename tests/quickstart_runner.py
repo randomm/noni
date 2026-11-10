@@ -11,10 +11,9 @@ The two moves, and why each is a plain mapping rather than a rule with a defence
 beside it:
 
 - **Placeholder substitution.** ``<record-id>`` is the id the reader reads off the
-  ``decide`` line's own output and ``<session-id>`` is the id ``register`` printed,
-  so the harness reads each off the file that line committed (see
-  :meth:`quickstart_topology.World.collect_record_id` and
-  :meth:`quickstart_topology.World.collect_session_id`). Applied token by token,
+  ``decide`` line's own output,
+  so the harness reads it off the file that line committed (see
+  :meth:`quickstart_topology.World.collect_record_id`). Applied token by token,
   never by rejoining the line: one argv entry holds spaces the reader quoted
   (``q1=Wait a week``), and a join-and-resplit would hand the program those words
   separately -- a different command from the one on the page.
@@ -96,10 +95,10 @@ __all__ = [
 # both quickstart test modules, so the pair cannot drift to different instants.
 ORDERING_NOW = "2026-10-27T12:00:00Z"
 
-# Both placeholders the page asks the reader to fill take their value from the
-# running tree (see ``World.collect_record_id`` and ``World.collect_session_id``):
-# each names a file a writer committed, so a fixed value would name one no run can
-# have made. There is deliberately no fallback mapping for them, and no such name in
+# The placeholder the page asks the reader to fill takes its value from the
+# running tree (see ``World.collect_record_id``):
+# it names a file a writer committed, so a fixed value would name one no run can
+# have made. There is deliberately no fallback mapping for it, and no such name in
 # this module. ``<record-id>`` used to carry the literal
 # ``2026-11-02-release-scope`` (#70): decide dates the id it writes by the day it
 # ran, so that literal named a real record on one day only and the page's ordering
@@ -271,9 +270,10 @@ def run_route_b(world: World) -> list[list[str]]:
     The one walk every Route B test drives: the project's git identity comes from the
     page's own Route A config lines (Route B's ignore-rule line writes into the
     project, and ``git status`` there reports an untracked ``.gitignore`` unless the
-    tree has an identity), the register line's session id has to be read off disk
-    *after* that line and *before* the claim line that names it, and the snapshot
-    that makes that read mean "this run added one" has to be taken before register
+    tree has an identity), the record id the two direction writers name has to be
+    read off disk *after* the ``decide`` line and *before* the lines that name it,
+    and the snapshot
+    that makes that read mean "this run added one" has to be taken before decide
     ran. Two copies of that sequence drift -- one drops the snapshot, the other gains
     a config call the page never printed -- and then the two modules stop running the
     same route.
@@ -295,8 +295,6 @@ def run_route_b(world: World) -> list[list[str]]:
             # plants it where ``load_denylist`` reads it. The Route B test reads the
             # file back: planted, active, and untracked by the clone.
             plant_denylist(world)
-        if argv[:2] == ["noni", "register"]:
-            world.mark_sessions()
         if argv[:2] == ["noni", "decide"]:
             world.mark_decisions()
         proc = launch(world, argv, world.project)
@@ -307,8 +305,6 @@ def run_route_b(world: World) -> list[list[str]]:
         # missing, so the exit code below is the reader's answer, not a formality.
         if argv[:3] == ["git", "-C", STATE_DIR, "commit"]:
             checked(proc, "Route B commit of the clone's own ignore rule")
-        if argv[:2] == ["noni", "register"]:
-            world.collect_session_id()
         if argv[:2] == ["noni", "decide"]:
             world.collect_record_id()
         if argv[:2] in _ID_CONSUMERS:
@@ -316,17 +312,16 @@ def run_route_b(world: World) -> list[list[str]]:
     return commands
 
 
-# The three lines that carry an id a collector produced rather than one the reader
-# typed: both direction writers' ``--decision`` and the claim writer's
-# ``--session-id``. The intent writer is here because it asks the same question of
+# The two lines that carry an id a collector produced rather than one the reader
+# typed: both direction writers' ``--decision``. The intent writer is here because
+# it asks the same question of
 # the ledger as the ordering writer does, so it earns the same two refusals: a
 # golden line pre-filled with a value, and a token no writer could have produced.
 _ID_CONSUMERS: tuple[tuple[str, ...], ...] = (
-    ("noni", "intent"), ("noni", "order"), ("noni", "claim"))
+    ("noni", "intent"), ("noni", "order"))
 
 # The flag each consumer carries its id in, keyed by the command pair.
-_ID_FLAGS = {("noni", "intent"): "--decision", ("noni", "order"): "--decision",
-             ("noni", "claim"): "--session-id"}
+_ID_FLAGS = {("noni", "intent"): "--decision", ("noni", "order"): "--decision"}
 
 
 def _assert_consumed_id(argv: list[str], filled: list[str]) -> None:

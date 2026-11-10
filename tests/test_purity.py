@@ -42,7 +42,7 @@ from public_safety import (  # noqa: E402
     load_denylist,
 )
 
-SKILL_DIRS = [REPO / "skills" / "steering-ledger", REPO / "skills" / "sessions-claims",
+SKILL_DIRS = [REPO / "skills" / "steering-ledger",
               REPO / "skills" / "census", REPO / "skills" / "direction"]
 FIXTURES = REPO / "tests" / "fixtures"
 README = REPO / "README.md"
@@ -373,7 +373,6 @@ def test_the_shape_check_spares_the_pages_own_placeholder_forms() -> None:
         "the census reads `<project>/.noni-scrub-denylist` and `<record-id>.md`",
         "run `census.sh`, `decide.py` and `order.py` (e.g. from the skill dir)",
         "the reader's own remote is `git@forge.internal:you/your-project.git`",
-        "copy `census-sessions.sh` into the project and the `noni/direction/` dir",
         "read docs/QUICKSTART.md and docs/PUBLISHING.md before the first run",
         "the census reports `absent`, `corrupt` and `present but empty`",
         "push to `github.com/OWNER/your-project` with the placeholder owner filled",

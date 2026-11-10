@@ -144,7 +144,7 @@ def test_no_comment_line_is_a_command_the_page_means_to_run():
 def test_the_page_names_no_other_interpreter_for_a_shell_wrapper():
     """The bash shims are never shown under ``python3`` on this page.
 
-    ``skills/*/scripts/census.sh`` and ``census-sessions.sh`` are bash scripts;
+    ``skills/*/scripts/census.sh`` is a bash script;
     the interpreter they exec is their own business. A page that showed
     ``python3 <path>.sh`` would hand the reader a traceback, and the README's
     python3 launches are all ``.py`` entry points. The same rule over every page

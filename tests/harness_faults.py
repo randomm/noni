@@ -90,43 +90,14 @@ def _permission_fault_guard(target: Path, *, text: str = "input/output error",
 def _fault_the_ledger_listing(monkeypatch, ledger: Path) -> None:
     """Fault the census's listing of ``ledger`` for an in-process run.
 
-    One install over :func:`_permission_fault_guard`, so the ledger and sessions
-    sides of the seam are the same fixture and cannot drift into two conventions
+    One install over :func:`_permission_fault_guard`, so the seam has one builder
+    and cannot drift into two conventions
     for it (see the block comment for why the seam is ``iterdir``).
     """
     import census
 
     monkeypatch.setattr(census.Path, "iterdir",
                         _permission_fault_guard(ledger, text="readdir denied"))
-
-
-def _fault_the_sessions_listing(monkeypatch, sessions: Path,
-                                text: str = "input/output error") -> None:
-    """Fault the census's listing of ``sessions`` for an in-process run.
-
-    The sessions-side twin of :func:`_fault_the_ledger_listing`: same builder,
-    same seam, same in-process-only caveat. ``text`` defaults to the slash-free
-    errno words an unmounted device reports, so a test can quote the fault back
-    out of the row unchanged -- the scrubber replaces every ``/segment`` run with
-    its marker, and a message carrying a separator could not be.
-    """
-    import census
-
-    monkeypatch.setattr(census.Path, "iterdir",
-                        _permission_fault_guard(sessions, text=text))
-
-
-def _permission_fault_on(sessions: Path, leaked: str):
-    """The installable fixture of a fault that carries a path in ``filename``.
-
-    Thin over :func:`_permission_fault_guard`, and named for what it tests: the
-    one shape that carries both halves of the row's rule in a single exception,
-    so the row must print the words and not the path. Returns the replacement for
-    the caller to install with ``monkeypatch.setattr(census.Path, "iterdir", ...)``.
-    """
-    return _permission_fault_guard(sessions,
-                                   text="Permission denied - input/output error",
-                                   filename=leaked)
 
 
 # --- Synthetic hygiene fixtures ------------------------------------------------

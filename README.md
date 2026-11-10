@@ -1,23 +1,22 @@
 # noni
 
-noni makes sure two agents working on one project never take the same task, and
-that a decision outlives the session that made it. It is an attachable direction
-layer for a Git project: standing intent, decisions, the agreed order of work,
-the session register and the claims are plain files committed to the repo, and
-one read-only script reports where the work has drifted. No service, no database.
+noni makes sure a decision outlives the session that made it, and that the order
+of work stays what the operator said it was. It is an attachable direction layer
+for a Git project: standing intent, decisions, the agreed order of work and the
+item store are plain files committed to the repo, and one read-only script
+reports where the work has drifted. No service, no database.
 
 ## The problem
 
 - Decisions get made in a session and die with it. The next session reopens the
   same question, or quietly contradicts the answer.
-- Two workers take the same task. Neither knows: nothing says who means what.
 - Nobody can say whether the work still matches the direction. The order was set
   weeks ago, several issues in it are closed, and nothing reports that.
 - What the project is for, and what it will not do, live in someone's head.
 
 ## What you get
 
-Five artifacts, all committed files under `noni/`, all read by the census. The
+Four artifacts, all committed files under `noni/`, all read by the census. The
 order is of issues your tracker holds, by their positive numbers: noni is no
 backlog and no notes tool, so unfiled work has nowhere to go.
 
@@ -26,13 +25,13 @@ backlog and no notes tool, so unfiled work has nowhere to go.
 | standing intent | what the project is for, its principles, its never-do list, and what must be asked first, in `noni/direction/intent.md` | `intent.py` |
 | steering ledger | one JSON file per dated, attributed decision under `noni/decisions/` | `decide.py` |
 | ordering | the issues you want worked next, in order, in `noni/direction/order.json` | `order.py` |
-| session register | one file per session under `noni/sessions/`, with its claims | `register.py`, `claim.py`, `release.py` and `close.py` |
+| item store | one JSON file per filed idea under `noni/items/` | `item.py` |
 | census | nothing: it reads the four above and reports | read-only |
 
-Claims are signals, not locks. A claim tells everyone else what you intend to
-work on; the census is what flags two active claims on one task. The intent file
-is a statement, not a lock either: it tells a session how to decide, and the
-census is what flags one that has drifted from its shape or its citation.
+The artifacts are statements, not locks. The intent file tells a session how to
+decide, and the census is what flags one that has drifted from its shape or its
+citation. The order says what to work on next, and the census is what flags an
+entry nobody has confirmed in a while, or one whose issue the tracker has closed.
 
 Every path above resolves from `--repo`, the one flag that names the state root:
 by default the repository you run in, so the state sits at `<project>/noni/`, or
@@ -73,7 +72,7 @@ the `noni` package, so it must be installed or importable for them to run: see t
 which installs it with `uv tool install` or in a clean virtual environment. There
 is no PyPI package and the name will be `noni-noni`, so every route names this
 repository, and none runs `pip` at a system Python, which current distributions
-refuse. One `noni` command replaces a path per tool, the nine writers and the
+refuse. One `noni` command replaces a path per tool, the writers and the
 read-only `census` and `brief`, printing the same bytes.
 
 The census is read-only: it never writes, so `git status --porcelain` is empty.
@@ -89,8 +88,8 @@ missing deny-list and a ledger with nothing to arbitrate), and does not move it.
 ## How it works
 
 Read `noni/skills/<skill>/SKILL.md` for what each writer accepts and refuses;
-the steering-ledger and sessions-claims skills keep record-shape detail in their
-`references/` directories. `noni --help` names the ten subcommands and
+the steering-ledger skill keeps record-shape detail in its `references/`
+directory. `noni --help` names the six subcommands and
 `noni <tool> --help` the flags of one.
 
 Everything noni keeps in your repository lives in one directory:
@@ -100,14 +99,14 @@ Everything noni keeps in your repository lives in one directory:
   decisions/   one JSON record per dated decision
   direction/   intent.md: what the project is for and will not do
                order.json: the ordered list of issues to work next
-  sessions/    one Markdown file per session, one writer each
+  items/       one JSON file per filed idea
 ```
 
 Nothing else is state. The writers above are the only things that create those
 files, and each commits what it writes in one atomic step. The try-it run above
 creates the ledger record only: `intent.md` appears when you first run
-`intent.py`, `order.json` when you first run `order.py`, and a session file when
-you first run `register.py`. All four are optional, and only a run that counted
+`intent.py`, `order.json` when you first run `order.py`, and an item file when
+you first run `item.py`. All four are optional, and only a run that counted
 no row and skipped no check reads all-clear (`census: no findings; all checks
 passed`, `summary: clean; 0 finding(s); verdict ok`); the try-it run above does
 not: the always-reporting hygiene class leaves a first tree a warn row. The
@@ -120,15 +119,14 @@ exit codes; [docs/ONBOARDING.md](docs/ONBOARDING.md) covers the skills.
 ## Status
 
 Shipped, and covered by the test suite: the steering ledger with its supersede
-chain, the session register with its claim, release and close verbs, the
-ordering artifact, the standing intent file with its precedence rule, the
-unified census with its honest exit codes, and the `noni` package that carries
-them (installed from a clone or a git URL, then `noni <tool>`: no PyPI package,
-distribution name `noni-noni`).
+chain, the ordering artifact, the standing intent file with its precedence rule,
+the item store, the unified census with its honest exit codes, and the `noni`
+package that carries them (installed from a clone or a git URL, then
+`noni <tool>`: no PyPI package, distribution name `noni-noni`).
 
 Not yet: the adapters that fill the tracker-side inputs the census reads.
 `docs/PRODUCT.md` is the product document and the deep reference for record
-shapes, the claim protocol and the census exit codes.
+shapes, the state-root rule and the census exit codes.
 
 noni's own direction lives in a private state repository, so `git ls-files noni`
 here is empty: pass `--repo` at the tree that holds the `noni/` layout.

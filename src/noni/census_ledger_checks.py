@@ -10,7 +10,7 @@ the ledger that history rather than the filesystem settles, sit in
 
 The row mechanics each reporter needs — ``row``, ``rel_to``, ``rel_to_root``,
 ``file_kind``, ``bounded``, ``clipped``, ``repo_sha1`` and the cannot-tell row —
-are handed in at the call, exactly as the ordering and session splits do it, so
+are handed in at the call, exactly as the ordering split does it, so
 the row shape, its visibility marker and the machine-local-path rule keep their
 single owner in ``census.py`` and this module composes no row of its own
 devising. The one probe of the ledger directory is taken by the census

@@ -60,8 +60,8 @@ def test_the_census_never_reads_the_ledger_through_the_order_writer():
     census_src = _harness_source(CENSUS)
     assert "orderstate" not in census_src, "the census mentions the order writer"
     for name in ("census_hygiene", "census_json", "census_ledger", "census_ordering",
-                 "census_ordering_readers", "census_sessions_checks",
-                 "census_sessions_probe", "census_text", "census_wrapper"):
+                 "census_ordering_readers",
+                 "census_text", "census_wrapper"):
         path = SRC / "noni" / f"{name}.py"
         assert "orderstate" not in path.read_text(encoding="utf-8"), \
             f"{name}.py mentions the order writer"

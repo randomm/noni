@@ -22,10 +22,9 @@ by following only the docs:
   page rather than leaving it documenting a file nobody reads or a note nobody prints.
 - **The driver-coexistence position is on the page, in the product's own words.** A
   team whose work driver already keeps claim state has to be told which of noni's
-  layers it still runs and which it skips, and that skipping claims means never
-  creating ``noni/sessions/`` rather than creating it empty -- the one
-  distinction whose row the census's own ``session-deleted`` cannot-tell carries
-  (:mod:`tests.test_census_sessions_listing_gates`).
+  layers it still runs and that noni keeps no claim state of its own -- so a
+  leftover ``noni/sessions/`` directory earns no row, no error and no warning
+  from the census.
 
 The page is this repository's own reviewed file, so nothing here defends against it;
 the golden list in :mod:`quickstart_golden` makes the hostile-page question impossible
@@ -85,7 +84,9 @@ def test_the_page_says_where_the_writers_commit_and_who_uses_route_b() -> None:
     """Before the routes are run, the page states the commit rule and its consequence.
 
     Every writer commits onto whatever branch the ``--repo`` tree has checked out (see
-    ``current_branch`` and ``unsafe_branch_reason`` in ``src/noni/_session_push.py``),
+    ``current_branch`` and ``unsafe_branch_reason`` once lived in a removed
+    sessions-era push module; the writers still commit in the ``--repo`` tree's
+    own directory and never name a branch of their own),
     so Route A asks a project for direct commits to that branch. A branch-protected or
     PR-only project cannot grant that, and a page that never said so left a pilot team
     discovering it from a rejected push. Located by the clause's two pinned ends (see
@@ -259,26 +260,25 @@ def test_the_page_names_exactly_the_two_prerequisites() -> None:
 
 
 def test_the_page_states_the_driver_coexistence_position() -> None:
-    """The section every claim-skipping team reads exists, and carries the three facts.
+    """The section every claim-keeping team reads exists, and carries the facts.
 
     A pilot team that attaches noni usually already runs a work driver that keeps
-    its own per-issue state, worktree claims and a queue, and noni's sessions and
-    claims layer would be a second claim system beside it. The page has to say
-    which layers such a team runs and which it skips, because the alternative --
-    both registers, kept current by hand -- is the state the census reads as one
-    register and arbitrates badly. The facts are located inside the section rather
-    than searched over the page, so prose about a driver under some other heading
-    cannot satisfy them (:mod:`quickstart_page` states why these locators are
-    section-scoped and whitespace-collapsed).
+    its own per-issue state, worktree claims and a queue, and a second claim layer
+    beside it would be the second claim system the product refuses to ship. The page
+    has to say which layers such a team runs and which it leaves to the driver,
+    because the alternative -- both claim systems, kept current by hand -- is the
+    disagreement only one of them arbitrates. The facts are located inside the
+    section rather than searched over the page, so prose about a driver under some
+    other heading cannot satisfy them (:mod:`quickstart_page` states why these
+    locators are section-scoped and whitespace-collapsed).
     """
     section = flowed_section(COEXISTENCE_HEADING)
     facts = ("per-issue state", "worktree claims", "queue",
-             "sessions and claims layer is optional", "Never both by hand",
-             "claim checks simply find no sessions",
+             "Never both by hand",
+             "asks no claim question at all",
              "`noni/sessions/` **does not exist**",
              "do not create it as an empty directory",
-             "`cannot-tell` row of the `session-deleted` class",
-             "`integrations/`")
+             "adds no row for an artifact it was never given")
     missing = [fact for fact in facts if fact not in section]
     assert not missing, (
         f"the coexistence section omits {missing}, which is the position a team "
@@ -322,21 +322,22 @@ def test_the_coexistence_section_names_the_two_direction_artifacts() -> None:
         "skills/direction/SKILL.md) and this section does not need")
 
 
-def test_product_md_names_the_driver_claims_adapter_as_the_follow_up() -> None:
-    """docs/PRODUCT.md's adapters section names the driver-claims adapter as the follow-up.
+def test_product_md_names_the_coexistence_position_as_the_adapters_duty() -> None:
+    """docs/PRODUCT.md's adapters section points at the coexistence position.
 
     The binding page and the reader's page split the work: the quickstart states
-    the position, and the product page names the adapter that would mirror a
-    driver's claims instead, as work not yet done. Read from that one section
+    the position, and the product page carries it inside the section that says what
+    the adapters owe. Read from that one section
     rather than from the whole page, so a sentence about an adapter under a
     different heading is not this claim, and read the quickstart link as a path
     that has to resolve.
     """
     section = flowed_section(PRODUCT_ADAPTERS_HEADING, product_adapters_section())
-    assert "driver-claims adapter" in section, (
-        f"docs/PRODUCT.md no longer names the driver-claims adapter as the "
-        f"follow-up: {section!r}")
-    assert "follow-up" in section, "the adapters section dropped its follow-up framing"
+    assert "driver" in section, (
+        f"docs/PRODUCT.md no longer names the driver whose claims the adapters "
+        f"leave alone: {section!r}")
+    assert "coexistence position" in section, (
+        "the adapters section dropped its coexistence framing")
     assert "docs/QUICKSTART.md" in section, (
         "the adapters section does not point at the page that carries the position")
     assert QUICKSTART.is_file(), (

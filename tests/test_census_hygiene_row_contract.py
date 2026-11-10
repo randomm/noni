@@ -27,7 +27,6 @@ from _harness import (
     _home_path_violation,
     _init_repo,
     _permission_fault_guard,
-    _permission_fault_on,
     _secret_violation,
 )
 from census_denylist import _clear_denylist, _with_denylist
@@ -287,7 +286,9 @@ class TestHygieneRowContract:
         leaked = "/home/someone/\u00fcn\u00ef c\u00f6de/my dir/denylist"
 
         faults = [_permission_fault_guard(repo, text="readdir denied"),
-                  _permission_fault_on(repo, leaked)]
+                  _permission_fault_guard(
+                      repo, text="Permission denied - input/output error",
+                      filename=leaked)]
         for guard in faults:
             def raise_from_guard(_repo, _guard=guard):
                 # Drive the guard's own raise: the fault it builds is the fixture.

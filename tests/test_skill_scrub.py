@@ -27,7 +27,7 @@ REPO = Path(__file__).resolve().parent.parent
 # secret shapes or path patterns are added in exactly one place.
 from public_safety import FIXTURE_HOME_PATH_PATTERNS, HOME_PATH_PATTERNS, SECRET_PATTERNS  # noqa: E402
 
-SKILL_DIRS = [REPO / "skills" / "steering-ledger", REPO / "skills" / "sessions-claims",
+SKILL_DIRS = [REPO / "skills" / "steering-ledger",
               REPO / "skills" / "census", REPO / "skills" / "direction"]
 FIXTURES = REPO / "tests" / "fixtures"
 
@@ -165,9 +165,8 @@ def test_package_files_present():
         "census_intent_readers.py", "census_json.py",
         "census_ledger.py",
         "census_ordering.py", "census_ordering_readers.py",
-        "census_sessions_checks.py", "census_sessions_probe.py",
         "census_text.py", "census_wrapper.py",
-        "claim.py", "cli.py",
+        "cli.py",
         "decide.py", "gitenv.py", "gitwrite.py", "intent.py", "intentschema.py",
         "labels.py", "ledger_level.py", "order.py",
         "order_gitwrite.py",
@@ -178,7 +177,6 @@ def test_package_files_present():
         "public_safety_allowlist.py",
         "public_safety_io.py",
         "public_safety_scan.py",
-        "register.py",
         "shim_help.py", "targetschema.py",
     ):
         assert module in shipped, f"src/noni/{module} missing; have: {sorted(shipped)}"
@@ -251,21 +249,3 @@ def test_the_schema_program_is_gone_and_the_shim_is_a_tracked_wrapper():
     names = {line.split("/")[-1] for line in tracked.stdout.split()}
     assert {"census.sh", "census.py", "decide.py"} <= names, sorted(names)
     assert "census-schema.jq" not in names, f"the schema program is tracked: {sorted(names)}"
-
-
-# The four sessions writers, each documented in SKILL.md as
-# ``scripts/<name>.py --repo ...`` -- the form that fails with "Permission
-# denied" on a fresh clone when the bit is missing.
-SESSIONS_WRAPPERS = ("register.py", "claim.py", "close.py", "release.py")
-
-
-def test_sessions_writers_are_executable():
-    """All four session writers are executable, as the skill invokes them.
-
-    The wrapper form is the one SKILL.md documents, so a writer that landed in
-    the tree at 0644 is broken product surface rather than a cosmetic detail:
-    the reader's first ``scripts/close.py --repo .`` would not run.
-    """
-    for name in SESSIONS_WRAPPERS:
-        script = REPO / "skills" / "sessions-claims" / "scripts" / name
-        assert script.stat().st_mode & 0o111, f"{name} is not executable"

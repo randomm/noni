@@ -1,6 +1,6 @@
 ---
 name: census
-description: Run the unified noni census — a single read-only script that checks the steering ledger (schema, edit-after-commit, supersede chain), the session register (double-claim, claim-without-register, malformed, stalled) the ordering artifact (malformed order, stale entries, ordered-but-closed issues) and the standing intent file (missing or repeated sections, a file past its cap, an intent whose last commit cites no record) and returns an honest exit code. Use when the operator or any agent needs to verify the protocol invariants before merging, when triaging a failing census, or when the question is "are the ledger, the session register, the order and the intent in a valid state?" Do NOT use for writing, fixing, or mutating anything — the census is strictly read-only.
+description: Run the unified noni census — a single read-only script that checks the steering ledger (schema, edit-after-commit, supersede chain), the ordering artifact (malformed order, stale entries, ordered-but-closed issues), the standing intent file (missing or repeated sections, a file past its cap, an intent whose last commit cites no record) and the item store (malformed item, dropped-but-ordered, promoted-without-issue, unresolved reference, stale, unlistable) and returns an honest exit code. Use when the operator or any agent needs to verify the protocol invariants before merging, when triaging a failing census, or when the question is "are the ledger, the order, the intent and the item store in a valid state?" Do NOT use for writing, fixing, or mutating anything — the census is strictly read-only.
 ---
 
 # census
@@ -28,14 +28,13 @@ directory, is a usage error (exit 2) before any check runs.
 |---|---|---|
 | `--repo PATH` | `.` | the repository or directory to audit |
 | `--ledger PATH` | `<repo>/noni/decisions` | override the ledger directory |
-| `--sessions PATH` | `<repo>/noni/sessions` | override the sessions directory |
 | `--ordering PATH` | `<repo>/noni/direction/order.json` | override the ordering artifact |
 | `--intent PATH` | `<repo>/noni/direction/intent.md` | override the standing intent file (its citation is still answered against the run's `--ledger`) |
 | `--items DIR` | `<repo>/noni/items` | override the item store. An absent store is not a finding (an idea nobody filed earns no row); a store named here that cannot be listed is reported by `item-unlistable` rather than reading as an empty store |
 | `--issue-state FILE` | — | JSON map `{"<issue>": "open"\|"closed"}` produced by an adapter or the operator; the only route by which closed state reaches the census, which never contacts a tracker |
 | `--now ISO-8601` | current UTC | fixed timestamp for time-based checks (reproducible output) |
-| `--stale-after` | `7d` `session-stalled`, `30d` `ordering-stale`, `30d` `item-stale` | staleness threshold; positive whole days as `<N>` or `<N>d` (e.g. `7` or `7d`). Each class keeps its own default; a given value applies to all stale classes |
-| `--strict` | off | treat every warn class as a failure: `session-stalled`, `probe`, `ledger-empty`, `session-same-identity`, `session-deleted`, `ordering-stale`, `ordering-closed`, `hygiene`, `item-stale`, `item-unlistable` |
+| `--stale-after` | `30d` `ordering-stale`, `30d` `item-stale` | staleness threshold; positive whole days as `<N>` or `<N>d` (e.g. `7` or `7d`). Each class keeps its own default; a given value applies to all stale classes |
+| `--strict` | off | treat every warn class as a failure: `probe`, `ledger-empty`, `ordering-stale`, `ordering-closed`, `hygiene`, `item-stale`, `item-unlistable` |
 | `--json` | off | emit NDJSON records on stdout (`noni.census/1`) |
 | `--only CHECK` | all | run only the named check (repeatable). Rows of a class it does not name are dropped; a row about the file a group was asked to read is reported whatever the filter names, because a group that could not read its input must say so |
 | `--skip CHECK` | none | skip the named check (repeatable) |
@@ -49,12 +48,6 @@ directory, is a usage error (exit 2) before any check runs.
 | `ledger-empty` | 42 | there is no steering ledger to arbitrate — exactly one row per run, whose message carries the state word `absent` (no `noni/`), `not a directory` (`noni/` is not a directory), `symlink` (refused, never followed), or `empty` (no record to census: `noni/` present with no `decisions/` directory, or a `decisions/` directory that holds no `*.json` record). It only ADDS rows and never weakens a malformed-record `ledger-record` failure (warn by default; fail under `--strict`) |
 | `ledger-edited` | 12 | a record was edited after commit (supersede, never edit); a committed record deleted or renamed from the working tree is also reported here, with the "deleted" reason — including the case where the whole `decisions/` directory was deleted and the deletion committed; also the `cannot-tell` row for a `decisions/` directory that exists but could not be listed (warn by default; fail under `--strict`) |
 | `ledger-chain` | 20 | the supersede chain is broken (dangling, duplicate, orphan, cycle, zero-live, multi-live) |
-| `session-double` | 30 | two active claims on the same task from different identities (the arbiter) |
-| `session-claim` | 31 | a claim row committed without a register file |
-| `session-malformed` | 32 | a session file is malformed (missing field, bad claim row) |
-| `session-stalled` | 40 | an active session with no commit for `--stale-after` (warn by default; fail under `--strict`) |
-| `session-same-identity` | 43 | two or more non-terminal session files carry the same `identity` — one row per identity, naming every file (warn by default; fail under `--strict`) |
-| `session-deleted` | 44 | a `<YYYY-MM-DD>-<6 hex>.md` register file that git history shows was added is gone from the working tree (warn by default; fail under `--strict`) |
 | `probe` | 41 | a probe could not read its input (unreadable file, symlink, git failure) — never reported as clean |
 | `ordering-malformed` | 15 | the ordering artifact is there and is not the artifact: unparseable bytes, a non-finite number, a key stated twice, wrong `schema`, a duplicate or non-positive `issue`, a `confirmed` that is not a UTC timestamp (one with no offset included), a `decision` matching no file in the ledger, an `--issue-state` file that does not parse or whose keys are not plain positive issue numbers, or a decision ledger whose listing faulted |
 | `ordering-stale` | 45 | an order entry whose `confirmed` is older than the `--stale-after` threshold relative to `--now` (warn by default; fail under `--strict`) |
@@ -94,14 +87,8 @@ class that fired.
 12  ledger-edited
 15  ordering-malformed
 20  ledger-chain
-30  session-double
-31  session-claim
-32  session-malformed
-40  session-stalled (warn by default; failure under --strict)
 41  probe (warn by default; failure under --strict)
 42  ledger-empty (warn by default; failure under --strict)
-43  session-same-identity (warn by default; failure under --strict)
-44  session-deleted (warn by default; failure under --strict)
 45  ordering-stale (warn by default; failure under --strict)
 46  ordering-closed (warn by default; failure under --strict)
 50  hygiene (warn by default; failure under --strict)
@@ -129,7 +116,7 @@ was found under --repo <path>` before rows that would otherwise read as a projec
 that has not steered yet (a no-`noni/` tree is just a `ledger-empty` warn beside an
 inactive `deny-list`). It is a note, not a row: no check class, no row kind and no
 exit code is added, and under `--json` it rides the summary row's `not_evaluated`
-like any other note. It is not printed when `--ledger`, `--sessions`, `--ordering`
+like any other note. It is not printed when `--ledger`, `--ordering`
 or `--intent` replaces the path under the state root. The first and last lines are
 keyed to what the run found:
 
@@ -158,11 +145,11 @@ unaffected by all of this (see below).
 One `finding` record per violation, followed by exactly one `summary` record:
 
 ```json
-{"schema": "noni.census/1", "kind": "finding", "check": "session-double",
- "code": 30, "severity": "fail", "subject": "#42",
- "artifact": "noni/sessions", "message": "…", "fix": "…"}
-{"schema": "noni.census/1", "kind": "summary", "ok": false, "exit": 30,
- "counts": {"session-double": 1}}
+{"schema": "noni.census/1", "kind": "finding", "check": "ledger-record",
+ "code": 10, "severity": "fail", "subject": "2026-10-01-alpha.json",
+ "artifact": "noni/decisions", "message": "…", "fix": "…"}
+{"schema": "noni.census/1", "kind": "summary", "ok": false, "exit": 10,
+ "counts": {"ledger-record": 1}}
 ```
 
 Every `finding` row names the `artifact` path it derives from. Both output modes
@@ -177,7 +164,7 @@ owns that naming.
 
 A probe that cannot read its input (unreadable file, symlink, non-UTF-8 bytes,
 git failure on a real repo) is recorded as a `probe` finding (warn) or a
-`session-stalled` cannot-tell finding (warn). It is **never** silently
+`cannot-tell` finding of the class that owns the artifact (warn). It is **never** silently
 skipped, and it is **never** reported as clean. Under `--strict` it becomes a
 failure (exit 41) and the run is never reported clean.
 
@@ -222,24 +209,14 @@ The same rule extends to the classes that report their own absence:
   both carry the ledger's name and whose message carries the `OSError` text,
   bounded and stripped of machine-local paths. It is a warn at exit 0 and a
   failure at 12 under `--strict`.
-- **An unreadable `noni/sessions/` is never clean.** A `noni/sessions/` that
-  stats as a directory and cannot be listed earns exactly one `session-deleted`
-  `cannot-tell` row — the class the deletion check already uses for its
-  cannot-tells — marked whole-artifact, with the register's name in `subject`,
-  `artifact` and its message, under the same naming rule the ledger bullet
-  above states (root-relative `noni/sessions` when the census could root it,
-  the last segment for an out-of-tree `--sessions` override, and the path as
-  given in the identifier fields for a relative override it could not root),
-  and the `OSError` text in the message, bounded and stripped of machine-local
-  paths. It is a warn at exit 0 and a failure at 44 under `--strict`, and the
-  group adds no other row: the read answered nothing, so no file was seen, no
-  claim was compared, and the git-backed deletion question is not put either.
-  The register is listed with an explicit `iterdir`, never `glob`, which
-  swallows the readdir `OSError`. The register is read once per run, whatever
-  the filter names, so the gate that opens the group and the rows it reports
-  are the answer of that one readdir. A `noni/sessions/` that is simply absent
-  stays what it always was: clean, because no sessions registered is a real
-  state and not a failed read.
+- **An absent `noni/items/` is clean and an unreadable one is not.** An item
+  store that is simply absent adds no row at all (an idea nobody filed is a real
+  state, not a failed read); a store that stats as a directory and cannot be
+  listed earns one `item-unlistable` `cannot-tell` row, named by the same rule
+  the ledger bullet above states, with the `OSError` text in the message. A
+  leftover `noni/sessions/` directory from a removed subsystem is neither: the
+  census reads no claim files, so that directory earns no row, no error and no
+  warning in any mode.
 - **`hygiene` (50)** always reports under `noni census`, a clean tree included
   (the per-artifact wrappers run one group each and report no hygiene row). When the
   deny-list class is not active (its file is `absent`, `corrupt`, or present
@@ -249,7 +226,7 @@ The same rule extends to the classes that report their own absence:
   for any reason) emits one row saying the scan did not run. Neither is ever
   reported as hygiene-clean, and no scanner failure can take the census down:
   every finding the run already collected is still reported. The scan runs
-  in-process over the census's own git tree — the `--ledger` / `--sessions`
+  in-process over the census's own git tree — the `--ledger` and other path
   overrides never re-target it.
 
   The file that switches the deny-list half on is `.noni-scrub-denylist`, one
@@ -263,8 +240,8 @@ The same rule extends to the classes that report their own absence:
   freshly attached tree and why `docs/PUBLISHING.md` step 1 runs
   `scripts/public_safety.py` rather than trusting a clean census.
 - **The deletion classes report what they could not check.** A
-  `--sessions`/`--ledger` override that points outside the audited git tree
-  switches off the append-only question for that group; both say so in a
+  `--ledger` override that points outside the audited git tree
+  switches off the append-only question for that group; it says so in a
   `cannot-tell` row rather than letting a filtered or `--strict` run read "no
   rows" as "nothing was deleted". A cannot-tell row is a warn by default and
   is promoted by `--strict`, whatever its class's own severity: not being able
@@ -365,16 +342,15 @@ substitute for running `scripts/public_safety.py` before publishing.
   leaves `git status --porcelain` empty.
 - **One arbiter.** `noni census` (``census.py``) is the only entry point that
   enforces, and the page you are reading is the only exit-code reference. The
-  two per-artifact shell entry points (`skills/steering-ledger/scripts/census.sh`
-  and `skills/sessions-claims/scripts/census-sessions.sh`) are thin wrappers: each
+  one per-artifact shell entry point
+  (`skills/steering-ledger/scripts/census.sh`) is a thin wrapper: it
   takes the one directory its caller names, accepts `--json`, `--strict` and
   `--now` and refuses every other option without running the census, and runs
   this census restricted to its group — the ledger
-  shim (`census.sh`) to `ledger-record`, `ledger-edited` and `ledger-chain`, the
-  sessions shim (`census-sessions.sh`) to the session group. Neither carries a
-  schema, a rule or an exit-code table of
-  its own, so neither can disagree with this one, and `jq` is not a prerequisite
-  of either. They are reached through `bash` or their own executable bit, never
+  shim (`census.sh`) to `ledger-record`, `ledger-edited` and `ledger-chain`. It carries no
+  schema, no rule or an exit-code table of
+  its own, so it cannot disagree with this one, and `jq` is not a prerequisite
+  of it. It is reached through `bash` or its own executable bit, never
   under `python3`: the interpreter a wrapper needs is the one it execs itself
   (`NONI_PYTHON`, `python3` by default), and running the script under an
   interpreter hands the reader a syntax error before any check runs. A wrapper

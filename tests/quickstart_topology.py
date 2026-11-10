@@ -93,13 +93,10 @@ class World:
         self.origin = scratch / "origin"
         self.state = self.project / STATE_DIR
         # Placeholder values a running tree produces (see
-        # ``quickstart_runner.substitute``): the id register printed, read back off
-        # the file it wrote, so the page's claim line names the session the register
-        # line actually allocated.
+        # ``quickstart_runner.substitute``): the id decide printed, read back off
+        # the file it wrote, so the page's direction lines name the record that run
+        # actually committed.
         self.placeholders: dict[str, str] = {}
-        # The session files on disk before the page's register line ran, so the
-        # collector can require that line to have added exactly one.
-        self._sessions_before: list[str] | None = None
         # The same snapshot for the ledger, taken before the page's decide line.
         self._decisions_before: list[str] | None = None
         # The date the page's decide line records under, or None for today. A
@@ -112,41 +109,15 @@ class World:
         # Route B assertions read it where they used to spell ``main``.
         self.branch: str = DEFAULT_BRANCH
 
-    def mark_sessions(self) -> None:
-        """Record the session files on disk, just before the register line runs."""
-        directory = self.state / "noni" / "sessions"
-        self._sessions_before = sorted(p.name for p in directory.glob("*.md"))
-
     def mark_decisions(self) -> None:
         """Record the ledger files on disk, just before the decide line runs."""
         directory = self.state / "noni" / "decisions"
         self._decisions_before = sorted(p.name for p in directory.glob("*.json"))
 
-    def collect_session_id(self) -> None:
-        """Take the page's ``<session-id>`` from the register file on disk.
-
-        Read from the state clone's own sessions directory, not from stdout: the
-        value the next page command must carry is the file the writer committed, and
-        reading it back proves that file exists where ``--repo`` points. With a
-        :meth:`mark_sessions` snapshot behind it the read is stronger than "a file
-        is there": the register line must have added exactly one, so the id the claim
-        line carries is the one that run allocated.
-        """
-        files = sorted((self.state / "noni" / "sessions").glob("*.md"))
-        if self._sessions_before is not None:
-            assert len(files) == len(self._sessions_before) + 1, (
-                "the page's register line did not add exactly one session file: "
-                f"{self._sessions_before} before, {[f.name for f in files]} after")
-        assert files, (
-            "the page's register line wrote no session file under the state clone, "
-            "so the claim line that follows cannot name a real session id")
-        self.placeholders["<session-id>"] = files[-1].stem
-
     def collect_record_id(self) -> None:
         """Take the page's ``<record-id>`` from the record the decide line wrote.
 
-        The sibling of :meth:`collect_session_id` for the other placeholder the
-        page asks the reader to copy off a writer's output. Read from the state
+        Read from the state
         clone's own ledger, not from stdout and not from a literal: the record the
         ordering line cites is a file whose name carries the date the writer ran,
         so a value the harness invented would name a record no run could have made

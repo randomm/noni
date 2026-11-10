@@ -299,7 +299,7 @@ def test_the_product_page_links_the_coexistence_position_in_one_paragraph() -> N
     """The product page's adapters section points at the coexistence position.
 
     The adapters section is the binding page's own statement of what the adapters
-    owe, so the driver-claims adapter's follow-up line belongs inside it rather
+    owe, so the coexistence line belongs inside it rather
     than as a free-floating note the reader meets somewhere else: a sentence about
     the adapter planted under a different heading would let the position be dropped
     from the adapters section while the page still read as if it were promised.
@@ -318,10 +318,7 @@ def test_the_product_page_links_the_coexistence_position_in_one_paragraph() -> N
     assert "docs/QUICKSTART.md" in section, (
         "the adapters section names the section without naming the page that "
         "carries it, so the reference has nothing to resolve against")
-    assert "driver-claims adapter" in section, (
-        "the adapters section no longer names the adapter whose coexistence this "
+    assert "driver" in section, (
+        "the adapters section no longer names the driver whose coexistence this "
         f"is: {section!r}")
-    assert "follow-up" in section, (
-        "the adapters section lost its follow-up framing, so the adapter reads as "
-        f"shipped: {section!r}")
 

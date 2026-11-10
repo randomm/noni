@@ -287,9 +287,10 @@ def run_brief_with_history(root: Path, *extra: str) -> tuple[int, str, str]:
     :func:`plant_brief_tree` renames ``.git`` out of the way so an outer repository cannot see a
     planted tree's files and a copy cannot be read as part of the suite's own repository. The
     census needs that name to be there to answer anything about history at all: it resolves the
-    state root to a git top-level and, finding none, reports ``hygiene``, ``intent`` and
-    ``session-stalled`` as states it could not tell. A case that asks what the verdict says about
-    a session, a claim or a citation has to put the history back for the length of the run, which
+    state root to a git top-level and, finding none, reports ``hygiene``, ``intent``
+    and the ordering classes as states it could not tell. A case that asks what the
+    verdict says about a citation has to put the history back for the length of the
+    run, which
     is what this does and what :func:`restore_history` alone cannot do -- that helper leaves the
     name in place only while its own block runs, and the brief run is the point of the block.
     """
@@ -335,56 +336,18 @@ def porcelain_of(repo: Path, target: Path) -> str:
     return _git(repo, "status", "--porcelain", "--", relative).stdout
 
 
-# The register file's path. The name is the shape the sessions census allocates -- a date and
-# six hex digits, which :mod:`noni.census_sessions_checks` refuses anything else as
-# ``session-malformed`` -- because a case that planted a file the census called malformed would
-# be asserting about a fault of its own making and not about the stall window.
-SESSION_REL = "noni/sessions/2026-10-20-abcdef.md"
-
-# The register file's own fields, in the order the register's writer puts them and with the
-# keys its reader reads. Held here rather than in the one case that needs it because the case
-# asserts a census verdict, and a verdict that silently stopped being about staleness is the
-# failure mode of a fixture whose file the reader never recognised in the first place.
-def session_body(status: str = "active") -> str:
-    """One register file for the planted tree, in the shape the sessions census reads.
-
-    ``status: active`` is the only status the ``session-stalled`` class looks at: a closed or
-    released session is never stale, so a case that planted a file without that field would
-    prove that ``--now`` is forwarded by nothing at all.
-    """
-    return ("\n".join([
-        "- identity: brief-verify",
-        "- host/worktree: fixture",
-        "- started: 2026-10-20T09:00:00Z",
-        f"- status: {status}",
-        "- claims:",
-        "  - claim: issue-127",
-    ]) + "\n")
-
-
-def plant_session(root: Path) -> Path:
-    """Write the register file into the planted tree; the caller commits it when it wants to.
-
-    Written, not committed: the case that wants the file's history to predate one instant and
-    postdate another is the case that decides when to commit it, and a helper that committed on
-    the caller's behalf would fix the date of the very commit the case is about.
-    """
-    path = root / SESSION_REL
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(session_body(), encoding="utf-8")
-    return path
-
-
 def commit_at(root: Path, paths: list[str], when: str, subject: str) -> None:
     """Commit ``paths`` with a committer date of ``when``, identity pinned.
 
-    The census's ``session-stalled`` class measures a session against the commit that last
-    touched its register file -- and it reads the commit's *timestamp*, which git takes from
-    the committer date. ``--date`` alone sets the author date, so a launcher that passed only
-    that would leave every session looking as old as the fixture's own build and make the case
-    a test of git's defaults. Both dates are set, and the run goes through :func:`_git`, which
-    pins the author identity: a launched ``git commit`` with no identity and no ``--author``
-    dies on a machine holding no ``user.name``, and the failure looks like a brief that could
+    The census reads a commit's *timestamp*, which git takes from the committer
+    date. ``--date`` alone sets the author date, so a launcher that passed only
+    that would leave every commit looking as old as the fixture's own build and make
+    the case
+    a test of git's defaults. Both dates are set, and the run goes through
+    :func:`_git`, which
+    pins the author identity: a launched ``git commit`` with no identity and no
+    ``--author`` dies on a machine holding no ``user.name``, and the failure looks
+    like a brief that could
     not render.
     """
     _git(root, "add", "-A", "--", *paths)

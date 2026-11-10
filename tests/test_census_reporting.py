@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 
 from _harness import _commit_file, _git, _init_repo
-from census_fixtures import _ndjson_rows, _session_body, _valid_record
+from census_fixtures import _ndjson_rows, _valid_record
 from census_run import _run_census, _run_census_from
 
 
@@ -28,35 +28,33 @@ class TestStateRoot:
     double-claim or grow a ``noni/`` directory, and both are asserted against."""
 
     def test_census_reads_only_the_state_root_named_by_repo(self, tmp_path):
-        """A clean state root censuses clean while a double-claim sits in a
-        decoy register beside the cwd."""
+        """A clean state root censuses clean while a schema violation sits in a
+        decoy ledger beside the cwd."""
         root = _init_repo(tmp_path / "state-root")
         _commit_file(root, "noni/decisions/2026-10-01-alpha.json",
                      json.dumps(_valid_record(), indent=2))
-        _commit_file(root, "noni/sessions/2026-10-01-aaaaaa.md",
-                     _session_body("dev", claims=["#42"]))
         cwd = tmp_path / "elsewhere"
         cwd.mkdir()
-        decoy = cwd / "noni" / "sessions"
+        decoy = cwd / "noni" / "decisions"
         decoy.mkdir(parents=True)
-        # Two active claims on one task from two identities: exit 30 whenever
-        # the sessions group reads this directory.
-        (decoy / "2026-10-01-bbbbbb.md").write_text(
-            _session_body("one", claims=["#7"]), encoding="utf-8")
-        (decoy / "2026-10-01-cccccc.md").write_text(
-            _session_body("two", claims=["#7"]), encoding="utf-8")
+        # A record missing a required key: exit 10 whenever the ledger group
+        # reads this directory.
+        bad = _valid_record()
+        del bad["status"]
+        (decoy / "2026-10-01-bbbbb.json").write_text(
+            json.dumps(bad, indent=2), encoding="utf-8")
 
         rc, out, err = _run_census_from(cwd, root, "--json", "--skip", "hygiene",
                                         "--now", "2026-10-02T00:00:00Z")
         assert rc == 0, f"the state root is clean, got {rc}\n{out}\n{err}"
         rows = _ndjson_rows(out)
         assert not [r for r in rows if r.get("kind") == "finding"
-                    and r.get("check") == "session-double"], (
-            f"the census reported the decoy's double-claim, so the sessions "
+                    and r.get("check") == "ledger-record"], (
+            f"the census reported the decoy's schema violation, so the ledger "
             f"group resolved from the cwd and not --repo: {rows}"
         )
         assert not [r for r in rows if r.get("kind") == "finding"
-                    and "bbbbbb" in json.dumps(r)], (
+                    and "bbbbb" in json.dumps(r)], (
             f"a row named a file that exists only in the decoy: {rows}"
         )
         assert not (cwd / "noni" / "direction" / "order.json").exists(), (
@@ -72,20 +70,23 @@ class TestStateRoot:
         Without this, a first test that asserts the decoy is silent could be
         satisfied by a census that read nothing at all."""
         root = _init_repo(tmp_path / "state-root")
-        _commit_file(root, "noni/decisions/2026-10-01-alpha.json",
-                     json.dumps(_valid_record(), indent=2))
-        _commit_file(root, "noni/sessions/2026-10-01-bbbbbb.md",
-                     _session_body("one", claims=["#7"]))
-        _commit_file(root, "noni/sessions/2026-10-01-cccccc.md",
-                     _session_body("two", claims=["#7"]))
+        bad = _valid_record()
+        del bad["status"]
+        _commit_file(root, "noni/decisions/2026-10-01-bad.json",
+                     json.dumps(bad, indent=2))
         cwd = tmp_path / "elsewhere"
         cwd.mkdir()
 
         rc, out, err = _run_census_from(cwd, root, "--json", "--skip", "hygiene",
                                         "--now", "2026-10-02T00:00:00Z")
-        assert rc == 30, f"the state root's double-claim must fire, got {rc}\n{out}\n{err}"
+        assert rc == 10, f"the state root's schema violation must fire, got {rc}\n{out}\n{err}"
         rows = _ndjson_rows(out)
-        assert any(r.get("check") == "session-double" and r.get("subject") == "#7"
+        # The row's subject is the record's own ``id`` (what a malformed record
+        # still carries) and its artifact is the file path, so the pair names the
+        # file the operator has to open.
+        assert any(r.get("check") == "ledger-record"
+                   and r.get("subject") == "2026-10-01-alpha"
+                   and "2026-10-01-bad.json" in r.get("artifact", "")
                    for r in rows), rows
 
     def test_census_refuses_a_repo_that_is_not_a_directory(self, tmp_path):
@@ -101,7 +102,7 @@ class TestStateRoot:
     def test_census_reads_nothing_under_home_when_the_caller_names_no_home_path(
         self, tmp_path,
     ):
-        """HOME holds a decoy register with a double-claim; a census of an empty
+        """HOME holds a decoy ledger with a schema violation; a census of an empty
         state root reports nothing from it.
 
         HOME is the one directory a tool reaches without being told (git reads
@@ -116,12 +117,12 @@ class TestStateRoot:
         import os
 
         home = tmp_path / "hostile-home"
-        decoy = home / "noni" / "sessions"
+        decoy = home / "noni" / "decisions"
         decoy.mkdir(parents=True)
-        (decoy / "2026-10-01-aaaaaa.md").write_text(
-            _session_body("one", claims=["#7"]), encoding="utf-8")
-        (decoy / "2026-10-01-bbbbbb.md").write_text(
-            _session_body("two", claims=["#7"]), encoding="utf-8")
+        bad = _valid_record()
+        del bad["status"]
+        (decoy / "2026-10-01-aaaaaa.json").write_text(
+            json.dumps(bad, indent=2), encoding="utf-8")
         cwd = tmp_path / "elsewhere"
         cwd.mkdir()
 
@@ -141,10 +142,10 @@ class TestStateRoot:
                     os.environ[name] = value
         rows = _ndjson_rows(out)
         assert rc == 0, f"an empty state root is clean, got {rc}\n{err}"
-        assert not [r for r in rows if r.get("check") == "session-double"], (
-            f"the census reported a double-claim that exists only under HOME: {rows}"
+        assert not [r for r in rows if r.get("check") == "ledger-record"], (
+            f"the census reported a violation that exists only under HOME: {rows}"
         )
-        assert "aaaaaa" not in json.dumps(rows) and "bbbbbb" not in json.dumps(rows), rows
+        assert "aaaaaa" not in json.dumps(rows), rows
         assert not (home / "noni" / "direction").exists(), (
             "the census is read-only and never writes under HOME either"
         )
@@ -232,7 +233,7 @@ class TestClean:
     def test_no_noni_note_is_silent_under_a_path_override(self, tmp_path):
         """No note when a path override names the state, because --repo need not hold it.
 
-        --ledger, --sessions, --ordering and --intent replace the path under the state
+        --ledger, --ordering and --intent replace the path under the state
         root rather than selecting it, so a caller who keeps the ledger beside an
         unrelated --repo has done the sanctioned thing and must not be told their
         --repo holds no noni/. The state words of ledger-empty keep reporting the
@@ -260,8 +261,6 @@ class TestClean:
         repo = _init_repo(tmp_path / "repo")
         _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
                       json.dumps(_valid_record(), indent=2))
-        _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md",
-                      _session_body("developer"))
         before = _git(repo, "status", "--porcelain").stdout
         _run_census(repo)
         after = _git(repo, "status", "--porcelain").stdout
@@ -352,19 +351,19 @@ class TestJsonMode:
 
     def test_json_emits_ndjson_to_stdout(self, tmp_path):
         repo = _init_repo(tmp_path / "repo")
-        _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md",
-                      _session_body("developer", claims=["#42"]))
-        _commit_file(repo, "noni/sessions/2026-10-01-bbbbbb.md",
-                      _session_body("reviewer", claims=["#42"]))
+        bad = _valid_record()
+        del bad["id"]
+        _commit_file(repo, "noni/decisions/2026-10-01-bad.json",
+                      json.dumps(bad, indent=2))
         rc, out, err = _run_census(repo, json_out=True)
         rows = _ndjson_rows(out)
-        assert rc == 30
+        assert rc == 10
         finding_rows = [r for r in rows if r.get("kind") == "finding"]
         summary_rows = [r for r in rows if r.get("kind") == "summary"]
         assert len(finding_rows) >= 1
         assert len(summary_rows) == 1, "exactly one summary record"
         summary = summary_rows[0]
-        assert summary["exit"] == 30
+        assert summary["exit"] == 10
         assert summary["ok"] is False
         for row in finding_rows:
             assert row["schema"] == "noni.census/1"
@@ -379,10 +378,10 @@ class TestJsonMode:
 
     def test_every_finding_names_an_artifact_path(self, tmp_path):
         repo = _init_repo(tmp_path / "repo")
-        _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md",
-                      _session_body("developer", claims=["#42"]))
-        _commit_file(repo, "noni/sessions/2026-10-01-bbbbbb.md",
-                      _session_body("reviewer", claims=["#42"]))
+        bad = _valid_record()
+        del bad["id"]
+        _commit_file(repo, "noni/decisions/2026-10-01-bad.json",
+                      json.dumps(bad, indent=2))
         rc, out, err = _run_census(repo, json_out=True)
         rows = _ndjson_rows(out)
         for row in rows:
@@ -402,14 +401,14 @@ class TestJsonMode:
     def test_json_reproducible_two_runs(self, tmp_path):
         """Two runs with the same --now produce byte-identical stdout."""
         repo = _init_repo(tmp_path / "repo")
-        _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md",
-                      _session_body("developer", claims=["#42"]))
-        _commit_file(repo, "noni/sessions/2026-10-01-bbbbbb.md",
-                      _session_body("reviewer", claims=["#42"]))
+        bad = _valid_record()
+        del bad["id"]
+        _commit_file(repo, "noni/decisions/2026-10-01-bad.json",
+                      json.dumps(bad, indent=2))
         args = ["--now", "2026-10-02T00:00:00Z"]
         rc1, out1, _ = _run_census(repo, *args, json_out=True)
         rc2, out2, _ = _run_census(repo, *args, json_out=True)
-        assert rc1 == rc2 == 30
+        assert rc1 == rc2 == 10
         assert out1 == out2, f"two runs produced different output:\n---\n{out1}\n---\n{out2}"
 
 class TestCheckFilters:
@@ -419,8 +418,8 @@ class TestCheckFilters:
         The expected set is written out here and nowhere else on purpose. A version
         that read it from ``census_report.CHECKS`` was a tautology: remove a class from
         the table and the listing still matched it, which is the failure a listing test
-        exists to catch. The names below are the contract -- the direction and session
-        classes the census has always printed, plus the six the item group of #124
+        exists to catch. The names below are the contract -- the ledger, ordering
+        and hygiene classes the census has always printed, plus the six the item group of #124
         declares. A class may only join or leave this set together with the row that
         documents it.
         """
@@ -434,9 +433,8 @@ class TestCheckFilters:
         assert rc == 0
         lines = out.getvalue().strip().splitlines()
         expected = {"ledger-record", "ledger-edited", "ledger-chain",
-                     "session-double", "session-claim", "session-malformed",
-                     "session-stalled", "probe",
-                     "ledger-empty", "session-same-identity", "session-deleted",
+                     "probe",
+                     "ledger-empty",
                      "hygiene", "intent",
                      "ordering-malformed", "ordering-stale", "ordering-closed",
                      "item-malformed", "item-dropped-in-order",
@@ -445,26 +443,25 @@ class TestCheckFilters:
         assert set(lines) == expected, f"got {lines}"
         assert len(lines) == len(set(lines)), "a class was listed twice"
 
-    def test_only_session_double(self, tmp_path):
-        """--only session-double skips ledger checks."""
+    def test_only_ignores_classes_it_did_not_name(self, tmp_path):
+        """--only ordering-malformed drops the ledger violation planted beside it."""
         repo = _init_repo(tmp_path / "repo")
-        # Plant both a ledger violation and a double-claim
         bad = _valid_record()
         del bad["id"]
-        _commit_file(repo, "noni/decisions/2026-10-01-bad.json", json.dumps(bad, indent=2))
-        _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md",
-                      _session_body("developer", claims=["#42"]))
-        _commit_file(repo, "noni/sessions/2026-10-01-bbbbbb.md",
-                      _session_body("reviewer", claims=["#42"]))
-        rc, out, err = _run_census(repo, "--only", "session-double")
-        assert rc == 30, f"expected 30 (session-double only), got {rc}\nstderr: {err}\nstdout: {out}"
+        _commit_file(repo, "noni/decisions/2026-10-01-bad.json",
+                     json.dumps(bad, indent=2))
+        rc, out, err = _run_census(repo, "--only", "ordering-malformed",
+                                   "--skip", "hygiene")
+        assert rc == 0, (
+            f"expected 0 (ledger class not named), got {rc}\nstderr: {err}\nstdout: {out}")
 
-    def test_skip_session_double(self, tmp_path):
-        """--skip session-double skips the double-claim check."""
+    def test_skip_drops_the_named_class(self, tmp_path):
+        """--skip ledger-record skips the schema violation."""
         repo = _init_repo(tmp_path / "repo")
-        _commit_file(repo, "noni/sessions/2026-10-01-aaaaaa.md",
-                      _session_body("developer", claims=["#42"]))
-        _commit_file(repo, "noni/sessions/2026-10-01-bbbbbb.md",
-                      _session_body("reviewer", claims=["#42"]))
-        rc, out, err = _run_census(repo, "--skip", "session-double")
-        assert rc == 0, f"expected 0 (double-claim skipped), got {rc}\nstderr: {err}\nstdout: {out}"
+        bad = _valid_record()
+        del bad["id"]
+        _commit_file(repo, "noni/decisions/2026-10-01-bad.json",
+                     json.dumps(bad, indent=2))
+        rc, out, err = _run_census(repo, "--skip", "ledger-record", "--skip", "hygiene")
+        assert rc == 0, (
+            f"expected 0 (schema class skipped), got {rc}\nstderr: {err}\nstdout: {out}")

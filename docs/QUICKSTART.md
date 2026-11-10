@@ -185,17 +185,8 @@ your project. `intent-draft.md` starts from
 the writer restamps its `Last-confirmed:` line to this run's UTC day and commits
 the file as `intent: <record-id>`. Both direction files are optional: a project
 that has written neither earns no `intent` (51) or `ordering` rows at all. The
-session register is optional too: `register`, `claim`, `release` and `close` are
-what create `noni/sessions/`, and a team that does not run them never makes it (see
-[the coexistence section](#using-noni-alongside-a-driver-that-keeps-its-own-claims)
-for when to skip it, and what skipping it means on disk). When you do run them,
-`register` allocates its own session id and prints it, so you never choose one,
-and `claim`, `release` and `close` all take that id as `--session-id`:
-
-```bash
-noni register --repo .noni-state --identity developer
-noni claim --repo .noni-state --session-id <session-id> --task "#12"
-```
+item store is optional in the same way: `item.py add` is what creates
+`noni/items/`, and a team that files no idea never makes it.
 
 The census reads only the tree `--repo`
 names, so the code repository's tracked files never enter it — and its hygiene
@@ -258,8 +249,8 @@ run.
 Run it without `--strict`, and gate the build on these two sets, which are the
 census's own classes split by their default severity:
 
-- **fail the build** on 10, 12, 15, 20, 30, 31, 32, 51, 52, 53, 54 and 55;
-- **report without failing** on 40, 41, 42, 43, 44, 45, 46, 50, 56 and 57.
+- **fail the build** on 10, 12, 15, 20, 51, 52, 53, 54 and 55;
+- **report without failing** on 41, 42, 45, 46, 50, 56 and 57.
 
 `skills/census/SKILL.md` owns that table with the class names beside each code.
 A warning never moves the exit code on its own, so a first CI run on a tree with
@@ -278,17 +269,16 @@ per-issue state, worktree claims and a queue. noni does not compete with it.
 - **The direction layer is always used.** The steering ledger
   (`noni/decisions/`) and the ordering artifact (`noni/direction/order.json`) are
   the shared direction layer, and a team that attaches noni runs them.
-- **The sessions and claims layer is optional.** Where a driver already owns
-  claim state, the team either skips noni claims outright or mirrors the
-  driver's claims into noni's register through an adapter under
-  `integrations/`, once one exists. Never both by hand: two claim systems
-  written by hand disagree, and the census reads one register.
-- **The census still runs, and its claim checks simply find no sessions.**
+- **The claim state stays the driver's.** Where a driver already owns
+  claim state, noni does not keep a second copy of it. Never both by hand:
+  two claim systems written by hand disagree, and only one of them is read
+  by the thing that arbitrates.
+- **The census still runs, and it asks no claim question at all.**
   That is the state this page documents for such a team, and the state is that
   `noni/sessions/` **does not exist**: do not create it as an empty directory.
-  A register that is absent is a clean state and the sessions group stays
-  wordless; a register that exists and cannot be listed earns a `cannot-tell`
-  row of the `session-deleted` class instead.
+  A tree that holds no claim files is a clean state, and the census adds no row
+  for an artifact it was never given, the same way it adds none for an item
+  store nobody has filed an idea into.
 
 ## The deny-list, and why --strict fails on a fresh attach
 
@@ -389,12 +379,11 @@ Two things outside noni decide whether a first run works:
   it; the writers need `user.email` for the commit itself. On Route B that
   means the state clone, not the project.
 - **A Python 3 on the reading machine** for every entry point under
-  `skills/<skill>/scripts/`, including the ledger shim `census.sh` and the
-  sessions shim `census-sessions.sh`,
-  which run the interpreter named by `NONI_PYTHON` and default to `python3`. That
+  `skills/<skill>/scripts/`, including the ledger shim `census.sh`,
+  which runs the interpreter named by `NONI_PYTHON` and defaults to `python3`. That
   interpreter also has to import the package, so the wrappers need the install
   above or `PYTHONPATH=<clone>/src`
   whichever route you took.
   A wrapper whose interpreter or package is missing names the fault on one plain
-  line and exits 3 rather than printing a traceback. Neither shim needs `jq`: the
+  line and exits 3 rather than printing a traceback. The shim needs no `jq`: the
   unified census is the one arbiter of both.

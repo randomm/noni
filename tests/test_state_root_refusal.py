@@ -25,13 +25,9 @@ from pathlib import Path
 
 from _harness import (
     CENSUS,
-    CLAIM,
-    CLOSE,
     DECIDE,
     INTENT,
     ORDER,
-    REGISTER,
-    RELEASE,
     _commit_file,
     _git,
     _init_repo,
@@ -44,29 +40,20 @@ from noni import _path_kind
 # tuple is the prose transcribed: a change on either side breaks this test.
 STATE_ROOT_REFUSAL = (
     (ORDER, 2),
-    (REGISTER, 2),
     (DECIDE, 3),
-    (CLAIM, 4),
-    (CLOSE, 4),
-    (RELEASE, 4),
 )
 
 # The tools §7 gives code 2, and the ones it gives 3 and 4: the prose test below
 # reads the numbers off the page rather than trusting this table alone.
 DOCUMENTED = {
-    2: ("`order`", "`register`", "census"),
+    2: ("`order`", "census"),
     3: ("`decide`",),
-    4: ("`claim`", "`close`", "`release`"),
 }
 
 # One minimum argv beyond --repo per tool: enough to get past argparse to the
 # state-root check, and values no assertion depends on, since the run is refused
 # before any of them is read.
 ARGV = {
-    CLAIM: ("--session-id", "2026-10-01-aaaaaa", "--task", "#42"),
-    CLOSE: ("--session-id", "2026-10-01-aaaaaa"),
-    RELEASE: ("--session-id", "2026-10-01-aaaaaa", "--task", "#42"),
-    REGISTER: ("--identity", "developer"),
     DECIDE: ("--slug", "state-root", "--scope", "release ordering",
              "--asked-by", "developer", "--question", "q1=Probe?",
              "--option", "q1=yes", "--option", "q1=no", "--answer", "q1=yes"),
@@ -219,8 +206,8 @@ def test_the_sanctioned_creators_still_create_noni_on_a_tree_with_none(tmp_path)
     """The first-run exception holds for every verb §7 names as a creator.
 
     A refusal that refused these too would be the same bug with the opposite exit
-    code: the first record, the first order entry, the first intent file and the
-    first session all legitimately bring ``noni/`` into being, and QUICKSTART's own
+    code: the first record, the first order entry and the
+    first intent file all legitimately bring ``noni/`` into being, and QUICKSTART's own
     command blocks are first runs. Each run below is against a committed tree with
     no ``noni/`` at all, so the only thing that lets it through is the exception.
     """
@@ -233,7 +220,6 @@ def test_the_sanctioned_creators_still_create_noni_on_a_tree_with_none(tmp_path)
         (DECIDE, ("--slug", "first", "--scope", "first record", "--asked-by",
                   "dev", "--question", "q1=Ship?", "--option", "q1=yes",
                   "--option", "q1=no", "--answer", "q1=yes"), "noni/decisions"),
-        (REGISTER, ("--identity", "developer", "--no-commit"), "noni/sessions"),
     )
     for script, argv, created in cases:
         repo = _code_repo(tmp_path, f"creator-{script.stem}")
@@ -286,8 +272,8 @@ def test_a_tree_holding_a_noni_directory_is_a_state_root(tmp_path):
     """A tree with a ``noni/`` is a state root, whatever that directory holds.
 
     The contrast the refusal lives by, and the half the ticket's own reproduction does
-    not reach: the wrong ``--repo`` with a ``noni/`` in it -- another writer's session
-    register, or a ledger an aborted run left a file in -- is a tree noni has been told
+    not reach: the wrong ``--repo`` with a ``noni/`` in it -- a ledger an aborted run
+    left a file in -- is a tree noni has been told
     to look in, and the writer answers it with its normal reading of that state rather
     than with the state-root sentence. Only a tree with no ``noni/`` at all is the wrong
     tree: there is nothing under it to read or to arbitrate, which is the misleading
@@ -301,8 +287,8 @@ def test_a_tree_holding_a_noni_directory_is_a_state_root(tmp_path):
     argv = ("--slug", "probe", "--scope", "state root", "--asked-by", "dev",
             "--question", "q1=Probe?", "--option", "q1=yes", "--option", "q1=no",
             "--answer", "q1=yes", "--date", "2026-10-01")
-    for name, rel in (("sessions-tree", "noni/sessions/2026-10-01-aaaaaa.md"),
-                      ("stray-ledger", "noni/decisions/left-behind.txt")):
+    for name, rel in (("stray-ledger", "noni/decisions/left-behind.txt"),
+                      ("stray-order", "noni/direction/left-behind.txt")):
         repo = _code_repo(tmp_path, name)
         held = repo / rel
         held.parent.mkdir(parents=True)
@@ -315,7 +301,7 @@ def test_a_tree_holding_a_noni_directory_is_a_state_root(tmp_path):
 def test_decide_no_commit_is_admitted_on_a_tree_with_no_noni(tmp_path):
     """``--no-commit`` stays open where the tree itself holds no ``noni/``.
 
-    The shim and the session writers drive ``decide --no-commit`` to mint a record
+    The shim drives ``decide --no-commit`` to mint a record
     without a commit of its own, so a state-root refusal that stopped it would stop
     those routes outright. The tree answers the question, not the flag: on a tree with
     no ``noni/`` the run is the first writer either way, and the file still lands

@@ -48,19 +48,14 @@ from quickstart_page import COEXISTENCE_HEADING, flowed_text
 # ``owner`` is the core skill whose ``SKILL.md`` the page must link for that step.
 PROTOCOL_STEPS: tuple[tuple[str, str], ...] = (
     ("read the standing intent first", "direction"),
-    ("register the session", "sessions-claims"),
-    ("claim the task you mean to work", "sessions-claims"),
+    ("read the current order", "direction"),
     ("record a decision through the steering-ledger writer", "steering-ledger"),
-    ("release the claim you no longer hold", "sessions-claims"),
 )
 
-# The two things the protocol exists to prevent, in the page's own words. A page
-# that keeps the five steps and drops these has become a list of commands without
-# its reason: the claim step in particular reads as optional paperwork unless the
-# page says what an unclaimed run costs everyone else.
+# The thing the protocol exists to prevent, in the page's own words. A page that
+# keeps the steps and drops this has become a list of commands without its reason:
+# the ledger is the only thing that survives a session, and the page has to say so.
 PROTOCOL_REASONS: tuple[str, ...] = (
-    "Claims are signals, not locks",
-    "double-claim",
     "unrecorded steer",
 )
 
@@ -149,29 +144,29 @@ def test_the_page_states_each_protocol_step_and_its_owning_skill() -> None:
             + "\n".join(rows))
 
 
-def test_the_page_keeps_the_protocol_in_its_three_moments() -> None:
-    """The page groups the steps by when they happen: start, during, end.
+def test_the_page_keeps_the_protocol_in_its_two_moments() -> None:
+    """The page groups the steps by when they happen: start, during.
 
-    AC2/AC3/AC4/AC5 are one claim with three parts, and the part a rewrite loses is
-    the ordering: an agent that registers after it claims has the protocol upside
-    down. Each of the three moment words has to appear as a table cell, so a page
-    that merged the steps into one undifferentiated list fails here.
+    AC2/AC3/AC4 are one claim with two parts, and the part a rewrite loses is
+    the ordering: an agent that reads the order before it reads the intent has the
+    protocol upside down. Each of the two moment words has to appear as a table
+    cell, so a page that merged the steps into one undifferentiated list fails here.
     """
     cells = [cell.strip() for line in page_text().splitlines()
              if line.strip().startswith("|")
              for cell in line.strip().strip("|").split("|")]
-    for moment in ("at start", "during work", "at the end"):
+    for moment in ("at start", "during work"):
         assert moment in cells, (
             f"the protocol table has no row for the {moment!r} moment, so a "
             f"reader cannot tell when the step belongs: {cells}")
 
 
 def test_the_page_says_why_the_protocol_is_not_optional() -> None:
-    """The page states what an unclaimed or unrecorded session costs.
+    """The page states what an unrecorded steer costs.
 
-    The claims check is the arbiter for double-claims and the ledger is the only
-    thing that survives a session; both facts are what make the steps worth doing,
-    and the page has to say them rather than just listing verbs.
+    The ledger is the only thing that survives a session, which is what makes the
+    recording step worth doing, and the page has to say that rather than just
+    listing verbs.
     """
     flowed = flowed_text(page_text())
     for reason in PROTOCOL_REASONS:
@@ -305,42 +300,13 @@ def test_the_page_is_within_its_own_size_cap() -> None:
         f"docs/ONBOARDING.md is {lines} lines; the cap is {ONBOARDING_LINE_LIMIT}")
 
 
-def test_the_sessions_steps_are_marked_conditional() -> None:
-    """The three sessions-claims rows are stated as taken only by teams that use them.
-
-    The quickstart's coexistence section says a team whose driver already keeps
-    claim state must not create ``noni/sessions/`` at all (its own test pins that
-    promise in ``tests/test_quickstart_promises.py``), and the pilot's second team
-    read this page's five rows as five commands and registered a session they were
-    told elsewhere never to write. So the condition is product surface here: the
-    page has to name the three rows as conditional on the team using noni's
-    sessions and claims, keep the other two unconditional, and route the skip
-    decision to the section that owns it. Located in the flowed text around the
-    table, not on the rows themselves -- the rows are pinned by
-    :func:`test_the_page_states_each_protocol_step_and_its_owning_skill`, and this
-    is the sentence that qualifies them.
-    """
-    flowed = flowed_text(page_text())
-    assert "sessions and claims" in flowed, (
-        "the page no longer names what the three conditional rows depend on")
-    assert "if your team uses" in flowed, (
-        "the sessions and claims steps are no longer stated as conditional on the "
-        "team using them, which is how the pilot read them as five mandatory steps")
-    assert "every team" in flowed, (
-        "the page no longer says which steps stay unconditional, so a team that "
-        "skips claims cannot tell whether the direction and ledger steps go too")
-    assert "coexistence" in flowed and "QUICKSTART.md" in page_text(), (
-        "the page invites a team to skip the claim steps without routing them to "
-        "the section that decides when skipping is right")
-
-
 def test_the_page_names_the_coexistence_section_without_restating_it() -> None:
     """The page routes the driver question to the section that owns it.
 
-    A team already running a work driver of its own has to be told that noni's
-    sessions layer is optional, and that answer lives in exactly one place -- the
-    quickstart's coexistence section, which the forge page links for the same
-    reason (``tests/test_docs_ci_neutrality.py``). The onboarding page is where an
+    A team already running a work driver of its own has to be told which layers it
+    still runs, and that answer lives in exactly one place -- the quickstart's
+    coexistence section, which the forge page links for the same reason
+    (``tests/test_docs_ci_neutrality.py``). The onboarding page is where an
     agent-reading team meets that situation, so it has to route there; it may not
     restate the position, because two copies of "never both by hand" is how the two
     pages start disagreeing.
@@ -363,20 +329,18 @@ def test_the_page_names_the_coexistence_section_without_restating_it() -> None:
 def test_the_protocol_steps_run_in_order_through_the_console_command(
     world, tmp_path: Path,
 ) -> None:
-    """Register, claim, release and close each exit 0 in the page's own order.
+    """The writers of the page's three steps each exit 0 in the page's own order.
 
     AC7's honest reading: the page prints no commands, so the claim that survives is
     that the steps it tells an agent to take are executable and take an attached
-    project from no register to a closed session. The page links the skills rather
-    than printing flags, so the harness supplies the flags -- launched through the
-    installed ``noni`` console script, in the world the quickstart's own walks use
-    (project, private state clone, origin), so what is observed is the reader's
-    experience rather than the wrapper's argparse.
+    project from no state to an intent, an order and a recorded steer. The page
+    links the skills rather than printing flags, so the harness supplies the flags --
+    launched through the installed ``noni`` console script, in the world the
+    quickstart's own walks use (project, private state clone, origin), so what is
+    observed is the reader's experience rather than the wrapper's argparse.
 
-    The census runs at the end, on the page's own advice, and the session must have
-    released its claim before it closes: ``close`` alone leaves an active claim row
-    in a closed session, which the census does not flag and the next session cannot
-    tell from a live one.
+    The census runs at the end, on the page's own advice, over exactly the state
+    those three writers left: a tree that followed the protocol must census clean.
     """
     state, env = world.state, world.env
     state.mkdir(parents=True, exist_ok=True)
@@ -385,32 +349,29 @@ def test_the_protocol_steps_run_in_order_through_the_console_command(
         proc = _git(state, "config", key, value, env=env)
         assert proc.returncode == 0, f"state identity {key}: {proc.stderr}"
 
-    register = _run(world, "register", "--repo", str(state), "--identity", "developer")
-    assert register.returncode == 0, f"register: {register.stderr}"
-    session_id = _session_id_from(register.stdout)
-    files = sorted((state / "noni" / "sessions").glob("*.md"))
-    assert [p.stem for p in files] == [session_id], (
-        f"register printed {session_id!r} but the register holds "
-        f"{[p.name for p in files]}")
+    # The steer the two direction files cite. It is written first because the page
+    # says so: the intent and the order name a record the ledger must already hold.
+    decide = _run(world, "decide", "--repo", str(state), "--slug", "walk",
+                  "--scope", "release ordering", "--asked-by", "developer",
+                  "--question", "q1=Ship the beta this week?", "--option",
+                  "q1=Ship it", "--option", "q1=Wait a week",
+                  "--answer", "q1=Wait a week")
+    assert decide.returncode == 0, f"decide: {decide.stderr}"
+    record_id = _record_id_from(decide.stdout)
 
-    claim = _run(world, "claim", "--repo", str(state), "--session-id", session_id,
-                 "--task", "#12")
-    assert claim.returncode == 0, f"claim: {claim.stderr}"
-    assert "- claim: #12" in files[0].read_text(encoding="utf-8"), (
-        "the claim step wrote no claim row, so the release step below releases "
-        "nothing and proves nothing")
+    intent_draft = tmp_path / "intent-draft.md"
+    intent_draft.write_text(_INTENT_DRAFT, encoding="utf-8")
+    intent = _run(world, "intent", "--repo", str(state), "set",
+                  "--from", str(intent_draft), "--decision", record_id)
+    assert intent.returncode == 0, f"intent: {intent.stderr}"
+    assert (state / "noni" / "direction" / "intent.md").is_file(), (
+        "the intent step wrote no standing intent file")
 
-    release = _run(world, "release", "--repo", str(state), "--session-id", session_id,
-                   "--task", "#12")
-    assert release.returncode == 0, f"release: {release.stderr}"
-    body = files[0].read_text(encoding="utf-8")
-    assert "- claim: #12" not in body, f"the release left the row behind: {body!r}"
-
-    close = _run(world, "close", "--repo", str(state), "--session-id", session_id)
-    assert close.returncode == 0, f"close: {close.stderr}"
-    assert "- status: closed" in files[0].read_text(encoding="utf-8"), (
-        "the close step did not move the session to a terminal status, so the "
-        "protocol's end is not the end the sessions skill documents")
+    order = _run(world, "order", "--repo", str(state), "add", "12",
+                 "--decision", record_id)
+    assert order.returncode == 0, f"order: {order.stderr}"
+    assert (state / "noni" / "direction" / "order.json").is_file(), (
+        "the order step wrote no ordering artifact")
 
     census = _run(world, "census", "--repo", str(state))
     assert census.returncode == 0, f"census: {census.stderr}\n{census.stdout}"
@@ -424,11 +385,11 @@ def test_the_page_links_the_skills_whose_writers_this_walk_runs() -> None:
 
     The walk is the evidence behind the page's protocol table; if it drifted to
     driving a skill the page never named, the two halves of this module would be
-    testing different pages. The four verbs below are the protocol's end steps, and
-    each is dispatched by the console command to a module of one skill.
+    testing different pages. The verbs below are the protocol's steps, and each is
+    dispatched by the console command to a module of one skill.
     """
     page = page_text()
-    for skill in ("sessions-claims", "steering-ledger", "direction", "census"):
+    for skill in ("steering-ledger", "direction", "census"):
         assert _step_link_for(skill) in page, (
             f"the walk drives {skill}'s writers and the page does not link it")
 
@@ -457,15 +418,36 @@ def _git(repo: Path, *argv: str, env: dict[str, str]):
                           text=True, env=env, timeout=120)
 
 
-def _session_id_from(stdout: str) -> str:
-    """The session id the register writer printed, read off its own line.
+def _record_id_from(stdout: str) -> str:
+    """The record id the decide writer printed, read off its own line.
 
-    The writer's headline is ``registered session <id> -> <path>``; the id is read
-    from it rather than from the file list so that the assertion in the caller --
-    the printed id is the name of the one file on disk -- means something. A reader
-    that took the id off the directory instead would pass on a register that never
-    printed one, which is the value the next three steps have to carry.
+    The writer's headline names the file it wrote; the id is read from it rather
+    than from the file list so that the assertion in the caller -- the two direction
+    files cite a record the ledger holds -- means the id this run actually made.
     """
-    match = re.search(r"registered session (\S+) ->", stdout)
-    assert match, f"the register line printed no session id in its headline: {stdout!r}"
+    match = re.search(r"(\d{4}-\d{2}-\d{2}-[a-z0-9-]+)\.json", stdout)
+    assert match, f"the decide line printed no record path in its headline: {stdout!r}"
     return match.group(1)
+
+
+# The standing intent the walk installs, in the shape the direction skill's own
+# template validates: the four headings in order and one confirmation line, which
+# the writer restamps with its own date.
+_INTENT_DRAFT = """Last-confirmed: 2026-10-01
+
+## Purpose
+
+Ship the beta and keep the direction readable.
+
+## Principles
+
+Plain files and one arbiter.
+
+## Never
+
+Never answer for the operator.
+
+## Ask first
+
+Anything that changes the release scope.
+"""

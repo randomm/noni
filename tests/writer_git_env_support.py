@@ -1,7 +1,7 @@
 """Shared fixture builders for the writers'-git-environment suites.
 
 Every writer here commits, so every case needs the same three trees: a state
-root holding one committed session register, a state root whose ledger holds one
+root whose ledger holds one
 committed decided record, and a decoy for the variable under test. The record is
 committed through ``git_pin_date`` (the harness's dated commit) because decide.py
 cites a decision id and order.py looks one up before it writes its artifact, and
@@ -21,12 +21,8 @@ import sys
 from pathlib import Path
 
 from _harness import (
-    CLAIM,
-    CLOSE,
     DECIDE,
     ORDER,
-    REGISTER,
-    RELEASE,
     _git,
     _git_env_with_identity,
     _init_repo,
@@ -35,11 +31,6 @@ from _harness import (
     git_pin_date,
     subprocess_env,
 )
-
-# The session file every sessions writer writes to, and the task they claim.
-SID = "2026-10-01-aaaaaa"
-SESSION_REL = f"noni/sessions/{SID}.md"
-TASK = "#42"
 
 # decide.py's own record and the ledger path it lands under, and order.py's
 # artifact. All three are read back from HEAD by name, so each is a constant.
@@ -63,27 +54,6 @@ def _git_ok(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return proc
 
 
-def _assert_row_released(repo: Path) -> None:
-    """The committed register no longer carries the task's row.
-
-    ``git cat-file`` rather than ``git show``: show runs the tree's clean/smudge
-    filters over what it prints, and a blob that is plainly there can come back
-    empty. The assertion below is about content, so it reads the stored blob.
-    """
-    shown = _git_ok(repo, "cat-file", "-p", f"HEAD:{SESSION_REL}")
-    assert f"- claim: {TASK}" not in shown.stdout, "the row was not released"
-
-
-def _register_repo(tmp_path: Path, subdir: str) -> Path:
-    """The empty state root register.py is pointed at: an init'd repo, no state.
-
-    The register case is the only one that runs a writer against a tree with
-    nothing committed in it, so it does not need the committed register or the
-    committed record the other writers act on.
-    """
-    return _init_repo(tmp_path / subdir)
-
-
 def _identity_env() -> dict[str, str]:
     """The harness's deterministic git identity, ready to extend with decoys.
 
@@ -105,28 +75,6 @@ def _decoy_env(vars_: dict[str, str]) -> dict[str, str]:
     env.update(_identity_env())
     env.update(vars_)
     return env
-
-
-def _session_body(identity: str = "dev", claims: list[str] | None = None) -> str:
-    """A session register file in the shape register.py writes."""
-    lines = [f"- identity: {identity}", "- host/worktree: ws",
-             "- started: 2026-10-01T10:00:00Z", "- status: active", "- claims:"]
-    for claim in claims or []:
-        lines.append(f"  - claim: {claim}")
-    return "\n".join(lines) + "\n"
-
-
-def _sessions_repo(tmp_path: Path, subdir: str,
-                   claims: list[str] | None = None) -> Path:
-    """A state root holding one committed session file, claiming ``claims``."""
-    repo = _init_repo(tmp_path / subdir)
-    sessions = repo / "noni" / "sessions"
-    sessions.mkdir(parents=True, exist_ok=True)
-    (sessions / f"{SID}.md").write_text(_session_body("dev", claims), encoding="utf-8")
-    _git_ok(repo, "add", SESSION_REL)
-    git_pin_date(repo, "2026-10-01T10:00:00Z", "commit", "-q",
-                 "-m", f"register: {SID}")
-    return repo
 
 
 def _ledger_repo(tmp_path: Path, subdir: str) -> Path:
@@ -204,37 +152,6 @@ def _run(script: Path, repo: Path, env: dict[str, str],
     return subprocess.run([sys.executable, str(script), "--repo", str(repo), *args],
                           capture_output=True, text=True, env=env, timeout=120,
                           cwd=str(_scratch_dir(repo)))
-
-
-# --- the per-writer launchers ------------------------------------------------------
-
-
-def _claim_run(repo: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    return _run(CLAIM, repo, env, "--session-id", SID, "--task", TASK)
-
-
-def _close_run(repo: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    return _run(CLOSE, repo, env, "--session-id", SID)
-
-
-def _release_run(repo: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    return _run(RELEASE, repo, env, "--session-id", SID, "--task", TASK)
-
-
-def _register_run(repo: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    return _run(REGISTER, repo, env, "--identity", "developer")
-
-
-def _registered_rel(proc: subprocess.CompletedProcess[str]) -> str:
-    """The session file register.py's success line names, as a repo-relative path.
-
-    The id is allocated by the writer, so the path the assertion reads back from
-    HEAD is taken from the run's own words rather than guessed.
-    """
-    line = proc.stdout.strip()
-    assert "registered session " in line, f"no registration line: {proc.stderr}"
-    session_id = line.split("registered session ")[1].split(" ->")[0].strip()
-    return f"noni/sessions/{session_id}.md"
 
 
 def _decide_argv() -> list[str]:

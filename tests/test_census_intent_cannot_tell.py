@@ -144,12 +144,12 @@ def test_the_run_survives_a_path_it_cannot_classify(tmp_path, monkeypatch):
     monkeypatch.setattr(census, "_file_kind",
                         intent_kind_answers("nonregular", "lstat: Permission denied"))
 
-    code, out, err = run_census_in_process(repo, "--only", "session-double")
+    code, out, err = run_census_in_process(repo, "--only", "item-unlistable")
     assert findings_of(out, "intent") == [("intent", "cannot-tell", "warn")], out
     assert err == "", "the run's blindness must not reach the operator as a traceback"
     assert code == 0
     # --strict promotes the run's own blindness, as it promotes every cannot-tell.
-    assert run_census_in_process(repo, "--only", "session-double",
+    assert run_census_in_process(repo, "--only", "item-unlistable",
                                  "--strict")[0] == 51
 
     # And the gate got that answer from the census's classifier and nowhere else.

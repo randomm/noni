@@ -2,9 +2,8 @@
 
 A project whose rules require a pull request cannot grant Route A's assumption:
 every noni writer commits onto whatever branch the ``--repo`` tree has checked
-out (``current_branch`` and ``unsafe_branch_reason`` in
-``src/noni/_session_push.py`` name that branch, and no writer ever passes a
-branch or a ref of its own). A page that never said so left a pilot team
+out (the writers shell out to ``git commit`` in that tree's own directory and
+never pass a branch or a ref of their own). A page that never said so left a pilot team
 discovering it from a rejected push, so the clause that says it is a product
 contract and not an editorial nicety: ``docs/QUICKSTART.md``'s ``## The state
 root`` states it before the reader chooses a route, and ``docs/PRODUCT.md``

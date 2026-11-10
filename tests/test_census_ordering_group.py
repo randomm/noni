@@ -21,10 +21,10 @@ from ordering_fixtures import (
     _human,
     _order,
     _repo,
-    rows_without_unasked_closed,
     _run,
     _seed,
     _state,
+    rows_without_unasked_closed,
 )
 from quickstart_page import ordering_note_from_product
 

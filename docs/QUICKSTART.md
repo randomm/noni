@@ -324,10 +324,21 @@ spelled as a bare decimal string, to `"open"` or `"closed"`. Without the flag
 the `ordering-closed` (46) class is not evaluated at all, so a run with no rows
 from it does not mean every ordered issue is open.
 
-The census says so out loud whichever mode you read it in. In human-readable
-mode it says it twice: a run with no finding row that skipped a check opens
-`census: no findings; <class> did not run`, not the banner, plus one
-`note:` line:
+The census says so out loud whichever mode you read it in, and it says it in the
+part of the report a gate reads. Over an order that holds issues, the class
+reports itself: one `ordering-closed` row whose subject is the order file, saying
+the closed state was not checked. Without `--strict` it is a `warn` and the exit
+code stays 0; under `--strict` it is promoted and earns its own 46, so a CI step
+that gates on the exit code cannot stay green over an order whose issues have all
+been closed. A run over an empty order, an absent order, or one whose class you
+skipped by name prints no such row and no code, because nothing was left
+unasked.
+
+In human-readable mode the report also says it in its first line and in one
+`note:` line, so a person scanning a terminal learns the same thing. A run that
+carries no row of the class opens `census: no findings; <class> did not run`, and
+one that carries the row names the class on the count line; either way the
+summary line ends `ordering-closed not checked` rather than the word `clean`:
 
 ```text
 note: ordering-closed was not evaluated: no --issue-state FILE was given, so whether an ordered issue is closed is not asked (the census never contacts a tracker)
@@ -336,9 +347,11 @@ note: ordering-closed was not evaluated: no --issue-state FILE was given, so whe
 In `--json` mode no such line goes to stdout — that stream stays findings and
 one summary — and the same sentence is instead carried on the summary row as its
 `not_evaluated` field, a list of the classes the run did not evaluate and why.
-Keep the ordering group in the run either way (`--only` must name an ordering class,
-or name none), because a run that never reached the class reports nothing about
-it.
+The field is the machine's record of the unasked question and the row is the
+report's verdict on it: both are present, and a consumer that reads only the
+summary row still sees the class. Keep the ordering group in the run either way
+(`--only` must name an ordering class, or name none), because a run that never
+reached the class reports nothing about it.
 
 The census ships no producer. A tracker with a command line and `jq` produce
 one:

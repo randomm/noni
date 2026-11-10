@@ -25,6 +25,7 @@ from ordering_fixtures import (
     _run,
     _seed,
     _state,
+    rows_without_unasked_closed,
 )
 from ordering_shapes import CLEAN_SHAPES
 from ordering_shapes import MALFORMED_SHAPES as SHAPES
@@ -269,10 +270,17 @@ def test_the_filter_keeps_a_whole_artifact_row_of_any_unnamed_class(tmp_path):
             for extra in filters:
                 code, rows, out, err = _run(repo, *argv, *extra)
                 assert code == 15, f"{label} {extra}: exit {code} rows={rows} out={out} err={err}"
-                assert [r["check"] for r in rows] == expected, (
+                # The whole-artifact rule under test belongs to the fault rows. The
+                # closed class's not-evaluated row (issue #148) is a plain finding of
+                # its class and obeys the filter like any other: it is absent under a
+                # filter that named the class away, so the rows the fault rule is
+                # about are the ones left after that row is taken out. Its code still
+                # never outranks the 15 above -- each case pins that too.
+                fault_rows = rows_without_unasked_closed(rows)
+                assert [r["check"] for r in fault_rows] == expected, (
                     f"{label} {extra}: {rows}")
-                assert rows[0]["severity"] == "fail", f"{label} {extra}: {rows[0]}"
-                assert rows[0]["code"] == 15, f"{label} {extra}: {rows[0]}"
+                assert fault_rows[0]["severity"] == "fail", f"{label} {extra}: {fault_rows[0]}"
+                assert fault_rows[0]["code"] == 15, f"{label} {extra}: {fault_rows[0]}"
         finally:
             record.chmod(0o644)
 
@@ -392,7 +400,9 @@ def test_a_file_the_writer_emits_is_never_the_file_this_class_faults(tmp_path):
         _order(repo, body)
         code, rows, out, err = _run(repo)
         assert code == 0, f"{label}: exit {code} rows={rows} err={err}"
-        assert rows == [], f"{label}: {rows}"
+        # The run's own not-evaluated row (issue #148) is the fixture's, not a defect
+        # of the shape: no --issue-state is given here, so the closed class says so.
+        assert rows_without_unasked_closed(rows) == [], f"{label}: {rows}"
         # The writer's side of the same claim, on bytes it can be shown to have
         # produced: a shape the arbiter faults and the writer also refuses is a shape
         # no verb can repair, and the pair is only visible from both sides at once.

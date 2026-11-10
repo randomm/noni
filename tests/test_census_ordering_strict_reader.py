@@ -19,6 +19,7 @@ from ordering_fixtures import (
     _run_in_process,
     _seed,
     _strict_reader_copy,
+    rows_without_unasked_closed,
 )
 
 BASELINE_ID = "2026-10-01-baseline"
@@ -72,7 +73,11 @@ def test_a_composed_row_keeps_the_paths_it_names_while_staying_bounded(tmp_path)
     _seed(repo, _entry(3, "2026-10-01-ghost"))
     code, rows, out, err = _run(repo)
     assert code == 15, (code, rows, out, err)
-    message = rows[0]["message"]
+    # The composed row under test is the citation row; the closed class's own
+    # not-evaluated row (issue #148) is the fixture's and is not composed from the
+    # ledger's fault, so it is not the message whose bound and paths are pinned here.
+    malformed = rows_without_unasked_closed(rows)
+    message = malformed[0]["message"]
     assert len(message) <= 300, f"{len(message)} chars: {message[:80]}"
     assert "noni/decisions" in message, message
     assert "<path>" not in message, message
@@ -97,8 +102,9 @@ def test_an_unlistable_ledger_row_stays_within_the_message_bound(tmp_path):
                          "input/output error: " + "u" * 5000):
         code, rows, out, err = _run_in_process(repo)
     assert code == 15, (code, rows, out, err)
-    assert [r["check"] for r in rows] == ["ordering-malformed"], rows
-    message = rows[0]["message"]
+    malformed = rows_without_unasked_closed(rows)
+    assert [r["check"] for r in malformed] == ["ordering-malformed"], rows
+    message = malformed[0]["message"]
     assert len(message) <= 300, f"{len(message)} chars: {message[:80]}"
     assert "noni/decisions" in message, message
     assert "OSError" in message, message
@@ -128,9 +134,14 @@ def test_an_entry_value_of_any_length_is_bounded_in_the_row(tmp_path):
         _order(repo, body)
         code, rows, out, err = _run(repo)
         assert code == 15, f"{label}: exit {code} rows={rows} err={err[-500:]}"
-        assert [r["check"] for r in rows] == ["ordering-malformed"], f"{label}: {rows}"
-        for row in rows:
+        malformed = rows_without_unasked_closed(rows)
+        assert [r["check"] for r in malformed] == ["ordering-malformed"], \
+            f"{label}: {rows}"
+        for row in malformed:
             assert len(row["message"]) <= 300, \
                 f"{label}: {len(row['message'])} chars: {row['message'][:80]}"
+        # The bound is asserted over the whole stream, not the filtered rows: an
+        # unbounded foreign value reaching any row of the report is the failure this
+        # test exists for, including the closed class's own row (issue #148).
         assert "i" * 5000 not in json.dumps(rows), label
         assert "d" * 5000 not in json.dumps(rows), label

@@ -36,15 +36,16 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
-#
-# The one package import this module makes. It is absolute rather than relative for
-# the same reason the module carries no relative siblings: the tests that hold this
-# file's copies of the writer's contract equal to their owner exec it from source
-# under a test-private name, with no package bound (``load_package_module``), and a
-# relative import there would be an ImportError instead of a comparison. The module
-# loaded is the package's own -- the same object every other route imports -- so the
-# seam a test puts on either name is the one this group uses.
 from noni import census_ordering_closed as _closed
+
+# The one package import this module makes, and why it is spelled absolutely where
+# its siblings are relative: the tests that hold this file's copies of the writer's
+# contract exec it from source under a test-private name, with no package bound
+# (``load_package_module``), and a relative import there is an ImportError instead of
+# a comparison. The module loaded is still the package's own -- the same object every
+# other route imports -- so a seam a test puts on either name is the one this group
+# uses. The flag is on the import, not the block: ruff reads an import whose every
+# line is a comment as detached from it and reports the block unsorted.
 
 
 # The artifact's shape, the census's side of the contract order.py writes to. The

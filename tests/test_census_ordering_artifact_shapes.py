@@ -15,7 +15,16 @@ import json
 
 import pytest
 from _harness import _git, git_pin_date
-from ordering_fixtures import _canonical, _commit, _entry, _order, _repo, _run, _seed
+from ordering_fixtures import (
+    _canonical,
+    _commit,
+    _entry,
+    _order,
+    _repo,
+    _run,
+    _seed,
+    rows_without_unasked_closed,
+)
 
 BASELINE_ID = "2026-10-01-baseline"
 
@@ -46,18 +55,26 @@ def test_a_record_that_exists_but_cannot_be_read_is_not_called_absent(tmp_path):
         if code == 0:
             pytest.skip("the reading user can read a 000-mode file")
         assert code == 15, (code, out, err)
-        assert [r["check"] for r in rows] == ["ordering-malformed"], rows
-        message = rows[0]["message"]
+        malformed = rows_without_unasked_closed(rows)
+        assert [r["check"] for r in malformed] == ["ordering-malformed"], rows
+        message = malformed[0]["message"]
         assert "could not read" in message, message
         assert "matches no record file" not in message, message
         # The same artifact, filtered to the classes the operator gates on: the
         # unreadable citation is the group's own fault to report, not the class
         # the caller happened to name.
-        for extra in (("--only", "ordering-closed", "--strict"),
-                      ("--only", "ordering-stale", "--strict")):
+        # The cases run without --strict on the closed class's account: under
+        # --strict its unasked row (issue #148) is itself a fail row of a class the
+        # filter named, and its 46 would outrank the 15 that is this test's subject.
+        # What the filter may not do is silence the fault row, so each case asserts
+        # the fault row is present and its code still wins.
+        for extra in (("--only", "ordering-closed"),
+                      ("--only", "ordering-stale")):
             code, rows, out, err = _run(repo, *extra)
             assert code == 15, f"{extra}: exit {code} rows={rows} err={err}"
-            assert "could not read" in rows[0]["message"], rows[0]
+            unreadable = [r for r in rows if "could not read" in r["message"]]
+            assert len(unreadable) == 1, f"{extra}: {rows}"
+            assert unreadable[0]["check"] == "ordering-malformed", f"{extra}: {rows}"
     finally:
         record.chmod(0o644)
 
@@ -122,8 +139,9 @@ def test_a_decision_that_matches_no_record_is_a_finding(tmp_path):
     _seed(repo, _entry(3, "2026-01-01-ghost"))
     code, rows, out, err = _run(repo)
     assert code == 15, (code, out, err)
-    assert rows[0]["subject"] == "#3", rows[0]
-    assert "matches no record" in rows[0]["message"], rows[0]
+    malformed = rows_without_unasked_closed(rows)
+    assert malformed[0]["subject"] == "#3", rows
+    assert "matches no record" in malformed[0]["message"], rows
 
 
 def test_a_superseded_decision_is_a_finding_naming_its_successor(tmp_path):
@@ -148,8 +166,9 @@ def test_a_superseded_decision_is_a_finding_naming_its_successor(tmp_path):
     _seed(repo, _entry(3, BASELINE_ID))
     code, rows, out, err = _run(repo)
     assert code == 15, (code, out, err)
-    assert "superseded" in rows[0]["message"], rows[0]
-    assert successor in rows[0]["message"], rows[0]
+    malformed = rows_without_unasked_closed(rows)
+    assert "superseded" in malformed[0]["message"], rows
+    assert successor in malformed[0]["message"], rows
 
 
 def test_a_decision_of_null_is_an_ordering_malformed_row(tmp_path):

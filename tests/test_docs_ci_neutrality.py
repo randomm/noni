@@ -207,6 +207,12 @@ def test_the_forge_example_runs_the_page_s_own_census_commands() -> None:
     are checked, because Route B's whole correctness is its ``--repo`` -- an example
     that pointed the census at the code repository would report a clean verdict for a
     state tree it never read.
+
+    The third step is the forge's own, so it is checked separately rather than by the
+    list below: the closed-state map the adapter's tracker produces, passed to the
+    census by the step that writes it. That one line is the only place in this
+    repository where the census is run with ``--issue-state`` in an example, and a
+    reader who copies it gets a closed check that was actually asked.
     """
     page = [argv for argv in route_commands(CI) if argv[:2] == ["noni", "census"]]
     steps = [argv for block in fenced_blocks(read(FORGE_CI_README), info="yaml")
@@ -215,8 +221,19 @@ def test_the_forge_example_runs_the_page_s_own_census_commands() -> None:
         assert census_argv in steps, (
             f"the forge example does not run the page's census line "
             f"{' '.join(census_argv)}: {steps}")
-    assert [argv[3] for argv in steps if argv[:2] == ["noni", "census"]] == [
-        ".", STATE_DIR], f"the example's two routes are wrong: {steps}"
+    plain = [argv for argv in steps if "--issue-state" not in argv]
+    assert [argv[3] for argv in plain if argv[:2] == ["noni", "census"]] == [
+        ".", STATE_DIR], f"the example's two routes are wrong: {plain}"
+    state_step = [argv for argv in steps
+                  if argv[:2] == ["noni", "census"] and "--issue-state" in argv]
+    assert len(state_step) == 1, f"the map step is not the one census line: {steps}"
+    argv = state_step[0]
+    assert argv[3] == ".", f"the map step must audit the tree the page prints: {argv}"
+    assert argv[argv.index("--issue-state") + 1] == "issue-state.json", argv
+    producer = [a for a in steps if a[:2] == ["gh", "issue"]]
+    assert producer, "the forge example passes a map no step of the page produces"
+    assert steps.index(producer[0]) < steps.index(argv), \
+        "the census runs before the map that feeds it is written"
 
 
 def test_the_forge_page_names_where_the_deny_list_lives_for_a_strict_run() -> None:

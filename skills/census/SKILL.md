@@ -242,14 +242,19 @@ The same rule extends to the classes that report their own absence:
   states follow from that. An entry whose issue the map does not mention gets a
   `cannot-tell` row of the same class rather than silence, so a partial map
   cannot read as "every ordered issue is open"; it is a warn by default and
-  `--strict` promotes it to 46. And when `--issue-state` was not given at all,
-  the class is not evaluated: the run names the class and the reason in both
-  modes. Human-readable mode prints one `note:` line saying so; `--json` mode
-  prints no `note:` line at all and carries the same sentence on the one summary
-  record's `not_evaluated` list, so a machine consumer is not left with `"counts":
-  {}` and no way to tell "nothing closed" from "the question was not asked". A
-  recipe that produces the file with a tracker command line and `jq` is in
-  `docs/QUICKSTART.md`.
+  `--strict` promotes it to 46. When `--issue-state` was not given at all and the
+  order holds issues, the class is not evaluated and says so as a finding of its own:
+  one `ordering-closed` row whose subject is the order file, a warn at exit 0 and the
+  class's own 46 under `--strict`, so a CI step gating on the exit code cannot stay
+  green over an order whose issues have all been closed. The same fact is also
+  spoken twice in human-readable mode -- the first line names the class, and one
+  `note:` line gives the reason -- and `--json` mode prints no `note:` line at all,
+  carrying the sentence on the one summary record's `not_evaluated` list instead, so
+  a machine consumer has both the verdict (the row) and the record of the unasked
+  question (the field). The row is an ordinary finding of its class, so `--skip
+  ordering-closed` silences it and `--only` of another class leaves it out. An
+  order that holds no issue owes no row: a recipe that produces the state file with
+  a tracker command line and `jq` is in `docs/QUICKSTART.md`.
   A missing `noni/direction/order.json` is not a finding at all — the ordering
   layer is optional — so an attached project that has never ordered anything
   adds no ordering rows to its census.

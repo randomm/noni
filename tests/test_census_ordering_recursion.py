@@ -23,6 +23,7 @@ from ordering_fixtures import (
     _run,
     _run_in_process,
     _seed,
+    rows_without_unasked_closed,
 )
 from ordering_shapes import DEEP, _deep, _deep_artifact
 
@@ -144,8 +145,11 @@ def test_a_deeply_nested_ledger_record_leaves_the_run_alive(tmp_path):
     combined = out + err
     assert "RecursionError" not in combined, combined[-2000:]
     assert code == 15, (code, rows, combined[-2000:])
-    assert [r["check"] for r in rows] == ["ordering-malformed"], rows
-    assert "matches no record file" in rows[0]["message"], rows[0]
+    # The closed class also reports its unasked question (issue #148); this test is
+    # about the citation row the deep record produced, so that one row is the fixture's.
+    malformed = rows_without_unasked_closed(rows)
+    assert [r["check"] for r in malformed] == ["ordering-malformed"], rows
+    assert "matches no record file" in malformed[0]["message"], rows
 
 
 def test_the_strict_reader_walks_a_deep_value_without_recursing():
@@ -201,7 +205,7 @@ def test_the_census_lists_the_ledger_through_the_one_shared_helper():
         "the record pass no longer reads the probe's names"
     assert "_ledger.listing_helper(ledger)" not in ledger_checks_src, \
         "the record pass lists the ledger again: the run must take one readdir"
-    assert "findings, ledger_probe.names)" in run_src, \
+    assert "findings, ledger_probe.names," in run_src, \
         "the ordering group is no longer handed the run's one listing"
     readers_src = (SCRIPTS / "census_ordering_readers.py").read_text(encoding="utf-8")
     assert "names = listing_helper(ledger)" in readers_src, \
@@ -238,7 +242,10 @@ def test_the_ordering_group_reads_the_probe_names_and_not_the_directory(
     with _ordering_record_read_faults(repo / "noni" / "decisions"):
         code, rows, out, err = _run_in_process(repo)
     assert code == 0, (code, rows, out, err)
-    assert rows == [], rows
+    # The run's own unasked-closed row (issue #148) is the fixture's, not a finding:
+    # the group was handed the probe's names and never listed the ledger itself, which
+    # is what the run above this assertion proves.
+    assert rows_without_unasked_closed(rows) == [], rows
 
 
 def test_the_readers_take_the_strict_reader_as_an_argument(tmp_path):

@@ -260,9 +260,9 @@ def _closed_state_unasked_row() -> dict:
 
 def _closed_state_unasked_message() -> str:
     """The row's message, read out of the census rather than copied into this test."""
-    from noni import census_ordering
+    from noni import census_ordering_closed
 
-    return census_ordering.CLOSED_STATE_UNASKED
+    return census_ordering_closed.CLOSED_STATE_UNASKED
 
 
 def _census_json_run(repo: Path, issue_state: str | None):

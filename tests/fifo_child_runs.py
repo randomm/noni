@@ -4,8 +4,8 @@ The bug was a hang, so no test for it may run the faulting call in-process: an
 unbounded read of a named pipe takes the pytest worker with it and reports nothing
 at all, which is the product's failure mode one layer up. Every scan, read and
 deny-list load that could block therefore runs in a child under
-``subprocess.run(timeout=...)`` plus an elapsed assertion -- the shape
-``tests/test_session_walk_bounded.py`` uses. Each runner prints its verdict on a
+``subprocess.run(timeout=...)`` plus an elapsed assertion -- the bounded-child
+shape this suite reuses wherever a read could block. Each runner prints its verdict on a
 marker line so the parent can tell "no violations" from "no answer": the second is
 the hang, and it is the finding, not an artefact.
 

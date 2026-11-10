@@ -26,12 +26,6 @@ CONFTEST = Path(__file__).resolve().parent / "conftest.py"
 # one planted note's content line (public_safety matches line content).
 DECOY_DENYLIST_ENTRY = "decoy-denylist-probe"
 
-# The identity a decoy claim row would carry, and the task a claim run would
-# name. Both are unused now the claim subsystem is gone, and kept because
-# DECOY_DENYLIST_ENTRY and the planted note beside them are the decoy this suite
-# actually catches.
-DECOY_SID = "2026-10-01-aaaaaa"
-DECOY_TASK = "#42"
 BASELINE_DECISION_ID = "2026-10-01-baseline"
 
 
@@ -127,17 +121,16 @@ _DECOY_ORDER = [{"issue": 999, "decision": BASELINE_DECISION_ID,
 
 
 def _hostile_home(tmp_path: Path) -> Path:
-    """A HOME carrying a complete decoy state root: all three noni/ directories.
+    """A HOME carrying a complete decoy state root: the noni/ directories.
 
-    The three directories are the whole layout the sessions-era fixture planted
-    (direction, decisions and the now-removed sessions register), kept as three
-    so every writer in WRITER_LAUNCHERS still has a plausible place to have
-    landed here -- and none of them may.
+    The two directories are the layout the kept writers write into (decisions and
+    direction), each holding a decoy artifact, so every writer in
+    WRITER_LAUNCHERS still has a plausible place to have landed here -- and none
+    of them may.
     """
     home = tmp_path / "hostile-home"
     state = home / "noni"
     (state / "decisions").mkdir(parents=True)
-    (state / "sessions").mkdir(parents=True)
     (state / "direction").mkdir(parents=True)
     (state / "decisions" / "2026-10-01-home-decoy.json").write_text(
         json.dumps(_DECOY_RECORD, indent=2), encoding="utf-8")

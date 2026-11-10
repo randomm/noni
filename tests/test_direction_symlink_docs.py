@@ -6,7 +6,7 @@ only contract for what a symlinked ``noni/``, ``noni/direction/`` or
 nothing but the checks below compares them, which is how a page that dropped the
 clause, or a writer that changed its code, would otherwise pass every suite.
 
-Modelled on ``tests/test_session_symlink_docs.py``: the expected code is read off the
+Modelled on the direction symlink-docs pattern: the expected code is read off the
 page rather than trusted from the writer's constant, and the prose is read for the
 state and the code together. A clause is located by the two phrases ONLY it carries
 -- the position the guard walks and the promise it makes -- and the code and the path

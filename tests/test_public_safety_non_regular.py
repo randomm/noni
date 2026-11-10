@@ -12,7 +12,7 @@ both halves of it:
   device is deliberately *not* among them: opening one returns EOF immediately
   with or without the guard, so a device test would pass green and prove nothing
   about the class. The behavioural cases therefore run in child processes under a
-  ``timeout=`` (the shape ``tests/test_session_walk_bounded.py`` uses), since an
+  ``timeout=`` (the bounded-child shape this suite reuses), since an
   in-process hang takes the pytest worker with it.
 - **The structure.** The flag ordering no fixture can plant: a regular file
   swapped for a pipe between a check and the open, and the flags on the one

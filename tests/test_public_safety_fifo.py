@@ -9,7 +9,7 @@ error surface was zero -- no row, no traceback, no exit.
 
 So this module asserts behaviour, never source text: every scan that could hang
 runs in a child process under ``subprocess.run(timeout=...)`` with an elapsed
-assertion, the shape ``tests/test_session_walk_bounded.py`` uses. An in-process
+assertion, the elapsed-assertion shape this suite reuses. An in-process
 scan would take the pytest worker with it, and a test that wedges the suite
 reports nothing at all -- the same failure mode as the product bug, one layer up.
 

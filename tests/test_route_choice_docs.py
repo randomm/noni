@@ -10,8 +10,7 @@ root`` states it before the reader chooses a route, and ``docs/PRODUCT.md``
 section 7 -- the page the quickstart itself calls binding -- states the same
 rule in one sentence.
 
-The clause is located by its two ends, following
-``tests/test_session_symlink_docs.py``: the position the writers commit to
+The clause is located by its two ends: the position the writers commit to
 (:data:`quickstart_page.ROUTE_CHOICE_START`) and the recommendation that follows
 from it (:data:`quickstart_page.ROUTE_CHOICE_CLOSE`). Neither phrase occurs
 anywhere else on either page -- not in the route headings, not in the ignore-rule
@@ -116,8 +115,8 @@ def locate(flowed: str, origin: str, facts: tuple[str, ...]) -> str:
     ``origin`` names the page in the failure, so a red run says which page lost
     the clause rather than which phrase a search could not find. The text between
     the ends must carry every fact in ``facts``: a clause that kept its two
-    pinned phrases and lost the reasoning between them is the clause
-    ``tests/test_session_symlink_docs.py`` describes, and it fails here.
+    pinned phrases and lost the reasoning between them is the clause this
+    two-ended check exists to catch, and it fails here.
     """
     start = flowed.find(ROUTE_CHOICE_START)
     assert start >= 0, (

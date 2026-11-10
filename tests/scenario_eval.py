@@ -2,11 +2,11 @@
 
 The builder constructs a bare origin plus two agent clones in a throwaway
 directory (a tmp_path in the tests; its own temp dir when run standalone
-with no argument), drives the real register.py / claim.py scripts
-(fetch-rebase-push), the real order.py writer for the ordering artifact, and
-commits a healthy steering decision chain. In the faulted variant it plants
-five disjoint faults (census codes 30, 31, 20, 40 committed to origin, and 12
-planted in the fresh clone's working tree), each in its own artifact. Every
+with no argument), drives the real item.py and order.py writers through their
+fetch-rebase-push commit path, and commits a healthy steering decision chain.
+In the faulted variant it plants four disjoint faults (census codes 52, 53 and
+20 committed to origin, and 12 planted in the fresh clone's working tree), each
+in its own artifact. Every
 commit runs with pinned GIT_AUTHOR_DATE / GIT_COMMITTER_DATE, so a rebuilt
 scenario is identical, and the census runs against a FRESH clone of the bare
 origin with a fixed --now and --stale-after.

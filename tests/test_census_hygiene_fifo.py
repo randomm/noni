@@ -10,7 +10,7 @@ Two rules shape this file, both of them about how a hanging test would hide the
 bug rather than report it:
 
 - **The census runs in a child process** (``sys.executable -c``, a hard
-  ``timeout=``, an elapsed assertion), the shape ``tests/test_session_walk_bounded.py``
+  ``timeout=``, an elapsed assertion), the bounded-child shape this suite reuses
   and ``tests/test_census_intent_cited_record.py`` use. The suite's in-process
   runner, ``tests/census_run.py``'s ``_run_census``, calls ``census.main`` with no
   bound of any kind, so a regression there would wedge the pytest worker and the

@@ -139,10 +139,10 @@ CENSUS = CENSUS_SKILL / "census.py"
 # ``noni item`` print the same bytes.
 ITEM = REPO / "scripts" / "item.py"
 
-# The six tools the ``noni`` command dispatches: subcommand -> the wrapper that
+# The four tools the ``noni`` command dispatches: subcommand -> the wrapper that
 # must produce the same bytes. The shell census entry point is the other
 # half of the wrapper surface: it is compared against the package route in
-# tests/test_console_routes.py, so the path is pinned here as well.
+# tests/test_console_equivalence.py, so the path is pinned here as well.
 TOOL_WRAPPERS: tuple[tuple[str, Path], ...] = (
     ("census", CENSUS),
     ("decide", DECIDE),

@@ -1,4 +1,4 @@
-"""What the two shell census wrappers accept, what they refuse, and what they hand on.
+"""What the shell census wrapper accepts, what it refuses, and what it hands on.
 
 ``skills/steering-ledger/scripts/census.sh`` execs the in-place ``census.py``
 beside it, which calls ``census_wrapper.run_ledger``. That function is the
@@ -117,7 +117,7 @@ def _run_with(run, argv: list[str]) -> tuple[int, str, str]:
 
 
 def _register(tmp_path: Path, noun: str) -> str:
-    """One state directory either wrapper will accept, laid out for either entry point."""
+    """One state directory the wrapper will accept, laid out for the entry point."""
     directory = tmp_path / "state" / "noni" / noun
     directory.mkdir(parents=True, exist_ok=True)
     return str(directory)

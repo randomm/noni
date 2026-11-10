@@ -203,11 +203,14 @@ def test_a_broken_state_file_is_reported_even_when_the_artifact_is_broken(tmp_pa
     assert subjects == {ORDER_REL, "issue-state"}, rows
 
 
-def test_the_ordering_group_does_not_read_the_sessions_or_the_ledger_classes(tmp_path):
-    """Isolation of the group: a tree whose sessions are broken still reports
-    only ordering rows when only the ordering classes were asked for."""
+def test_the_ordering_group_reads_no_class_but_the_ordering_ones(tmp_path):
+    """Isolation of the group: a run with no ``--only`` of its own still reports
+    only ordering rows, beside a tree whose ledger group fails on its own."""
     repo = _repo(tmp_path)
-    _commit(repo, "noni/sessions/2026-10-01-aaaaaa.md", "no fields at all\n")
+    # A record the ledger group reports (``ledger-record``, 10) sits in the same
+    # tree: the bare run reaches every group, so a leak would show up here as a
+    # ledger row or the ledger's code rather than the ordering pair below.
+    _commit(repo, "noni/decisions/2026-10-02-not-json.json", "{ not json\n")
     _seed(repo, _entry(3, "2026-01-01-ghost"))
     code, rows, _out, _err = _run(repo)
     assert {r["check"] for r in rows} == {"ordering-malformed"}, rows

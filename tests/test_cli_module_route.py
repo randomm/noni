@@ -36,8 +36,14 @@ from _harness import (
     run_wrapper,
 )
 from console_route_support import assert_same
-from decide_fixtures import ANSWERED, BASE, NEW_DATE, OPTIONS, QUESTION
-from test_decide_state_root import _committed_code_repo
+from decide_fixtures import (
+    ANSWERED,
+    BASE,
+    NEW_DATE,
+    OPTIONS,
+    QUESTION,
+    _committed_code_repo,
+)
 
 # One representative argv per shipped subcommand, each a run whose output needs no
 # state: the tool prints its own usage and exits 0, which is the shape a reader

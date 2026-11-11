@@ -4,11 +4,9 @@ Extracted from the decide writer suite: the writer driven from a decoy cwd and a
 decoy ledger, so a path leak is a refusal rather than a stray record."""
 
 import json
-from pathlib import Path
 
 from _harness import (
     _git_e2,
-    _init_repo,
     run_module,
     run_order,
 )
@@ -23,6 +21,7 @@ from decide_fixtures import (
     _baseline_repo,
     _census_py,
     _commit_tree,
+    _committed_code_repo,
     _decide,
     _decide_case,
     _decide_from,
@@ -286,16 +285,6 @@ def test_a_supersede_with_a_malformed_date_exits_two(tmp_path):
 # together in this file rather than in two places.
 
 NO_NONI_WORDS = ("is not a noni state root", "no noni/")
-
-
-def _committed_code_repo(tmp_path: Path, name: str) -> Path:
-    """A git tree with an identity, one commit, and no ``noni/`` of its own."""
-    repo = _init_repo(tmp_path / name)
-    _git_e2(repo, "config", "user.name", "Replay")
-    _git_e2(repo, "config", "user.email", "replay@fixture.invalid")
-    _commit_tree(repo, "README.md", "# a code repository\n", "add readme",
-                 "2026-10-01T00:00:00Z")
-    return repo
 
 
 def test_a_run_into_a_tree_with_no_noni_needs_the_flag_and_says_what_it_made(

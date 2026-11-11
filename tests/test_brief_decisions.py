@@ -303,6 +303,97 @@ def test_brief_ties_in_the_record_date_break_by_id(tmp_path: Path) -> None:
         "2026-10-25-charlie", "2026-10-25-bravo", "2026-10-25-alpha"]
 
 
+def _reason_past_the_floor() -> str:
+    """A single-word reason long enough that the row builder takes its floor arm.
+
+    The builder reaches the floor once the mark leaves it less than
+    :data:`noni.brief_page._MIN_CLIPPED_PART` characters of the bound. Which arm answered is a
+    property of the finished line rather than of one number, so the probe asks the builder for
+    the row it would print for the longest single-word reason the page can be handed and asserts
+    the mark sits straight after the subject: the arm that clips keeps the head whole, so a row
+    that read ``7. #123456 (2026-...`` would say the floor was never reached. The cases below then
+    hold whatever the page's bound is.
+    """
+    reason = "R" * brief_page.TEXT_LIMIT
+    row = brief_page_rows.order_row(7, issue=123456, decision="2026-10-01-brief",
+                                    why=reason)
+    assert row is not None
+    assert row.startswith(f"7{brief_page.ORDER_SUBJECT_SEPARATOR}#123456"
+                          f"{brief_page.REASON_SEPARATOR}R")
+    return reason
+
+
+def test_brief_a_reason_that_scrubs_to_nothing_prints_no_mark_at_the_floor() -> None:
+    """A reason that survives its callers' checks and empties under the page's scrub is no reason.
+
+    The guard against a bare mark sits in the row builder, not in the two callers that compose
+    a reason: a caller's test of the raw field and the page's test of the printed line are two
+    different answers, and a reason of nothing but what the scrub deletes (zero-width or
+    soft-hyphen characters) or of nothing but spaces passes the first and fails the second. The
+    rows are driven at the builder because the artifact's own rationale bound keeps a writer
+    from committing a reason long enough to reach the floor, where the head is dropped instead of
+    clipped: a row that printed "1. ... \u2014" there was a page that promised the operator's
+    reason, named none of it, and clipped the head that identified the row.
+    """
+    for scrubbed_to_nothing in ("\u200b" * 293, " " * 293):
+        row = brief_page._bounded_row("1. #1 (" + "d" * 250 + ")",
+                                      scrubbed_to_nothing, ". ")
+        assert row is not None
+        assert not row.rstrip().endswith("\u2014")
+        assert brief_page.REASON_SEPARATOR not in row
+        # The head survives on its own: what the row states is the position and the issue.
+        assert row.startswith("1. #1")
+        assert len(row) <= brief_page.TEXT_LIMIT
+
+
+def test_brief_the_floor_of_an_order_row_keeps_the_subject_and_the_reason() -> None:
+    """At the floor the row keeps the half that identifies it and the reason the row is for.
+
+    The floor is the one case where clipping the head around the reason cannot work: a reason at
+    the page's bound leaves no room for a statement that says anything, so the head is dropped
+    rather than clipped. What must survive that drop is what tells a reader which row it is. An
+    order row that fell back to the position alone printed ``7. `` over the operator's reason, and
+    an agent that read it could not tell which issue sat at seven. The reason keeps everything the
+    row's own bound allows it: the row's width is the page's, so the reason loses only what the
+    bound takes from the finished line, and it loses it at its end rather than at its start.
+    """
+    reason = _reason_past_the_floor()
+    row = brief_page_rows.order_row(7, issue=123456, decision="2026-10-01-brief",
+                                    why=reason)
+    assert row is not None
+    subject = (f"7{brief_page.ORDER_SUBJECT_SEPARATOR}#123456"
+               f"{brief_page.REASON_SEPARATOR}")
+    # The whole row is the subject and the reason: none of the head's own statement (the record id
+    # it brackets) survives, and what the reason loses is the page's ellipsis, the mark of the
+    # bound on the finished line, taken from the reason's end and not its start.
+    assert row == subject + "R" * (brief_page.TEXT_LIMIT - len(subject) - 3) + "..."
+    assert "(" not in row and ")" not in row
+    assert len(row) <= brief_page.TEXT_LIMIT
+
+
+def test_brief_the_floor_of_a_decision_row_keeps_the_record_id() -> None:
+    """The same floor on a decision row keeps the record id, the row's own identifier.
+
+    The head of a decision row opens with the id the ledger names the record by, and that is the
+    part the row has to keep when the statement yields the whole width to the reason: a reader
+    who means to go and read the record needs the id to find the file with. The statement of a
+    record at its own bound is what is dropped, so the row is the id, the mark, and as much of the
+    reason as the page's bound leaves. Driven at the helper because no writer admits a reason long
+    enough to reach the floor.
+    """
+    reason = _reason_past_the_floor()
+    # The row is composed through the page's own builders, so its width is the page's bound less
+    # the ellipsis that marks a bound line: the reason fills exactly that, which is what says the
+    # row is the subject and the reason and nothing else.
+    row = brief_page_rows.decision_row(record_id="2026-10-01-brief",
+                                       statement="Ship the beta", why=reason)
+    assert row is not None
+    subject = ("2026-10-01-brief" + brief_page.RECORD_SEPARATOR + "Ship"
+               + brief_page.REASON_SEPARATOR)
+    assert row == subject + "R" * (brief_page.TEXT_LIMIT - len(subject) - 3) + "..."
+    assert len(row) <= brief_page.TEXT_LIMIT
+
+
 def test_brief_a_record_that_is_a_symlink_contributes_no_row(tmp_path: Path) -> None:
     """A link in the ledger is refused, never followed, and costs only its own row.
 

@@ -293,20 +293,29 @@ def _statement_segment(question: object) -> str | None:
 def _bounded_row(head: str, reason: str, keep: str) -> str | None:
     """One row of a head and a reason, bounded with the reason kept whole.
 
-    The row is composed reason-last and bounded reason-last, and that order is what decides what a
+    The reason is scrubbed here and not by the callers, so the two rules a reason answers to --
+    no reason at all, and a reason too long to share the row -- are held by one function. The row
+    is composed reason-last and bounded reason-last, and that order is what decides what a
     too-long row loses. The head yields: it is a settled statement (or, on an order row, the
     position the artifact itself states), which the reader can go and read in the file the row
     names, while the reason is the half the row exists to put in front of an agent that has not
     read it. Below :data:`_MIN_CLIPPED_PART` a clipped head is mostly the ellipsis that marks it
-    clipped, so at that floor the row keeps only what ``keep`` opens (the id, or the position) and
-    drops the rest rather than printing a fragment.
+    clipped, so at that floor the row keeps the parts that identify the row rather than a
+    fragment: the head up to the first ``keep`` (the position of an order row, the id of a
+    decision row), plus the word that follows it, which is the ``#{issue}`` the order row names
+    its subject by. The separator is the caller's, so it is the caller's word that is kept.
     """
+    reason = _rendered(reason)
     if not reason:
         return page_line(head, TEXT_LIMIT, frozenset())
     mark = REASON_SEPARATOR + reason
     room = TEXT_LIMIT - len(mark)
     if room < _MIN_CLIPPED_PART:
-        return page_line(head.split(keep, 1)[0] + keep + reason,
+        subject = head.split(keep, 1)
+        kept = subject[0] + keep
+        if len(subject) > 1:
+            kept += subject[1].split(" ", 1)[0]
+        return page_line(kept + REASON_SEPARATOR + reason,
                          TEXT_LIMIT, frozenset())
     head_text = head if len(head) <= room else _clipped(head, room)
     return page_line(head_text + mark, TEXT_LIMIT, frozenset())

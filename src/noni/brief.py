@@ -332,7 +332,8 @@ def _order_block(root: Path) -> list[str]:
     """The ``top 10`` block: the head of the order, in the artifact's own order.
 
     The read is :func:`noni.orderstate.read_order` and each entry prints
-    ``{position}. #{issue} ({decision})``, plus `` | {why}`` after the page's mark when the entry
+    ``{position}. #{issue} ({decision})``, plus ``{why}`` after
+    :data:`noni.brief_page.REASON_SEPARATOR` when the entry
     carries a reason (see :func:`noni.brief_page.order_row` for the row and the reason the reason
     is kept whole). The record id is on the row because the page reads no tracker: an issue number
     is a number, and the decision that set the position is the only thing the tree holds that says
@@ -356,8 +357,10 @@ def _decisions_block(root: Path) -> list[str]:
 
     The reader lives beside the page's other foreign-text rules
     (:func:`noni.brief_page.decision_rows`) and this block only says what it prints: one row per
-    record, holding its id, one ``text: answer`` segment per question, and the record's ``why``
-    when it carries one. Live is that reader's single predicate -- a record whose own ``status``
+    record, holding its id, then one ``text: answer`` segment per question (or, for a record that
+    asked one question on purpose, its statement), and then the record's ``{why}`` after
+    :data:`noni.brief_page.REASON_SEPARATOR` when it carries one. Live is that reader's single
+    predicate -- a record whose own ``status``
     is ``decided`` -- so a ``superseded`` record never appears here, and neither does an ``open``
     one whose operator has not answered.
 

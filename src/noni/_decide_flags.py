@@ -392,7 +392,8 @@ def refuse_linked_state(printer: Printer, code: int, repo: Path,
 
 
 def refuse_state_root(printer: Printer, code: int, repo: Path,
-                      admits: Callable[[], bool]) -> int | None:
+                      admits: Callable[[], bool], *,
+                      hint: str = "") -> int | None:
     """The exit code for a ``--repo`` that is no noni state root, or None.
 
     The question a run asks of its ``--repo`` before it writes anything: the tree holds
@@ -413,9 +414,11 @@ def refuse_state_root(printer: Printer, code: int, repo: Path,
     The obstruction question is not asked here: :func:`refuse_linked_state` asks it of the
     same ``lstat`` ahead of this, so a linked ``noni/`` keeps the sentence that names it.
     ``code`` is the caller's own constant and ``printer`` its own, so the prefix is the
-    command the operator ran and the number is the one its documents state.
+    command the operator ran and the number is the one its documents state. ``hint`` is
+    one sentence the caller adds to the end of the shared fix line -- empty by default,
+    so a writer that has no flag of its own prints exactly the two shared sentences.
     """
-    refused = None if admits() else _path_kind.state_root_refusal(repo)
+    refused = None if admits() else _path_kind.state_root_refusal(repo, hint=hint)
     return None if refused is None else printer(code, *refused)
 
 def _allocation_refusal(repo: Path, ledger: Path) -> tuple[str, str] | None:

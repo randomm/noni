@@ -53,7 +53,7 @@ cd your-project
 git config user.name "Casey"
 git config user.email "casey@example.invalid"
 
-python3 ../noni/skills/steering-ledger/scripts/decide.py --repo . \
+python3 ../noni/skills/steering-ledger/scripts/decide.py --repo . --init \
   --slug release-scope --scope release --asked-by team-lead \
   --question "q1=Ship the beta this week?" \
   --option "q1=Ship it" --option "q1=Wait a week" \
@@ -61,6 +61,11 @@ python3 ../noni/skills/steering-ledger/scripts/decide.py --repo . \
 
 python3 ../noni/skills/census/scripts/census.py --repo .
 ```
+
+`--init` says this repository holds no `noni/` yet and is meant to: without it
+`decide` refuses at exit 3 rather than write direction state into a checkout you
+named by mistake. A tree that already holds a `noni/` is a state root and needs no
+flag, so omit it there.
 
 Run these from a commit of noni you trust: no release or tag exists yet, so pin
 a commit, and remember they run noni's scripts.
@@ -102,8 +107,8 @@ Everything noni keeps in your repository lives in one directory:
 
 Nothing else is state. The writers above are the only things that create those
 files, and each commits what it writes in one atomic step. The try-it run above
-creates the ledger record only: `intent.md` appears when you first run
-`intent.py` and `order.json` when you first run `order.py`. Both are optional, and only a run that counted
+creates the ledger record only: `intent.md` appears when you first run `intent.py`
+and `order.json` when you first run `order.py`. Both are optional, and only a run that counted
 no row and skipped no check reads all-clear (`census: no findings; all checks
 passed`, `summary: clean; 0 finding(s); verdict ok`); the try-it run above does
 not: the always-reporting hygiene class leaves a first tree a warn row. The

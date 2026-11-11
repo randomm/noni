@@ -351,7 +351,10 @@ def test_the_protocol_steps_run_in_order_through_the_console_command(
 
     # The steer the two direction files cite. It is written first because the page
     # says so: the intent and the order name a record the ledger must already hold.
-    decide = _run(world, "decide", "--repo", str(state), "--slug", "walk",
+    # ``--init`` because the fixture's state clone is new, which is exactly the state
+    # the flag exists to name.
+    decide = _run(world, "decide", "--repo", str(state), "--init",
+                  "--slug", "walk",
                   "--scope", "release ordering", "--asked-by", "developer",
                   "--question", "q1=Ship the beta this week?", "--option",
                   "q1=Ship it", "--option", "q1=Wait a week",

@@ -234,7 +234,7 @@ def test_a_first_run_with_no_noni_directory_still_creates_it(tmp_path):
     # then name. That it can do so on a tree with no ``noni/`` at all is half of what
     # this test is for; the order of the three runs is the other half -- a writer that
     # wrote before it could cite would be a different contract.
-    seed = _launch(project, DECIDE, _argv_naming(PROBE_ID), draft)
+    seed = _launch(project, DECIDE, _argv_naming(PROBE_ID) + ("--init",), draft)
     assert seed.returncode == 0, seed.stderr
     order_run, intent_run, decide_run = _run_writers_before_citation(project, draft)
     assert order_run.returncode == 0, order_run.stderr

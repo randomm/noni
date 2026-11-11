@@ -4,11 +4,11 @@ Extracted from the decide writer suite: the writer driven from a decoy cwd and a
 decoy ledger, so a path leak is a refusal rather than a stray record."""
 
 import json
-from pathlib import Path
 
 from _harness import (
     _git_e2,
-    _init_repo,
+    run_module,
+    run_order,
 )
 from decide_fixtures import (
     ANSWERED,
@@ -21,6 +21,7 @@ from decide_fixtures import (
     _baseline_repo,
     _census_py,
     _commit_tree,
+    _committed_code_repo,
     _decide,
     _decide_case,
     _decide_from,
@@ -286,33 +287,33 @@ def test_a_supersede_with_a_malformed_date_exits_two(tmp_path):
 NO_NONI_WORDS = ("is not a noni state root", "no noni/")
 
 
-def _committed_code_repo(tmp_path: Path, name: str) -> Path:
-    """A git tree with an identity, one commit, and no ``noni/`` of its own."""
-    repo = _init_repo(tmp_path / name)
-    _git_e2(repo, "config", "user.name", "Replay")
-    _git_e2(repo, "config", "user.email", "replay@fixture.invalid")
-    _commit_tree(repo, "README.md", "# a code repository\n", "add readme",
-                 "2026-10-01T00:00:00Z")
-    return repo
-
-
-def test_a_run_into_a_tree_with_no_noni_creates_the_ledger_and_says_what_it_made(
+def test_a_run_into_a_tree_with_no_noni_needs_the_flag_and_says_what_it_made(
 tmp_path):
-    """A first ``decide`` into a code repository creates ``noni/`` and reports it.
+    """A first ``decide`` into a code repository is refused, and ``--init`` opens it.
 
     The ticket's reproduction was a run that committed into a tree that never held
     state and left the operator no way to see it: the commit succeeded, so the tree
-    read as a state root afterwards and every later run looked legitimate. ``decide``
-    is a sanctioned creator (docs/PRODUCT.md 7), so this run is admitted and exits 0,
-    and what makes it auditable rather than silent is that the tree it touched and the
-    record it made are both named on stdout and left staged-and-committed as one unit.
-    The refusal for a tree that is genuinely no state root belongs to the readers and
-    to ``order``/``intent``; ``decide``'s half of the contract is that the first record
-    is real, reported, and asked before the ledger is read.
+    read as a state root afterwards and every later run looked legitimate. ``decide`` is
+    still the ledger's creator, but creation is now something the caller asks for: the
+    run with no flag exits 3, prints the state-root sentence and the ``--init``
+    instruction, creates no ``noni/`` and commits nothing (the tree stays porcelain
+    clean), and the same run with ``--init`` exits 0 and leaves the record and its
+    commit as one unit. The tree it touched and the record it made are both named on
+    stdout, which is what makes a creation auditable rather than silent.
     """
     repo = _committed_code_repo(tmp_path, "code-repo")
-    proc = _run(repo, "--slug", "probe", "--date", NEW_DATE,
-                *BASE, *QUESTION, *OPTIONS, *ANSWERED)
+    argv = ("--slug", "probe", "--date", NEW_DATE, *BASE, *QUESTION, *OPTIONS,
+            *ANSWERED)
+    refused = _run(repo, *argv)
+    assert refused.returncode == 3, f"{refused.returncode}: {refused.stderr}"
+    assert all(word in refused.stderr for word in NO_NONI_WORDS), refused.stderr
+    assert "--init" in refused.stderr, (
+        f"the refusal must name the flag that opens a new state root: {refused.stderr}")
+    assert not (repo / "noni").exists(), (
+        f"a refused run created {repo / 'noni'}")
+    assert _porcelain(repo) == "", _porcelain(repo)
+
+    proc = _run(repo, *argv, "--init")
     assert proc.returncode == 0, f"{proc.returncode}: {proc.stderr}"
     made = repo / "noni" / "decisions" / f"{NEW_DATE}-probe.json"
     assert made.is_file(), f"the first record did not land: {proc.stdout}"
@@ -333,26 +334,77 @@ def test_a_first_record_on_a_tree_with_no_noni_is_admitted(tmp_path):
     """
     repo = _committed_code_repo(tmp_path, "first-record")
     proc = _run(repo, "--slug", "first", "--date", NEW_DATE,
-                *BASE, *QUESTION, *OPTIONS, *ANSWERED)
+                *BASE, *QUESTION, *OPTIONS, *ANSWERED, "--init")
     assert proc.returncode == 0, f"{proc.returncode}: {proc.stderr}"
     assert all(word not in proc.stderr for word in NO_NONI_WORDS), proc.stderr
     assert (repo / "noni" / "decisions" / f"{NEW_DATE}-first.json").is_file(), proc.stdout
     assert _porcelain(repo) == "", _porcelain(repo)
 
 
-def test_no_commit_is_admitted_on_a_tree_with_no_noni(tmp_path):
-    """``--no-commit`` commits nothing, so no commit can land in the wrong tree.
+def test_no_commit_needs_the_flag_too_on_a_tree_with_no_noni(tmp_path):
+    """``--no-commit`` no longer stands in for the caller's word that this is a new root.
 
-    The shim route and the session writers mint a record with ``--no-commit`` and
-    commit it themselves, so a refusal that stopped this run would stop those routes
-    outright. The file still lands, uncommitted, which is what its caller then commits.
+    The flag used to be its own creator exception, which is how the pilot's records
+    landed without any commit of theirs: the run wrote, the caller committed. Minting a
+    record with no commit of its own is no longer a route the writer carries, so the
+    flag now only decides whether this run commits -- on a tree that already holds
+    ``noni/`` it commits nothing, as ever. Both halves: the run without ``--init`` is
+    refused and writes nothing, the run with it lands the file uncommitted.
     """
     repo = _committed_code_repo(tmp_path, "no-commit")
-    proc = _run(repo, "--slug", "minted", "--date", NEW_DATE,
-                *BASE, *QUESTION, *OPTIONS, *ANSWERED, "--no-commit")
+    argv = ("--slug", "minted", "--date", NEW_DATE, *BASE, *QUESTION, *OPTIONS,
+            *ANSWERED, "--no-commit")
+    refused = _run(repo, *argv)
+    assert refused.returncode == 3, f"{refused.returncode}: {refused.stderr}"
+    assert all(word in refused.stderr for word in NO_NONI_WORDS), refused.stderr
+    assert not (repo / "noni").exists(), f"a refused run created {repo / 'noni'}"
+
+    proc = _run(repo, *argv, "--init")
     assert proc.returncode == 0, f"{proc.returncode}: {proc.stderr}"
     assert all(word not in proc.stderr for word in NO_NONI_WORDS), proc.stderr
     assert (repo / "noni" / "decisions" / f"{NEW_DATE}-minted.json").is_file(), proc.stdout
+
+
+def test_init_is_harmless_where_noni_already_lives(tmp_path):
+    """On a tree that holds ``noni/`` the flag changes nothing, in either direction.
+
+    The control that keeps the gate from being a new burden: a state root records
+    byte-identically with or without ``--init``, so the flag is a first-run word and not
+    a second mode of the writer. Both runs write their own slug, and each exits 0.
+    """
+    repo = _baseline_repo(tmp_path, "init-noop")
+    without = _run(repo, "--slug", "plain", "--date", NEW_DATE,
+                   *BASE, *QUESTION, *OPTIONS, *ANSWERED)
+    assert without.returncode == 0, f"{without.returncode}: {without.stderr}"
+    with_flag = _run(repo, "--slug", "flagged", "--date", NEW_DATE,
+                     *BASE, *QUESTION, *OPTIONS, *ANSWERED, "--init")
+    assert with_flag.returncode == 0, f"{with_flag.returncode}: {with_flag.stderr}"
+    for name in (f"{NEW_DATE}-plain.json", f"{NEW_DATE}-flagged.json",
+                 f"{BASELINE_ID}.json"):
+        assert (repo / "noni" / "decisions" / name).is_file(), name
+    assert all(word not in (without.stderr + with_flag.stderr)
+               for word in NO_NONI_WORDS), without.stderr + with_flag.stderr
+    assert _porcelain(repo) == "", _porcelain(repo)
+
+
+def test_init_is_refused_by_the_other_writers_as_an_unknown_flag(tmp_path):
+    """``--init`` is decide's flag alone: every other command answers argparse's 2.
+
+    The surface holds at one flag, so the other writers and the census must not grow a
+    silent way to create state. Each run below names the flag it refused, exits 2, and
+    writes nothing into the tree it was given.
+    """
+    repo = _baseline_repo(tmp_path, "init-refused")
+    order = run_order(repo, "add", "12", "--decision", BASELINE_ID, "--now",
+                      "2026-10-26T00:00:00Z", "--init")
+    assert order.returncode == 2, f"order: {order.returncode}: {order.stderr}"
+    assert "--init" in order.stderr, f"order: {order.stderr}"
+    census = run_module("census", "--repo", str(repo), "--init")
+    assert census.returncode == 2, f"census: {census.returncode}: {census.stderr}"
+    assert "--init" in census.stderr, f"census: {census.stderr}"
+    assert sorted(p.name for p in (repo / "noni" / "decisions").glob("*.json")) == [
+        f"{BASELINE_ID}.json"]
+    assert _porcelain(repo) == "", _porcelain(repo)
 
 
 def test_a_linked_noni_keeps_its_own_refusal_ahead_of_the_state_root_one(tmp_path):

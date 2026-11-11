@@ -25,7 +25,26 @@ from __future__ import annotations
 
 import sys
 
-from _harness import CENSUS, INTENT, ORDER, REPO, run_module, run_noni, run_wrapper
+from _harness import (
+    CENSUS,
+    DECIDE,
+    INTENT,
+    ORDER,
+    REPO,
+    run_module,
+    run_noni,
+    run_wrapper,
+    subprocess_env,
+)
+from console_route_support import assert_same
+from decide_fixtures import (
+    ANSWERED,
+    BASE,
+    NEW_DATE,
+    OPTIONS,
+    QUESTION,
+    _committed_code_repo,
+)
 
 # One representative argv per shipped subcommand, each a run whose output needs no
 # state: the tool prints its own usage and exits 0, which is the shape a reader
@@ -103,6 +122,38 @@ def test_the_module_route_refusals_match_the_console_route(tmp_path):
         assert module.returncode == 2, module.returncode
         named = [line for line in module.stderr.splitlines() if line.startswith(label)]
         assert named, f"{tool}: no {label} line in {module.stderr!r}"
+
+
+def test_the_three_routes_agree_on_the_state_root_refusal(tmp_path):
+    """``decide`` refuses a no-``noni/`` tree the same bytes on all three routes.
+
+    The wrapper, ``noni decide`` and ``python -m noni decide`` share one parser and one
+    printer today, which is exactly the kind of agreement a test has to keep: the new
+    ``--init`` refusal is the line an operator acts on, and a route that printed a
+    different label, a different code or a hint the others dropped would still leave
+    every per-route help comparison green. Compared on bytes, with the refusal asserted
+    present in all three rather than only equal.
+    """
+    repo = _committed_code_repo(tmp_path, "routes")
+    argv = ("--slug", "probe", "--date", NEW_DATE, *BASE, *QUESTION, *OPTIONS,
+            *ANSWERED)
+    # The wrapper is the in-place script under ``skills/``, which is not on
+    # ``sys.path``, so it is launched from the checkout with ``src/`` on the path --
+    # the form README's try-it block documents. The two package routes already
+    # resolve ``noni`` through the suite's own bootstrap.
+    env = subprocess_env()
+    env["PYTHONPATH"] = str(REPO / "src")
+    wrapper = run_wrapper(DECIDE, "--repo", str(repo), *argv, env=env)
+    console = run_noni("decide", "--repo", str(repo), *argv)
+    module = run_module("decide", "--repo", str(repo), *argv)
+    assert_same(wrapper, console, "decide no-noni refusal (wrapper vs console)")
+    assert_same(module, console, "decide no-noni refusal (module vs console)")
+    assert console.returncode == 3, f"{console.returncode}: {console.stderr}"
+    for proc in (wrapper, console, module):
+        assert "is not a noni state root" in proc.stderr, proc.stderr
+        assert "--init" in proc.stderr, proc.stderr
+        assert proc.stderr.startswith("decide.py: "), repr(proc.stderr)
+    assert not (repo / "noni").exists(), "a refused route created noni/"
 
 
 def test_the_module_route_and_the_wrapper_agree_on_help_for_each_tool():

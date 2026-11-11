@@ -11,8 +11,8 @@ is the commands.
 ## Install noni
 
 noni is not published, and the distribution name will be `noni-noni`. `pip install
-noni` installs some other project's wheel, so every route to it names this
-repository, and none of them runs `pip` against your system Python. On a
+noni` installs some other project's wheel, so every route names this
+repository, and none runs `pip` against your system Python. On a
 distribution that marks that interpreter externally-managed, a system `pip install`
 stops there with no `noni` on the path, and forcing it past the marker installs
 noni's dependencies into the system packages.
@@ -99,7 +99,8 @@ under:
 cd your-project
 git config user.name "Casey"
 git config user.email "casey@example.invalid"
-noni decide --repo . --slug release-scope --scope release --asked-by team-lead \
+noni decide --repo . --init --slug release-scope --scope release \
+  --asked-by team-lead \
   --question "q1=Ship the beta this week?" \
   --option "q1=Ship it" --option "q1=Wait a week" \
   --answer "q1=Wait a week"
@@ -107,13 +108,14 @@ noni census --repo .
 ```
 
 The record lands at `noni/decisions/<date>-release-scope.json`, committed in
-the same step the writer wrote it. The census reads the tree and recomputes
-everything from git history plus those files, so a first run reports the two
-warnings a tree without operator configuration carries — the inactive deny-list
-and the ledger with nothing to arbitrate — and still ends `verdict ok`: its last
-line names them, `summary: W warning(s); N finding(s); verdict ok`. `clean` and
-the all-clear banner `census: no findings; all checks passed` belong to a run
-that counted no row and skipped no check. The census never writes.
+the same step the writer wrote it. `--init` is the word that a tree with no
+`noni/` is a state root you mean to start: without it `decide` refuses at exit 3
+rather than create direction content in a checkout you pointed at by mistake. A tree
+that already holds a `noni/` is a state root whatever it holds, and needs no flag. The
+census reads the tree, from git history plus those files, so a first run reports the two
+warnings a tree without operator configuration carries — the inactive deny-list and the
+ledger with nothing to arbitrate — and still ends `verdict ok`: its last line names them,
+`summary: W warning(s); N finding(s); verdict ok`. The census never writes.
 
 ## Route B: a separate private state repository
 
@@ -160,10 +162,10 @@ git -C .noni-state commit --allow-empty -m "direction: first commit"
 ```
 
 Now every command names the state clone. Same flags, same writers, same census
-as Route A, with one path added:
+as Route A, with one path added (`--init` again, because the clone is new too):
 
 ```bash
-noni decide --repo .noni-state --slug release-scope --scope release \
+noni decide --repo .noni-state --init --slug release-scope --scope release \
   --asked-by team-lead \
   --question "q1=Ship the beta this week?" \
   --option "q1=Ship it" --option "q1=Wait a week" \

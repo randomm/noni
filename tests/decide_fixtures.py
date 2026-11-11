@@ -201,6 +201,22 @@ def _head_paths(repo: Path) -> list[str]:
     return [line for line in out.splitlines() if line.strip()]
 
 
+def _committed_code_repo(tmp_path: Path, name: str) -> Path:
+    """A git tree with an identity, one commit, and no ``noni/`` of its own.
+
+    The tree the pilot's mistake is reproduced on: a valid work tree, so a writer's
+    work-tree probe admits it and only the state-root question refuses it. Shared
+    between the decide suite and the two route-equivalence suites, each of which builds
+    one, so no suite reaches into another's private helpers for it.
+    """
+    repo = _init_repo(tmp_path / name)
+    _git_e2(repo, "config", "user.name", "Replay")
+    _git_e2(repo, "config", "user.email", "replay@fixture.invalid")
+    _commit_tree(repo, "README.md", "# a code repository\n", "add readme",
+                 "2026-10-01T00:00:00Z")
+    return repo
+
+
 def _porcelain(repo: Path, *rels: str) -> str:
     return _git_e2(repo, "status", "--porcelain", "--", *rels).stdout.strip()
 

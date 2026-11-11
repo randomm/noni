@@ -8,7 +8,8 @@ admits it and only the question here refuses it.
 
 Two decisions live here and nowhere else:
 
-* whether the run is a **creator** and so admitted, and
+* whether the run is a **creator** and so admitted -- today one answer: the tree holds
+  a ``noni/``, or the caller said ``--init``, and
 * where in the run that question is asked -- which is not free. The writer's own
   :func:`noni._writer.allocate_ledger` runs ``mkdir(parents=True)``, so a question
   about ``noni/`` deferred past the allocation finds the directory this very run
@@ -23,59 +24,103 @@ pinned census refuses rather than committing a record its own arbiter then repor
 Like the state-root question, it is asked ahead of the allocation, so a refused run
 never leaves a ``noni/`` behind in a tree it may not write to.
 
+The one note the creator answer carries is that it is not asked of the ledger leaf
+alone: a question about ``noni/decisions`` by itself would be answered yes by a
+committed code repository, which has no ledger either and no state of anyone's. Nor
+does ``--no-commit`` answer it any more: it used to, which let a run write a record
+into a tree holding no state of anyone's as long as it left the commit to somebody
+else, and the route that needed it is gone.
+
 The wording, the ordering and the declined-``lstat`` rule all belong to
 :mod:`noni._path_kind` and :mod:`noni._decide_flags`; this module only decides the
-things that are ``decide``'s own, and pins each exit code from the caller rather
-than importing it -- :data:`noni.decide.EXIT_GIT` for a wrong path (the code
-docs/PRODUCT.md 7 gives this tool) and the two codes the level check returns.
+things that are ``decide``'s own -- its answer to the creator question and the one
+``--init`` sentence its fix line carries -- and hands each refusal the caller's own
+printer and the codes the run's module passes in rather than importing them:
+:data:`noni.decide.EXIT_GIT` for a wrong path (the code docs/PRODUCT.md 7 gives this
+tool) and the two codes the level check returns. :func:`refuse_run` is the one seam
+the run calls: it holds both questions and their order, so a later caller cannot ask
+them out of turn.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 
-from . import _decide_flags, _writer, ledger_level
+from . import _decide_flags, _path_kind, _writer, ledger_level
 
 
-def admits_creation(root: Path, no_commit: bool) -> bool:
-    """Whether this run brings ``noni/`` into being, and so holds the creator exception.
+def admits_creation(root: Path, init: bool) -> bool:
+    """Whether this run may treat its ``--repo`` as a state root.
 
-    Two answers and no more, and the tree is asked first because it is the stricter of
-    the two: :func:`noni._writer.ledger_is_first` admits a run only where ``--repo``
-    holds no ``noni/`` at all, which is the one tree whose record this run can genuinely
-    be the first of. A ``--no-commit`` run then adds its own case -- it commits nothing
-    until its caller commits it, which is how a caller mints a record without
-    a commit of its own (docs/QUICKSTART.md) -- and a run into a tree that already has a
-    ``noni/`` is a state root by the census's own account and reaches its normal reads.
+    The rule: the tree holds a ``noni`` directory, or the caller said ``--init``. A tree
+    that holds ``noni`` is a state root whatever that directory holds, which is the
+    census's own account of a ``noni/`` it can see (``empty``, ``not a directory``,
+    ``symlink``, each its own state word) and no writer here contradicts it. A tree that
+    holds none is a wrong ``--repo``, and ``--init`` is the caller's word that the tree
+    is a state root they mean to start -- the only thing that lets such a run through.
 
-    Asked of the tree and never of the ledger leaf: the directory the writer is about to
-    create is the thing under test, and a question about ``noni/decisions`` alone would
-    be answered yes by a committed code repository, which has no ledger either and no
-    state of anyone's.
+    The one note it needs: a ``noni`` or a ledger that is a link is not admitted here
+    either, though not by this predicate: ``_writer.ledger_is_first`` is
+    :func:`noni._path_kind.has_no_noni`, whose ``lstat`` reports a link at ``noni`` as
+    neither absent nor a directory, so the flag
+    cannot open a tree whose state root is a link. A link deeper down, at
+    ``noni/decisions``, is refused by the obstruction guard that every component of the
+    guarded list is asked of ahead of this, in the sentence that names the fault.
     """
-    return _writer.ledger_is_first(root) or no_commit
+    return init or not _writer.ledger_is_first(root)
 
 
-def refuse_state_root(fail, exit_git: int, repo: Path, no_commit: bool) -> int | None:
+def _refuse_state_root(printer: _decide_flags.Printer, code: int,
+                      repo: Path, admits: Callable[[], bool]) -> int | None:
     """The exit-3 refusal for a ``--repo`` that is no noni state root, or None.
 
-    :param fail: ``decide``'s own failure printer, so the prefix stays ``decide.py``.
-    :param exit_git: :data:`noni.decide.EXIT_GIT`, pinned by the caller rather than
-        imported, so this module stays a leaf the run's module can own the number of.
+    :param printer: ``decide``'s own failure printer, so the prefix stays ``decide.py``.
+    :param code: :data:`noni.decide.EXIT_GIT`, pinned by the caller rather than imported,
+        so this module stays a leaf the run's module can own the number of.
 
     :func:`noni._decide_flags.refuse_state_root` words the two lines and holds the
-    ordering; this only binds the tool's printer, the tool's code, and the tool's
-    answer to the creator question. The obstruction question is *not* asked here --
-    :func:`noni._decide_flags.refuse_linked_state` asks it of the same ``lstat`` ahead
-    of this, so a linked ``noni/`` keeps the sentence that names it.
+    ordering; this only binds the tool's printer, the tool's code, the tool's answer to
+    the creator question, and the ``--init`` sentence this tool alone hands the shared
+    renderer. The obstruction question is *not* asked here --
+    :func:`noni._decide_flags.refuse_linked_state` asks it
+    of the same ``lstat`` ahead of this, so a linked ``noni/`` keeps the sentence that
+    names it. The readers reach
+    :func:`noni._path_kind.state_root_refusal` through
+    :func:`noni._path_kind.refuse_state_root` with no sentence of their own, so no
+    command prints a fix line naming a flag it answers with argparse's exit 2.
     """
     return _decide_flags.refuse_state_root(
-        fail, exit_git, repo, partial(admits_creation, repo, no_commit))
+        printer, code, repo, admits, hint=_path_kind.STATE_ROOT_INIT_HINT)
 
 
-def refuse_schema_level_skew(fail, exit_usage: int, exit_collision: int,
-                             repo: Path) -> int | None:
+def refuse_run(fail: _decide_flags.Printer, exit_git: int, exit_usage: int,
+               exit_collision: int, repo: Path, init: bool) -> int | None:
+    """Both questions this module asks of ``--repo``, in the order they must be asked.
+
+    The state root first, then the census level, because both are asked ahead of the
+    allocation and a refusal must never leave a ``noni/`` behind in a tree this run may
+    not write to. The caller hands in its printer and its three codes so this stays a
+    leaf whose numbers the run's module owns.
+
+    The state-root question is asked through :func:`_refuse_state_root`, this module's
+    own seam, with this tool's printer, this tool's code, and this tool's answer to the
+    creator question (:func:`admits_creation`), handed over as a thunk so it follows the
+    tree as the caller left it rather than the ledger this run is about to allocate. The
+    obstruction question is not asked here: :func:`noni._decide_flags.refuse_linked_state`
+    asks it of the same ``lstat`` ahead of this, so a linked ``noni/`` keeps the sentence
+    that names it.
+    """
+    refused = _refuse_state_root(
+        fail, exit_git, repo, partial(admits_creation, root=repo, init=init))
+    if refused is not None:
+        return refused
+    return refuse_schema_level_skew(fail, exit_usage, exit_collision, repo)
+
+
+def refuse_schema_level_skew(fail: _decide_flags.Printer, exit_usage: int,
+                             exit_collision: int, repo: Path) -> int | None:
     """The refusal printed when this writer has outrun the project's census, or None.
 
     The question a run asks of the tree it is about to write: is

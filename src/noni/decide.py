@@ -21,7 +21,7 @@ Usage:
               --question ID=TEXT [--option ID=OPTION]... [--answer ID=ANSWER]...
               [--date YYYY-MM-DD] [--source-issue N --source-comment N]
               [--decided-by WHO] [--on-behalf-of WHO] [--single-option]
-              [--why REASON] [--supersedes ID] [--no-commit]
+              [--why REASON] [--supersedes ID] [--no-commit] [--init]
 
 Exit codes:
     0  the record was written (and committed unless --no-commit)
@@ -35,12 +35,13 @@ Exit codes:
        of the record has one option, or --supersedes with an unanswered question
     3  a git or identity problem: --repo is not a git work tree, git config
        user.name is not set (git config user.name <name>), a git probe timed
-       out or failed for a reason that answered nothing, or a noni/ or
-       noni/decisions directory -- every one from the state root down to the
-       ledger -- that is not a plain path this writer may read or write through
-       (a symlink, a plain file, a socket or a device, each asked of lstat
-       before the git probes, the first read or the mkdir, and an absent one
-       admitted because the first record creates it)
+       out or failed for a reason that answered nothing, a --repo that is a
+       directory holding no noni/ (pass the state clone, or --init for a new
+       one), or a noni/ or noni/decisions directory -- every one from the state
+       root down to the ledger -- that is no plain path this writer may read or
+       write through (a symlink, a plain file, a socket or a device, each asked
+       of lstat before the git probes, the first read or the mkdir; an absent
+       ledger is admitted because the first record creates it)
     4  a collision or a bad supersede target: the record path already exists as
        anything (file, directory or symlink), or the target is missing, already
        superseded, untracked, locally modified, not a regular file at its path
@@ -404,6 +405,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="id of the record this one replaces (needs every answer)")
     parser.add_argument("--no-commit", action="store_true",
                         help="write the file(s) and leave them uncommitted for the caller")
+    parser.add_argument("--init", action="store_true",
+                        help="allow this run to create noni/ in a tree that holds none "
+                        "(a new state root); without it such a --repo is refused")
     args = parser.parse_args(argv)
 
     repo = Path(args.repo)
@@ -426,19 +430,13 @@ def main(argv: list[str] | None = None) -> int:
         return by
     # Asked after the git probes, so a tree that is no work tree keeps the refusal that
     # names that fault, and before the allocation, so a wrong --repo is refused without
-    # gaining the directory this run would otherwise have created.
-    no_state = _decide_state_root.refuse_state_root(_fail, EXIT_GIT, repo,
-                                                    args.no_commit)
-    if no_state is not None:
-        return no_state
-    # The census-level question before the allocation, so a run the declaration
-    # refuses never leaves a ``noni/`` behind in a tree it may not write to, and
-    # before the target reads: a supersede of a record the pinned census would
-    # refuse is refused too.
-    skewed = _decide_state_root.refuse_schema_level_skew(_fail, EXIT_USAGE,
-                                                        EXIT_COLLISION, repo)
-    if skewed is not None:
-        return skewed
+    # gaining the directory this run would otherwise have created. The census-level
+    # question is asked in the same call, also ahead of the allocation, so a run the
+    # declaration refuses never leaves a ``noni/`` behind in a tree it may not write to.
+    refused = _decide_state_root.refuse_run(_fail, EXIT_GIT, EXIT_USAGE,
+                                            EXIT_COLLISION, repo, args.init)
+    if refused is not None:
+        return refused
     opened = _open_ledger(repo, ledger)
     if opened is not None:
         return opened

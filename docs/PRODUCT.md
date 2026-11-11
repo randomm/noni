@@ -161,13 +161,24 @@ is not a noni state root (no `noni/` directory), plus a fix line naming `--repo`
 `order` refuses `move`, `remove` and `confirm` that way; `add` is admitted
 because its first entry is a sanctioned creator of `noni/direction`, and its
 `--decision` is still resolved against the ledger. `intent set` is admitted for
-the same reason (its first file creates `noni/direction/intent.md`). `decide`
-is admitted on the same ground: its first record is what brings `noni/decisions/`
-into being, and a `--no-commit` run commits nothing until its caller commits it.
-What makes a first `decide` auditable rather than silent is that it is a real,
-reported commit: the run names the state root and the record it wrote, and leaves
-the tree clean. The question is asked before the ledger is read, so a first record
-never lands behind a half-checked tree. What none of them may do is
+the same reason (its first file creates `noni/direction/intent.md`). Both create
+`noni/direction` only, and only inside a tree that already holds a `noni/`: neither
+brings `noni/` itself into being on a tree that holds none. The mark of a state root
+is that `noni/` directory alone, whatever it holds, so a tree the two direction
+writers left with `noni/direction` and no record is a state root: that is the
+census's own account of a `noni/` it can see, and no writer here gives the same path
+a second, contradicting account. `decide` refuses a `--repo` tree that holds no
+`noni/` directory unless `--init` is given; it is the one writer that can bring
+`noni/` and its `noni/decisions/` ledger into being, and a run pointed at a project
+checkout by mistake must not create direction content there. The refusal names the
+path as the caller spelled it, says the tree holds no `noni/`, and sends the caller
+to `--repo` or to `--init`; the `--init` sentence belongs to `decide` alone, since no
+other command has the flag and each answers it as an unknown one. On a tree that
+already holds a `noni/` `--init` changes nothing, and `--no-commit` no longer stands
+in for the flag. What makes an admitted first `decide` auditable rather than silent
+is that it is a real, reported commit: the run names the state root and the record it
+wrote, and leaves the tree clean. The question is asked before the ledger is read, so
+a first record never lands behind a half-checked tree. What none of them may do is
 answer a *read* with "no decision record … is in the ledger" about a repository
 that holds no ledger at all: that sentence is true of the ledger and useless as
 an account of the wrong `--repo`, so the state root is checked before the reads.

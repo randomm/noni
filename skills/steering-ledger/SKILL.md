@@ -58,7 +58,7 @@ scripts/decide.py --repo REPO --slug SLUG --scope SCOPE --asked-by ROLE
                   --question ID=TEXT [--option ID=OPTION]... [--answer ID=ANSWER]...
                   [--date YYYY-MM-DD] [--source-issue N --source-comment N]  # N positive
                   [--decided-by WHO] [--on-behalf-of WHO] [--single-option]
-                  [--why REASON] [--supersedes ID] [--no-commit]
+                  [--why REASON] [--supersedes ID] [--no-commit] [--init]
 ```
 
 One command per steering act. The record's `id` is `<date>-<slug>`, its `by`
@@ -73,7 +73,7 @@ flags.
 |---|---|
 | `0` | the record was written (and committed unless `--no-commit`) |
 | `2` | invalid input: an argparse failure, an empty or malformed `--slug`, a `--slug` that already starts with a date (the writer adds it), a malformed `--date`, a malformed `--question`/`--option`/`--answer`, a `--source-issue`/`--source-comment` that is not a positive integer, a question outside 1-4 or with outside 2-4 options, an empty or multi-line `--decided-by`/`--on-behalf-of`, `--on-behalf-of` without `--decided-by`, an empty, multi-line or over-long `--why`, a question with one option when `--single-option` was not given, or `--supersedes` with an unanswered question |
-| `3` | git or identity: `--repo` is not a git work tree, `git config user.name` is not set (the hint names the command), a git probe timed out or failed for a reason that answered nothing, or a `noni/` or `noni/decisions/` that is not a directory this writer may read or write through (a symlink, a plain file, a socket or a device: every directory from the state root down to the ledger is asked of `lstat` before the git probes, the first read or the `mkdir`, so nothing is followed and nothing is written, and an absent ledger is admitted because the first record creates it; a `--repo` that is a directory holding no `noni/` is admitted on the same ground, because `decide` is the ledger's creator and its first record is what brings the tree into being — what makes such a run auditable rather than silent is that it is a real, reported commit that names the state root and the record it wrote, asked before the ledger is read) |
+| `3` | git or identity: `--repo` is not a git work tree, `git config user.name` is not set (the hint names the command), a git probe timed out or failed for a reason that answered nothing, a `--repo` that is a directory holding no `noni/` (a code repository where the state clone was meant: pass that clone, or `--init` if this really is a new state root), or a `noni/` or `noni/decisions/` that is not a directory this writer may read or write through (a symlink, a plain file, a socket or a device: every directory from the state root down to the ledger is asked of `lstat` before the git probes, the first read or the `mkdir`, so nothing is followed and nothing is written, and an absent ledger is admitted because the first record creates it; a tree holding no `noni/` directory is refused there, because a writer pointed at the wrong repository by mistake must not create direction content in it, unless `--init` is given; a tree that already holds a `noni/` directory is a state root whatever it holds, and `--init` changes nothing there) |
 | `4` | a collision or a bad supersede target: the record path exists as anything (a file, a directory or a symlink), or the target is missing, already superseded, untracked, locally modified, not a regular file at its path (a symlink, directory or device), not readable at all, not in the writer's canonical form, or carries a field the census does not type as a string (`id`, `asked_by`, `by`, `scope`, `date`; `supersedes` as a string or null; `decided_by` and `on_behalf_of` as non-empty single-line strings when present), a `status` outside `decided`, `open` or `superseded`, `questions` that are not a non-empty list of objects each with a string `id` and a string-or-null `answer`, or a number JSON cannot hold. A `git show` reporting the path is not in HEAD is this code, not `3` |
 | `5` | the commit failed: both paths are rolled back (index reset, target restored, new record removed), and anything the rollback could not do is named — a failed reset with the paths that may still be staged, or a path it could not restore |
 
@@ -90,6 +90,11 @@ target's status is now `superseded`: `--no-commit` writes **both** files, so an
 operator who aborts the run has two paths to put right — delete the new record
 and restore the target — or the chain is left with no live record and the
 census reports it (exit 20, `zero-live`).
+
+`--init` asserts one thing: this is a new state root. It is needed only on a tree
+holding no `noni/`, which is the one case where it changes what the run may do; on a
+tree that already holds a `noni/` it changes nothing, and a `noni/` that is a symlink
+or a plain file is refused before the flag is ever asked.
 
 `--supersedes ID` writes the new record and flips the target's `status` to
 `superseded` in **one** commit of exactly those two paths, with the message

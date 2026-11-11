@@ -337,7 +337,7 @@ In human-readable mode the report also says it in its first line and in one
 `note:` line. The two lines branch on the row: a run that carries it names the
 class on the count line and on the summary line in place of `clean`; a run that
 owes none keeps the verdict word its rows earned (`clean` when it printed no row
-at all) and opens `census: no findings; ordering-closed did not run`:
+at all) and opens `census: no findings, ordering-closed did not run`:
 
 ```text
 note: ordering-closed was not evaluated: no --issue-state FILE was given, so whether an ordered issue is closed is not asked (the census never contacts a tracker)

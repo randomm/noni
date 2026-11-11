@@ -203,10 +203,13 @@ def _not_evaluated_headline(notes: tuple[str, ...],
     class id, so the two are not derived from each other: a note whose class this
     module knows about is named by that id (``ORDERING_CLOSED_CHECK`` beside the
     sentence itself), and the sentence may be reworded without rewriting the
-    headline. A note this module does not know names nothing, so the clause falls
-    back to a count rather than print a sentence as a class name — and because the
-    known note is counted before that test, a known note can never be swallowed by
-    the fallback. Several notes read as a list.
+    headline. A note this module does not know names nothing, so the headline carries no
+    extra clause at all: nothing is glued onto the counts, and the note line below
+    the rows already says what was not evaluated. When a class is named, the clause
+    opens with one separator (", ", matching the counts) in every branch, so the
+    closed-state headline and the generic one agree. Each returned clause begins
+    with the separator, so a caller can concatenate it directly onto the counts
+    without adding a second one. Several notes read as a list.
 
     ``findings`` is the clause's second half, and the reason the headline is not
     simply "count + note count": the closed class reports its own row when an order
@@ -218,16 +221,12 @@ def _not_evaluated_headline(notes: tuple[str, ...],
     """
     named = [ORDERING_CLOSED_CHECK for note in notes
              if note == ORDERING_CLOSED_NOT_EVALUATED]
-    unchecked = bool(named) and closed_state_verdict_carried(findings)
-    if unchecked:
-        return f" — {', '.join(named)} not checked"
-    unknown = sum(1 for note in notes
-                  if note != ORDERING_CLOSED_NOT_EVALUATED and not note.strip())
     if not named:
-        return f"{unknown or len(notes)} check(s) did not run"
-    if unknown:
-        return f"{', '.join(named)}, {unknown} other check(s) did not run"
-    return f"{', '.join(named)} did not run"
+        return ""
+    unchecked = closed_state_verdict_carried(findings)
+    if unchecked:
+        return f", {', '.join(named)} not checked"
+    return f", {', '.join(named)} did not run"
 
 
 def _warn_class_names() -> str:
@@ -359,7 +358,7 @@ def _render_human(findings: list[dict], counts: dict[str, int], ok: bool,
     elif not findings:
         # "Nothing to report" is two facts, and the headline says the one
         # that is true of this run: no rows, and these checks unasked.
-        print(f"census: no findings; {_not_evaluated_headline(notes)}")
+        print(f"census: no findings{_not_evaluated_headline(notes)}")
     else:
         print(f"census: {warns} warning(s), {len(findings)} finding(s)"
               + _not_evaluated_headline(notes, findings))

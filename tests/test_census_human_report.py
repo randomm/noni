@@ -369,3 +369,39 @@ class TestHumanVerdict:
         assert out_json == out_json_again, "two --json runs of one tree differed"
 
 
+def test_not_evaluated_note_without_a_named_class_glues_nothing():
+    """A not-evaluated note naming no class contributes no headline clause.
+
+    Regression: the counts branch used to append ``{n} check(s) did not run``
+    flush against the counts (``1 finding(s)1 check(s) did not run``). With no
+    named class the headline carries no extra clause at all: the first line is
+    exactly the counts, and the note line below the rows says what was not
+    evaluated.
+    """
+    import io
+    import sys as _sys
+
+    from noni.census_render import (
+        NO_STATE_ROOT_NOTE,
+        _render,
+    )
+
+    findings = [{"check": "hygiene", "severity": "warn",
+                 "subject": "noni/direction/order.json",
+                 "artifact": "noni/direction/order.json",
+                 "message": "not a hygiene-clean guarantee"}]
+    note = NO_STATE_ROOT_NOTE.format(repo="state/repo")
+    buf = io.StringIO()
+    saved = _sys.stdout
+    _sys.stdout = buf
+    try:
+        _render(findings, {"hygiene": 1}, True, 0, False, (note,))
+    finally:
+        _sys.stdout = saved
+    lines = buf.getvalue().splitlines()
+    headline = [line for line in lines if line.startswith("census:")][0]
+    assert headline == "census: 1 warning(s), 1 finding(s)", lines[:3]
+    assert "did not run" not in headline, headline
+    assert f"note: {note}" in lines, lines
+
+

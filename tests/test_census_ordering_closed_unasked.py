@@ -225,6 +225,7 @@ def test_the_headline_separates_the_clause_from_the_counts_it_qualifies(tmp_path
     # it); what matters below is their shape, not their number.
     assert re.match(r"^census: \d+ warning\(s\), \d+ finding\(s\)", first), first
     assert "finding(s)ordering" not in first.replace(" ", ""), first
+    assert ", ordering-closed not checked" in first, first
     assert first.endswith("ordering-closed not checked"), first
     assert first.count("ordering-closed") == 1, first
 

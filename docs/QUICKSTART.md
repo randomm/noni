@@ -110,11 +110,11 @@ noni census --repo .
 The record lands at `noni/decisions/<date>-release-scope.json`, committed in
 the same step the writer wrote it. `--init` is the word that a tree with no
 `noni/` is a state root you mean to start: without it `decide` refuses at exit 3
-rather than create direction content in a repository you pointed at by mistake.
-The census reads the tree, from git history plus those files, so a first run
-reports the two warnings a tree without operator configuration carries — the
-inactive deny-list and the ledger with nothing to arbitrate — and still ends
-`verdict ok`: its last line names them,
+rather than create direction content in a checkout you pointed at by mistake, and the
+flag admits an absent or empty `noni/`, never one with entries in it. The census reads
+the tree, from git history plus those files, so a first run reports the two warnings a
+tree without operator configuration carries — the inactive deny-list and the ledger with
+nothing to arbitrate — and still ends `verdict ok`: its last line names them,
 `summary: W warning(s); N finding(s); verdict ok`.
 
 ## Route B: a separate private state repository

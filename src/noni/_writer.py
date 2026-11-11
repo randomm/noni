@@ -69,13 +69,14 @@ def ledger_is_first(root: Path) -> bool:
     that had never held state, and because the commit succeeded the tree read as a state
     root afterwards and every later run looked legitimate.
 
-    A ``noni/`` that exists is a state root, whatever it holds, even when it holds
-    nothing. The census owns that distinction (``skills/census/SKILL.md``: a ledger
-    directory can be ``absent``, ``empty`` or ``not-a-directory``, and only the first is
-    no ledger at all) and the readers act on it, so a writer that refused an empty
-    ``noni/`` would give the same path two contradicting accounts. An operator who wants
-    records there gets them; an operator who pointed at the wrong tree is refused by
-    every reader of that tree, which is what the ticket's own reproduction shows.
+    This is the census's ``absent`` state and nothing else, which is the strictest answer
+    a creator can be let through on. The census gives a ``noni/`` that exists its own
+    states (``skills/census/SKILL.md``: ``empty``, ``not a directory``, ``symlink``) and a
+    reader reports each as it stands, so a writer never calls a ``noni`` it can see an
+    absence: what it admits is nothing beyond what ``absent`` already admits, and what it
+    refuses it refuses with the sentence that names the fault rather than with "no
+    ``noni/`` directory". Where a run may create the tree it asks a second question of the
+    entries under ``noni``; see :func:`noni._decide_state_root.admits_creation`.
     """
     return _path_kind.has_no_noni(root)
 

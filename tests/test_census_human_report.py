@@ -369,3 +369,94 @@ class TestHumanVerdict:
         assert out_json == out_json_again, "two --json runs of one tree differed"
 
 
+def test_not_evaluated_note_without_a_named_class_glues_nothing():
+    """A not-evaluated note naming no class contributes no headline clause.
+
+    Regression: the counts branch used to append ``{n} check(s) did not run``
+    flush against the counts (``1 finding(s)1 check(s) did not run``). With no
+    named class the headline carries no extra clause at all: the first line is
+    exactly the counts, and the note line below the rows says what was not
+    evaluated.
+    """
+    import io
+    import sys as _sys
+
+    from noni.census_render import (
+        NO_STATE_ROOT_NOTE,
+        _render,
+    )
+
+    findings = [{"check": "hygiene", "severity": "warn",
+                 "subject": "noni/direction/order.json",
+                 "artifact": "noni/direction/order.json",
+                 "message": "not a hygiene-clean guarantee"}]
+    note = NO_STATE_ROOT_NOTE.format(repo="state/repo")
+    buf = io.StringIO()
+    saved = _sys.stdout
+    _sys.stdout = buf
+    try:
+        _render(findings, {"hygiene": 1}, True, 0, False, (note,))
+    finally:
+        _sys.stdout = saved
+    lines = buf.getvalue().splitlines()
+    headline = [line for line in lines if line.startswith("census:")][0]
+    assert headline == "census: 1 warning(s), 1 finding(s)", lines[:3]
+    assert "did not run" not in headline, headline
+    assert f"note: {note}" in lines, lines
+
+
+def test_rowless_run_naming_a_class_keeps_the_semicolon():
+    """A rowless run that names a class separates the clause with a semicolon.
+
+    `census: no findings; ordering-closed did not run` -- the rowless site keeps
+    the semicolon it had before issue #166's PR glued the clause onto the counts
+    with a comma. The counts site keeps its comma. Fails on the PR's current
+    comma output until the renderer restores the semicolon for the rowless case.
+    """
+    import io
+    import sys as _sys
+
+    from noni.census_render import (
+        ORDERING_CLOSED_NOT_EVALUATED,
+        _render,
+    )
+
+    buf = io.StringIO()
+    saved = _sys.stdout
+    _sys.stdout = buf
+    try:
+        _render([], {}, True, 0, False, (ORDERING_CLOSED_NOT_EVALUATED,))
+    finally:
+        _sys.stdout = saved
+    lines = buf.getvalue().splitlines()
+    headline = [line for line in lines if line.startswith("census:")][0]
+    assert headline == "census: no findings; ordering-closed did not run", lines
+
+
+def test_rowless_run_whose_note_names_no_class_prints_only_no_findings():
+    """A rowless run whose note names no class prints exactly `census: no findings`.
+
+    No trailing semicolon, and never the all-clear banner: a note exists, so the
+    run is not all-clear. The note itself still prints below the rows.
+    """
+    import io
+    import sys as _sys
+
+    from noni.census_render import (
+        NO_STATE_ROOT_NOTE,
+        _render,
+    )
+
+    note = NO_STATE_ROOT_NOTE.format(repo="state/repo")
+    buf = io.StringIO()
+    saved = _sys.stdout
+    _sys.stdout = buf
+    try:
+        _render([], {}, True, 0, False, (note,))
+    finally:
+        _sys.stdout = saved
+    lines = buf.getvalue().splitlines()
+    headline = [line for line in lines if line.startswith("census:")][0]
+    assert headline == "census: no findings", lines
+
+

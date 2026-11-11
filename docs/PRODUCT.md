@@ -209,8 +209,12 @@ The brief is the other read-only tool, and the only one that answers a person
 rather than a check: `noni brief --repo DIR` prints four parts and exits — the
 standing intent's `Purpose`, the head of the order, the five newest live decision
 records with their questions, answers and reasons, and the census's own `summary:`
-line, echoed and never recomposed. An order row names its subject and reads no
-further: an entry that names an issue prints `#N` and nothing else. It writes nothing, so running it
+line, echoed and never recomposed. An order row names its subject, the record that set
+its position and the reason the operator gave for it: an entry that names an issue prints
+`#N`, then `(<decision id>)`, then the reason after a mark when it carries one. A decision
+row of a record that asked one question on purpose prints its statement and its reason,
+with no boilerplate question, and the reason is what the row's bound keeps when the two
+cannot both fit. It writes nothing, so running it
 leaves `git status --porcelain`
 empty too, and
 it prints the same bytes twice over one tree at one `--now`. It has no verdict of

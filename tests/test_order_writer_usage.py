@@ -68,6 +68,20 @@ ORDER_TOKEN = f"{STATE_DIR}/{ORDER_REL}"
 # --- AC1: the rendered usage line, against the two documents ------------------
 
 
+def test_order_help_names_repo_the_state_root(tmp_path):
+    """``order --help`` calls ``--repo`` the state root, in the words the brief uses.
+
+    Four tools take the flag and a cold start reads their help pages to decide which tree a
+    writer touches. "repository root" and "the repository (or directory) to audit" left an
+    agent unable to tell the tree beside it from the state clone, so the wording is the one
+    docs/PRODUCT.md 7 uses and ``brief`` already printed.
+    """
+    proc = _order(_repo(tmp_path), "--help")
+    assert proc.returncode == 0, proc.stderr
+    assert "the state root" in proc.stdout, proc.stdout
+    assert "repository root" not in proc.stdout, proc.stdout
+
+
 def test_order_help_puts_the_verb_ahead_of_the_flags(tmp_path):
     """``scripts/order.py --help`` leads with the verb, not with the flag block."""
     # ``--repo`` is required and argparse prints its usage before honouring

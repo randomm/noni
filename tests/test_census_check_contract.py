@@ -69,6 +69,28 @@ class TestCheckContractIsDerived:
             "--list and CHECKS have drifted apart"
         )
 
+    def test_repo_help_names_the_state_root_and_keeps_its_default(self):
+        """``census --help`` calls ``--repo`` the state root and still defaults to the cwd.
+
+        Four tools take the flag and a cold start reads their help pages to decide which tree a
+        run touches, so the wording is the one docs/PRODUCT.md 7 uses and ``brief`` prints. The
+        census alone keeps a default (the current directory), which the help line has to say
+        rather than leave to the operator's guess.
+        """
+        import census
+
+        parser = census._build_parser()
+        repo = next(a for a in parser._actions if a.dest == "repo")
+        assert "the state root" in repo.help, repo.help
+        assert "repository" not in repo.help, repo.help
+        assert repo.default == ".", repo.default
+        assert "current directory" in repo.help, repo.help
+        # The page that lists the flags names the tree by the same word.
+        text = (REPO / "skills" / "census" / "SKILL.md").read_text(encoding="utf-8")
+        row = next(line for line in text.splitlines()
+                   if line.startswith("| `--repo PATH`"))
+        assert "state root" in row, row
+
     def test_strict_help_lists_the_warn_classes(self):
         import census
 

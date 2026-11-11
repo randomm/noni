@@ -36,13 +36,14 @@ Exit codes:
     3  a git or identity problem: --repo is not a git work tree, git config
        user.name is not set (git config user.name <name>), a git probe timed
        out or failed for a reason that answered nothing, a --repo that is a
-       directory holding no noni/ (a code repository where the state clone was
-       meant: pass that clone, or --init if this really is a new state root),
-       or a noni/ or noni/decisions directory -- from the state root down to
-       the ledger -- that is no plain path this writer may read or write
-       through (a symlink, a plain file, a socket or a device, each asked of
-       lstat before the git probes, the first read or the mkdir; an absent
-       ledger is admitted because the first record creates it)
+       directory holding no noni/ (pass the state clone, or --init for a new
+       one), a --repo whose noni/ holds neither a decisions ledger nor a
+       direction directory (residue: remove it in the right tree), or a noni/
+       or noni/decisions directory -- state root down to ledger -- that is no
+       plain path this writer may read or write through (a symlink, a plain
+       file, a socket or a device, each asked of lstat before the git probes,
+       the first read or the mkdir; an absent ledger is admitted because the
+       first record creates it)
     4  a collision or a bad supersede target: the record path already exists as
        anything (file, directory or symlink), or the target is missing, already
        superseded, untracked, locally modified, not a regular file at its path
@@ -77,7 +78,6 @@ Every path the success lines name (``wrote`` on either route) is the file's real
 location from the caller's working directory: --repo joined to noni/decisions/
 <id>.json, spelled the same with and without --no-commit.
 """
-
 from __future__ import annotations
 
 import argparse

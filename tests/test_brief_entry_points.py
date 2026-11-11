@@ -176,7 +176,9 @@ def test_brief_reads_no_census_state_from_the_previous_run(tmp_path: Path) -> No
     run_brief_in_process(first, "--now", NOW)
     out = run_brief_in_process(second, "--now", NOW)[1]
     assert "#77" in out
-    assert "#1 " not in out
+    # A row reads "{position}. #{issue} ({id})", so the position pins the row: a bare
+    # "#1 " would also match the fixture's "1. #10 (...)".
+    assert "1. #1 (" not in out
 
 
 def test_brief_is_a_sibling_module_of_the_tool_and_read_by_it(tmp_path: Path) -> None:

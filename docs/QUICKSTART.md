@@ -11,8 +11,8 @@ is the commands.
 ## Install noni
 
 noni is not published, and the distribution name will be `noni-noni`. `pip install
-noni` installs some other project's wheel, so every route to it names this
-repository, and none of them runs `pip` against your system Python. On a
+noni` installs some other project's wheel, so every route names this
+repository, and none runs `pip` against your system Python. On a
 distribution that marks that interpreter externally-managed, a system `pip install`
 stops there with no `noni` on the path, and forcing it past the marker installs
 noni's dependencies into the system packages.
@@ -115,7 +115,7 @@ that already holds a `noni/` is a state root whatever it holds, and needs no fla
 census reads the tree, from git history plus those files, so a first run reports the two
 warnings a tree without operator configuration carries — the inactive deny-list and the
 ledger with nothing to arbitrate — and still ends `verdict ok`: its last line names them,
-`summary: W warning(s); N finding(s); verdict ok`.
+`summary: W warning(s); N finding(s); verdict ok`. The census never writes.
 
 ## Route B: a separate private state repository
 
@@ -161,8 +161,8 @@ git -C .noni-state config user.email "casey@example.invalid"
 git -C .noni-state commit --allow-empty -m "direction: first commit"
 ```
 
-Now every command names the state clone. Same flags, writers and census as
-Route A, with one path added (`--init` again, because the clone is new too):
+Now every command names the state clone. Same flags, same writers, same census
+as Route A, with one path added (`--init` again, because the clone is new too):
 
 ```bash
 noni decide --repo .noni-state --init --slug release-scope --scope release \
@@ -186,7 +186,7 @@ your project. `intent-draft.md` starts from
 `skills/direction/references/intent-template.md`, which validates as it stands;
 the writer restamps its `Last-confirmed:` line to this run's UTC day and commits
 the file as `intent: <record-id>`. Both direction files are optional: a project
-that wrote neither earns no `intent` (51) or `ordering` rows.
+that has written neither earns no `intent` (51) or `ordering` rows at all.
 
 The census reads only the tree `--repo`
 names, so the code repository's tracked files never enter it — and its hygiene

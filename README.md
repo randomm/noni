@@ -78,6 +78,7 @@ is no PyPI package and the name will be `noni-noni`, so every route names this
 repository, and none runs `pip` at a system Python, which current distributions
 refuse. One `noni` command replaces a path per tool, the writers and the
 read-only `census` and `brief`, printing the same bytes.
+
 The census is read-only: it never writes, so `git status --porcelain` is empty.
 Read the result. A run with rows ends with the line
 
@@ -106,8 +107,8 @@ Everything noni keeps in your repository lives in one directory:
 
 Nothing else is state. The writers above are the only things that create those
 files, and each commits what it writes in one atomic step. The try-it run above
-creates the ledger record only: `intent.md` appears when you first run
-`intent.py` and `order.json` when you first run `order.py`. Both are optional, and only a run that counted
+creates the ledger record only: `intent.md` appears when you first run `intent.py`
+and `order.json` when you first run `order.py`. Both are optional, and only a run that counted
 no row and skipped no check reads all-clear (`census: no findings; all checks
 passed`, `summary: clean; 0 finding(s); verdict ok`); the try-it run above does
 not: the always-reporting hygiene class leaves a first tree a warn row. The

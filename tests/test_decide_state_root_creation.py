@@ -73,15 +73,19 @@ def _argv_naming(record_id: str) -> tuple[str, ...]:
 
 
 def test_decide_creates_noni_on_a_tree_with_none_when_asked(tmp_path):
-    """The first-run exception holds for every verb §7 names as a creator.
+    """The first-run exception holds for the one verb the loop below sweeps.
 
-    A refusal that refused these too would be the same bug with the opposite exit
-    code: the first order entry and the
-    first intent file both legitimately bring ``noni/`` into being, and QUICKSTART's own
-    command blocks are first runs. Each run below is against a committed tree with
-    no ``noni/`` at all, so the only thing that lets it through is the exception.
-    ``decide``'s first run is admitted the same way once the caller has said so with
-    ``--init`` (issue #162), so its row carries the flag.
+    The loop cases hold ``decide`` alone. ``order add`` and ``intent set`` are the
+    other verbs §7 names as creators, and
+    :func:`test_the_seeder_of_a_new_state_root_is_the_one_run_that_carries_the_flag`
+    is where they are swept: both run without ``--init`` on a state clone that held no
+    ``noni/`` until the seeder created it, and each must exit 0 and leave the directory
+    it is credited with. A refusal that refused those too would be the same bug with
+    the opposite exit code, and QUICKSTART's own command blocks are first runs. Each
+    run below is against a committed tree with no ``noni/`` at all, so the only thing
+    that lets it through is the exception. ``decide``'s first run is admitted the same
+    way once the caller has said so with ``--init`` (issue #162), so its row carries the
+    flag.
     """
     cwd = tmp_path / "cwd"
     cwd.mkdir()
@@ -274,8 +278,9 @@ def test_the_seeder_of_a_new_state_root_is_the_one_run_that_carries_the_flag(
 def test_the_creator_rule_asks_the_tree_first_and_opens_the_ledger_for_the_flag(tmp_path):
     """decide's creator rule: the tree refuses a wrong ``--repo``, the flag opens it.
 
-    The rule is ``init and ledger_is_first(root)`` and both halves are pinned. The tree
-    half, which is what the ticket names: a committed code repository whose ``noni`` is
+    The rule is ``init or not ledger_is_first(root)`` (``_decide_state_root.admits_creation``)
+    and both halves are pinned. The tree half, which is what the ticket names: a
+    committed code repository whose ``noni`` is
     a plain file is no tree this run brings into being, so the run is refused (exit 3,
     the path named, its fix line named) and nothing is written -- and the refusal is
     reached *before* the ledger allocation, so the ``noni`` leaf that would have been

@@ -24,6 +24,13 @@ pinned census refuses rather than committing a record its own arbiter then repor
 Like the state-root question, it is asked ahead of the allocation, so a refused run
 never leaves a ``noni/`` behind in a tree it may not write to.
 
+The one note the creator answer carries is that it is not asked of the ledger leaf
+alone: a question about ``noni/decisions`` by itself would be answered yes by a
+committed code repository, which has no ledger either and no state of anyone's. Nor
+does ``--no-commit`` answer it any more: it used to, which let a run write a record
+into a tree holding no state of anyone's as long as it left the commit to somebody
+else, and the route that needed it is gone.
+
 The wording, the ordering and the declined-``lstat`` rule all belong to
 :mod:`noni._path_kind` and :mod:`noni._decide_flags`; this module only decides the
 things that are ``decide``'s own -- its answer to the creator question and the one
@@ -47,36 +54,17 @@ from . import _decide_flags, _path_kind, _writer, ledger_level
 def admits_creation(root: Path, init: bool) -> bool:
     """Whether this run may treat its ``--repo`` as a state root.
 
-    One question, answered one way: the tree holds a ``noni`` directory, or the caller
-    said ``--init``. A tree that holds ``noni`` is a state root whatever that directory
-    holds, which is the census's own account of a ``noni/`` it can see (``empty``,
-    ``not a directory``, ``symlink``, each its own state word) and no writer here
-    contradicts it. A tree that holds none is a wrong ``--repo``: a committed code
-    repository passed where the state clone was meant is a valid git work tree, so the
-    work-tree probe admits it and this is the only question that refuses it. ``--init``
-    is the caller's word that the tree is a state root they mean to start, and the only
-    thing that lets such a run through.
+    The rule: the tree holds a ``noni`` directory, or the caller said ``--init``. A tree
+    that holds ``noni`` is a state root whatever that directory holds, which is the
+    census's own account of a ``noni/`` it can see (``empty``, ``not a directory``,
+    ``symlink``, each its own state word) and no writer here contradicts it. A tree that
+    holds none is a wrong ``--repo``, and ``--init`` is the caller's word that the tree
+    is a state root they mean to start -- the only thing that lets such a run through.
 
-    One question, answered one way: the tree holds a ``noni`` directory, or the caller
-    said ``--init``. A tree that holds ``noni`` is a state root whatever that directory
-    holds, which is the census's own account of a ``noni/`` it can see (``empty``,
-    ``not a directory``, ``symlink``, each its own state word) and no writer here
-    contradicts it. A tree that holds none is a wrong ``--repo``: a committed code
-    repository passed where the state clone was meant is a valid git work tree, so the
-    work-tree probe admits it and this is the only question that refuses it. ``--init``
-    is the caller's word that the tree is a state root they mean to start, and the only
-    thing that lets such a run through.
-
-    Two answers this one deliberately does not carry. It is not asked of the ledger leaf
-    alone: a question about ``noni/decisions`` by itself would be answered yes by a
-    committed code repository, which has no ledger either and no state of anyone's. And
-    ``--no-commit`` no longer answers it: it used to, which let a run write a record into
-    a tree holding no state of anyone's as long as it left the commit to somebody else,
-    and the route that needed it is gone.
-
-    A ``noni`` or a ledger that is a link is not admitted here either, though not by this
-    predicate: ``_writer.ledger_is_first`` is :func:`noni._path_kind.has_no_noni`, whose
-    ``lstat`` reports a link at ``noni`` as neither absent nor a directory, so the flag
+    The one note it needs: a ``noni`` or a ledger that is a link is not admitted here
+    either, though not by this predicate: ``_writer.ledger_is_first`` is
+    :func:`noni._path_kind.has_no_noni`, whose ``lstat`` reports a link at ``noni`` as
+    neither absent nor a directory, so the flag
     cannot open a tree whose state root is a link. A link deeper down, at
     ``noni/decisions``, is refused by the obstruction guard that every component of the
     guarded list is asked of ahead of this, in the sentence that names the fault.

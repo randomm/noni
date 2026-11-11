@@ -91,6 +91,11 @@ operator who aborts the run has two paths to put right — delete the new record
 and restore the target — or the chain is left with no live record and the
 census reports it (exit 20, `zero-live`).
 
+`--init` asserts one thing: this is a new state root. It is needed only on a tree
+holding no `noni/`, which is the one case where it changes what the run may do; on a
+tree that already holds a `noni/` it changes nothing, and a `noni/` that is a symlink
+or a plain file is refused before the flag is ever asked.
+
 `--supersedes ID` writes the new record and flips the target's `status` to
 `superseded` in **one** commit of exactly those two paths, with the message
 `steering: supersede <target> with <id>`. It requires every question in the new

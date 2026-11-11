@@ -392,7 +392,8 @@ def refuse_linked_state(printer: Printer, code: int, repo: Path,
 
 
 def refuse_state_root(printer: Printer, code: int, repo: Path,
-                      admits: Callable[[], bool]) -> int | None:
+                      admits: Callable[[], bool],
+                      hint: str | None = None) -> int | None:
     """The exit code for a ``--repo`` that is no noni state root, or None.
 
     The question a run asks of its ``--repo`` before it writes anything: the tree holds
@@ -400,23 +401,26 @@ def refuse_state_root(printer: Printer, code: int, repo: Path,
     whatever the verb intends -- a committed code repository passed where the state clone
     was meant passes the git work-tree probe, so this is the seam that refuses it.
 
-    ``admits`` is the run's creator exception, asked HERE, over the tree as it stands:
+    ``admits`` is the run's ``--init`` declaration, asked HERE, over the tree as it stands:
     the writer below is reached only once the state root has been settled, and its own
     :func:`noni._writer.allocate_ledger` runs ``mkdir parents=True`` -- so a question about
     the tree deferred past that allocation finds the ``noni/`` this very run made and calls
     it a state root, which is how a wrong ``--repo`` used to answer its own question and
     gain a ledger and a committed record of its own. A writer hands the answer over as a
-    thunk so the exception follows the tree's contents (:func:`noni._writer.ledger_is_first`)
-    rather than the verb's say-so, and is asked here -- before the guard that can decline to
-    ask anything at all.
+    thunk so the admission follows the caller's flag rather than the tree's contents, and
+    is asked here -- before the guard that can decline to ask anything at all.
 
     The obstruction question is not asked here: :func:`refuse_linked_state` asks it of the
     same ``lstat`` ahead of this, so a linked ``noni/`` keeps the sentence that names it.
     ``code`` is the caller's own constant and ``printer`` its own, so the prefix is the
-    command the operator ran and the number is the one its documents state.
+    command the operator ran and the number is the one its documents state. ``hint``
+    replaces the shared hint with the caller's own wording, so a writer whose flag turns
+    the refusal into a first run says which flag that is.
     """
     refused = None if admits() else _path_kind.state_root_refusal(repo)
-    return None if refused is None else printer(code, *refused)
+    if refused is None:
+        return None
+    return printer(code, refused[0], refused[1] if hint is None else hint)
 
 def _allocation_refusal(repo: Path, ledger: Path) -> tuple[str, str] | None:
     """The ledger directory asked as a directory, for a caller that wants the pair.

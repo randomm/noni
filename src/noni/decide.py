@@ -21,7 +21,7 @@ Usage:
               --question ID=TEXT [--option ID=OPTION]... [--answer ID=ANSWER]...
               [--date YYYY-MM-DD] [--source-issue N --source-comment N]
               [--decided-by WHO] [--on-behalf-of WHO] [--single-option]
-              [--why REASON] [--supersedes ID] [--no-commit]
+              [--why REASON] [--supersedes ID] [--no-commit] [--init]
 
 Exit codes:
     0  the record was written (and committed unless --no-commit)
@@ -40,7 +40,8 @@ Exit codes:
        ledger -- that is not a plain path this writer may read or write through
        (a symlink, a plain file, a socket or a device, each asked of lstat
        before the git probes, the first read or the mkdir, and an absent one
-       admitted because the first record creates it)
+       admitted because the first record creates it), or a --repo holding no
+       noni/ directory, which only --init admits
     4  a collision or a bad supersede target: the record path already exists as
        anything (file, directory or symlink), or the target is missing, already
        superseded, untracked, locally modified, not a regular file at its path
@@ -354,16 +355,6 @@ def _refuse_taken_name(record_path: Path) -> int:
     return _decide_flags.refuse_taken_name(_fail, EXIT_COLLISION, record_path)
 
 
-def _validate_usage(args: argparse.Namespace) -> tuple[str, list[dict], list[str]] | int:
-    """Flags-only checks, before git is consulted: :func:`_build_record_flags`.
-
-    The order is the one the refusals need: the record's parts are parsed first
-    because two of the flag rules read them, and the name and marker refusals come
-    after the options are known.
-    """
-    return _build_record_flags(args)
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog=labels.DECIDE,
@@ -404,6 +395,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="id of the record this one replaces (needs every answer)")
     parser.add_argument("--no-commit", action="store_true",
                         help="write the file(s) and leave them uncommitted for the caller")
+    parser.add_argument("--init", action="store_true",
+                        help="admit a first record into a tree that holds no noni/")
     args = parser.parse_args(argv)
 
     repo = Path(args.repo)
@@ -412,7 +405,7 @@ def main(argv: list[str] | None = None) -> int:
     linked = _refuse_linked_state(repo)
     if linked is not None:
         return linked
-    checked = _validate_usage(args)
+    checked = _build_record_flags(args)
     if isinstance(checked, int):
         return checked
     date_part, built, unanswered = checked
@@ -428,7 +421,7 @@ def main(argv: list[str] | None = None) -> int:
     # names that fault, and before the allocation, so a wrong --repo is refused without
     # gaining the directory this run would otherwise have created.
     no_state = _decide_state_root.refuse_state_root(_fail, EXIT_GIT, repo,
-                                                    args.no_commit)
+                                                    args.init)
     if no_state is not None:
         return no_state
     # The census-level question before the allocation, so a run the declaration

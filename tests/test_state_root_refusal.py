@@ -203,13 +203,15 @@ def test_the_readers_refuse_a_repo_that_holds_no_noni_directory(tmp_path):
 
 
 def test_the_sanctioned_creators_still_create_noni_on_a_tree_with_none(tmp_path):
-    """The first-run exception holds for every verb §7 names as a creator.
+    """The first-run route holds for every verb §7 names as a creator.
 
     A refusal that refused these too would be the same bug with the opposite exit
     code: the first record, the first order entry and the
     first intent file all legitimately bring ``noni/`` into being, and QUICKSTART's own
-    command blocks are first runs. Each run below is against a committed tree with
-    no ``noni/`` at all, so the only thing that lets it through is the exception.
+    command blocks are first runs. ``decide`` declares its first run with ``--init``;
+    the others have a verb that creates state. Each run below is against a committed
+    tree with no ``noni/`` at all, so the only thing that lets it through is that
+    declaration or verb.
     """
     cwd = tmp_path / "cwd"
     cwd.mkdir()
@@ -219,7 +221,8 @@ def test_the_sanctioned_creators_still_create_noni_on_a_tree_with_none(tmp_path)
     cases = (
         (DECIDE, ("--slug", "first", "--scope", "first record", "--asked-by",
                   "dev", "--question", "q1=Ship?", "--option", "q1=yes",
-                  "--option", "q1=no", "--answer", "q1=yes"), "noni/decisions"),
+                  "--option", "q1=no", "--answer", "q1=yes", "--init"),
+         "noni/decisions"),
     )
     for script, argv, created in cases:
         repo = _code_repo(tmp_path, f"creator-{script.stem}")
@@ -237,14 +240,13 @@ def test_the_sanctioned_creators_still_create_noni_on_a_tree_with_none(tmp_path)
 
 def test_a_first_record_is_admitted_where_the_second_would_commit_into_nothing(
         tmp_path):
-    """A first record creates the ledger; a run that is not first is refused.
+    """A first record creates the ledger; a second run reaches its own answer.
 
-    The two runs are the same command against the same kind of tree, and only the
-    ledger's own state tells them apart. The first sees no ``noni/decisions`` at all,
-    is admitted on the creator exception, and exits 0 with the directory it made --
+    The two runs are the same command against the same kind of tree. The first says
+    with ``--init`` that the tree is new, exits 0 with the directory it made --
     which is how ``noni/`` ever comes to exist, and what QUICKSTART's command blocks
-    do. The second finds that directory holding a committed record, so it is not a
-    first run: it is naming a tree noni has written to, and the state-root refusal
+    do. The second finds that directory holding a committed record, so it is a tree
+    noni has written to; ``--init`` is harmless there and the state-root refusal
     must not be the thing that stops it either way -- the run reaches its own answer
     (exit 4, the name is taken). Asserting both from one test is the point: a
     refusal that refused first runs, or an exception that let commits into a
@@ -254,7 +256,7 @@ def test_a_first_record_is_admitted_where_the_second_would_commit_into_nothing(
     cwd.mkdir()
     argv = ("--slug", "probe", "--scope", "state root", "--asked-by", "dev",
             "--question", "q1=Probe?", "--option", "q1=yes", "--option", "q1=no",
-            "--answer", "q1=yes", "--date", "2026-10-01")
+            "--answer", "q1=yes", "--date", "2026-10-01", "--init")
     repo = _code_repo(tmp_path, "first-record")
     first = _launch_against(DECIDE, repo, cwd, *argv)
     assert first.returncode == 0, f"{first.returncode}: {first.stderr}"
@@ -298,40 +300,69 @@ def test_a_tree_holding_a_noni_directory_is_a_state_root(tmp_path):
             f"{name}: a tree with a noni/ was refused as no state root: {proc.stderr}")
 
 
-def test_decide_no_commit_is_admitted_on_a_tree_with_no_noni(tmp_path):
-    """``--no-commit`` stays open where the tree itself holds no ``noni/``.
+def test_decide_refuses_a_tree_with_no_noni_without_init(tmp_path):
+    """The ticket's trigger: a no-``noni/`` tree is refused before anything is written.
 
-    The shim drives ``decide --no-commit`` to mint a record
-    without a commit of its own, so a state-root refusal that stopped it would stop
-    those routes outright. The tree answers the question, not the flag: on a tree with
-    no ``noni/`` the run is the first writer either way, and the file still lands
-    uncommitted, which is what the caller then commits.
+    No directory, no record and no commit: the tree is exactly as the caller left it,
+    the refusal names the path it was given, and its fix line names ``--init``.
     """
     cwd = tmp_path / "cwd"
     cwd.mkdir()
-    repo = _code_repo(tmp_path, "no-commit")
+    repo = _code_repo(tmp_path, "no-init")
+    before = _git(repo, "rev-parse", "HEAD").stdout.strip()
     proc = _launch_against(DECIDE, repo, cwd,
                            "--slug", "probe", "--scope", "state root", "--asked-by",
                            "dev", "--question", "q1=Ship?", "--option", "q1=yes",
                            "--option", "q1=no", "--answer", "q1=yes",
-                           "--date", "2026-10-01", "--no-commit")
+                           "--date", "2026-10-01")
+    assert proc.returncode == 3, f"{proc.returncode}: {proc.stderr}"
+    assert str(repo) in proc.stderr, proc.stderr
+    for word in NOT_A_STATE_ROOT_WORDS:
+        assert word in proc.stderr, proc.stderr
+    assert "--init" in proc.stderr, proc.stderr
+    assert not (repo / "noni").exists(), "the refused run created noni/"
+    assert _git(repo, "status", "--porcelain").stdout.strip() == "", (
+        "the refused run left the tree dirty")
+    assert _git(repo, "rev-parse", "HEAD").stdout.strip() == before, (
+        "the refused run committed a record")
+
+
+def test_decide_no_commit_needs_init_on_a_tree_with_no_noni(tmp_path):
+    """``--no-commit`` is not an admission of its own; ``--init`` is.
+
+    The exception that kept a no-commit run open on a tree with no ``noni/`` existed
+    for a mint route that no longer exists, and it left the ticket's trigger open. A
+    first run needs ``--init`` with or without ``--no-commit``; the record still lands
+    uncommitted, which is what the caller then commits.
+    """
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    argv = ("--slug", "probe", "--scope", "state root", "--asked-by", "dev",
+            "--question", "q1=Ship?", "--option", "q1=yes", "--option", "q1=no",
+            "--answer", "q1=yes", "--date", "2026-10-01", "--no-commit")
+
+    refused_repo = _code_repo(tmp_path, "no-commit-refused")
+    refused = _launch_against(DECIDE, refused_repo, cwd, *argv)
+    assert refused.returncode == 3, f"{refused.returncode}: {refused.stderr}"
+    assert "--init" in refused.stderr, refused.stderr
+    assert not (refused_repo / "noni").exists(), (
+        "a no-commit run created noni/ without --init")
+
+    repo = _code_repo(tmp_path, "no-commit")
+    proc = _launch_against(DECIDE, repo, cwd, *argv, "--init")
     assert proc.returncode == 0, f"{proc.returncode}: {proc.stderr}"
     assert (repo / "noni" / "decisions" / "2026-10-01-probe.json").is_file(), proc.stdout
     assert NOT_A_STATE_ROOT_WORDS[0] not in proc.stderr, proc.stderr
 
 
-def test_the_creator_rule_asks_the_tree_first_and_keeps_the_no_commit_route(tmp_path):
-    """decide's creator rule: the tree refuses a wrong ``--repo``, the flag keeps its route.
+def test_init_is_the_only_admission_and_the_obstruction_guard_runs_first(tmp_path):
+    """``--init`` admits an absent tree; it never writes through an obstruction.
 
-    The rule is ``ledger_is_first(root) or no_commit`` and both halves are pinned. The
-    tree half, which is what the ticket names: a committed code repository whose
-    ``noni`` is a plain file is no tree this run brings into being, so the run is
-    refused (exit 3, the path named, its fix line named) and nothing is written -- and
-    the refusal is reached *before* the ledger allocation, so the ``noni`` leaf that
-    would have been mkdir'd is still absent afterwards. The flag half: a run into a tree
-    that holds no ``noni/`` at all is the sanctioned first record and stays open with or
-    without ``--no-commit``, so the shim route that mints a record without committing it
-    is not closed by the guard.
+    The ordering is the contract: a ``noni`` that is a plain file is refused as an
+    obstruction (exit 3) before the state-root question, so ``--init`` cannot preempt
+    it, and the refused run never allocates the ledger leaf that would have been
+    mkdir'd. On a tree that holds no ``noni/`` at all, ``--init`` is the one
+    admission, and it admits the run with or without ``--no-commit``.
 
     A tree that already holds a ledger is not part of this pair: it is a state root and
     its run reaches its own answer, which
@@ -344,29 +375,56 @@ def test_the_creator_rule_asks_the_tree_first_and_keeps_the_no_commit_route(tmp_
             "--question", "q1=Ship?", "--option", "q1=yes", "--option", "q1=no",
             "--answer", "q1=yes", "--date", "2026-10-01")
 
-    for no_commit in (False, True):
-        tag = "nc" if no_commit else "commit"
-        repo = _code_repo(tmp_path, f"creator-file-{tag}")
-        (repo / "noni").write_text("not a directory\n", encoding="utf-8")
-        proc = _launch_against(DECIDE, repo, cwd, *argv,
-                               *(() if not no_commit else ("--no-commit",)))
-        assert proc.returncode == 3, (
-            f"noni-as-a-file/{tag}: a tree whose noni is no directory is refused as a "
-            f"wrong --repo: {proc.returncode}: {proc.stderr}")
-        assert str(repo) in proc.stderr, proc.stderr
-        assert "--repo" in proc.stderr or "fix:" in proc.stderr, proc.stderr
-        assert not (repo / "noni" / "decisions").exists(), (
-            f"noni-as-a-file/{tag}: the refused run allocated the ledger anyway")
+    for init in (False, True):
+        for no_commit in (False, True):
+            tag = f"{'init' if init else 'plain'}-{'nc' if no_commit else 'commit'}"
+            repo = _code_repo(tmp_path, f"obstructed-{tag}")
+            (repo / "noni").write_text("not a directory\n", encoding="utf-8")
+            proc = _launch_against(
+                DECIDE, repo, cwd, *argv,
+                *(() if not init else ("--init",)),
+                *(() if not no_commit else ("--no-commit",)))
+            assert proc.returncode == 3, (
+                f"noni-as-a-file/{tag}: a tree whose noni is no directory is refused "
+                f"as a wrong --repo: {proc.returncode}: {proc.stderr}")
+            assert str(repo) in proc.stderr, proc.stderr
+            assert "--repo" in proc.stderr or "fix:" in proc.stderr, proc.stderr
+            assert not (repo / "noni" / "decisions").exists(), (
+                f"noni-as-a-file/{tag}: the refused run allocated the ledger anyway")
 
     for no_commit in (False, True):
         tag = "nc" if no_commit else "commit"
         repo = _code_repo(tmp_path, f"first-record-{tag}")
-        proc = _launch_against(DECIDE, repo, cwd, *argv,
+        proc = _launch_against(DECIDE, repo, cwd, *argv, "--init",
                                *(() if not no_commit else ("--no-commit",)))
         assert proc.returncode == 0, f"{proc.returncode}: {proc.stderr}"
         assert (repo / "noni" / "decisions" / "2026-10-01-probe.json").is_file(), (
             proc.stdout)
         assert NOT_A_STATE_ROOT_WORDS[0] not in proc.stderr, proc.stderr
+
+
+def test_init_is_decides_flag_alone(tmp_path):
+    """Every other writer and the census refuse ``--init`` as an unknown flag.
+
+    The flag is decide's declaration about a first record, not a general state-root
+    switch: ``order`` and ``intent`` have a verb that creates their state, and the
+    census reads. argparse refuses the flag by name at exit 2 before any state
+    question, so a run cannot use it to bypass a refusal it was never meant for.
+    """
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    repo = _code_repo(tmp_path, "only-decide")
+    cases = (
+        (ORDER, ("move", "7", "--to", "1", "--now", "2026-10-02T00:00:00Z")),
+        (INTENT, ("set",)),
+        (CENSUS, ()),
+    )
+    for script, argv in cases:
+        proc = _launch_against(script, repo, cwd, *argv, "--init")
+        assert proc.returncode == 2, (
+            f"{script.name}: --init was not refused as an unknown flag: "
+            f"{proc.returncode}: {proc.stderr}")
+        assert "--init" in proc.stderr, f"{script.name}: {proc.stderr}"
 
 
 def test_an_uninspectable_repo_is_never_read_as_holding_no_noni(tmp_path):

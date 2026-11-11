@@ -1,4 +1,4 @@
-"""The state-root question of one ``decide`` run, and the exception that admits it.
+"""The state-root question of one ``decide`` run, and the ``--init`` flag that admits it.
 
 Split from ``decide.py``, which holds the run. A ``--repo`` that is a directory but
 holds no ``noni/`` is the second shape of the wrong path docs/PRODUCT.md 7 describes,
@@ -8,11 +8,12 @@ admits it and only the question here refuses it.
 
 Two decisions live here and nowhere else:
 
-* whether the run is a **creator** and so admitted, and
+* whether the run may bring ``noni/`` into being -- only when the caller declares
+  the tree new with ``--init`` -- and
 * where in the run that question is asked -- which is not free. The writer's own
   :func:`noni._writer.allocate_ledger` runs ``mkdir(parents=True)``, so a question
   about ``noni/`` deferred past the allocation finds the directory this very run
-  made and calls it a state root. The exception is therefore handed to
+  made and calls it a state root. The question is therefore handed to
   :func:`noni._decide_flags.refuse_state_root` as a thunk and asked before any
   allocation, over the tree as the caller left it.
 
@@ -35,34 +36,35 @@ from __future__ import annotations
 from functools import partial
 from pathlib import Path
 
-from . import _decide_flags, _writer, ledger_level
+from . import _decide_flags, ledger_level
+
+# ``decide`` is the writer a wrong ``--repo`` reaches first, so its hint names the one
+# flag that turns the refusal into a first run. The headline stays the shared one.
+STATE_ROOT_INIT_HINT = (
+    "if this is a new state root, run again with --init; if you meant an existing "
+    "state clone, pass that clone as --repo")
 
 
-def admits_creation(root: Path, no_commit: bool) -> bool:
-    """Whether this run brings ``noni/`` into being, and so holds the creator exception.
+def admits_creation(init: bool) -> bool:
+    """Whether the caller declared this tree new with ``--init``.
 
-    Two answers and no more, and the tree is asked first because it is the stricter of
-    the two: :func:`noni._writer.ledger_is_first` admits a run only where ``--repo``
-    holds no ``noni/`` at all, which is the one tree whose record this run can genuinely
-    be the first of. A ``--no-commit`` run then adds its own case -- it commits nothing
-    until its caller commits it, which is how a caller mints a record without
-    a commit of its own (docs/QUICKSTART.md) -- and a run into a tree that already has a
-    ``noni/`` is a state root by the census's own account and reaches its normal reads.
-
-    Asked of the tree and never of the ledger leaf: the directory the writer is about to
-    create is the thing under test, and a question about ``noni/decisions`` alone would
-    be answered yes by a committed code repository, which has no ledger either and no
-    state of anyone's.
+    One admission and no more: a ``--repo`` that holds no ``noni/`` is a wrong tree by
+    default, and only ``--init`` says the caller means to bring ``noni/`` into being.
+    The flag creates nothing of its own -- the writer's normal allocation and commit
+    still do that -- it only admits the run past the state-root refusal, with or
+    without ``--no-commit``.
     """
-    return _writer.ledger_is_first(root) or no_commit
+    return init
 
 
-def refuse_state_root(fail, exit_git: int, repo: Path, no_commit: bool) -> int | None:
+def refuse_state_root(fail, exit_git: int, repo: Path, init: bool) -> int | None:
     """The exit-3 refusal for a ``--repo`` that is no noni state root, or None.
 
     :param fail: ``decide``'s own failure printer, so the prefix stays ``decide.py``.
     :param exit_git: :data:`noni.decide.EXIT_GIT`, pinned by the caller rather than
         imported, so this module stays a leaf the run's module can own the number of.
+    :param init: the caller's ``--init`` flag, the only admission for a no-``noni``
+        tree.
 
     :func:`noni._decide_flags.refuse_state_root` words the two lines and holds the
     ordering; this only binds the tool's printer, the tool's code, and the tool's
@@ -71,7 +73,8 @@ def refuse_state_root(fail, exit_git: int, repo: Path, no_commit: bool) -> int |
     of this, so a linked ``noni/`` keeps the sentence that names it.
     """
     return _decide_flags.refuse_state_root(
-        fail, exit_git, repo, partial(admits_creation, repo, no_commit))
+        fail, exit_git, repo, partial(admits_creation, init),
+        hint=STATE_ROOT_INIT_HINT)
 
 
 def refuse_schema_level_skew(fail, exit_usage: int, exit_collision: int,

@@ -296,23 +296,40 @@ def _committed_code_repo(tmp_path: Path, name: str) -> Path:
     return repo
 
 
-def test_a_run_into_a_tree_with_no_noni_creates_the_ledger_and_says_what_it_made(
-tmp_path):
-    """A first ``decide`` into a code repository creates ``noni/`` and reports it.
+def test_a_run_into_a_tree_with_no_noni_is_refused_without_init(tmp_path):
+    """A no-``noni/`` tree is refused unless the caller declares it new.
 
-    The ticket's reproduction was a run that committed into a tree that never held
-    state and left the operator no way to see it: the commit succeeded, so the tree
-    read as a state root afterwards and every later run looked legitimate. ``decide``
-    is a sanctioned creator (docs/PRODUCT.md 7), so this run is admitted and exits 0,
-    and what makes it auditable rather than silent is that the tree it touched and the
-    record it made are both named on stdout and left staged-and-committed as one unit.
-    The refusal for a tree that is genuinely no state root belongs to the readers and
-    to ``order``/``intent``; ``decide``'s half of the contract is that the first record
-    is real, reported, and asked before the ledger is read.
+    The reproduction the ticket is written from: a run pointed at a project checkout
+    instead of the state clone wrote ``noni/decisions/`` and committed the record
+    into the public repository. The refusal must name the path as given, say which
+    flag admits a first run, create nothing and leave the tree clean.
+    """
+    repo = _committed_code_repo(tmp_path, "no-init")
+    before = _git_e2(repo, "rev-parse", "HEAD").stdout.strip()
+    proc = _run(repo, "--slug", "probe", "--date", NEW_DATE,
+                *BASE, *QUESTION, *OPTIONS, *ANSWERED)
+    assert proc.returncode == 3, f"{proc.returncode}: {proc.stderr}"
+    assert str(repo) in proc.stderr, proc.stderr
+    assert all(word in proc.stderr for word in NO_NONI_WORDS), proc.stderr
+    assert "--init" in proc.stderr, proc.stderr
+    assert not (repo / "noni").exists(), "the refused run created noni/"
+    assert _git_e2(repo, "rev-parse", "HEAD").stdout.strip() == before, (
+        "the refused run committed a record")
+    assert _porcelain(repo) == "", _porcelain(repo)
+
+
+def test_an_init_run_into_a_tree_with_no_noni_creates_the_ledger_and_says_what_it_made(
+tmp_path):
+    """``--init`` admits a first ``decide`` into a code repository, and reports it.
+
+    The tree it touched and the record it made are both named on stdout and left
+    staged-and-committed as one unit, so the creation is auditable rather than
+    silent. ``--init`` creates nothing of its own: the normal allocation and commit
+    still do that, which is what keeps a first record real and reported.
     """
     repo = _committed_code_repo(tmp_path, "code-repo")
     proc = _run(repo, "--slug", "probe", "--date", NEW_DATE,
-                *BASE, *QUESTION, *OPTIONS, *ANSWERED)
+                *BASE, *QUESTION, *OPTIONS, *ANSWERED, "--init")
     assert proc.returncode == 0, f"{proc.returncode}: {proc.stderr}"
     made = repo / "noni" / "decisions" / f"{NEW_DATE}-probe.json"
     assert made.is_file(), f"the first record did not land: {proc.stdout}"
@@ -322,34 +339,41 @@ tmp_path):
         f"a record left uncommitted is how the ticket's tree drifted: {_porcelain(repo)}")
 
 
-def test_a_first_record_on_a_tree_with_no_noni_is_admitted(tmp_path):
-    """The same command with nothing in the ledger yet is the first record, and lands.
+def test_a_first_record_on_a_tree_with_no_noni_is_admitted_with_init(tmp_path):
+    """A first record still lands when the caller declares the tree new.
 
-    This is the exception the refusal exists for: ``noni/decisions`` comes into being
-    by the writer allocating it, and docs/QUICKSTART.md's own command blocks are first
-    runs. A refusal that refused this run too would be the same bug with the opposite
-    exit code, so it is asserted beside the refusal rather than somewhere nobody would
-    compare the two.
+    docs/QUICKSTART.md's own command blocks are first runs, so the refusal must not
+    stop a run that says what it is doing. ``--init`` creates nothing by itself:
+    ``noni/decisions`` comes into being through the writer's ordinary allocation,
+    and the record is committed as one unit.
     """
     repo = _committed_code_repo(tmp_path, "first-record")
     proc = _run(repo, "--slug", "first", "--date", NEW_DATE,
-                *BASE, *QUESTION, *OPTIONS, *ANSWERED)
+                *BASE, *QUESTION, *OPTIONS, *ANSWERED, "--init")
     assert proc.returncode == 0, f"{proc.returncode}: {proc.stderr}"
     assert all(word not in proc.stderr for word in NO_NONI_WORDS), proc.stderr
     assert (repo / "noni" / "decisions" / f"{NEW_DATE}-first.json").is_file(), proc.stdout
     assert _porcelain(repo) == "", _porcelain(repo)
 
 
-def test_no_commit_is_admitted_on_a_tree_with_no_noni(tmp_path):
-    """``--no-commit`` commits nothing, so no commit can land in the wrong tree.
+def test_no_commit_is_refused_without_init_and_admitted_with_it(tmp_path):
+    """``--no-commit`` is not an admission of its own.
 
-    The shim route and the session writers mint a record with ``--no-commit`` and
-    commit it themselves, so a refusal that stopped this run would stop those routes
-    outright. The file still lands, uncommitted, which is what its caller then commits.
+    The exception that kept a no-commit run open on a tree with no ``noni/`` existed
+    for a mint route that no longer exists, and it reopened the ticket's trigger: a
+    code checkout with ``--no-commit`` still gained a direction record. The flag that
+    admits a first run is ``--init``, with or without ``--no-commit``; the record then
+    lands uncommitted, which is what its caller commits.
     """
     repo = _committed_code_repo(tmp_path, "no-commit")
+    refused = _run(repo, "--slug", "minted", "--date", NEW_DATE,
+                   *BASE, *QUESTION, *OPTIONS, *ANSWERED, "--no-commit")
+    assert refused.returncode == 3, f"{refused.returncode}: {refused.stderr}"
+    assert "--init" in refused.stderr, refused.stderr
+    assert not (repo / "noni").exists(), "a no-commit run created noni/ without --init"
+
     proc = _run(repo, "--slug", "minted", "--date", NEW_DATE,
-                *BASE, *QUESTION, *OPTIONS, *ANSWERED, "--no-commit")
+                *BASE, *QUESTION, *OPTIONS, *ANSWERED, "--no-commit", "--init")
     assert proc.returncode == 0, f"{proc.returncode}: {proc.stderr}"
     assert all(word not in proc.stderr for word in NO_NONI_WORDS), proc.stderr
     assert (repo / "noni" / "decisions" / f"{NEW_DATE}-minted.json").is_file(), proc.stdout
@@ -367,7 +391,7 @@ def test_a_linked_noni_keeps_its_own_refusal_ahead_of_the_state_root_one(tmp_pat
     (repo / "target").mkdir()
     (repo / "noni").symlink_to(repo / "target")
     proc = _run(repo, "--slug", "probe", "--date", NEW_DATE,
-                *BASE, *QUESTION, *OPTIONS, *ANSWERED)
+                *BASE, *QUESTION, *OPTIONS, *ANSWERED, "--init")
     assert proc.returncode == 3, f"{proc.returncode}: {proc.stderr}"
     assert "symlink" in proc.stderr, proc.stderr
     assert NO_NONI_WORDS[0] not in proc.stderr, (

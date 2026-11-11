@@ -25,7 +25,19 @@ from __future__ import annotations
 
 import sys
 
-from _harness import CENSUS, INTENT, ORDER, REPO, run_module, run_noni, run_wrapper
+from _harness import (
+    CENSUS,
+    DECIDE,
+    INTENT,
+    ORDER,
+    REPO,
+    _commit_file,
+    _git,
+    _init_repo,
+    run_module,
+    run_noni,
+    run_wrapper,
+)
 
 # One representative argv per shipped subcommand, each a run whose output needs no
 # state: the tool prints its own usage and exits 0, which is the shape a reader
@@ -103,6 +115,36 @@ def test_the_module_route_refusals_match_the_console_route(tmp_path):
         assert module.returncode == 2, module.returncode
         named = [line for line in module.stderr.splitlines() if line.startswith(label)]
         assert named, f"{tool}: no {label} line in {module.stderr!r}"
+
+
+def test_decide_refuses_a_no_noni_tree_the_same_on_all_three_routes(tmp_path):
+    """The new state-root refusal is one run through every documented route.
+
+    The wrapper, the console command and the module route share one parser and one
+    printer, so a divergence here means one route stopped going through them. The
+    refusal must be the same bytes: exit 3, the path named, and the fix naming
+    ``--init``.
+    """
+    repo = _init_repo(tmp_path / "no-noni")
+    _git(repo, "config", "user.name", "Replay")
+    _git(repo, "config", "user.email", "replay@fixture.invalid")
+    _commit_file(repo, "README.md", "# a code repository\n")
+    args = ("--repo", str(repo), "--slug", "probe", "--scope", "state root",
+            "--asked-by", "dev", "--question", "q1=Ship?", "--option", "q1=yes",
+            "--option", "q1=no", "--answer", "q1=yes")
+
+    wrapper = run_wrapper(DECIDE, *args)
+    console = run_noni("decide", *args)
+    module = run_module("decide", *args)
+    for label, proc in (("wrapper", wrapper), ("console", console), ("module", module)):
+        assert proc.returncode == 3, f"{label}: {proc.returncode}: {proc.stderr}"
+        assert str(repo) in proc.stderr, f"{label}: {proc.stderr}"
+        assert "--init" in proc.stderr, f"{label}: {proc.stderr}"
+        assert proc.stdout == "", f"{label}: {proc.stdout!r}"
+    assert wrapper.stderr == console.stderr == module.stderr, (
+        f"wrapper: {wrapper.stderr!r}\nconsole: {console.stderr!r}\n"
+        f"module: {module.stderr!r}")
+    assert not (repo / "noni").exists(), "a refused route created noni/"
 
 
 def test_the_module_route_and_the_wrapper_agree_on_help_for_each_tool():

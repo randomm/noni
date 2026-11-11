@@ -59,27 +59,6 @@ def allocate_ledger(label: str, repo: Path, ledger: Path) -> tuple[str, str] | N
     return None
 
 
-def ledger_is_first(root: Path) -> bool:
-    """Whether the tree holds no ``noni/`` at all, so a record written into it is the first.
-
-    Asked of the tree behind ``--repo``, never of the ledger leaf: a question about
-    ``noni/decisions`` alone would be answered yes by a committed code repository, which
-    has no ledger either and no state of anyone's. That is the fault the ticket is written
-    from -- the run mkdir'd ``noni/decisions`` itself and committed a record into a tree
-    that had never held state, and because the commit succeeded the tree read as a state
-    root afterwards and every later run looked legitimate.
-
-    A ``noni/`` that exists is a state root, whatever it holds, even when it holds
-    nothing. The census owns that distinction (``skills/census/SKILL.md``: a ledger
-    directory can be ``absent``, ``empty`` or ``not-a-directory``, and only the first is
-    no ledger at all) and the readers act on it, so a writer that refused an empty
-    ``noni/`` would give the same path two contradicting accounts. An operator who wants
-    records there gets them; an operator who pointed at the wrong tree is refused by
-    every reader of that tree, which is what the ticket's own reproduction shows.
-    """
-    return _path_kind.has_no_noni(root)
-
-
 def write_record(write: Callable[[Path, str], None], render: Callable[[dict], str],
                  record_path: Path, record: dict,
                  target: tuple[Path, dict, bytes] | None,

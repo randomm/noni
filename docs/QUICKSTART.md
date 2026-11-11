@@ -99,7 +99,7 @@ under:
 cd your-project
 git config user.name "Casey"
 git config user.email "casey@example.invalid"
-noni decide --repo . --slug release-scope --scope release --asked-by team-lead \
+noni decide --repo . --init --slug release-scope --scope release --asked-by team-lead \
   --question "q1=Ship the beta this week?" \
   --option "q1=Ship it" --option "q1=Wait a week" \
   --answer "q1=Wait a week"
@@ -163,7 +163,7 @@ Now every command names the state clone. Same flags, same writers, same census
 as Route A, with one path added:
 
 ```bash
-noni decide --repo .noni-state --slug release-scope --scope release \
+noni decide --repo .noni-state --init --slug release-scope --scope release \
   --asked-by team-lead \
   --question "q1=Ship the beta this week?" \
   --option "q1=Ship it" --option "q1=Wait a week" \

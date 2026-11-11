@@ -53,7 +53,7 @@ cd your-project
 git config user.name "Casey"
 git config user.email "casey@example.invalid"
 
-python3 ../noni/skills/steering-ledger/scripts/decide.py --repo . \
+python3 ../noni/skills/steering-ledger/scripts/decide.py --repo . --init \
   --slug release-scope --scope release --asked-by team-lead \
   --question "q1=Ship the beta this week?" \
   --option "q1=Ship it" --option "q1=Wait a week" \

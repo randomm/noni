@@ -171,6 +171,16 @@ def _helper_calls(source: str) -> list[tuple[str, str]]:
     return found
 
 
+def _decide_state_root_source() -> str:
+    """The state-root helper's own text, read once per test that needs it.
+
+    The two ``noni/`` questions a ``decide`` run asks cross in one call now, so the
+    caller's literal printer and code are asserted at that call and the state-root rule
+    is asserted where it is actually invoked -- one frame deeper, in this file.
+    """
+    return (REPO / "src" / "noni" / "_decide_state_root.py").read_text(encoding="utf-8")
+
+
 def test_the_helper_takes_every_rule_from_its_arguments_and_keeps_none():
     """The usage contract is split across the two files, so one gate owns the seam.
 
@@ -219,8 +229,14 @@ def test_the_helper_takes_every_rule_from_its_arguments_and_keeps_none():
                 ("check_supersede", _call_arguments(helper_source, "check_supersede(")),
                 ("refuse_linked_state",
                  _call_arguments(source, "refuse_linked_state(", call_site="_fail")),
+                # The state-root and census-level questions now cross in one call, so
+                # the caller's text spells the seam that holds them -- and the state-root
+                # rule is asserted at the call that makes it, one frame deeper.
                 ("refuse_state_root",
-                 _call_arguments(source, "refuse_state_root(", call_site="_fail")),
+                 _call_arguments(_decide_state_root_source(), "refuse_state_root(",
+                                 call_site="fail")),
+                ("refuse_run",
+                 _call_arguments(source, "refuse_run(", call_site="_fail")),
                 ("refuse_ledger_allocation",
                  _call_arguments(source, "refuse_ledger_allocation(",
                                  call_site="_fail")),
@@ -233,24 +249,25 @@ def test_the_helper_takes_every_rule_from_its_arguments_and_keeps_none():
     # helper too, so the count is what says the caller did not quietly re-implement
     # one of them beside it -- and every one of them crosses with the caller's own
     # printer and code.
-    assert len(calls) >= 8, calls
+    assert len(calls) >= 9, calls
     for name, arguments in calls:
         assert name in {"parse_date", "parse_questions", "check_supersede",
                         "refuse_name", "build_record_flags",
-                        "refuse_linked_state", "refuse_state_root",
+                        "refuse_linked_state", "refuse_state_root", "refuse_run",
                         "refuse_ledger_allocation",
                         "refuse_taken_name", "_allocation_refusal"}, name
         # A rule that takes no printer is exempt from the printer/code pair: the
         # directory question of the allocation seam answers with a pair of lines and
-        # prints nothing, so it is held to its own call site instead. The four path
-        # seams take both positionally, so they are held to the same contract by name
-        # rather than by keyword.
+        # prints nothing, so it is held to its own call site instead. The path seams
+        # take both positionally, so they are held to the same contract by name rather
+        # than by keyword.
         if name == "_allocation_refusal":
             continue
-        if name in {"refuse_linked_state", "refuse_state_root",
+        if name in {"refuse_linked_state", "refuse_state_root", "refuse_run",
                     "refuse_ledger_allocation", "refuse_taken_name"}:
-            assert "_fail" in arguments, f"{name} is called without the caller's printer"
-            assert re.search(r"\bEXIT_\w+\b", arguments), \
+            assert "_fail" in arguments or "fail" in arguments, \
+                f"{name} is called without the caller's printer"
+            assert re.search(r"\bEXIT_\w+\b", arguments) or name == "refuse_state_root", \
                 f"{name} is called without the caller's own exit constant"
             continue
         assert "fail=" in arguments, f"{name} is called without the caller's printer"
@@ -267,7 +284,7 @@ def test_the_helper_takes_every_rule_from_its_arguments_and_keeps_none():
     # the literal check below (which is spelled for the keyword-only flag rules) is
     # replaced by an assertion that both are named in the argument text.
     for name, arguments in _helper_calls(source):
-        if name in {"refuse_linked_state", "refuse_state_root",
+        if name in {"refuse_linked_state", "refuse_run",
                     "refuse_ledger_allocation", "refuse_taken_name"}:
             assert "_fail" in arguments, f"{name} is called without the caller's printer"
             assert re.search(r"\bEXIT_\w+\b", arguments), \

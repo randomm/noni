@@ -154,6 +154,14 @@ STATE_ROOT_NOT_A_NONI_HINT = (
     "noni/: the project repository itself, or the private state repository of "
     "docs/PRODUCT.md 7")
 
+# The tail a writer that CAN create the tree adds to that hint, so a caller who meant a
+# new state root is sent to the flag that opens it rather than left to guess. Kept apart
+# from the shared sentence above because the readers -- `order`, `intent`, the census --
+# have no such flag and must not advertise one.
+STATE_ROOT_INIT_HINT = (
+    "if this is a new state root, run again with --init; if you meant an existing "
+    "state clone, pass that clone as --repo")
+
 # The one directory whose presence makes ``--repo`` a state root at all: a tree that
 # holds it is a tree noni was told to look in, and the only shape a no-``noni/``
 # refusal may be reached through is its absence, which is also the state the sanctioned
@@ -244,7 +252,7 @@ def state_root_refusal(root: Path) -> tuple[str, str] | None:
         return None
     text = safe_path(str(root))
     return (STATE_ROOT_NOT_A_NONI.format(path=text),
-            STATE_ROOT_NOT_A_NONI_HINT)
+            f"{STATE_ROOT_NOT_A_NONI_HINT} {STATE_ROOT_INIT_HINT}")
 
 
 def refuse_state_root(root: Path, creates: bool,

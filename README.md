@@ -53,7 +53,7 @@ cd your-project
 git config user.name "Casey"
 git config user.email "casey@example.invalid"
 
-python3 ../noni/skills/steering-ledger/scripts/decide.py --repo . \
+python3 ../noni/skills/steering-ledger/scripts/decide.py --repo . --init \
   --slug release-scope --scope release --asked-by team-lead \
   --question "q1=Ship the beta this week?" \
   --option "q1=Ship it" --option "q1=Wait a week" \
@@ -61,6 +61,10 @@ python3 ../noni/skills/steering-ledger/scripts/decide.py --repo . \
 
 python3 ../noni/skills/census/scripts/census.py --repo .
 ```
+
+`--init` says this repository holds no `noni/` yet and is meant to: without it
+`decide` refuses at exit 3 rather than write direction state into a checkout you
+named by mistake. Omit it on a tree that already holds `noni/`.
 
 Run these from a commit of noni you trust: no release or tag exists yet, so pin
 a commit, and remember they run noni's scripts.
@@ -73,7 +77,6 @@ is no PyPI package and the name will be `noni-noni`, so every route names this
 repository, and none runs `pip` at a system Python, which current distributions
 refuse. One `noni` command replaces a path per tool, the writers and the
 read-only `census` and `brief`, printing the same bytes.
-
 The census is read-only: it never writes, so `git status --porcelain` is empty.
 Read the result. A run with rows ends with the line
 

@@ -25,9 +25,10 @@ never leaves a ``noni/`` behind in a tree it may not write to.
 
 The wording, the ordering and the declined-``lstat`` rule all belong to
 :mod:`noni._path_kind` and :mod:`noni._decide_flags`; this module only decides the
-things that are ``decide``'s own, and pins each exit code from the caller rather
-than importing it -- :data:`noni.decide.EXIT_GIT` for a wrong path (the code
-docs/PRODUCT.md 7 gives this tool) and the two codes the level check returns.
+things that are ``decide``'s own, and hands each refusal the caller's own printer and
+the codes the run's module passes in rather than importing them: :data:`noni.decide.EXIT_GIT`
+for a wrong path (the code docs/PRODUCT.md 7 gives this tool) and the two codes the
+level check returns.
 """
 
 from __future__ import annotations
@@ -38,26 +39,30 @@ from pathlib import Path
 from . import _decide_flags, _writer, ledger_level
 
 
-def admits_creation(root: Path, no_commit: bool) -> bool:
-    """Whether this run brings ``noni/`` into being, and so holds the creator exception.
+def admits_creation(root: Path, init: bool) -> bool:
+    """Whether this run is allowed to bring ``noni/`` into being.
 
-    Two answers and no more, and the tree is asked first because it is the stricter of
-    the two: :func:`noni._writer.ledger_is_first` admits a run only where ``--repo``
-    holds no ``noni/`` at all, which is the one tree whose record this run can genuinely
-    be the first of. A ``--no-commit`` run then adds its own case -- it commits nothing
-    until its caller commits it, which is how a caller mints a record without
-    a commit of its own (docs/QUICKSTART.md) -- and a run into a tree that already has a
-    ``noni/`` is a state root by the census's own account and reaches its normal reads.
+    One answer and no more: :data:`noni._writer.ledger_is_first` admits a run only where
+    ``--repo`` holds no ``noni/`` at all, which is the one tree whose record this run can
+    genuinely be the first of, and the caller has to have said so with ``--init``.
+    Without the flag a recordless tree is a wrong ``--repo``: a committed code repository
+    passed where the state clone was meant is a valid git work tree, so the work-tree
+    probe admits it and this is the only question that refuses it.
+
+    ``--no-commit`` no longer answers here. It used to, which let a run write a record
+    into a tree holding no state of anyone's as long as it left the commit to somebody
+    else; the route that needed it (minting a record without a commit of its own) is
+    gone, and the flag still commits nothing on a tree that holds ``noni/``.
 
     Asked of the tree and never of the ledger leaf: the directory the writer is about to
     create is the thing under test, and a question about ``noni/decisions`` alone would
     be answered yes by a committed code repository, which has no ledger either and no
     state of anyone's.
     """
-    return _writer.ledger_is_first(root) or no_commit
+    return init and _writer.ledger_is_first(root)
 
 
-def refuse_state_root(fail, exit_git: int, repo: Path, no_commit: bool) -> int | None:
+def refuse_state_root(fail, exit_git: int, repo: Path, init: bool) -> int | None:
     """The exit-3 refusal for a ``--repo`` that is no noni state root, or None.
 
     :param fail: ``decide``'s own failure printer, so the prefix stays ``decide.py``.
@@ -71,7 +76,22 @@ def refuse_state_root(fail, exit_git: int, repo: Path, no_commit: bool) -> int |
     of this, so a linked ``noni/`` keeps the sentence that names it.
     """
     return _decide_flags.refuse_state_root(
-        fail, exit_git, repo, partial(admits_creation, repo, no_commit))
+        fail, exit_git, repo, partial(admits_creation, repo, init))
+
+
+def refuse_run(fail, exit_git: int, exit_usage: int, exit_collision: int,
+               repo: Path, init: bool) -> int | None:
+    """Both questions this module asks of ``--repo``, in the order they must be asked.
+
+    The state root first, then the census level, because both are asked ahead of the
+    allocation and a refusal must never leave a ``noni/`` behind in a tree this run may
+    not write to. The caller hands in its printer and its three codes so this stays a
+    leaf whose numbers the run's module owns.
+    """
+    refused = refuse_state_root(fail, exit_git, repo, init)
+    if refused is not None:
+        return refused
+    return refuse_schema_level_skew(fail, exit_usage, exit_collision, repo)
 
 
 def refuse_schema_level_skew(fail, exit_usage: int, exit_collision: int,

@@ -257,7 +257,7 @@ def test_the_level_and_the_reader_have_one_owner_each():
         "the census no longer asks the shared module for the cause clause")
     assert "_level.LEDGER_SCHEMA_LEVEL" in census, (
         "the census keeps its own level rather than the shared constant")
-    assert "refuse_schema_level_skew" in writer, (
+    assert "_decide_state_root.refuse_run" in writer, (
         "decide.py no longer reaches the level check through its state-root module")
     assert "read_schema_level" in state_root, (
         "the level question is no longer asked where the tree question is asked")

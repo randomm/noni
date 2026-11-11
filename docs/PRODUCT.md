@@ -162,9 +162,13 @@ is not a noni state root (no `noni/` directory), plus a fix line naming `--repo`
 because its first entry is a sanctioned creator of `noni/direction`, and its
 `--decision` is still resolved against the ledger. `intent set` is admitted for
 the same reason (its first file creates `noni/direction/intent.md`). `decide`
-is admitted on the same ground: its first record is what brings `noni/decisions/`
-into being, and a `--no-commit` run commits nothing until its caller commits it.
-What makes a first `decide` auditable rather than silent is that it is a real,
+refuses it too, and is admitted only when the caller passes `--init`: it is the
+one writer that can bring `noni/` into being, and a run pointed at a project
+checkout by mistake must not create direction content there. The refusal names
+the path as the caller spelled it, says the tree holds no `noni/`, and sends the
+caller to `--repo` or to `--init`; `--init` on a tree that already holds `noni/`
+changes nothing, and `--no-commit` no longer stands in for the flag. What makes
+an admitted first `decide` auditable rather than silent is that it is a real,
 reported commit: the run names the state root and the record it wrote, and leaves
 the tree clean. The question is asked before the ledger is read, so a first record
 never lands behind a half-checked tree. What none of them may do is

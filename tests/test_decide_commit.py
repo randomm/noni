@@ -282,10 +282,11 @@ def test_a_supersede_without_a_date_writes_todays_record(tmp_path):
 
 def test_the_ledger_directory_is_created_for_the_first_record(tmp_path):
     """A fresh attached project has no noni/decisions yet: the writer allocates
-    the directory that holds its own record rather than failing."""
+    the directory that holds its own record rather than failing, once asked to
+    start the state root with --init."""
     repo = _init_repo(tmp_path / "fresh")
     assert not (repo / "noni" / "decisions").exists()
-    proc = _decide(repo, *ANSWERED)
+    proc = _decide(repo, *ANSWERED, "--init")
     assert proc.returncode == 0, proc.stderr
     assert _record_path(repo, NEW_ID).is_file()
     # The unified census treats a recordless ledger as ledger-empty; with the

@@ -314,6 +314,43 @@ def test_the_page_states_the_read_only_promise_of_the_screen_it_prints() -> None
     assert "writes no file" in flowed or "write no file" in flowed
 
 
+def test_the_page_explains_the_two_lines_it_prints_that_read_as_faults() -> None:
+    """The two lines the screen can print that a cold start misreads as faults are explained.
+
+    A fresh agent given only this page and the screen has nothing else to decide with: a
+    ``dropped:`` line it cannot place reads as a broken state file, and a verdict that never
+    asked whether the ordered issues are closed reads as a checked queue. Each is stated in
+    words inside the section that teaches the reader the screen, which is where an agent that
+    is reading the page top to bottom meets it.
+    """
+    section = _section(_flowed(page_text()), "## How to read the screen")
+    assert "dropped: n line(s)" in section.lower(), (
+        "the page no longer says what the block's dropped-count line means")
+    assert "200-line budget" in section.lower(), (
+        "the page no longer says the dropped lines went missing to the page's own budget")
+    assert "ordering-closed not checked" in section, (
+        "the page no longer names the verdict clause it expects the reader to meet")
+    assert "--issue-state" in section, (
+        "the page no longer names the run that would have answered the closed question")
+    assert "stale" in section.lower(), (
+        "the page no longer tells the reader to treat the order as possibly stale")
+
+
+def test_the_page_says_where_a_decision_record_lives() -> None:
+    """The page tells the reader where a record's bytes are, not only that they exist.
+
+    The screen tells an agent to read a record before quoting it; a page that never says where
+    records live leaves the agent asking, or quoting the one line the block printed. The path is
+    stated under the state root rather than as a worked example, so the page prints no host path.
+    """
+    section = _section(_flowed(page_text()), "## How to read the screen")
+    assert "<state root>/noni/decisions/<record id>.json" in section, (
+        "the page no longer states where a decision record lives under the state root")
+    assert "json" in section.lower()
+    assert "safe" in section.lower(), (
+        "the page no longer says reading the record yourself is safe")
+
+
 def test_the_page_names_the_memory_boundary_without_naming_a_tool() -> None:
     """Learned facts live elsewhere, and the page says so without naming a vendor.
 

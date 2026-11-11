@@ -79,7 +79,12 @@ def test_brief_a_launched_usage_error_exits_two(argv: list[str], tmp_path: Path)
 
 
 def test_brief_is_listed_in_the_tool_index(tmp_path: Path) -> None:
-    """The index of ``noni --help`` names the tool, and its own help names both flags."""
+    """The index of ``noni --help`` names the tool, and its own help names both flags.
+
+    The ``--repo`` line is part of what this tool publishes: an agent that has to choose between
+    the tree it sits in and the state root reads the help page to settle it, so the help names
+    the flag's subject in the words every other noni tool uses for it.
+    """
     from noni import cli
 
     assert cli.TOOLS["brief"] == ("noni.brief", "main")
@@ -98,6 +103,8 @@ def test_brief_is_listed_in_the_tool_index(tmp_path: Path) -> None:
     assert help_text.stdout.startswith("usage:")
     assert "--repo" in help_text.stdout and "--now" in help_text.stdout
     assert help_text.stderr == ""
+    # The one wording ``--repo`` is given by every noni tool that takes it.
+    assert "the state root" in help_text.stdout, help_text.stdout
 
 
 def test_brief_a_relative_repo_prints_the_same_page(tmp_path: Path) -> None:
@@ -142,7 +149,7 @@ def test_brief_the_repo_is_read_at_the_path_it_was_given(tmp_path: Path) -> None
         "Belongs to the other tree\n", encoding="utf-8")
     out = run_brief_from(elsewhere, root, "--now", NOW)[1]
     assert "Belongs to the other tree" not in out
-    assert "1. #4242" not in out
+    assert "#4242" not in out
     assert len(stripped(sections(out), brief_module.ORDER_HEADER)) == \
         brief_module.TOP_ENTRIES
 
@@ -168,8 +175,8 @@ def test_brief_reads_no_census_state_from_the_previous_run(tmp_path: Path) -> No
                           confirmed="2026-10-26T00:00:00Z")])
     run_brief_in_process(first, "--now", NOW)
     out = run_brief_in_process(second, "--now", NOW)[1]
-    assert "1. #77" in out
-    assert "1. #1" not in out
+    assert "#77" in out
+    assert "#1 " not in out
 
 
 def test_brief_is_a_sibling_module_of_the_tool_and_read_by_it(tmp_path: Path) -> None:

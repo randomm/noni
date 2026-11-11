@@ -263,7 +263,7 @@ def _repo_refusals(repo: Path, repo_arg: str, verb: str) -> int | None:
     """
     if not repo.is_dir():
         return _fail(EXIT_USAGE, f"--repo {repo_arg} is not a directory",
-                     "pass the repository root that holds (or will hold) "
+                     "pass the state root that holds (or will hold) "
                      "noni/direction/order.json")
     return _refuse_linked_state(repo, verb)
 
@@ -310,7 +310,8 @@ def main(argv: list[str] | None = None) -> int:
     # class -- the answer to a missing verb -- is handed to it rather than imported there.
     parser = order_plan.build_parser(_VerbedParser, order_plan.USAGE, labels.ORDER,
                                       DESCRIPTION)
-    parser.add_argument("--repo", required=True, help="repository root")
+    parser.add_argument("--repo", required=True,
+                        help="the state root that holds (or will hold) noni/")
     parser.add_argument("subcommand", help="add, move, remove or confirm")
     parser.add_argument("issue", nargs="?", default=None,
                         help="the issue number (required for add, move and remove; "

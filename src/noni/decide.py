@@ -372,7 +372,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     # The tests read this parser from the AST, so the flag names are passed to
     # add_argument in main() itself: no helper may stand between the two.
-    parser.add_argument("--repo", required=True, help="repository root")
+    parser.add_argument("--repo", required=True,
+                        help="the state root that holds (or will hold) noni/")
     parser.add_argument("--slug", required=True, help="id slug ([a-z0-9-]+)")
     parser.add_argument("--scope", required=True, help="the direction area the decision covers")
     parser.add_argument("--asked-by", required=True, help="the agent role or session that asked")

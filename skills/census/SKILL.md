@@ -26,7 +26,7 @@ directory, is a usage error (exit 2) before any check runs.
 
 | option | default | meaning |
 |---|---|---|
-| `--repo PATH` | `.` | the repository or directory to audit |
+| `--repo PATH` | `.` | the state root to audit |
 | `--ledger PATH` | `<repo>/noni/decisions` | override the ledger directory |
 | `--ordering PATH` | `<repo>/noni/direction/order.json` | override the ordering artifact |
 | `--intent PATH` | `<repo>/noni/direction/intent.md` | override the standing intent file (its citation is still answered against the run's `--ledger`) |

@@ -87,8 +87,12 @@ ORDER_REL = f"{ORDER_DIR}/{ORDER_FILE}"
 # of reason for the position, written by ``order.py add --why`` and optional: an entry
 # without it is the three-field shape every order written before it holds, byte for
 # byte. Its shape and its bound are the ledger's (``ledger_schema.why_problems``), the
-# same rule a record's rationale obeys.
-ENTRY_FIELDS = ("issue", "decision", "confirmed", WHY_FIELD)
+# same rule a record's rationale obeys. Each field is named by a constant of its own so
+# a reader that prints one of them (the brief's row, the writer's listing) names the
+# artifact's field rather than a string that outlives a rename.
+DECISION_FIELD = "decision"
+CONFIRMED_FIELD = "confirmed"
+ENTRY_FIELDS = ("issue", DECISION_FIELD, CONFIRMED_FIELD, WHY_FIELD)
 
 # The key the item store used to give an entry its citation, and the repair sentence
 # every reader gives a file that still carries it. Named here so the writer, the

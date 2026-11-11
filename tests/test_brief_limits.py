@@ -103,6 +103,11 @@ def _intent_with_purpose(lines: tuple[str, ...] | list[str]) -> str:
 
 
 def test_brief_a_hundred_order_entries_render_ten(tmp_path: Path) -> None:
+    """The cap is asked of the rows the block built, and each row is the full form.
+
+    One hundred entries, ten rows, each of them the position, the issue and the record that
+    set the position: the row gained two parts and the cap stayed the count of rows.
+    """
     root = plant_brief_tree(tmp_path)
     entries = [orderschema.entry(issue=number, decision=RECORD_ID,
                                  confirmed="2026-10-26T00:00:00Z")
@@ -112,7 +117,7 @@ def test_brief_a_hundred_order_entries_render_ten(tmp_path: Path) -> None:
     code, out, _ = run_brief(root, "--now", NOW)
     assert code == 0
     assert stripped(sections(out), brief_module.ORDER_HEADER) == \
-        [f"{n}. #{n}" for n in range(1, brief_module.TOP_ENTRIES + 1)]
+        [f"{n}. #{n} ({RECORD_ID})" for n in range(1, brief_module.TOP_ENTRIES + 1)]
 
 
 def test_brief_the_page_never_exceeds_the_cap(tmp_path: Path) -> None:

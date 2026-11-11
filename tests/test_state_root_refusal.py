@@ -227,6 +227,57 @@ def test_the_readers_refuse_a_repo_that_holds_no_noni_directory(tmp_path):
                 f"tell the operator to pass one: {proc.stderr}")
 
 
+def test_the_census_refusal_of_a_no_noni_tree_never_advertises_init(tmp_path):
+    """The census's own answer for a no-``noni/`` tree stays free of ``--init``.
+
+    The census takes no flag of that name and would answer one with argparse's exit 2,
+    so a note or a refusal that sent the operator to it is a dead end rather than a
+    fix -- the same rule ``order`` and ``intent`` are held to above, on the one entry
+    point that reports this state without refusing it. The census reports the tree on
+    stdout and exits 0 for this state, so stdout is compared too, not just stderr.
+    """
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    repo = _code_repo(tmp_path, "census-no-init")
+    proc = subprocess.run([sys.executable, str(CENSUS), "--repo", str(repo)],
+                          capture_output=True, text=True, env=subprocess_env(),
+                          cwd=str(cwd), timeout=120)
+    assert proc.returncode == 0, f"{proc.returncode}: {proc.stderr}"
+    assert "no noni/ directory was found under --repo" in proc.stdout, proc.stdout
+    assert "--init" not in proc.stdout, proc.stdout
+    assert "--init" not in proc.stderr, proc.stderr
+
+
+def test_the_sanctioned_creators_of_direction_never_advertise_init(tmp_path):
+    """``order add`` and ``intent set`` are admitted past the state-root question, so
+    they never print it -- and no part of their answer for a recordless tree may name
+    ``--init`` either.
+
+    These two are the verbs the shared sentence cannot be shown for (their first write
+    creates ``noni/direction``), which is exactly why a regression that moved the
+    ``--init`` sentence into the shared wording would slip past the reader table: it
+    only runs verbs that are refused. Here the runs reach their citation refusal at
+    exit 4, and the whole of both streams is checked for the flag neither command has.
+    """
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    draft = tmp_path / "draft.md"
+    draft.write_text(_INTENT_DRAFT, encoding="utf-8")
+    runs = (
+        _launch_against(ORDER, _code_repo(tmp_path, "add-no-init"), cwd,
+                        "add", "12", "--decision", "2026-10-01-release-scope",
+                        "--now", "2026-10-02T00:00:00Z"),
+        _launch_against(INTENT, _code_repo(tmp_path, "set-no-init"), cwd,
+                        "set", "--from", str(draft), "--decision",
+                        "2026-10-01-release-scope", "--now",
+                        "2026-10-02T00:00:00Z"),
+    )
+    for proc in runs:
+        assert proc.returncode == 4, f"{proc.returncode}: {proc.stderr}"
+        assert "--init" not in proc.stdout + proc.stderr, (
+            f"a writer with no --init advertised it: {proc.stdout}{proc.stderr}")
+
+
 def test_init_is_accepted_by_decide_and_refused_by_every_other_writer(tmp_path):
     """``--init`` is decide's flag and no other command grows it.
 

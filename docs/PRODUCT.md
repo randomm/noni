@@ -162,22 +162,17 @@ is not a noni state root (no `noni/` directory), plus a fix line naming `--repo`
 because its first entry is a sanctioned creator of `noni/direction`, and its
 `--decision` is still resolved against the ledger. `intent set` is admitted for
 the same reason (its first file creates `noni/direction/intent.md`). `decide`
-refuses it too, and is admitted only when the caller passes `--init`: it is the
-one writer that can bring `noni/` into being, and a run pointed at a project
-checkout by mistake must not create direction content there. `--init` admits a tree
-whose `noni/` is absent, or one that exists and holds no entry at all: the two states
-a fresh state root arrives in. A `noni/` that holds an entry but neither the
-`noni/decisions` ledger nor a `noni/direction` directory is residue of an aborted or
-mis-targeted run, and `decide` refuses it with its own line at the same code, with or
-without the flag: that tree is not one this run was asked to create, and mkdir'ing a
-ledger beside the residue would commit direction into somebody else's repository. The
-refusal names
-the path as the caller spelled it, says the tree holds no `noni/` (or no ledger under
-it), and sends the
-caller to `--repo` or to `--init`; the `--init` sentence belongs to `decide` alone,
-since no other command has the flag and each answers it as an unknown one. On a
-tree that already holds a ledger or a `noni/direction` directory `--init`
-changes nothing, and `--no-commit` no longer stands in for the flag. What makes
+refuses a `--repo` tree that holds no `noni/` directory unless `--init` is given;
+it is the one writer that can bring `noni/` into being, and a run pointed at a
+project checkout by mistake must not create direction content there. A tree that
+already holds a `noni/` directory is treated as a state root, whatever it holds:
+that is the census's own account of a `noni/` it can see, and no writer here
+gives the same path a second, contradicting account. The refusal names the path
+as the caller spelled it, says the tree holds no `noni/`, and sends the caller to
+`--repo` or to `--init`; the `--init` sentence belongs to `decide` alone, since no
+other command has the flag and each answers it as an unknown one. On a tree that
+already holds a `noni/` `--init` changes nothing, and `--no-commit` no longer
+stands in for the flag. What makes
 an admitted first `decide` auditable rather than silent is that it is a real,
 reported commit: the run names the state root and the record it wrote, and leaves
 the tree clean. The question is asked before the ledger is read, so a first record

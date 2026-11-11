@@ -37,12 +37,10 @@ Exit codes:
        user.name is not set (git config user.name <name>), a git probe timed
        out or failed for a reason that answered nothing, a --repo that is a
        directory holding no noni/ (pass the state clone, or --init for a new
-       one), a --repo whose noni/ holds neither a decisions ledger nor a
-       direction directory (residue: remove it in the right tree), or a noni/
-       or noni/decisions directory -- every one from the state root down to
-       the ledger -- that is no plain path this writer may read or write
-       through (a symlink, a plain file, a socket or a device, each asked of
-       lstat before the git probes, the first read or the mkdir; an absent
+       one), or a noni/ or noni/decisions directory -- every one from the state
+       root down to the ledger -- that is no plain path this writer may read or
+       write through (a symlink, a plain file, a socket or a device, each asked
+       of lstat before the git probes, the first read or the mkdir; an absent
        ledger is admitted because the first record creates it)
     4  a collision or a bad supersede target: the record path already exists as
        anything (file, directory or symlink), or the target is missing, already
@@ -78,6 +76,7 @@ Every path the success lines name (``wrote`` on either route) is the file's real
 location from the caller's working directory: --repo joined to noni/decisions/
 <id>.json, spelled the same with and without --no-commit.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -91,10 +90,11 @@ from . import ledger_schema as _schema
 from .ledger_schema import is_single_line
 
 # The git helper and the atomic writer are an ordinary package import: inside an
-# installed wheel there is no sibling file to load by path, so a lookalike earlier on
-# some path cannot become this writer's mechanics. ``_git`` and ``_write_atomic`` are
-# the two names the writer's tests replace to inject a fault no flag produces; the
-# constants are re-exported because the writer's contract names them.
+# installed wheel there is no sibling file to load by path, and no directory of the
+# package goes on ``sys.path``, so a lookalike earlier on some path cannot become this
+# writer's mechanics. ``_git`` and ``_write_atomic`` are the two names the writer's
+# tests replace to inject a fault no flag produces; the constants are re-exported
+# because the writer's contract names them.
 GIT_TIMEOUT = gitwrite.GIT_TIMEOUT
 GIT_TIMEOUT_RC = gitwrite.GIT_TIMEOUT_RC
 FAIL_COMMIT_ENV_VAR = gitwrite.FAIL_COMMIT_ENV_VAR

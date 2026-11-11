@@ -34,6 +34,7 @@ from _harness import (
     run_module,
     run_noni,
     run_wrapper,
+    subprocess_env,
 )
 from console_route_support import assert_same
 from decide_fixtures import (
@@ -136,7 +137,13 @@ def test_the_three_routes_agree_on_the_state_root_refusal(tmp_path):
     repo = _committed_code_repo(tmp_path, "routes")
     argv = ("--slug", "probe", "--date", NEW_DATE, *BASE, *QUESTION, *OPTIONS,
             *ANSWERED)
-    wrapper = run_wrapper(DECIDE, "--repo", str(repo), *argv)
+    # The wrapper is the in-place script under ``skills/``, which is not on
+    # ``sys.path``, so it is launched from the checkout with ``src/`` on the path --
+    # the form README's try-it block documents. The two package routes already
+    # resolve ``noni`` through the suite's own bootstrap.
+    env = subprocess_env()
+    env["PYTHONPATH"] = str(REPO / "src")
+    wrapper = run_wrapper(DECIDE, "--repo", str(repo), *argv, env=env)
     console = run_noni("decide", "--repo", str(repo), *argv)
     module = run_module("decide", "--repo", str(repo), *argv)
     assert_same(wrapper, console, "decide no-noni refusal (wrapper vs console)")

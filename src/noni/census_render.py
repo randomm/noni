@@ -206,10 +206,11 @@ def _not_evaluated_headline(notes: tuple[str, ...],
     headline. A note this module does not know names nothing, so the headline carries no
     extra clause at all: nothing is glued onto the counts, and the note line below
     the rows already says what was not evaluated. When a class is named, the clause
-    opens with one separator (", ", matching the counts) in every branch, so the
-    closed-state headline and the generic one agree. Each returned clause begins
-    with the separator, so a caller can concatenate it directly onto the counts
-    without adding a second one. Several notes read as a list.
+    opens with ``; `` on a rowless run (nothing was asked of it, so the clause starts
+    its own sentence of the headline) and ``, `` on a run that carries rows, matching
+    the counts. Each returned clause begins with its separator, so a caller can
+    concatenate it directly onto the counts without adding a second one. Several notes
+    read as a list.
 
     ``findings`` is the clause's second half, and the reason the headline is not
     simply "count + note count": the closed class reports its own row when an order
@@ -224,9 +225,10 @@ def _not_evaluated_headline(notes: tuple[str, ...],
     if not named:
         return ""
     unchecked = closed_state_verdict_carried(findings)
+    separator = "; " if not findings else ", "
     if unchecked:
-        return f", {', '.join(named)} not checked"
-    return f", {', '.join(named)} did not run"
+        return f"{separator}{', '.join(named)} not checked"
+    return f"{separator}{', '.join(named)} did not run"
 
 
 def _warn_class_names() -> str:

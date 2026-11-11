@@ -111,7 +111,7 @@ keyed to what the run found:
 |---|---|---|
 | no rows, no note | `census: no findings; all checks passed` | `clean` |
 | rows counted | `census: W warning(s), N finding(s)` | `W warning(s)` |
-| no rows, a note | `census: no findings, <class> did not run` | `clean` |
+| no rows, a note | `census: no findings; <class> did not run` | `clean` |
 | the unasked-closed row is carried | `census: …, N finding(s), ordering-closed not checked` | `ordering-closed not checked` |
 
 The last row is the one state in which the word `clean` is displaced by a class

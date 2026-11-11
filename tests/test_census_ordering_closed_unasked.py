@@ -22,7 +22,6 @@ than the one it replaced: it would fault a project for a layer it never used.
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 from _harness import _commit_file
@@ -222,12 +221,8 @@ def test_the_headline_separates_the_clause_from_the_counts_it_qualifies(tmp_path
     assert code == 0, (code, out, err)
     first = out.splitlines()[0]
     # The counts are the ordering group's own (the human helper confines the run to
-    # it); what matters below is their shape, not their number.
-    assert re.match(r"^census: \d+ warning\(s\), \d+ finding\(s\)", first), first
-    assert "finding(s)ordering" not in first.replace(" ", ""), first
-    assert ", ordering-closed not checked" in first, first
-    assert first.endswith("ordering-closed not checked"), first
-    assert first.count("ordering-closed") == 1, first
+    # it); pinned as one exact line on the concrete tree below.
+    assert first == "census: 1 warning(s), 1 finding(s), ordering-closed not checked", first
 
 
 def test_the_row_never_invents_a_closed_issue(tmp_path):

@@ -21,8 +21,10 @@ from _harness import (
     DECIDE,
     INTENT,
     ORDER,
+    _git,
     subprocess_env,
 )
+from decide_fixtures import _porcelain
 from direction_symlink_fixtures import (
     NOW,
     PROBE_ID,
@@ -35,10 +37,25 @@ from test_state_root_refusal import (
     _INTENT_DRAFT,
     NOT_A_STATE_ROOT_WORDS,
     _code_repo,
+    _commit_file,
     _launch_against,
 )
 
 from noni import _path_kind
+
+
+def _code_repo_with_identity(tmp_path: Path, name: str) -> Path:
+    """``_code_repo`` plus the identity ``decide`` commits under.
+
+    ``_launch_against`` passes no identity env, so a run that reaches the
+    attribution check answers with the missing-identity refusal instead of the
+    state-root answer under test. The repo's own config carries it here, which is
+    what the launcher-built rows of the refusal table rely on too.
+    """
+    repo = _code_repo(tmp_path, name)
+    _git(repo, "config", "user.name", "Replay")
+    _git(repo, "config", "user.email", "replay@fixture.invalid")
+    return repo
 
 
 def _argv_naming(record_id: str) -> tuple[str, ...]:
@@ -124,37 +141,125 @@ def test_a_first_record_is_admitted_where_the_second_would_commit_into_nothing(
         f"{second.stderr}")
 
 
-def test_a_tree_holding_a_noni_directory_is_a_state_root(tmp_path):
-    """A tree with a ``noni/`` is a state root, whatever that directory holds.
+def test_a_tree_holding_a_noni_directory_with_entries_is_not_created_into(tmp_path):
+    """A ``noni/`` that holds something is state of somebody's, and ``decide`` writes
+    no record under it even with ``--init``.
 
-    The contrast the refusal lives by, and the half the ticket's own reproduction does
-    not reach: the wrong ``--repo`` with a ``noni/`` in it -- a ledger an aborted run
-    left a file in -- is a tree noni has been told
-    to look in, and the writer answers it with its normal reading of that state rather
-    than with the state-root sentence. Only a tree with no ``noni/`` at all is the wrong
-    tree: there is nothing under it to read or to arbitrate, which is the misleading
-    message the ticket was filed about. The empty-``noni/`` case is the census's
-    ``absent``/``empty`` distinction (``skills/census/SKILL.md``) and is pinned there; a
-    second, contradicting account in a writer would be the same bug the ticket reported,
-    told two ways.
+    The half the first cut of this gate left open. The admission test asked only
+    whether ``noni`` was absent, so a public code repository holding any ``noni`` entry
+    -- a file an aborted run left, an earlier mis-targeted write, anything somebody
+    committed under that name -- answered "not absent" and was admitted with no flag at
+    all: the run mkdir'd ``noni/decisions`` beneath it and committed a record onto that
+    repository's branch, which is the exposure issue #162 was filed to close. Such a
+    tree stays a state root for every reader and for the census (that is the census's
+    own account of a ``noni/`` it can see, and this writer contradicts nobody); it is
+    simply not a tree this run brings into being, so the creator answers no and the run
+    reaches its own refusal instead of committing.
+
+    Every row runs with ``--init`` and without it: neither admits a write, nothing of
+    the run's is created, the tree's own file stands, and the tree stays clean. An
+    ``noni`` holding nothing is the contrast case below.
     """
     cwd = tmp_path / "cwd"
     cwd.mkdir()
     argv = ("--slug", "probe", "--scope", "state root", "--asked-by", "dev",
             "--question", "q1=Probe?", "--option", "q1=yes", "--option", "q1=no",
             "--answer", "q1=yes", "--date", "2026-10-01")
-    for name, rel in (("stray-ledger", "noni/decisions/left-behind.txt"),
-                      ("stray-order", "noni/direction/left-behind.txt")):
-        repo = _code_repo(tmp_path, name)
-        held = repo / rel
-        held.parent.mkdir(parents=True)
-        held.write_text("state of somebody's\n", encoding="utf-8")
-        proc = _launch_against(DECIDE, repo, cwd, *argv)
-        assert proc.returncode == 0, (
-            f"{name}: a tree with a noni/ is a state root, so --init is harmless there "
-            f"and the run reaches its normal answer: {proc.returncode}: {proc.stderr}")
-        assert NOT_A_STATE_ROOT_WORDS[0] not in proc.stderr, (
-            f"{name}: a tree with a noni/ was refused as no state root: {proc.stderr}")
+    for name, rel in (("stray-file", "noni/left-behind.txt"),
+                      ("stray-config", "noni/config.ini")):
+        for flag in ((), ("--init",)):
+            tag = f"{name}-{'init' if flag else 'plain'}"
+            repo = _code_repo_with_identity(tmp_path, tag)
+            _commit_file(repo, rel, "state of somebody's\n")
+            proc = _launch_against(DECIDE, repo, cwd, *argv, *flag)
+            assert proc.returncode == 3, (
+                f"{tag}: decide wrote a record under a noni/ that already holds "
+                f"entries: {proc.returncode}: {proc.stderr}{proc.stdout}")
+            assert "no noni/decisions directory is there" in proc.stderr, (
+                f"{tag}: the run must say the tree holds no ledger to write into: "
+                f"{proc.stderr}")
+            assert (repo / rel).is_file(), f"{tag}: the run disturbed the tree's own file"
+            assert not (repo / "noni" / "decisions"
+                        / "2026-10-01-probe.json").exists(), (
+                f"{tag}: the record landed under a noni/ holding entries")
+            assert _porcelain(repo) == "", f"{tag}: left dirty: {_porcelain(repo)}"
+
+
+def test_an_empty_noni_directory_is_admitted_only_with_the_flag(tmp_path):
+    """A ``noni/`` that exists and holds nothing is the census's ``empty`` state, and
+    ``--init`` opens it: a state root nobody has written to yet.
+
+    Two accounts have to hold at once and both are asserted. The census keeps its
+    ``absent``/``empty`` distinction (``skills/census/SKILL.md``) and this writer must
+    not contradict it by calling an ``empty`` ``noni`` an absence; and the gate is still
+    a gate, so an ``empty`` ``noni`` is admitted only on the caller's word, exactly as an
+    absent one is. The contrast that makes the pair worth pinning together: the same
+    tree without the flag writes nothing, is refused with the state-root sentence, and
+    stays clean.
+    """
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    argv = ("--slug", "probe", "--scope", "state root", "--asked-by", "dev",
+            "--question", "q1=Probe?", "--option", "q1=yes", "--option", "q1=no",
+            "--answer", "q1=yes", "--date", "2026-10-01")
+
+    repo = _code_repo_with_identity(tmp_path, "empty-noni")
+    (repo / "noni").mkdir()
+    refused = _launch_against(DECIDE, repo, cwd, *argv)
+    assert refused.returncode == 3, f"{refused.returncode}: {refused.stderr}"
+    # The no-ledger sentence, not the no-noni/ one: an empty noni/ is there, so calling it
+    # a missing noni/ would be a second, contradicting account of the same directory.
+    assert "no noni/decisions directory is there" in refused.stderr, (
+        f"the refusal must name the absent ledger: {refused.stderr}")
+    # Not_a_state_root_words[0] is the whole headline of the other refusal and is the
+    # phrase that would contradict the census's account of this directory; [1] is a
+    # fragment of "no noni/decisions directory is there", which this sentence is entitled
+    # to say, so it is not asserted absent here.
+    assert NOT_A_STATE_ROOT_WORDS[0] not in refused.stderr, (
+        f"an empty noni/ is not a missing one, so it must not meet "
+        f"{NOT_A_STATE_ROOT_WORDS[0]!r}: {refused.stderr}")
+    assert "--init" in refused.stderr, (
+        f"the fix must name the flag that opens it: {refused.stderr}")
+    assert not (repo / "noni" / "decisions").exists(), (
+        "a refused run allocated the ledger under an empty noni/")
+
+    admitted = _launch_against(DECIDE, repo, cwd, *argv, "--init")
+    assert admitted.returncode == 0, f"{admitted.returncode}: {admitted.stderr}"
+    assert (repo / "noni" / "decisions" / "2026-10-01-probe.json").is_file(), (
+        admitted.stdout)
+    assert _porcelain(repo) == "", f"left dirty: {_porcelain(repo)}"
+
+
+def test_a_direction_only_tree_is_a_state_root_that_still_answers_for_its_cite(tmp_path):
+    """A ``noni/`` holding ``direction/`` and no ledger is a state root, not a residue.
+
+    The pair the ledger question has to get right. ``intent set`` and ``order add`` are
+    sanctioned creators of ``noni/direction``, so a caller who ran one of them first and
+    has steered nothing yet has a tree with no ledger under it: that is a state root, and
+    ``decide`` must not answer it with the state-root or the no-ledger refusal. What still
+    refuses the run is the record ``intent set`` cites, which is that writer's own exit 4,
+    and a plain ``decide`` into the same tree simply writes the first record.
+    """
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    argv = ("--slug", "probe", "--scope", "state root", "--asked-by", "dev",
+            "--question", "q1=Probe?", "--option", "q1=yes", "--option", "q1=no",
+            "--answer", "q1=yes", "--date", "2026-10-01")
+    repo = _code_repo_with_identity(tmp_path, "direction-only")
+    _commit_file(repo, "noni/direction/order.json", "{}\n")
+
+    proc = _launch_against(DECIDE, repo, cwd, *argv)
+    assert proc.returncode == 0, (
+        f"a tree holding noni/direction is a state root, so the first record lands: "
+        f"{proc.returncode}: {proc.stderr}")
+    assert (repo / "noni" / "decisions" / "2026-10-01-probe.json").is_file(), proc.stdout
+    for words in (NOT_A_STATE_ROOT_WORDS, ("no noni/decisions ledger",)):
+        for word in words:
+            assert word not in proc.stderr, (
+                f"a state root holding a direction artifact met {word!r}: {proc.stderr}")
+    assert _porcelain(repo) == "", f"left dirty: {_porcelain(repo)}"
+
+
 def test_a_no_commit_run_needs_the_flag_too(tmp_path):
     """``--no-commit`` is not a creator exception: a first record needs ``--init``.
 

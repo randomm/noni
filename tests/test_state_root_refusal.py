@@ -217,6 +217,14 @@ def test_the_readers_refuse_a_repo_that_holds_no_noni_directory(tmp_path):
             assert "--init" in proc.stderr, (
                 f"{tool}: the fix must name the flag that opens a new state root: "
                 f"{proc.stderr}")
+        else:
+            # The other half of the same sentence: --init is decide's flag alone, so a
+            # reader's fix line must not send the operator to a flag the very command
+            # printing it answers with argparse's exit 2. The rows below pin that the
+            # flag IS refused; this pins that no reader advertises it.
+            assert "--init" not in proc.stderr, (
+                f"{tool} {argv[0]}: {tool} has no --init, so its fix line must not "
+                f"tell the operator to pass one: {proc.stderr}")
 
 
 def test_init_is_accepted_by_decide_and_refused_by_every_other_writer(tmp_path):

@@ -67,6 +67,7 @@ from pathlib import Path
 from typing import Callable, Protocol
 
 from . import _path_kind, _writer
+from ._safe_text import safe_path
 
 # A date flag is four-digit year, month, day; a real calendar day is checked
 # against the calendar on top of the shape. Anchored, and used with fullmatch:
@@ -392,7 +393,8 @@ def refuse_linked_state(printer: Printer, code: int, repo: Path,
 
 
 def refuse_state_root(printer: Printer, code: int, repo: Path,
-                      admits: Callable[[], bool]) -> int | None:
+                      admits: Callable[[], bool],
+                      admits_reopening: Callable[[], bool] | None = None) -> int | None:
     """The exit code for a ``--repo`` that is no noni state root, or None.
 
     The question a run asks of its ``--repo`` before it writes anything: the tree holds
@@ -420,9 +422,59 @@ def refuse_state_root(printer: Printer, code: int, repo: Path,
     :func:`noni._path_kind.state_root_refusal` through
     :func:`noni._path_kind.refuse_state_root` and keep the two shared sentences, so no
     command prints a fix line naming a flag it answers with argparse's exit 2.
+
+    The seam asks a second question of a run the creator exception did not admit, because
+    the shared sentence above can only report a tree with no ``noni/`` at all: a tree whose
+    ``noni/`` is there but holds neither of the three artifacts is neither absent nor a
+    state root with something in it, and :func:`noni._path_kind.state_root_refusal` answers
+    None for it. That is the state an aborted or mis-targeted run leaves in a code
+    repository, and a writer that mkdir'd the ledger under it would commit direction into
+    that repository on the caller's branch -- the exposure this refusal exists to close. So
+    a run that is not a creator is refused for an absent ledger too, in the words below,
+    and only a tree that holds a real ledger or a real ``noni/direction`` is admitted to
+    write into it. A reader asks neither question: it writes nothing and leaves an absent
+    ledger to its own answer about the record it could not read.
+
+    ``admits_reopening`` is the same caller's word for the second create, asked only when
+    the ledger question finds nothing: ``--init`` on a tree whose ``noni/`` exists but
+    holds no artifact. A caller with no flag to give passes nothing and is refused there,
+    which is why the parameter is optional and why the readers never reach it. It is a
+    second thunk rather than the first one's answer because the two admits differ by the
+    flag alone: a bare tree is admitted with ``--init`` by ``admits``, and a scaffolded one
+    by this.
     """
-    refused = None if admits() else _path_kind.state_root_refusal(repo, init=True)
+    if admits():
+        return None
+    reopens = admits_reopening is not None and admits_reopening()
+    if not _path_kind.state_root_ledger_is_absent(repo):
+        return None
+    if reopens:
+        return None
+    refused = (_path_kind.state_root_refusal(repo, init=True)
+               or _no_ledger_refusal(repo, reopens=_path_kind.noni_is_empty(repo)))
     return None if refused is None else printer(code, *refused)
+
+
+def _no_ledger_refusal(repo: Path, reopens: bool) -> tuple[str, str] | None:
+    """The ``(headline, hint)`` pair for a ``--repo`` whose ``noni/`` holds no artifact.
+
+    :func:`noni._path_kind.state_root_ledger_is_absent` asks the question; the wording is
+    :mod:`noni._path_kind`'s, as every refusal's is, and the path is the root as the caller
+    spelled it, rendered once through :func:`noni._safe_text.safe_path`. ``reopens`` says
+    whether ``--init`` would open this very tree (an ``noni`` that exists and holds
+    nothing), and picks the hint that names the flag; a tree holding a stray file gets the
+    hint that tells the caller to clear the residue instead, because the flag admits
+    nothing there and promising it would be a second dead-end fix line. Nothing is printed
+    and nothing raises: the caller prints the pair with its own label and code.
+    """
+    if not _path_kind.state_root_ledger_is_absent(repo):
+        return None
+    text = safe_path(str(repo))
+    hint = _path_kind.STATE_ROOT_NO_LEDGER_HINT + (
+        _path_kind.STATE_ROOT_NO_LEDGER_INIT_HINT if reopens else
+        "; if a run left this noni/ behind in the wrong repository, remove it there "
+        "rather than adding records to it")
+    return (_path_kind.STATE_ROOT_NO_LEDGER.format(path=text), hint)
 
 def _allocation_refusal(repo: Path, ledger: Path) -> tuple[str, str] | None:
     """The ledger directory asked as a directory, for a caller that wants the pair.

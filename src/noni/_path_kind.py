@@ -169,12 +169,49 @@ STATE_ROOT_INIT_HINT = (
     "if this is a new state root, run again with --init; if you meant an existing "
     "state clone, pass that clone as --repo")
 
+# The second sentence a creator owes a ``--repo`` whose ``noni/`` is there but holds no
+# ledger to write into: the residue an aborted or mis-targeted run leaves in a code
+# repository. :func:`state_root_refusal` cannot report this state -- it answers only to a
+# plain absence, and an ``noni`` that exists is state the census words in its own states
+# -- so it is composed by the one seam that asks the creator question, which is the only
+# caller for whom a ``noni/`` with no ledger is a refusal at all. A reader writes nothing
+# here and keeps its own answer about the ledger it could not read.
+STATE_ROOT_NO_LEDGER = ("{path} holds a noni/ directory with no ledger under "
+                        "it: no noni/decisions directory is there, so this run cannot "
+                        "write a record into it")
+STATE_ROOT_NO_LEDGER_HINT = (
+    "pass --repo naming the state root, the directory that holds the noni/decisions "
+    "ledger of docs/PRODUCT.md 7")
+
+# The tail of the same hint for the one run that could open the tree: an ``noni`` that
+# exists and holds nothing, which ``--init`` admits. Composed only when the caller's flag
+# would genuinely work there, so a refusal never sends the operator to a flag that changes
+# nothing -- the mistake the readers' ``--init`` line made.
+STATE_ROOT_NO_LEDGER_INIT_HINT = (
+    "; if this is a new state root whose noni/ you created yourself and left empty, run "
+    "again with --init; if a run left this noni/ behind in the wrong repository, remove "
+    "it there rather than adding records to it")
+
 # The one directory whose presence makes ``--repo`` a state root at all: a tree that
 # holds it is a tree noni was told to look in, and the only shape a no-``noni/``
 # refusal may be reached through is its absence, which is also the state the sanctioned
 # first writers create (:func:`has_no_noni` answers for it and nothing else; a ``noni``
 # that exists and holds entries is state of somebody's, whatever it holds).
 STATE_ROOT_DIR = "noni"
+
+# The directory a record goes in, spelled here (and only here) so the creator's second
+# question -- :func:`state_root_ledger_is_absent` -- can ask it of the same helper without
+# this module importing a writer's constants. The writers pass the identical path to
+# :func:`direction_refusal` as ``noni/decisions``; a name that drifted from theirs would
+# ask the question of the wrong directory and admit a write the guard exists to stop.
+STATE_ROOT_LEDGER_DIR = "noni/decisions"
+
+# The direction writers' own directory, named beside the ledger for the same reason: the
+# two together are what an ``noni/`` must hold for it to have been written to at all, and
+# a tree holding only one of them is a state root whose other artifact has not been
+# created yet. The writers pass these same paths to :func:`direction_refusal`; a name that
+# drifted from theirs would ask the question of the wrong directory.
+STATE_ROOT_DIRECTION_DIR = "noni/direction"
 
 # The two questions this module asks of a directory are both asked by a helper that
 # gives the SAME answer for "a directory I may read" and for "nothing of mine is
@@ -232,6 +269,57 @@ def has_no_noni(root: Path) -> bool:
     """
     return _directory_verdict(
         Path(os.path.normpath(str(root))) / STATE_ROOT_DIR) == ABSENT
+
+
+def noni_is_empty(root: Path) -> bool:
+    """Whether ``<root>/noni`` is a real directory with nothing in it.
+
+    The census's ``empty`` state for a ``noni`` that exists, asked of one ``listdir``.
+    Its one caller is the no-ledger refusal, which uses it to decide whether ``--init``
+    belongs in the fix line it prints: a name this module keeps rather than importing the
+    census is how the census module and the writers stay apart. Absence and a declined
+    listing both answer False -- the first is :func:`has_no_noni`'s finding, and the second
+    is a fault, never evidence of an empty directory the caller could be sent to create.
+    """
+    try:
+        return not os.listdir(Path(os.path.normpath(str(root))) / STATE_ROOT_DIR)
+    except OSError:
+        return False
+
+
+def state_root_ledger_is_absent(root: Path) -> bool:
+    """Whether ``--repo`` holds neither a ``noni/decisions`` ledger nor a
+    ``noni/direction`` directory, asked as strictly as :func:`has_no_noni` asks of
+    ``noni`` itself.
+
+    The second question a run asks when the creator exception did not admit it, and the
+    one the shared no-``noni/`` sentence cannot answer: a tree whose ``noni/`` is there
+    but holds none of the three artifacts is neither an absence nor a state root with
+    something in it. Absence of both is the only answer that lets the writer's own
+    allocation bring the ledger into being; a ledger that exists is one someone else
+    committed, and the writer's collision and supersede rules own it.
+
+    Two paths, not one, and their two siblings give the shape of the answer. An
+    operator who started a state root the other way round -- ``intent set`` or
+    ``order add`` first, so ``noni/direction`` exists and no record has been steered
+    yet -- has a tree that is a state root and holds no ledger: the direction half
+    answers "not absent", the run is admitted, and it reaches its own citation refusal
+    (exit 4) for the record it names, exactly as it did before this question was asked.
+    A tree with neither destination is the residue an aborted or mis-targeted run
+    leaves in a code repository -- an ``noni/`` with a stray file, or an empty one --
+    and a writer that mkdir'd the ledger under it would commit direction into that
+    repository on the caller's branch.
+
+    Only these two ``lstat``s are asked, and a fault on either is a declined answer
+    rather than an absence: :func:`_directory_verdict` refuses a link and a non-directory
+    and reports a declined ``lstat`` in its own words, and the walk from ``noni`` down is
+    :func:`direction_refusal`'s, which the same run asks of every component of its
+    guarded list ahead of this. So an ``noni`` that is a plain file, a link or a device
+    answers False here and the run keeps the obstruction sentence that names it.
+    """
+    normalised = Path(os.path.normpath(str(root)))
+    return all(_directory_verdict(normalised / rel) is ABSENT
+               for rel in (STATE_ROOT_LEDGER_DIR, STATE_ROOT_DIRECTION_DIR))
 
 
 def state_root_refusal(root: Path, *, init: bool = False) -> tuple[str, str] | None:

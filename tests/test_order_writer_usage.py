@@ -362,6 +362,10 @@ def test_a_repo_that_holds_no_noni_directory_is_a_fault(tmp_path):
         f"the hint must name the flag the caller passed wrong: {proc.stderr}")
     assert "is in the ledger" not in proc.stderr, (
         f"the reads must not answer for a tree with no state root: {proc.stderr}")
+    # --init is decide's flag alone: an order fix line that named it would send the
+    # operator to a flag order itself answers with argparse's exit 2.
+    assert "--init" not in proc.stderr, (
+        f"order has no --init, so its fix line must not advertise one: {proc.stderr}")
     assert not (repo / "noni").exists(), "the writer created a noni/ it refused"
 
 

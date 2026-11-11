@@ -39,11 +39,11 @@ Exit codes:
        directory holding no noni/ (pass the state clone, or --init for a new
        one), a --repo whose noni/ holds neither a decisions ledger nor a
        direction directory (residue: remove it in the right tree), or a noni/
-       or noni/decisions directory -- state root down to ledger -- that is no
-       plain path this writer may read or write through (a symlink, a plain
-       file, a socket or a device, each asked of lstat before the git probes,
-       the first read or the mkdir; an absent ledger is admitted because the
-       first record creates it)
+       or noni/decisions directory -- every one from the state root down to
+       the ledger -- that is no plain path this writer may read or write
+       through (a symlink, a plain file, a socket or a device, each asked of
+       lstat before the git probes, the first read or the mkdir; an absent
+       ledger is admitted because the first record creates it)
     4  a collision or a bad supersede target: the record path already exists as
        anything (file, directory or symlink), or the target is missing, already
        superseded, untracked, locally modified, not a regular file at its path

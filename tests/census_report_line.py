@@ -26,11 +26,16 @@ from readme_support import _CLEAN_RUN_WARN_ROWS, _try_it_section
 # The one shape a census summary line has, shared by the page reader and the
 # renderer tests so the two cannot match the line with copies that drift. Four
 # groups: the fixed head, the human verdict word, the finding count, the machine
-# tail. The verdict word is either the all-clear word or a warn count; the count
-# is a number in a real run's line and ``N`` in the page's, where the page holds
-# it open (see ``_summary_parts``).
+# tail. The verdict word is either the all-clear word or a warn count, either of
+# which may carry the clause naming the class whose check went unasked (issue
+# #148): the clause is a suffix on the word, not a fifth group, because the
+# reader of this shape wants the count and the tail in the same positions
+# whoever wrote the run. The count is a number in a real run's line and ``N`` in
+# the page's, where the page holds it open (see ``_summary_parts``).
+_UNASKED_CLAUSE = r"(?: ordering-closed not checked)?"
 _SUMMARY_SEGMENT = re.compile(
-    r"^(summary: )(\d+ warning\(s\)|clean|W warning\(s\)); (\d+|N) finding\(s\); "
+    r"^(summary: )(\d+ warning\(s\)|clean|W warning\(s\))" + _UNASKED_CLAUSE
+    + r"; (\d+|N) finding\(s\); "
     r"(verdict (?:ok|fail))$"
 )
 
@@ -47,7 +52,7 @@ _WARN_COUNT_PLACEHOLDER = "W warning(s)"
 # #117), and a warn-bearing run names its warn count instead. The machine tail
 # of the line (`verdict ok` / `verdict fail`) is the other group, and no wording
 # of the human half moves it.
-_WARN_VERDICT_SHAPE = re.compile(r"^\d+ warning\(s\)$")
+_WARN_VERDICT_SHAPE = re.compile(r"^\d+ warning\(s\)" + _UNASKED_CLAUSE + r"$")
 _ALL_CLEAR_VERDICT = "clean"
 _ALL_CLEAR_BANNER = "census: no findings; all checks passed"
 

@@ -141,6 +141,46 @@ audited holds a deny-list with at least one usable entry: `.noni-scrub-denylist`
 its root (so `.noni-state/.noni-scrub-denylist` on Route B, where the state clone is
 what `--repo` names), or the file `NONI_SCRUB_DENYLIST` points at.
 
+### Produce the closed-state map, or the closed check is not asked
+
+The census never contacts a tracker, so an order of issues this tracker has since
+closed is invisible to it unless the pipeline hands it the states: without
+`--issue-state FILE` the `ordering-closed` (46) class reports that it could not ask
+-- a `warn` row, and under `--strict` the run's own 46. A pipeline that never
+produces the map is therefore not silently clean once `--strict` is in use, and a
+pipeline that does produce it is the one that can gate on the class at all. The map
+is a JSON object of issue number to `open` or `closed`, and this tracker's own
+command line and `jq` write it; the three details that decide its correctness
+(`--state all`, the key's spelling, the two allowed values) are the quickstart's
+[`--issue-state` map](../../docs/QUICKSTART.md#the---issue-state-map-and-what-the-census-skips-without-it)
+section.
+
+Put the step before the census step, in the same job, and pass the file it wrote.
+Write the map outside the tree the census audits, in a runner's temporary directory:
+
+```yaml
+  - name: Closed-state map
+    run: |
+      gh issue list --state all --json number,state --jq \
+        'map({key: (.number | tostring), value: (.state | ascii_downcase)}) | from_entries' \
+        > "$RUNNER_TEMP/issue-state.json"
+  - name: Census
+    run: |
+      noni census --repo . --issue-state "$RUNNER_TEMP/issue-state.json"
+```
+
+Three things about that pair are worth stating because they are where the recipe
+fails quietly. The map goes outside the audited tree because the census's hygiene
+class reads every tracked file of the tree `--repo` names, and a map committed there
+would have the issue numbers and states of your tracker in the repository's history.
+A runner's temporary directory is not a path anyone can hand to `--repo`, and no
+ignore rule is needed for it. The map is a build artifact and never a commit: it is a
+snapshot of a tracker's state at checkout time. And the map is written by the
+tracker's command line, which is why the step belongs to this page and not to the
+generic CI section: the census itself stays offline, and so does every test of
+it. A job with no runner temp directory passes any path outside the tree that
+`--repo` does not name.
+
 ### When a work driver already keeps its own claims
 
 A team attaching noni may already run a work driver that claims issues and keeps

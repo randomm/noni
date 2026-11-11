@@ -8,6 +8,11 @@ tracker: the class is asked only when ``--issue-state`` is given. The fix adds a
 these tests pin both halves of that decision: the field carries the sentence in
 the mode that has no ``note:`` line, and the legal kind set stays closed.
 
+Issue #148 later added the row this file first forbade -- the same fact as a
+``warn`` finding of the class, which is what gives ``--strict`` a code to return.
+The field survived because it is the machine's record of an unasked question, and
+the row is the report's verdict on it; the two are pinned together below.
+
 The sentence itself is read from the product's source through the shared scraper
 in ``quickstart_page``: three doc tests quote it and a fourth written here would
 only add a fourth copy to keep in step.
@@ -34,16 +39,24 @@ def _tree(tmp_path, name: str):
 
 def test_the_json_summary_row_carries_the_not_evaluated_fact(tmp_path):
     """Without ``--issue-state`` the stream names the unanswered class on the
-    summary row, in a machine-readable field, and never as a finding row.
+    summary row, in a machine-readable field, as well as in its own row.
 
-    The finding-row half is the point: a row of the class that was not evaluated
-    would be a fabricated verdict (and would fail the run), so the fact belongs on
-    the row that already reports what the run *did* decide."""
+    The field is the half issue #97 added, and it stays: a consumer that dispatches on
+    the summary row must still see the class it never got. The row is what issue #148
+    added, and it is pinned here to one row of the class about the artifact as a whole --
+    never an issue -- so a run that went on to answer the class about an ordered issue
+    would fail this test rather than pass it. The field and the row are deliberately two
+    homes for one fact: the field tells a machine the question was unasked, the row gives
+    it a severity and, under ``--strict``, an exit code, which the note alone never had.
+    """
     repo = _tree(tmp_path, "json-note")
     rc, rows = _run_census_json(repo, "--only", "ordering-closed")
     assert rc == 0, f"a run that evaluated everything else is clean: rc={rc} rows={rows}"
     findings = [r for r in rows if r["kind"] == "finding"]
-    assert findings == [], f"the unevaluated class invented a row: {findings}"
+    assert [(r["check"], r["severity"], r["subject"]) for r in findings] == [
+        ("ordering-closed", "warn", "noni/direction/order.json")], findings
+    assert all(r["message"].startswith("closed state not checked:") for r in findings), (
+        f"the run's one closed row is not the not-evaluated one: {findings}")
     summaries = [r for r in rows if r["kind"] == "summary"]
     assert len(summaries) == 1, f"expected exactly one summary row: {rows}"
     carried = summaries[0]["not_evaluated"]

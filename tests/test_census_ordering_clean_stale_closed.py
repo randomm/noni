@@ -14,7 +14,15 @@ import json
 from pathlib import Path
 
 from _harness import REPO
-from ordering_fixtures import _commit, _entry, _human, _repo, _run, _seed
+from ordering_fixtures import (
+    _commit,
+    _entry,
+    _human,
+    _repo,
+    _run,
+    _seed,
+    rows_without_unasked_closed,
+)
 from ordering_shapes import issue_state_shapes
 
 BASELINE_ID = "2026-10-01-baseline"
@@ -28,11 +36,20 @@ ORDER_REL = "noni/direction/order.json"
 STALE = "2026-09-01T00:00:00Z"
 
 def test_a_committed_canonical_artifact_is_clean(tmp_path):
+    """The documented artifact raises no defect of the three classes.
+
+    ``rows_without_unasked_closed`` is the one row this run owes about itself: the
+    fixture gives no ``--issue-state``, so the closed class reports that it could not
+    ask (issue #148), and that row is a property of how the census was invoked here,
+    not a defect of the artifact. The row is pinned in
+    ``test_census_ordering_group.py``; a test of a defect of the artifact reads the
+    others.
+    """
     repo = _repo(tmp_path)
     _seed(repo, _entry(3, BASELINE_ID), _entry(4, BASELINE_ID))
     code, rows, out, err = _run(repo)
     assert code == 0, (code, out, err)
-    assert rows == [], rows
+    assert rows_without_unasked_closed(rows) == [], rows
 
 
 def test_the_shared_fixture_censuses_clean(tmp_path):
@@ -42,7 +59,7 @@ def test_the_shared_fixture_censuses_clean(tmp_path):
     _commit(repo, ORDER_REL, FIXTURE.read_text(encoding="utf-8"))
     code, rows, out, err = _run(repo)
     assert code == 0, (code, out, err)
-    assert rows == [], rows
+    assert rows_without_unasked_closed(rows) == [], rows
 
 
 # --- ordering-stale -----------------------------------------------------------
@@ -53,10 +70,11 @@ def test_a_confirmed_time_past_the_threshold_is_a_warn_at_forty_five(tmp_path):
     _seed(repo, _entry(7, BASELINE_ID, STALE))
     code, rows, out, err = _run(repo, "--stale-after", "7")
     assert code == 0, (code, out, err)  # a warn never moves the exit on its own
-    assert [r["check"] for r in rows] == ["ordering-stale"], rows
-    assert rows[0]["code"] == 45 and rows[0]["severity"] == "warn"
-    assert rows[0]["subject"] == "#7", rows[0]
-    assert rows[0]["message"].startswith("stale:"), rows[0]
+    stale = rows_without_unasked_closed(rows)
+    assert [r["check"] for r in stale] == ["ordering-stale"], rows
+    assert stale[0]["code"] == 45 and stale[0]["severity"] == "warn"
+    assert stale[0]["subject"] == "#7", rows
+    assert stale[0]["message"].startswith("stale:"), rows
     # The same tree read by a person (issue #117). Before the fix this run --
     # one warn row, exit 0 -- opened "census: no findings; all checks passed"
     # and ended "summary: clean", so the only reading of the exit code agreed
@@ -71,9 +89,18 @@ def test_a_confirmed_time_past_the_threshold_is_a_warn_at_forty_five(tmp_path):
     assert "no findings" not in lines[0], (
         f"the headline denied the warn row it prints below: {lines[0]!r}")
     assert "all checks passed" not in lines[0], lines[0]
-    assert "1 warning(s)" in lines[0], (
-        f"the headline did not name the warn count: {lines[0]!r}")
-    assert lines[-1] == "summary: 1 warning(s); 1 finding(s); verdict ok", lines[-1]
+    # The warn count is the run's own, not the fixture's: this tree holds an order and
+    # no --issue-state, so the closed class reports its unasked question as the second
+    # warn row issue #148 gave it. The count and the row are one fact read two ways, so
+    # the headline's number is pinned to the rows the NDJSON run above reported.
+    assert lines[0].startswith(f"census: {len(rows)} warning(s), {len(rows)} finding(s)"), (
+        f"the headline did not count the run's warn rows: {lines[0]!r} vs {rows}")
+    # The verdict carries the closed class's clause because the run carries that row;
+    # the clause is the product's and is matched as a clause rather than spelled again.
+    assert lines[-1].startswith(
+        f"summary: {len(rows)} warning(s)"
+        " ordering-closed not checked;"), lines[-1]
+    assert lines[-1].endswith(f"{len(rows)} finding(s); verdict ok"), lines[-1]
 
 
 def test_the_stale_row_says_so_under_strict(tmp_path):
@@ -91,10 +118,11 @@ def test_the_two_default_thresholds_are_distinct(tmp_path):
     repo = _repo(tmp_path)
     _seed(repo, _entry(7, BASELINE_ID, "2026-10-10T00:00:00Z"))  # 17 days old
     code, rows, _out, _err = _run(repo)
-    assert code == 0 and rows == [], (code, rows)
+    assert code == 0 and rows_without_unasked_closed(rows) == [], (code, rows)
     # The same run, asked for the sessions default: now it is stale.
     code, rows, _out, _err = _run(repo, "--stale-after", "7")
-    assert [r["check"] for r in rows] == ["ordering-stale"], rows
+    assert [r["check"] for r in rows_without_unasked_closed(rows)] == [
+        "ordering-stale"], rows
 
 
 def test_the_threshold_boundary_is_exclusive(tmp_path):
@@ -104,11 +132,12 @@ def test_the_threshold_boundary_is_exclusive(tmp_path):
     repo = _repo(tmp_path)
     _seed(repo, _entry(7, BASELINE_ID, "2026-10-20T12:00:00Z"))  # exactly 7 days before --now
     code, rows, _out, _err = _run(repo, "--stale-after", "7")
-    assert code == 0 and rows == [], (code, rows)
+    assert code == 0 and rows_without_unasked_closed(rows) == [], (code, rows)
     just_past = _repo(tmp_path, "past")
     _seed(just_past, _entry(7, BASELINE_ID, "2026-10-20T11:59:59Z"))
     code, rows, _out, _err = _run(just_past, "--stale-after", "7")
-    assert [r["check"] for r in rows] == ["ordering-stale"], rows
+    assert [r["check"] for r in rows_without_unasked_closed(rows)] == [
+        "ordering-stale"], rows
 
 
 def test_staleness_is_measured_against_now_alone(tmp_path):
@@ -127,7 +156,8 @@ def test_every_stale_entry_gets_its_own_row(tmp_path):
     repo = _repo(tmp_path)
     _seed(repo, _entry(7, BASELINE_ID, STALE), _entry(8, BASELINE_ID, STALE), _entry(9, BASELINE_ID, FRESH))
     code, rows, _out, _err = _run(repo, "--stale-after", "7")
-    assert [r["subject"] for r in rows] == ["#7", "#8"], rows
+    assert [r["subject"] for r in rows_without_unasked_closed(rows)] == [
+        "#7", "#8"], rows
 
 
 # --- ordering-closed ----------------------------------------------------------

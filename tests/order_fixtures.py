@@ -260,10 +260,67 @@ def _census_ordering(repo: Path, *extra: str) -> tuple[int, list[dict], str]:
     return proc.returncode, findings, proc.stdout + proc.stderr
 
 
+def _closed_state_unasked_row(rows: list[dict]) -> list[dict]:
+    """The not-evaluated rows of a no-``--issue-state`` run, taken out of ``rows``.
+
+    Named for what it hands back -- the rows of something else, the caller's own case --
+    and that name is what its one caller subtracts, so a filter that returned the rows
+    it drops would make the subtraction a no-op and every writer test that uses it would
+    assert on a row the fixture was built to remove.
+
+    Issue #148 gave such a run one row of its own -- ``ordering-closed``, ``warn``, code
+    46 under ``--strict`` -- because the bare ``note:`` line the class already printed
+    left a CI step gating on the exit code green over an order whose issues had all been
+    closed. The caller keeps the rows of its own case and drops that one.
+
+    The row is recognised by the product's own words, read from the module that raises
+    the row (``noni.census_ordering_closed.CLOSED_STATE_UNASKED``) exactly as
+    ``ordering_fixtures.rows_without_unasked_closed`` does, rather than by a copy typed
+    here: a copy would keep filtering a row the product had reworded, and the caller
+    would then assert on a stream it no longer recognised. Two filters of one row are
+    kept identical by both reading one constant.
+    """
+    from noni import census_ordering_closed
+
+    prefix = census_ordering_closed.CLOSED_STATE_UNASKED.split(":", 1)[0]
+    return [r for r in rows
+            if r["check"] == "ordering-closed" and r["message"].startswith(prefix)]
+
+
+def _rows_about_something_else(rows: list[dict]) -> list[dict]:
+    """``rows`` with the not-evaluated row of a no-``--issue-state`` run taken out.
+
+    The writer tests call the census over the three ordering classes with no
+    ``--issue-state`` -- they exercise the writer, never a tracker -- so that one row is a
+    property of how the census was invoked, not of the case under test. Every caller here
+    has asked for it by name; a test that pins the closed-class behaviour itself leaves
+    the row in place and asserts on it.
+    """
+    unasked = _closed_state_unasked_row(rows)
+    assert len(unasked) <= 1, f"the class promised one not-evaluated row, got {unasked}"
+    return [r for r in rows if r not in unasked]
+
+
+def census_ordering_faults(repo: Path, *extra: str) -> tuple[int, list[dict], str]:
+    """``_census_ordering`` with the run's own not-evaluated row taken out.
+
+    The writer suites drive the census over the three ordering classes with no
+    ``--issue-state`` -- they exercise the writer and never a tracker -- so the row the
+    closed class owes for that (issue #148) is a property of how the census was
+    invoked, not of the shape under test. The exit code is returned untouched: the row
+    is a warn and moves no code without ``--strict``, which is exactly the claim the
+    callers' ``code == 15`` / ``code == 0`` assertions make. Every caller asks for it
+    by name; the tests that pin the closed class assert on the row instead.
+    """
+    code, rows, output = _census_ordering(repo, *extra)
+    return code, _rows_about_something_else(rows), output
+
+
 def _assert_census_clean(repo: Path, context: str, *extra: str) -> None:
     code, rows, output = _census_ordering(repo, *extra)
     assert code == 0, f"ordering census not clean after {context} (exit {code}):\n{output}"
-    assert not rows, f"unexpected ordering rows after {context}: {rows}"
+    assert not _rows_about_something_else(rows), (
+        f"unexpected ordering rows after {context}: {rows}")
 
 
 def _head_paths(repo: Path) -> list[str]:

@@ -24,7 +24,10 @@ brought are gone, so a file that still states that version or holds an entry wit
 migration (re-add each entry as an issue entry) rather than read as a valid ``/1``.
 
 Nothing here prints or exits: every answer is appended to the caller's
-``findings`` list through the ``row`` factory it supplies.
+``findings`` list through the ``row`` factory it supplies. The one row the group raises
+about itself -- the closed question it could not ask -- is raised by
+``census_ordering_closed.py`` beside this file, which this module asks at the point where
+it holds the artifact read.
 """
 
 from __future__ import annotations
@@ -32,6 +35,18 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
+
+from noni import census_ordering_closed as _closed
+
+# The one package import this module makes, and why it is spelled absolutely where
+# its siblings are relative: the tests that hold this file's copies of the writer's
+# contract exec it from source under a test-private name, with no package bound
+# (``load_package_module``), and a relative import there is an ImportError instead of
+# a comparison. The module loaded is still the package's own -- the same object every
+# other route imports -- so a seam a test puts on either name is the one this group
+# uses. The flag is on the import, not the block: ruff reads an import whose every
+# line is a comment as detached from it and reports the block unsorted.
+
 
 # The artifact's shape, the census's side of the contract order.py writes to. The
 # version lives here rather than being imported from the writer's schema module: the
@@ -88,12 +103,20 @@ ISSUE_STATE_STATES = (ISSUE_STATE_OPEN, ISSUE_STATE_CLOSED)
 RECORD_STATUSES = ("decided", "open", "superseded")
 STATUS_SUPERSEDED = "superseded"
 
-# The two subjects the ordering class uses for the rows that are not about one
-# entry: a whole-file malformation, and the --issue-state file that did not
-# parse. Like hygiene's `deny-list` / `hygiene scan` subjects, they are the
-# machine-readable discriminator between whole-artifact and per-entry rows.
+# The subjects the ordering group gives the rows that are not about one entry: a
+# whole-file malformation, and the --issue-state file that did not parse. Like hygiene's
+# `deny-list` / `hygiene scan` subjects, they are the machine-readable discriminator
+# between whole-artifact and per-entry rows. The order's id is a fixed root-relative
+# path rather than a spelling of whatever path this run was handed, so no out-of-root
+# ``--ordering`` can reach a report; ``census_ordering_closed`` names its row by the same
+# constant, which is what makes one file have one name across the group.
 ORDER_DEFAULT_SUBJECT = "noni/direction/order.json"
 ISSUE_STATE_SUBJECT = "issue-state"
+
+# The class this group's rows belong to, spelled once here for the call into
+# ``census_ordering_closed`` (the row module itself stays ignorant of the id, and
+# ``census_render`` names the same word beside the note that says the class did not run).
+CLOSED_STATE_CHECK = "ordering-closed"
 
 
 def _why_problems(entry: dict) -> list[str]:
@@ -252,8 +275,6 @@ def _entry_problems(entries: list, problems: list[str], parse_iso, names_zone) -
                                      or parse_iso(confirmed) is None
                                      or not names_zone(confirmed)):
             problems.append(f"entry {index} confirmed {confirmed!r} is not a UTC timestamp")
-
-
 def check_ordering(
     order: Path, ledger: Path, root: Path, now: datetime, ordering_stale_after: timedelta,
     issue_state, strict: bool, findings: list[dict], *,
@@ -262,6 +283,7 @@ def check_ordering(
     load_json_strict: Callable[[bytes], object], clipped: Callable[[str], str],
     ledger_name: Callable[[str], str],
     names: tuple[str, ...] | None = None,
+    closed_state_unasked: bool = False,
 ) -> None:
     """Check the ordering artifact; append its findings to ``findings``.
 
@@ -341,6 +363,15 @@ def check_ordering(
         add("ordering-malformed", ORDER_DEFAULT_SUBJECT, rel_to_root(root, order), problem,
             whole_artifact=True)
         return
+
+    if closed_state_unasked and issue_state.map is None:
+        # The class was asked for, no state map came in, and the artifact holds issues:
+        # the question is unasked and the run owes it a verdict and not only a note
+        # (issue #148). Decided from the map rather than the flag alone so a run given a
+        # state file never raises it, whatever the caller passed.
+        _closed.append(entries, root, strict, findings, row=row,
+                       check=CLOSED_STATE_CHECK,
+                       whole_artifact_subject=ORDER_DEFAULT_SUBJECT)
 
     rel_ledger = rel_to_root(root, ledger)
     records, ledger_readable, unreadable_records, listed, listing_fault = \

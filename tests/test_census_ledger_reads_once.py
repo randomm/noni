@@ -17,6 +17,7 @@ from _harness import (
     _init_repo,
 )
 from census_ledger_fixtures import _code, _rows, _valid_record
+from ordering_fixtures import rows_without_unasked_closed
 
 CENSUS = Path(__file__).resolve().parent.parent / "skills" / "census" / "scripts" / "census.py"
 
@@ -134,9 +135,13 @@ def test_a_run_that_cannot_relist_the_ledger_still_checks_every_citation(
     plant(1)
     rows = _rows(repo, "--skip", "hygiene")
     assert state["n"] == 1, f"the ledger was listed {state['n']} times, expected one"
-    assert sorted(r["check"] for r in rows) == ["ordering-malformed"], rows
-    assert [r["subject"] for r in rows] == ["#8"], rows
-    assert "2026-10-09-ghost" in rows[0]["message"], rows[0]
+    # The run's own not-evaluated row (issue #148) is the fixture's -- no
+    # --issue-state was given -- and it is not a second read of the ledger: the
+    # listing count above already answers that question, and it is answered once.
+    fault_rows = rows_without_unasked_closed(rows)
+    assert sorted(r["check"] for r in fault_rows) == ["ordering-malformed"], rows
+    assert [r["subject"] for r in fault_rows] == ["#8"], rows
+    assert "2026-10-09-ghost" in fault_rows[0]["message"], rows
     assert _code(repo, "--skip", "hygiene") == 15
 
 

@@ -32,6 +32,7 @@ from order_fixtures import (
     _repo,
     _schema_module,
     _seed,
+    census_ordering_faults,
 )
 from ordering_shapes import (
     DEEP,
@@ -282,7 +283,7 @@ def test_the_ordering_census_reports_what_the_writer_refused(tmp_path):
         commit_artifact(repo, body)
         writer = _order(repo, "confirm", "--now", NOW)
         assert writer.returncode == 4, f"{label}: writer exit {writer.returncode}"
-        code, rows, output = _census_ordering(repo)
+        code, rows, output = census_ordering_faults(repo)
         assert code == 15, f"{label}: census exit {code}: {output}"
         assert [r["check"] for r in rows] == ["ordering-malformed"], f"{label}: {rows}"
 
@@ -325,18 +326,26 @@ def test_a_stale_entry_is_reported_by_the_census_and_cleared_by_confirm(tmp_path
     --stale-after was not given, and the caller's number when it was."""
     repo = _repo(tmp_path)
     _seed(repo, _entry(7, BASELINE_ID, "2026-10-15T00:00:00Z"))
-    code, rows, _ = _census_ordering(repo)
+    code, rows, _ = census_ordering_faults(repo)
     assert code == 0 and rows == [], (
         f"a 12-day-old entry is inside the 30-day ordering default: {rows}")
-    code, rows, _ = _census_ordering(repo, "--stale-after", "7")
+    code, rows, _ = census_ordering_faults(repo, "--stale-after", "7")
     # The census's own rule, re-asserted here: a warn-class row never moves the
     # exit code on its own, so the row is the report and 0 is the verdict.
     assert code == 0, code
     assert [r["check"] for r in rows] == ["ordering-stale"], rows
     assert rows[0]["severity"] == "warn"
     assert rows[0]["subject"] == "#7", rows[0]
+    # --strict is asked of a tree whose closed question was never asked either, so the
+    # run carries the closed class's own row (issue #148) beside the stale one. The
+    # stale row's promotion to 45 is the contract here and the lower code wins, so
+    # this case also pins that the unasked row does not outrank it -- its 46 is the
+    # higher number and the census reports the lowest.
     code, rows, _ = _census_ordering(repo, "--stale-after", "7", "--strict")
-    assert code == 45 and rows[0]["severity"] == "fail", (code, rows)
+    assert code == 45, code
+    stale = [r for r in rows if r["check"] == "ordering-stale"]
+    assert len(stale) == 1 and stale[0]["severity"] == "fail", rows
+    assert rows[0]["severity"] == "fail", rows
     assert _order(repo, "confirm", "7", "--now", NOW).returncode == 0
     _assert_census_clean(repo, "confirm of the stale entry", "--stale-after", "7")
 
@@ -379,9 +388,16 @@ def test_the_closed_class_says_so_when_no_state_file_is_given(tmp_path):
     assert proc.returncode == 0, proc.stderr
     assert "ordering-closed was not evaluated" in proc.stdout, proc.stdout
     assert "never contacts a tracker" in proc.stdout, proc.stdout
-    # The same run in --json mode: no notice line in the NDJSON stream.
+    # The same run in --json mode: no notice line in the NDJSON stream, and the class's
+    # own row. Issue #148 made the unasked question a verdict the exit code can carry, so
+    # a rowless stream is no longer what this state prints: warn without --strict (hence
+    # code 0, which is the half that keeps this test from being a pass on a run that
+    # failed its own check), and pinned to the artifact rather than an issue, because the
+    # fact is about the run and not about any one ordered issue.
     code, rows, _ = _census_ordering(repo)
-    assert code == 0 and rows == [], (code, rows)
+    assert code == 0, (code, rows)
+    assert [(r["check"], r["severity"], r["subject"]) for r in rows] == [
+        ("ordering-closed", "warn", ORDER_REL)], rows
 
 
 # --- A linked ledger above the citation read (issue #104) --------------------

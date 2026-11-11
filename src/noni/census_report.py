@@ -125,9 +125,9 @@ CHECKS: dict[str, tuple[int, str, str]] = {
         # the note, the fix belongs to the fix.
         "remove the closed issue from the order (order.py remove ISSUE), or reopen it; the "
         "order is what to work on next, so an issue the tracker has closed does not "
-        "belong in it. When --issue-state was not given the class adds no row at "
-        "all, and the run prints its own note rather than leaving a rowless class "
-        "to read as every ordered issue being open",
+        "belong in it. A run with no --issue-state at all says so in its own row of this "
+        "class, which --strict promotes to 46: an empty set of closed rows is not a claim "
+        "that every ordered issue is open",
     ),
 }
 

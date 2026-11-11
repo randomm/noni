@@ -24,6 +24,7 @@ from ordering_fixtures import (
     _run,
     _seed,
     _state,
+    rows_without_unasked_closed,
 )
 from quickstart_page import ordering_note_from_product
 
@@ -79,11 +80,22 @@ def test_no_flag_means_the_closed_question_is_not_asked_and_says_so(tmp_path):
     A skipped class earns no verdict of its own, so a run that counted no row
     still says `clean` on its summary line -- what it may not say is that every
     check ran. The exit code stays 0 for the same reason.
+
+    Issue #148 changed the NDJSON half of this contract: "the class adds no row at
+    all" was the very silence a CI step read as a pass, so the unasked question now
+    carries one row of its class -- ``warn``, so the exit code stays 0 without
+    ``--strict``, and the code the class earns under it. Pinned here to that one row
+    and to its shape: the artifact as its subject, never an issue, because the fact is
+    about the run and not about any ordered issue. A run that answered the class about
+    an issue would fail this assertion rather than pass it.
     """
     repo = _repo(tmp_path)
     _seed(repo, _entry(7, BASELINE_ID))
     code, rows, _out, _err = _run(repo)
-    assert code == 0 and rows == [], (code, rows)
+    assert code == 0, (code, rows)
+    assert [(r["check"], r["severity"], r["subject"]) for r in rows] == [
+        ("ordering-closed", "warn", ORDER_REL)], rows
+    assert all(r["message"].startswith("closed state not checked:") for r in rows), rows
     code, out, err = _human(repo)
     assert code == 0, (code, out, err)
     assert "ordering-closed was not evaluated" in out, out
@@ -186,7 +198,10 @@ def test_the_lowest_code_wins_across_the_group(tmp_path):
     _seed(repo, _entry(0, BASELINE_ID, STALE))  # malformed and stale at once
     code, rows, out, err = _run(repo, "--stale-after", "7")
     assert code == 15, (code, out, err)
-    assert {r["check"] for r in rows} == {"ordering-malformed"}, rows
+    # The tree holds issues and no --issue-state, so the class also reports its own
+    # unasked row; this test isolates the group, and that row belongs to the fixture.
+    assert {r["check"] for r in rows_without_unasked_closed(rows)} == {
+        "ordering-malformed"}, rows
 
 
 def test_a_broken_state_file_is_reported_even_when_the_artifact_is_broken(tmp_path):
@@ -213,5 +228,8 @@ def test_the_ordering_group_reads_no_class_but_the_ordering_ones(tmp_path):
     _commit(repo, "noni/decisions/2026-10-02-not-json.json", "{ not json\n")
     _seed(repo, _entry(3, "2026-01-01-ghost"))
     code, rows, _out, _err = _run(repo)
-    assert {r["check"] for r in rows} == {"ordering-malformed"}, rows
+    # The tree holds issues and no --issue-state, so the class also reports its own
+    # unasked row; this test isolates the group, and that row belongs to the fixture.
+    assert {r["check"] for r in rows_without_unasked_closed(rows)} == {
+        "ordering-malformed"}, rows
     assert code == 15, code

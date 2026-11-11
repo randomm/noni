@@ -27,6 +27,7 @@ from ordering_fixtures import (
     _run,
     _run_in_process,
     _seed,
+    rows_without_unasked_closed,
 )
 
 BASELINE_ID = "2026-10-01-baseline"
@@ -43,7 +44,9 @@ def test_an_unreadable_ledger_does_not_blame_every_entry(tmp_path):
     (repo / "noni" / "decisions").write_text("not a directory", encoding="utf-8")
     code, rows, out, err = _run(repo)
     assert code == 0, (code, out, err)
-    assert rows == [], rows
+    # The one row the run owes about itself (no --issue-state) belongs to the fixture,
+    # not to the tree: see ``rows_without_unasked_closed``.
+    assert rows_without_unasked_closed(rows) == [], rows
 
 
 def test_an_unlistable_ledger_is_reported_and_never_reads_as_clean(tmp_path):
@@ -71,24 +74,36 @@ def test_an_unlistable_ledger_is_reported_and_never_reads_as_clean(tmp_path):
         # ordering-malformed is a fail class, so the run is not clean with or
         # without --strict: the row is the whole point of the test.
         assert code == 15, (code, out, err)
-        assert [r["check"] for r in rows] == ["ordering-malformed"], rows
-        assert rows[0]["severity"] == "fail", rows[0]
-        assert rows[0]["subject"] == ORDER_REL, rows[0]
-        assert "noni/decisions" in rows[0]["message"], rows[0]
+        # The closed class also reports its unasked question here (issue #148): a
+        # warn about the run, which neither earns the 15 above nor belongs to the
+        # contract on the row below.
+        malformed = rows_without_unasked_closed(rows)
+        assert [r["check"] for r in malformed] == ["ordering-malformed"], rows
+        assert malformed[0]["severity"] == "fail", rows
+        assert malformed[0]["subject"] == ORDER_REL, rows
+        assert "noni/decisions" in malformed[0]["message"], rows
         # The OSError's own text reaches the row. It goes through the census's
         # machine-local-path scrubbing, which is anchored so that it stops at
         # absolute and home paths and leaves this errno text whole; the
         # assertions are written by substring, not by the whole phrase, so they
         # hold whichever way the scrub lands.
-        assert "OSError" in rows[0]["message"], rows[0]
-        assert "input" in rows[0]["message"], rows[0]
+        assert "OSError" in malformed[0]["message"], rows
+        assert "input" in malformed[0]["message"], rows
         # A whole-artifact row survives a filter that named none of its classes.
-        for extra in (("--only", "ordering-stale", "--strict"),
-                      ("--only", "ordering-closed", "--strict"),
-                      ("--skip", "ordering-malformed", "--strict")):
-            strict, strict_rows, s_out, s_err = _run_in_process(repo, *extra)
-            assert strict == 15, f"{extra}: exit {strict} rows={strict_rows} {s_err}"
-            assert [r["check"] for r in strict_rows] == ["ordering-malformed"], strict_rows
+        # The filter cases are written without --strict on the closed class's account:
+        # under --strict the unasked row (issue #148) is itself a fail row of a named
+        # class, and its 46 would outrank the 15 that is this test's subject. What the
+        # unasked row may not do is displace the fault row, so each case below asserts
+        # both halves: the fault row is present, and the fault code still wins.
+        for extra in (("--only", "ordering-stale"),
+                      ("--only", "ordering-closed"),
+                      ("--skip", "ordering-malformed")):
+            code, only_rows, s_out, s_err = _run_in_process(repo, *extra, "--strict")
+            assert code == 15, f"{extra}: exit {code} rows={only_rows} {s_err}"
+            assert "ordering-malformed" in [r["check"] for r in only_rows], \
+                f"{extra}: {only_rows}"
+            assert all(r["check"] in ("ordering-malformed", "ordering-closed")
+                       for r in only_rows), f"{extra}: {only_rows}"
         strict, strict_rows, out, err = _run_in_process(repo, "--strict")
         assert strict == 15, (strict, out, err)
 
@@ -134,7 +149,7 @@ def test_an_unlistable_ledger_is_reported_by_the_ledger_group_too(tmp_path):
     _seed(repo, _entry(3, BASELINE_ID))
     with _listing_faults_all_reads(repo / "noni" / "decisions"):
         code, rows, out, err = _run_in_process(repo, "--skip", "hygiene")
-        checks = sorted(r["check"] for r in rows)
+        checks = sorted(r["check"] for r in rows_without_unasked_closed(rows))
         assert checks == ["ledger-edited", "ordering-malformed"], (checks, out, err)
         ledger_rows = [r for r in rows if r["check"] == "ledger-edited"]
         assert len(ledger_rows) == 1, rows
@@ -162,8 +177,9 @@ def test_the_listing_fault_row_carries_no_part_of_the_filename(tmp_path, case):
     with _listing_fault(repo / "noni" / "decisions", fault):
         code, rows, out, err = _run_in_process(repo)
     assert code == 15, (code, out, err)
-    assert [r["check"] for r in rows] == ["ordering-malformed"], rows
-    row = rows[0]
+    malformed = rows_without_unasked_closed(rows)
+    assert [r["check"] for r in malformed] == ["ordering-malformed"], rows
+    row = malformed[0]
     for field in ("subject", "artifact", "message"):
         for part in parts:
             assert part not in row[field], f"{part!r} leaked into {field}: {row[field]!r}"

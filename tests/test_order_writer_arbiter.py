@@ -24,8 +24,9 @@ from ordering_shapes import CLEAN_SHAPES, MALFORMED_SHAPES
 def test_the_arbiter_copy_of_the_rationale_bound_is_the_owner():
     """The one legitimate second spelling of the bound is held to its owner by reading.
 
-    ``census_ordering`` is loaded by path and imports nothing from the writer's
-    package, so it keeps its own copy of the number -- the same reason it keeps copies
+    ``census_ordering`` imports nothing from the writer's package (its one package
+    import is of its own closed-row module, ``census_ordering_closed``), so it keeps
+    its own copy of the number -- the same reason it keeps copies
     of the field lists and the two character sets. A copy nobody reads back is how the
     writer and the arbiter came to disagree about a value one of them wrote, so this
     asserts the two numbers are equal at the moment the suite runs, and that neither is

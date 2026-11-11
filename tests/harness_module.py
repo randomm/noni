@@ -96,7 +96,7 @@ def load_package_module(name: str) -> object:
     # before a copy of its file is exec'd, so a name that is not a package
     # module fails here rather than as a confusing file-not-found below.
     del module
-    source = _product_source(SRC / "noni" / f"{name}.py")
+    source = _product_source(SRC / "noni" / f"{name}.py", name)
     private = f"noni_under_test_{name}"
     sys.modules.pop(private, None)
     spec = importlib.util.spec_from_file_location(private, source)

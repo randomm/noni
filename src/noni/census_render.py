@@ -141,8 +141,63 @@ def _warn_count(findings: list[dict]) -> int:
     return sum(1 for f in findings if f["severity"] == "warn")
 
 
-def _not_evaluated_headline(notes: tuple[str, ...]) -> str:
-    """The clause of a no-rows headline that says which checks went unasked.
+# The opening words of the row ``census_ordering_closed.append`` raises (asked of it by
+# ``census_ordering.check_ordering``) for an order whose closed state went unasked. The
+# verdict line recognises that row by this prefix rather than by a second copy of the
+# sentence: the row's wording is the product's and lives with the class that raises it,
+# and a clause matched on a literal typed here would go quietly stale the next time that
+# sentence was reworded.
+CLOSED_STATE_UNASKED_PREFIX = "closed state not checked:"
+
+
+def closed_state_verdict(notes: tuple[str, ...],
+                         findings: list[dict] | tuple[dict, ...] = ()) -> str:
+    """The clause of the verdict line saying the closed question went unasked, or "".
+
+    A run over an order holding issues with no ``--issue-state`` leaves the whole closed
+    question unasked, and a reader who judges the run by its last line (a CI step
+    grepping the verdict, a person scanning a terminal) must not have to reach past the
+    rows to a ``note:`` line to learn it. So the verdict carries the id of the class that
+    went unasked.
+
+    It is keyed on the closed row of this run's own rows, not on the note alone: the note
+    says only that no state map came in, which is true of a tree that ordered nothing at
+    all, and a verdict that called such a tree unchecked would say something the run did
+    not observe. ``census_ordering_closed.append``, asked by
+    ``census_ordering.check_ordering``, raises that row for exactly
+    the orders whose closed state really was left unstated, so the clause and the row
+    cannot disagree about which run was asked to check a closed order.
+
+    Returns ``""`` rather than folding into the caller's sentence: the caller's all-clear
+    branch is shared by every run that has nothing to report, and an empty string is what
+    keeps every run that asked its closed question -- an empty order, an absent order, a
+    run that skipped the class, or any run given ``--issue-state`` -- worded exactly as it
+    was before this clause existed. The caller appends it to the all-clear word rather
+    than replacing it: a run with no rows whose closed check went unasked still has no
+    findings to count, so it says "clean" and then says what it did not check.
+    """
+    if ORDERING_CLOSED_NOT_EVALUATED not in notes:
+        return ""
+    owed = closed_state_verdict_carried(findings)
+    return f" {ORDERING_CLOSED_CHECK} not checked" if owed else ""
+
+
+def closed_state_verdict_carried(findings: list[dict] | tuple[dict, ...]) -> bool:
+    """Whether ``findings`` hold the row saying the closed question went unasked.
+
+    The one reader of that test, shared by the verdict clause above and the headline
+    below: the two lines of one report must call the same rows by the same name, and a
+    second copy of the prefix test would let one line learn a new wording while the
+    other kept the old one.
+    """
+    return any(f["check"] == ORDERING_CLOSED_CHECK
+               and f["message"].startswith(CLOSED_STATE_UNASKED_PREFIX)
+               for f in findings)
+
+
+def _not_evaluated_headline(notes: tuple[str, ...],
+                            findings: list[dict] | tuple[dict, ...] = ()) -> str:
+    """The clause of a headline that says which checks went unasked.
 
     A note is a sentence the product wrote for a reader, and this clause is a
     class id, so the two are not derived from each other: a note whose class this
@@ -152,9 +207,20 @@ def _not_evaluated_headline(notes: tuple[str, ...]) -> str:
     back to a count rather than print a sentence as a class name — and because the
     known note is counted before that test, a known note can never be swallowed by
     the fallback. Several notes read as a list.
+
+    ``findings`` is the clause's second half, and the reason the headline is not
+    simply "count + note count": the closed class reports its own row when an order
+    held issues and the question went unasked (issue #148), and a reader scanning the
+    first line must learn the class from it either way. A rowless run gets "did not
+    run" -- nothing was asked of it -- and a run carrying the class's own row gets
+    "not checked", which is the same words the verdict line uses for the same fact, so
+    the two halves of the report cannot name the state differently.
     """
     named = [ORDERING_CLOSED_CHECK for note in notes
              if note == ORDERING_CLOSED_NOT_EVALUATED]
+    unchecked = bool(named) and closed_state_verdict_carried(findings)
+    if unchecked:
+        return f" — {', '.join(named)} not checked"
     unknown = sum(1 for note in notes
                   if note != ORDERING_CLOSED_NOT_EVALUATED and not note.strip())
     if not named:
@@ -295,7 +361,8 @@ def _render_human(findings: list[dict], counts: dict[str, int], ok: bool,
         # that is true of this run: no rows, and these checks unasked.
         print(f"census: no findings; {_not_evaluated_headline(notes)}")
     else:
-        print(f"census: {warns} warning(s), {len(findings)} finding(s)")
+        print(f"census: {warns} warning(s), {len(findings)} finding(s)"
+              + _not_evaluated_headline(notes, findings))
         for f in sorted(findings, key=_finding_sort_key):
             tag = {"fail": "FAIL", "warn": "WARN"}.get(f["severity"], "?")
             print(f"{f['check']:<16} {tag:<4} {f['subject']}: {f['message']}")
@@ -308,7 +375,10 @@ def _render_human(findings: list[dict], counts: dict[str, int], ok: bool,
             print(f"note: {note}")
     fired = {f["check"] for f in findings}
     if ok:
-        verdict_text = (f"{warns} warning(s)" if warns else "clean")
+        # ``closed_state_verdict`` returns the empty string for every run that asked
+        # its closed question, and the all-clear word survives only when it did.
+        verdict_text = (f"{warns} warning(s)" if warns else "clean") \
+            + closed_state_verdict(notes, findings)
     else:
         verdict_text = f"{exit_code} ({', '.join(sorted(fired))})"
     print(f"summary: {verdict_text}; {sum(counts.values())} finding(s); "
@@ -325,6 +395,7 @@ def _render_human(findings: list[dict], counts: dict[str, int], ok: bool,
 # through the census before the renderers were split out: one object each, never a
 # copy, so the contract keeps its single owner in ``census_report``.
 __all__ = [name for name in dir() if name.startswith("_")] + [
+    "CLOSED_STATE_UNASKED_PREFIX",
     "NO_STATE_ROOT_NOTE", "NO_STATE_ROOT_PREFIX",
     "ORDERING_CLOSED_CHECK", "ORDERING_CLOSED_NOT_EVALUATED",
     "ORDERING_STALE_AFTER_DEFAULT", "STALE_AFTER_RE",

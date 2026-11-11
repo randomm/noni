@@ -222,18 +222,26 @@ def test_the_helper_takes_every_rule_from_its_arguments_and_keeps_none():
     # the same two arguments one frame deeper -- asserting the literal there would
     # assert the caller's spelling rather than the property, so those three are
     # checked for both names simply being passed on. A rule the assembly refused to
-    # forward would read as an empty argument string and fail here.
+    # forward would read as an empty argument string and fail here. The one seam whose
+    # printer is the caller's own ``_fail`` reached through a wrapper is held to the
+    # literal below rather than to the wrapper's local binding.
     calls = (_helper_calls(source)
              + [("parse_date", _call_arguments(helper_source, "parse_date(")),
                 ("parse_questions", _call_arguments(helper_source, "parse_questions(")),
                 ("check_supersede", _call_arguments(helper_source, "check_supersede(")),
                 ("refuse_linked_state",
                  _call_arguments(source, "refuse_linked_state(", call_site="_fail")),
-                # The state-root and census-level questions now cross in one call, so
-                # the caller's text spells the seam that holds them -- and the state-root
-                # rule is asserted at the call that makes it, one frame deeper.
-                ("refuse_state_root",
-                 _call_arguments(_decide_state_root_source(), "refuse_state_root(",
+                # The state-root and census-level questions cross in one call, so the
+                # caller's text spells the seam that holds them -- and both refusals that
+                # seam prints are asserted at the calls that make them, one frame deeper,
+                # where the printer and the code are still the caller's own bindings.
+                # The seam itself is checked where it is invoked, and held to the
+                # printer and code the run's module handed it: those are the caller's
+                # ``_fail`` and ``EXIT_GIT`` one frame deeper, so the call site is read
+                # for both names rather than for the literal (which the run's own
+                # ``refuse_run`` call below is held to).
+                ("_refuse_state_root",
+                 _call_arguments(_decide_state_root_source(), "_refuse_state_root(",
                                  call_site="fail")),
                 ("refuse_run",
                  _call_arguments(source, "refuse_run(", call_site="_fail")),
@@ -253,7 +261,7 @@ def test_the_helper_takes_every_rule_from_its_arguments_and_keeps_none():
     for name, arguments in calls:
         assert name in {"parse_date", "parse_questions", "check_supersede",
                         "refuse_name", "build_record_flags",
-                        "refuse_linked_state", "refuse_state_root", "refuse_run",
+                        "refuse_linked_state", "_refuse_state_root", "refuse_run",
                         "refuse_ledger_allocation",
                         "refuse_taken_name", "_allocation_refusal"}, name
         # A rule that takes no printer is exempt from the printer/code pair: the
@@ -263,11 +271,24 @@ def test_the_helper_takes_every_rule_from_its_arguments_and_keeps_none():
         # than by keyword.
         if name == "_allocation_refusal":
             continue
-        if name in {"refuse_linked_state", "refuse_state_root", "refuse_run",
+        if name in {"refuse_linked_state", "_refuse_state_root", "refuse_run",
                     "refuse_ledger_allocation", "refuse_taken_name"}:
-            assert "_fail" in arguments or "fail" in arguments, \
+            # The printer is asserted by name at every one of these seams and never by a
+            # bare substring "fail", which a parameter named ``fail_x`` or a ``--fail``
+            # string would satisfy. Which name is the caller's own depends on the seam:
+            # the run's module spells it ``_fail``, and the state-root seam, one frame
+            # deeper, forwards the binding it was handed under that parameter's name.
+            expected = "fail" if name == "_refuse_state_root" else "_fail"
+            assert expected in arguments, \
                 f"{name} is called without the caller's printer"
-            assert re.search(r"\bEXIT_\w+\b", arguments) or name == "refuse_state_root", \
+            # Every refusal crosses with the caller's own exit constant. The state-root
+            # seam is not exempt from that contract -- it is simply checked one frame
+            # deeper, where the code is the run's ``EXIT_GIT`` handed down as ``exit_git``,
+            # so its own forwarded binding is named; every other seam here is held to the
+            # literal in the run's text.
+            pattern = r"\bexit_git\b|\bEXIT_\w+\b" if name == "_refuse_state_root" \
+                else r"\bEXIT_\w+\b"
+            assert re.search(pattern, arguments), \
                 f"{name} is called without the caller's own exit constant"
             continue
         assert "fail=" in arguments, f"{name} is called without the caller's printer"

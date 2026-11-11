@@ -13,7 +13,7 @@ Two decisions live here and nowhere else:
   :func:`noni._writer.allocate_ledger` runs ``mkdir(parents=True)``, so a question
   about ``noni/`` deferred past the allocation finds the directory this very run
   made and calls it a state root. The exception is therefore handed to
-  :func:`refuse_state_root` as a thunk and asked before any
+  :func:`_refuse_state_root` as a thunk and asked before any
   allocation, over the tree as the caller left it.
 
 The state of the tree the run writes into is asked here too, in the same place and
@@ -107,10 +107,10 @@ def admits_reopening(root: Path, init: bool) -> bool:
     return init and _holds_nothing(root)
 
 
-def refuse_state_root(printer: _decide_flags.Printer, code: int,
-                      repo: Path,
-                      admits: Callable[[], bool],
-                      admits_reopening: Callable[[], bool] | None = None) -> int | None:
+def _refuse_state_root(printer: _decide_flags.Printer, code: int,
+                       repo: Path,
+                       admits: Callable[[], bool],
+                       admits_reopening: Callable[[], bool] | None = None) -> int | None:
     """The exit code for a ``--repo`` that is no noni state root, or None.
 
     The question a run asks of its ``--repo`` before it writes anything: the tree holds
@@ -124,8 +124,8 @@ def refuse_state_root(printer: _decide_flags.Printer, code: int,
     the tree deferred past that allocation finds the ``noni/`` this very run made and calls
     it a state root, which is how a wrong ``--repo`` used to answer its own question and
     gain a ledger and a committed record of its own. A writer hands the answer over as a
-    thunk so the exception follows the tree's contents ( say-so, and is asked here -- before the guard that can decline to
-    ask anything at all.
+    thunk so the exception follows the tree's contents rather than the verb's say-so, and
+    is asked here -- before the guard that can decline to ask anything at all.
 
     The obstruction question is not asked here: :func:`refuse_linked_state` asks it of the
     same ``lstat`` ahead of this, so a linked ``noni/`` keeps the sentence that names it.
@@ -200,7 +200,7 @@ def refuse_run(fail: _decide_flags.Printer, exit_git: int, exit_usage: int,
     not write to. The caller hands in its printer and its three codes so this stays a
     leaf whose numbers the run's module owns.
 
-    The state-root question is asked through :func:`refuse_state_root`, this module's
+    The state-root question is asked through :func:`_refuse_state_root`, this module's
     own seam, with this tool's printer, this tool's code, and this tool's two answers to the creator
     question (:func:`admits_creation` for a brand-new tree, :func:`admits_reopening` for a
     scaffolded one), handed over as thunks so each follows the tree as the caller left it
@@ -208,7 +208,7 @@ def refuse_run(fail: _decide_flags.Printer, exit_git: int, exit_usage: int,
     asked here: :func:`noni._decide_flags.refuse_linked_state` asks it of the same
     ``lstat`` ahead of this, so a linked ``noni/`` keeps the sentence that names it.
     """
-    refused = refuse_state_root(
+    refused = _refuse_state_root(
         fail, exit_git, repo, partial(admits_creation, root=repo, init=init),
         partial(admits_reopening, root=repo, init=init))
     if refused is not None:

@@ -64,8 +64,8 @@ python3 ../noni/skills/census/scripts/census.py --repo .
 
 `--init` says this repository holds no `noni/` yet and is meant to: without it
 `decide` refuses at exit 3 rather than write direction state into a checkout you
-named by mistake. It admits a `noni/` that is absent or empty and nothing else, so
-it does nothing on a tree with records. Omit it there.
+named by mistake. It admits an absent or empty `noni/` and nothing else, so omit it
+on a tree that already holds records.
 
 Run these from a commit of noni you trust: no release or tag exists yet, so pin
 a commit, and remember they run noni's scripts.

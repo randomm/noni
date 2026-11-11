@@ -34,7 +34,12 @@ reused one, because a directory that holds no ``noni/`` is not the same finding 
 ``noni/`` that is a link or a plain file: the first says the caller named the wrong
 tree, the second says the tree it named is obstructed. The writers that read state
 ask it through :func:`state_root_refusal`; the wording lives here so no writer
-composes its own.
+composes its own. One caller adds a sentence of its own: ``decide`` is the single
+writer that can bring ``noni/`` into being, so it asks for the ``--init`` tail
+(:data:`STATE_ROOT_INIT_HINT`) at the call and passes ``init=True``. The readers ask
+the same question with the default and keep the two shared sentences, because a fix
+line that told an operator of ``order`` or ``intent`` to pass a flag that command
+refuses at argparse is a dead end, not a remediation.
 """
 
 from __future__ import annotations
@@ -154,10 +159,12 @@ STATE_ROOT_NOT_A_NONI_HINT = (
     "noni/: the project repository itself, or the private state repository of "
     "docs/PRODUCT.md 7")
 
-# The tail a writer that CAN create the tree adds to that hint, so a caller who meant a
-# new state root is sent to the flag that opens it rather than left to guess. Kept apart
-# from the shared sentence above because the readers -- `order`, `intent`, the census --
-# have no such flag and must not advertise one.
+# The tail the ONE writer that can create the tree asks :func:`state_root_refusal` to
+# append, so a caller who meant a new state root is sent to the flag that opens it rather
+# than left to guess. It is composed at the call, never inside the shared renderer: the
+# readers -- ``order``, ``intent``, the census -- have no such flag, they answer it with
+# argparse's exit 2, and a refusal whose whole job is steering a caller out of the wrong
+# repository must not send them to a command that refuses the very flag it named.
 STATE_ROOT_INIT_HINT = (
     "if this is a new state root, run again with --init; if you meant an existing "
     "state clone, pass that clone as --repo")
@@ -165,7 +172,8 @@ STATE_ROOT_INIT_HINT = (
 # The one directory whose presence makes ``--repo`` a state root at all: a tree that
 # holds it is a tree noni was told to look in, and the only shape a no-``noni/``
 # refusal may be reached through is its absence, which is also the state the sanctioned
-# first writers create (:func:`has_no_noni` answers for it and nothing else).
+# first writers create (:func:`has_no_noni` answers for it and nothing else; a ``noni``
+# that exists and holds entries is state of somebody's, whatever it holds).
 STATE_ROOT_DIR = "noni"
 
 # The two questions this module asks of a directory are both asked by a helper that
@@ -226,7 +234,7 @@ def has_no_noni(root: Path) -> bool:
         Path(os.path.normpath(str(root))) / STATE_ROOT_DIR) == ABSENT
 
 
-def state_root_refusal(root: Path) -> tuple[str, str] | None:
+def state_root_refusal(root: Path, *, init: bool = False) -> tuple[str, str] | None:
     """The ``(headline, hint)`` pair for a ``--repo`` that is no noni state root.
 
     The question a writer that only READS asks before its first read, probe or
@@ -242,6 +250,13 @@ def state_root_refusal(root: Path) -> tuple[str, str] | None:
     the readers and the verbs with no sanctioned create path, not to every caller of
     ``--repo``.
 
+    ``init`` asks for :data:`STATE_ROOT_INIT_HINT` on the end of the fix line, and is
+    passed only by the writer that owns that flag -- ``decide``, through
+    :func:`noni._decide_flags.refuse_state_root`. It is a keyword-only argument with
+    the shared wording as its default so a reader cannot acquire the tail by reaching
+    the wrong composition site: the two readers and the census call this function
+    directly and get the two sentences that name ``--repo`` alone.
+
     The path in both sentences is the root as the caller spelled it, rendered once
     through :func:`noni._safe_text.safe_path`; nothing is printed, nothing raises, and
     the caller prints the pair through its own failure printer with its own label and
@@ -251,8 +266,10 @@ def state_root_refusal(root: Path) -> tuple[str, str] | None:
     if not has_no_noni(root):
         return None
     text = safe_path(str(root))
-    return (STATE_ROOT_NOT_A_NONI.format(path=text),
-            f"{STATE_ROOT_NOT_A_NONI_HINT} {STATE_ROOT_INIT_HINT}")
+    hint = STATE_ROOT_NOT_A_NONI_HINT
+    if init:
+        hint = f"{hint} {STATE_ROOT_INIT_HINT}"
+    return (STATE_ROOT_NOT_A_NONI.format(path=text), hint)
 
 
 def refuse_state_root(root: Path, creates: bool,

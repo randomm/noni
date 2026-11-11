@@ -414,8 +414,14 @@ def refuse_state_root(printer: Printer, code: int, repo: Path,
     same ``lstat`` ahead of this, so a linked ``noni/`` keeps the sentence that names it.
     ``code`` is the caller's own constant and ``printer`` its own, so the prefix is the
     command the operator ran and the number is the one its documents state.
+
+    This is the one seam that asks for the ``--init`` tail (``init=True`` below): it is
+    reached only by ``decide``, the writer that owns the flag. The readers reach
+    :func:`noni._path_kind.state_root_refusal` through
+    :func:`noni._path_kind.refuse_state_root` and keep the two shared sentences, so no
+    command prints a fix line naming a flag it answers with argparse's exit 2.
     """
-    refused = None if admits() else _path_kind.state_root_refusal(repo)
+    refused = None if admits() else _path_kind.state_root_refusal(repo, init=True)
     return None if refused is None else printer(code, *refused)
 
 def _allocation_refusal(repo: Path, ledger: Path) -> tuple[str, str] | None:

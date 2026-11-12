@@ -40,7 +40,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "ledger, the ordering artifact and the standing intent, with an honest "
         "exit code.",
     )
-    parser.add_argument("--repo", default=".", help="the repository (or directory) to audit (default: current directory)")
+    parser.add_argument("--repo", default=".",
+                        help="the state root to audit (default: the current directory)")
     parser.add_argument("--ledger", default=None, help="ledger directory (default: <repo>/noni/decisions)")
     parser.add_argument("--ordering", default=None,
                         help="ordering artifact (default: "

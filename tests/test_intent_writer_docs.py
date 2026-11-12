@@ -45,6 +45,39 @@ def test_docstring_usage_flags_match_the_parser():
         assert forbidden not in parser, f"{forbidden} is out of scope for intent.py"
 
 
+def test_help_names_repo_the_state_root():
+    """``intent --help`` calls ``--repo`` the state root, the word the product uses.
+
+    The writer commits into the tree the flag names, which is not always the caller's own
+    (docs/PRODUCT.md 7), so the help line and the refusal name the tree by what it is.
+    """
+    help_text = _parser_repo_help(intent_ast())
+    assert "the state root" in help_text, help_text
+    assert "repository root" not in help_text, help_text
+    # The refusal a bad ``--repo`` answers with uses the same words the help page does.
+    source = (REPO / "src" / "noni" / "intent.py").read_text(encoding="utf-8")
+    assert "pass the state root that holds" in source, source
+
+
+def _parser_repo_help(tree) -> str:
+    """The ``--repo`` help string the parser declares, read out of ``main``.
+
+    Read from the source rather than from a launched ``--help``: the flag's help is a literal the
+    module holds, so answering the question needs no tree, no identity and no git run.
+    """
+    main = next(n for n in tree.body
+                if isinstance(n, ast.FunctionDef) and n.name == "main")
+    for node in ast.walk(main):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "add_argument"
+                and node.args and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == "--repo"):
+            for keyword in node.keywords:
+                if keyword.arg == "help":
+                    return ast.literal_eval(keyword.value)
+    raise AssertionError("the parser declares no --repo help string")
+
+
 def test_docstring_names_the_refusals_the_code_performs():
     """The table is what a caller predicts a run's exit code from, so each
     refusal the code actually performs is named in it."""

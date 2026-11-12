@@ -106,6 +106,12 @@ INTENT_REL = "noni/direction/intent.md"
 ORDER_REL = "noni/direction/order.json"
 DECISIONS_REL = "noni/decisions"
 
+# The one line of reason the fixture's head of the queue carries. The committed tree prints its
+# first order row with a reason after the mark and every other row without one, so both shapes
+# of the row are the committed fixture's and not a planted variant's; the cases that count the
+# block's lines read this value from here rather than typing it again.
+ORDER_WHY = "the release train leaves Friday and this is the one that must land"
+
 # The line the brief's read-fault blocks print, and the verdict it prints when the census
 # produced none. Both are the tool's constants, read from the product so a rename that would
 # strand an assertion makes the assertion fail instead of quietly asserting nothing.

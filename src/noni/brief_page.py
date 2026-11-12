@@ -21,7 +21,7 @@ from pathlib import Path
 
 from . import ledger_schema, orderschema, orderstate
 from ._safe_text import safe_text
-from .census_text import _bounded
+from .census_text import _bounded, _clipped
 
 # The text of the one question the decisions block asks of every record it reads. Like
 # :data:`NOT_READ` it is the tool's own sentence and never a word from a record, so no byte
@@ -36,11 +36,76 @@ OPEN_ANSWER = "(open)"
 # to print. A row always opens with a record id, so nothing printable can collide with a header
 # anyway.
 
-# The separators of one decision row. The row is built here and printed by the caller, so the
-# two shapes the reader renders -- the join between two questions and the mark that opens the
-# reason -- are named once beside the reader rather than spelled at each end of the join.
+# The separators of one row. The rows are built here and printed by the caller, so the three
+# shapes the reader renders -- the join between two questions, the mark that opens the reason,
+# and the brackets that hold the record an order position was set by -- are named once beside
+# the reader rather than spelled at each end of the join.
 QUESTION_SEPARATOR = "; "
 REASON_SEPARATOR = " — "
+DECISION_BRACKETS = ("(", ")")
+
+# The floor of a clipped statement: the shortest rendering the row keeps a statement for. Below
+# it the ellipsis would be most of what stood where the operator's sentence was, and the row is
+# better printed with the reason alone than with a fragment no reader can use.
+_MIN_CLIPPED_PART = 4
+
+# The two separators a row is assembled with before its reason is joined on: ``{position}. `` for
+# an order row and ``{id}: `` for a decision row. Named beside the builders so neither a bound
+# nor a caller can be the place the shape of a row is spelled twice.
+ORDER_SUBJECT_SEPARATOR = ". "
+RECORD_SEPARATOR = ": "
+
+
+def order_row(position: int, *, issue: object, decision: object,
+              why: object = None) -> str | None:
+    """One ``top 10`` row: the position, the issue, the record that set it, and the reason.
+
+    Three parts before the page's bound, in the order the reader needs them. The position and the
+    issue are the line the block existed to print; the record id is what tells a reader what the
+    entry *is* when the page reads no tracker for a title, and it is the id an agent takes to the
+    ledger to read the decision itself. The entry's ``why`` rides at the end after its own mark
+    when the entry carries a reason, for the reason :func:`_decision_row` states for a record's:
+    the reason is what a cold start cannot recover anywhere else on the screen.
+
+    Every part reaches the line through :func:`page_line`, so a control byte in a reason cannot
+    reach the terminal and a host path in one prints as ``<path>`` here exactly as it would in a
+    census row. A reason that renders to nothing costs its mark and not the row: an entry written
+    before the field existed holds no reason, and a mark standing over nothing is the page
+    promising a line it did not print.
+    """
+    record = _rendered(decision)
+    head = _order_subject(position, issue)
+    if record:
+        head += f" {DECISION_BRACKETS[0]}{record}{DECISION_BRACKETS[1]}"
+    return _bounded_row(head, _rendered(why), ORDER_SUBJECT_SEPARATOR)
+
+
+def _order_subject(position: int, issue: object) -> str:
+    """The head of an order row: ``{position}. #{issue}``, or the shape a nameless row has.
+
+    The reader refuses a document whose entry names no issue, so the fallback is the shape a row
+    always has rather than a state a file can put it in, and it exists so a row stays one line
+    instead of an exception.
+    """
+    named = isinstance(issue, int) and not isinstance(issue, bool)
+    if not named:
+        return f"{position}{ORDER_SUBJECT_SEPARATOR}(unnamed entry)"
+    return f"{position}{ORDER_SUBJECT_SEPARATOR}#{issue}"
+
+
+def _rendered(value: object) -> str:
+    """A foreign field as it may be printed, or ``""`` for a field that renders to nothing.
+
+    Two questions rather than one test of the field: it must be a string with something in it, and
+    it must survive the page's own scrub with something in it. A field of spaces passes the first
+    and fails the second, and so does a field made only of what the scrub deletes (a category-C
+    character, say), which is the shape a hand-edited artifact reaches when a reason is deleted
+    and its quotes left behind. Asking the page's scrub is what makes a mark stand or fall on the
+    same answer the row itself gets.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    return value if page_line(value, TEXT_LIMIT, frozenset()) else ""
 
 
 def decision_rows(ledger: Path, cap: int) -> tuple[list[str], int]:
@@ -161,7 +226,7 @@ def _record_id(record: dict) -> str:
 
 
 def _decision_row(record: dict) -> str | None:
-    """One decision as one line: its id, then a ``text: answer`` segment per question.
+    """One decision as one line: its id, what it settled, and the operator's reason.
 
     The record's own order is the order printed, all of its questions on the one line, because
     a record is one decision and a block that showed one question of a three-question record
@@ -170,32 +235,90 @@ def _decision_row(record: dict) -> str | None:
     record's: the writer leaves an answer ``null`` on a record whose operator never answered,
     and a row that printed nothing there would read as a question the page dropped.
 
-    The ``why`` rides at the end after its own mark when the record carries a reason. Every
-    field reaches the line through :func:`page_line`, so a control byte in a question cannot reach
-    the terminal and a host path in a reason prints as ``<path>`` here exactly as it would in
-    a census row. The whole row is bounded as one line, and a row whose rendered form is blank
-    or one of the page's own words costs the block its row.
+    A record that asked its one question on purpose (the writer's ``single_option`` marker) is
+    the exception, and prints ``{id}: {statement}`` plus the reason: the question of such a
+    record is the statement asked back as a question, so printing both halves spent the row's
+    width on boilerplate and cut the operator's reason mid-word to pay for it.
+
+    The reason rides at the end after its own mark when the record carries one, and it is the
+    part the bound does not fall on: :func:`_bounded_row` clips the statement around the reason
+    rather than the tail of the finished line, because a settled statement is readable in the
+    record file and the reason is what the row exists to put on the screen. Every field reaches
+    the line through :func:`page_line`, so a control byte in a question cannot reach the terminal
+    and a host path in a reason prints as ``<path>`` here exactly as it would in a census row. A
+    row whose rendered form is blank or one of the page's own words costs the block its row.
     """
-    id_text = _field(record.get("id"))
+    body = _decision_body(record)
+    if body is None:
+        return None
+    head = _field(record.get("id")) + RECORD_SEPARATOR + body
+    return _bounded_row(head, _rendered(record.get("why")), RECORD_SEPARATOR)
+
+
+def _decision_body(record: dict) -> str | None:
+    """What a row states after the record's id, or ``None`` when it states nothing printable.
+
+    The single-option form is the record's own word and not this reader's reading of its option
+    counts: :data:`noni.ledger_schema.SINGLE_OPTION_MARKER` is what the writer sets when a
+    one-option question was asked on purpose, and a record whose question holds one option
+    without it is malformed and the census's to report. So this reads the marker and asks nothing
+    of the options: the reader that refused a malformed record is the arbiter, and a page that
+    guessed at the marker from the option count would be a second one.
+    """
     questions = record.get("questions")
     if not isinstance(questions, list) or not questions:
         return None
+    if record.get(ledger_schema.SINGLE_OPTION_MARKER) is True:
+        return _statement_segment(questions[0])
     segments = [_question_segment(question) for question in questions]
-    if not all(segments):
-        # A question the reader cannot render is a question it cannot answer for: one malformed
-        # entry costs the whole record its row rather than printing half a decision.
+    # A question the reader cannot render is a question it cannot answer for: one malformed entry
+    # costs the whole record its row rather than printing half a decision.
+    return QUESTION_SEPARATOR.join(segments) if all(segments) else None
+
+
+def _statement_segment(question: object) -> str | None:
+    """The statement a single-option record states: its question's answer, or nothing printable.
+
+    The answer and not the question text, because the answer is what the operator wrote down and
+    the question of such a record is that same statement dressed as a question. A record whose one
+    question carries no answer is an ``open`` record that :func:`_live_records` stopped at the
+    ledger, so an empty answer reaching here is the hand-edited shape, and it costs the record its
+    row for the reason a malformed entry does.
+    """
+    if not isinstance(question, dict):
         return None
-    row = id_text + ": " + QUESTION_SEPARATOR.join(segment for segment in segments if segment)
-    why = _field(record.get("why"))
-    if why.strip() and page_line(why, TEXT_LIMIT, frozenset()):
-        # Two questions rather than one test of the raw field. The first: ``_field`` hands back a
-        # field of spaces as those spaces, and a mark with nothing after it is the mark of a
-        # reason the reader never gets. The second: a ``why`` made only of what the page's scrub
-        # deletes (a category-C character, say) is not spaces, so the first question cannot see
-        # it, and it renders to nothing for the same reason. Asking the page's own scrub is what
-        # makes the mark stand or fall on the same answer the row itself gets.
-        row += REASON_SEPARATOR + why
-    return page_line(row, TEXT_LIMIT, frozenset())
+    return _rendered(question.get("answer")) or None
+
+
+def _bounded_row(head: str, reason: str, keep: str) -> str | None:
+    """One row of a head and a reason, bounded with the reason kept whole.
+
+    The reason is scrubbed here and not by the callers, so the two rules a reason answers to --
+    no reason at all, and a reason too long to share the row -- are held by one function. The row
+    is composed reason-last and bounded reason-last, and that order is what decides what a
+    too-long row loses. The head yields: it is a settled statement (or, on an order row, the
+    position the artifact itself states), which the reader can go and read in the file the row
+    names, while the reason is the half the row exists to put in front of an agent that has not
+    read it. Below :data:`_MIN_CLIPPED_PART` a clipped head is mostly the ellipsis that marks it
+    clipped, so at that floor the row keeps the parts that identify the row rather than a
+    fragment: the head up to the first ``keep`` (the position of an order row, the id of a
+    decision row), plus the word that follows it, which is the ``#{issue}`` the order row names
+    its subject by. The separator is the caller's, so it is the caller's word that is kept.
+    """
+    reason = _rendered(reason)
+    if not reason:
+        return page_line(head, TEXT_LIMIT, frozenset())
+    mark = REASON_SEPARATOR + reason
+    room = TEXT_LIMIT - len(mark)
+    if room < _MIN_CLIPPED_PART:
+        subject = head.split(keep, 1)
+        kept = subject[0] + keep
+        if len(subject) > 1:
+            kept += subject[1].split(" ", 1)[0]
+        return page_line(kept + REASON_SEPARATOR + reason,
+                         TEXT_LIMIT, frozenset())
+    head_text = head if len(head) <= room else _clipped(head, room)
+    return page_line(head_text + mark, TEXT_LIMIT, frozenset())
 
 
 def _question_segment(question: object) -> str:

@@ -42,6 +42,41 @@ def test_docstring_usage_flags_match_the_parser():
         assert forbidden not in parser, f"{forbidden} is out of scope for decide.py"
 
 
+def test_help_names_repo_the_state_root():
+    """``decide --help`` calls ``--repo`` the state root, the word the product uses.
+
+    The flag names the tree the writer commits into, which is not always the tree the caller
+    stands in (docs/PRODUCT.md 7): "repository root" made a cold start point the writer at a
+    code repository, so the help line says what the flag is and the refusal says what to pass.
+    """
+    tree = _decide_ast()
+    help_text = _parser_repo_help(tree)
+    assert "the state root" in help_text, help_text
+    assert "repository root" not in help_text, help_text
+
+
+def _parser_repo_help(tree) -> str:
+    """The ``--repo`` help string the parser declares, read out of ``main``.
+
+    Read from the source rather than from a launched ``--help``: the flag's help is a string the
+    module holds, and a launch would need a tree, an identity and a git run to answer a question
+    about one literal.
+    """
+    import ast
+
+    main = next(n for n in tree.body
+                if isinstance(n, ast.FunctionDef) and n.name == "main")
+    for node in ast.walk(main):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "add_argument"
+                and node.args and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == "--repo"):
+            for keyword in node.keywords:
+                if keyword.arg == "help":
+                    return ast.literal_eval(keyword.value)
+    raise AssertionError("the parser declares no --repo help string")
+
+
 def test_record_field_order_and_null_answer_form_are_the_written_shape(tmp_path):
     """The bytes on disk are the documented shape: the eight fields in order,
     source last when present, and answer null (not absent) for an open

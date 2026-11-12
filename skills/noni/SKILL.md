@@ -5,63 +5,76 @@ description: The start-here page for a fresh agent in an attached project: one r
 
 # noni
 
-**Mission:** one page, read once, that leaves a fresh agent able to carry on. An
-agent has limited context and no memory of the last session, so the fastest path to
-useful work is to read what the operator already wrote down before asking or
-proposing anything. noni holds those answers in committed files under the project's
-own `noni/` directory, and this page is the route to them.
+**Mission:** one page, read once, that leaves a fresh agent able to carry on. An agent
+has limited context and no memory of the last session, so the fastest path to useful
+work is to read what the operator already wrote down before asking or proposing
+anything. noni holds those answers in committed files under the project's own `noni/`
+directory, and this page is the route to them.
 
-Read the screen, then act on it. Do not re-argue a settled question: a decision the
-operator recorded is the current word, and the census, not your judgement, is the
-arbiter of whether the state is in order.
+Read the screen, then act on it. Do not re-argue a settled question: a recorded
+decision is the current word, and the census, not your judgement, is the arbiter of
+whether the state is in order.
 
 ## The first action (run the screen)
 
-At session start, run the brief over the state root (see *Carrying on* below for
-what follows from it):
+At session start, run the brief over the state root:
 
 ```console
 noni brief --repo DIR
 ```
 
 It is read-only: it writes no file, stages no commit and runs no tracker call, so
-nothing about the tree changes and no answer is committed by looking. It prints
-four parts and exits.
+nothing about the tree changes and no answer is committed by looking. It prints four
+parts and exits.
 
 The state root is the project's own repository by default, or a separate directory
 carrying the same `noni/` layout when a team keeps its direction in a private state
-repository. `--repo` names it on every run and has no default; nothing reads the
-current directory or the environment for it. Pass the directory that holds (or
-would hold) `noni/direction/` and `noni/decisions/`.
+repository. `--repo` names it on every run and has no default: nothing reads the
+current directory or the environment for it. It is the directory that holds (or would
+hold) `noni/direction/` and `noni/decisions/`.
 
 ## How to read the screen's four parts
+
+Two lines need a word before you read them as faults. `dropped: N line(s)` says the page
+withheld N lines of that block to fit its 200-line budget, so the block is longer than
+what you see: the order's head and the operator's prose stay, the oldest decisions go.
+`ordering-closed not checked` on the verdict line says the screen does not know whether
+the ordered issues are open, because no issue state reached the census it runs: treat the
+order as possibly stale until you run the census with `--issue-state`, which the census
+skill explains.
+
+A decision row points at a record you can read yourself: a plain JSON file at
+`<state root>/noni/decisions/<record id>.json`. Reading it is safe and shows fields this
+page's one line of them leaves out.
 
 - **Part one, Purpose.** The standing intent's own prose, clipped to a page: what the
   project is for and the principles it will not trade. The direction skill is the
   writer of that file; here it is read and shown.
 - **Part two, Order.** The top 10 open ordered entries, numbered 1 to 10, in the
-  operator's own order. The head is the default answer to "what now".
+  operator's own order, each as `N. #issue (decision id)` plus the reason for that
+  position after a mark. The head is the default answer to "what now". The screen
+  reads no tracker, so the record id is what says what the entry is for.
 - **Part three, Recent decisions.** The five most recent live records, newest first,
-  each as its question, its answer, and the reason when the operator gave one.
-  Superseded records never appear here.
+  each as its question, its answer, and the reason when the operator gave one. A record
+  that asked one question on purpose prints its statement and reason instead. Superseded
+  records never appear here.
 - **Part four, Summary.** The totals, echoed verbatim from `noni census --json`: the
   count of live records beside the count of open ordered entries, and nothing else the
   brief decided on its own.
 
-An empty part is a state, not a fault: a project that has written no intent, ordered
-nothing and steered nothing prints four headers and a verdict. A part that could not
-be read prints what it could read and says no more, because the census it runs a
-moment later is the tool that words a fault with a name and a fix. Read that verdict
-line as the state of the tree; run the census when you need its rows.
+An empty part is a state, not a fault: a project that wrote no intent, ordered nothing
+and steered nothing prints four headers and a verdict. A part it could not read says no
+more, because the census it runs a moment later is the tool that words a fault with a
+name and a fix. Read that verdict line as the state of the tree.
 
 ## Carrying on
 
-Three moves follow from the screen, each owned by another page. This page routes
-them and restates no flags.
+Three moves follow from the screen, each owned by another page, which this page routes
+and restates no flags of.
 
 1. **Take the first entry of the `top 10` list.** That is the issue the operator put
-   first. Nothing in the core reads the order to decide whether work may start: it is
-   a signal, not a lock, and the head of the list is the default answer to "what now".
+   first. The order is a signal, not a lock: nothing in the core reads it to decide
+   whether work may start.
 2. **When the operator decides something, record it.** An answer given in chat, in
    a comment or in passing is a hint; the committed record is the truth. Record it in
    their words, never your own summary of them, and never answer a question on their
@@ -80,19 +93,19 @@ propose anything, and if a record speaks to your question, its answer stands eve
 where the intent file says otherwise: an operator who overrode a principle made a
 dated record of it.
 
-To change one, supersede it: a new dated record naming the record it replaces,
-through the steering-ledger writer, and only on the operator's word. Never edit a
-committed record, and never write a record to make an inconvenient answer go away:
-the census's chain class reports what a hand-edited record looks like, and the
-append-only rule is the only thing that makes a record worth reading.
+To change one, supersede it: a new dated record naming the record it replaces, through
+the steering-ledger writer, and only on the operator's word. Never edit a committed
+record, and never write one to make an inconvenient answer go away: the census's chain
+class reports what a hand-edited record looks like, and the append-only rule is the
+only thing that makes a record worth reading.
 
 ## Where the rest lives
 
-noni holds the direction layer: the standing intent, the ordered list, and the
-decision records. It is not a knowledge base, and learned facts about a codebase do
-not belong here: they live in a separate memory tool, in that tool's own store.
-What noni keeps is what the operator decided, and it keeps it as committed files so
-a later session, a fresh clone or a CI run reads the same truth.
+noni holds the direction layer: the standing intent, the ordered list, and the decision
+records. It is not a knowledge base, and learned facts about a codebase do not belong
+here: they live in a separate memory tool, in that tool's own store. What noni keeps is
+what the operator decided, as committed files, so a later session, a fresh clone or a
+CI run reads the same truth.
 
 | To | Read |
 |---|---|
@@ -102,6 +115,6 @@ a later session, a fresh clone or a CI run reads the same truth.
 | install noni, or the commands in this page verbatim | [docs/QUICKSTART.md](../../docs/QUICKSTART.md) |
 
 The screen prints a truncated page, not the files: when a citation on it points at a
-record you are about to act on, read that record itself before you quote it. This
-page is the map, not the reference: [docs/PRODUCT.md](../../docs/PRODUCT.md) is the
-binding description of the state layout and the exit codes.
+record you are about to act on, read that record itself (the JSON path above) before
+you quote it. This page is the map, not the reference:
+[docs/PRODUCT.md](../../docs/PRODUCT.md) states the state layout and the exit codes.

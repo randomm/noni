@@ -57,6 +57,7 @@ from pathlib import Path
 
 from . import (
     brief_intent,
+    brief_page,
     census_run,
     intentschema,
     labels,
@@ -331,11 +332,12 @@ def _order_block(root: Path) -> list[str]:
     """The ``top 10`` block: the head of the order, in the artifact's own order.
 
     The read is :func:`noni.orderstate.read_order` and each entry prints
-    ``{position}. #{issue}``. An entry naming neither subject prints
-    ``{position}. (unnamed entry)``: the reader refuses such a document, so the branch is
-    the shape a row always has rather than a state a file can put it in.
-
-    ``decision`` and ``confirmed`` are not printed: this is a screen, and the order writer's
+    ``{position}. #{issue} ({decision})``, plus ``{why}`` after
+    :data:`noni.brief_page.REASON_SEPARATOR` when the entry
+    carries a reason (see :func:`noni.brief_page.order_row` for the row and the reason the reason
+    is kept whole). The record id is on the row because the page reads no tracker: an issue number
+    is a number, and the decision that set the position is the only thing the tree holds that says
+    what the entry is for. ``confirmed`` is not printed: this is a screen, and the order writer's
     own listing is the tool that shows the provenance of a position. A refusal or a fault of
     the read prints the header and :data:`NOT_READ` -- the artifact is the census's to
     report on -- and an absent file is the empty order, which prints its header alone.
@@ -345,7 +347,7 @@ def _order_block(root: Path) -> list[str]:
         return [ORDER_HEADER, NOT_READ]
     entries = read.entries[:TOP_ENTRIES]
     rows, withheld = block_rows(
-        (_order_row(position, entry)
+        (_entry_row(position, entry)
          for position, entry in enumerate(entries, 1)), TOP_ENTRIES)
     return close_block([ORDER_HEADER, *rows], withheld)
 
@@ -355,8 +357,10 @@ def _decisions_block(root: Path) -> list[str]:
 
     The reader lives beside the page's other foreign-text rules
     (:func:`noni.brief_page.decision_rows`) and this block only says what it prints: one row per
-    record, holding its id, one ``text: answer`` segment per question, and the record's ``why``
-    when it carries one. Live is that reader's single predicate -- a record whose own ``status``
+    record, holding its id, then one ``text: answer`` segment per question (or, for a record that
+    asked one question on purpose, its statement), and then the record's ``{why}`` after
+    :data:`noni.brief_page.REASON_SEPARATOR` when it carries one. Live is that reader's single
+    predicate -- a record whose own ``status``
     is ``decided`` -- so a ``superseded`` record never appears here, and neither does an ``open``
     one whose operator has not answered.
 
@@ -371,16 +375,19 @@ def _decisions_block(root: Path) -> list[str]:
     return close_block([RECENT_DECISIONS_HEADER, *rows], withheld)
 
 
-def _order_row(position: int, entry: dict) -> str:
-    """One line of the ``top 10`` block.
+def _entry_row(position: int, entry: dict) -> str | None:
+    """One ``top 10`` row for one order entry, read through the artifact's own fields.
 
-    The subject is the issue; a document naming neither was refused by
-    the reader before this line was reached, so the fallback is the shape a row always
-    has rather than a state a file can put it in, and it exists so a row is one line instead
-    of an exception.
+    The three fields an entry contributes to the line are asked through their owners: the issue
+    through :func:`noni.orderschema.entry_issue` (so "names no issue" is a value to branch on and
+    not a ``KeyError``), and the record and the reason as the artifact's own fields. The row itself
+    is built by :func:`noni.brief_page.order_row`, beside the page's other rules for a line of
+    foreign text.
     """
-    issue = orderschema.entry_issue(entry)
-    return f"{position}. #{issue}" if issue is not None else f"{position}. (unnamed entry)"
+    return brief_page.order_row(position,
+                                issue=orderschema.entry_issue(entry),
+                                decision=entry.get(orderschema.DECISION_FIELD),
+                                why=entry.get(orderschema.WHY_FIELD))
 
 
 def _summary_line(root: Path, stamp: str) -> str:

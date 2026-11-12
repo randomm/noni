@@ -163,7 +163,8 @@ def main(argv: list[str] | None = None) -> int:
                     f"({intentschema.INTENT_REL}) and commit it.",
         usage=_USAGE,
     )
-    parser.add_argument("--repo", required=True, help="repository root")
+    parser.add_argument("--repo", required=True,
+                        help="the state root that holds (or will hold) noni/")
     parser.add_argument("subcommand", help="set")
     parser.add_argument("--from", dest="source", default=None, metavar="FILE",
                         help="the Markdown file to install as the intent (required)")
@@ -190,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
     repo = Path(args.repo)
     if not repo.is_dir():
         return _fail(EXIT_USAGE, f"--repo {args.repo} is not a directory",
-                     "pass the repository root that holds (or will hold) "
+                     "pass the state root that holds (or will hold) "
                      f"{intentschema.INTENT_REL}")
     # Every directory this run reads or writes, asked of ``lstat`` before the first
     # read: a linked noni/ or noni/direction would otherwise carry the intent file

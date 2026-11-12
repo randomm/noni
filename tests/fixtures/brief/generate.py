@@ -53,6 +53,7 @@ from brief_fixtures import (
     CONFIRMED,
     NOW,
     OPEN_RECORD_ID,
+    ORDER_WHY,
     PURPOSE_LINES,
     RECORD_ID,
     SUPERSEDED_ID,
@@ -134,10 +135,10 @@ def order_document() -> dict:
     """``noni/direction/order.json``: eleven issue positions, none of them stale.
 
     Built from the entry shape :mod:`noni.orderschema` documents -- ``{issue, decision,
-    confirmed}`` -- rather than from invented keys. The brief renders this file through
-    :func:`noni.orderstate.read_order`, which refuses a document carrying a field the
-    artifact never declared, so a fixture that wrote ``ref`` and a top-level
-    ``confirmed`` printed ``not readable`` and turned ten page cases into a fixture
+    confirmed}``, and ``why`` on the head of the queue -- rather than from invented keys. The
+    brief renders this file through :func:`noni.orderstate.read_order`, which refuses a document
+    carrying a field the artifact never declared, so a fixture that wrote ``ref`` and a
+    top-level ``confirmed`` printed ``not readable`` and turned ten page cases into a fixture
     investigation.
 
     Every entry cites the one committed record and carries
@@ -145,11 +146,18 @@ def order_document() -> dict:
     of the brief instant: an entry citing nothing, or confirmed too long ago, is a census
     row the verdict line would then have to report.
 
+    The head of the queue carries :data:`tests.brief_fixtures.ORDER_WHY` and nothing else does,
+    which is what puts both shapes of the ``top 10`` row in the committed tree: the position,
+    the issue and the record that set it, and the same row with the operator's reason after a
+    mark. A fixture whose every entry carried a reason, or none at all, would leave half the
+    row's arms to a planted variant no other case reads.
+
     The count is one past the block's ten-row cap, which is what makes the committed tree
     hold both halves of the budget: ten rows that print and one the page withholds.
     """
     entries = [{"issue": number, "decision": RECORD_ID, "confirmed": CONFIRMED}
                for number in range(1, ORDER_ENTRIES + 1)]
+    entries[0][orderschema.WHY_FIELD] = ORDER_WHY
     return {"schema": orderschema.ORDER_SCHEMA, "entries": entries}
 
 

@@ -31,7 +31,7 @@ from brief_fixtures import (
 from brief_support import dropped_of, rows
 
 from noni import brief as brief_module
-from noni import brief_page
+from noni import brief_page, ledger_schema
 
 # --- the recent decisions block ---------------------------------------------
 
@@ -253,12 +253,11 @@ def test_brief_a_long_statement_clips_and_the_reason_survives(tmp_path: Path) ->
 
 
 def test_brief_a_statement_too_long_to_share_the_row_loses_its_own_width(tmp_path: Path) -> None:
-    """Even at the floor the reason is kept, and the statement yields the rest of the row.
+    """The statement yields the width the reason needs, and the reason is kept whole.
 
-    The one case where clipping the statement around the reason is not enough: the id, the
-    separator and the reason together leave too little room for a clipped statement to say
-    anything, and the row prints the reason rather than a clipped fragment no reader can use.
-    Driven at the builder because no writer admits a record whose statement is that long.
+    The statement, the id and the reason together are more than one row: the row is built
+    reason-last, so the statement is what the bound cuts and the reason keeps its end. Driven at
+    the builder because no writer admits a record whose statement is that long.
     """
     row = brief_page_rows.decision_row(record_id="r" * 280,
                                        statement="s" * 280,
@@ -303,41 +302,21 @@ def test_brief_ties_in_the_record_date_break_by_id(tmp_path: Path) -> None:
         "2026-10-25-charlie", "2026-10-25-bravo", "2026-10-25-alpha"]
 
 
-def _reason_past_the_floor() -> str:
-    """A single-word reason long enough that the row builder takes its floor arm.
-
-    The builder reaches the floor once the mark leaves it less than
-    :data:`noni.brief_page._MIN_CLIPPED_PART` characters of the bound. Which arm answered is a
-    property of the finished line rather than of one number, so the probe asks the builder for
-    the row it would print for the longest single-word reason the page can be handed and asserts
-    the mark sits straight after the subject: the arm that clips keeps the head whole, so a row
-    that read ``7. #123456 (2026-...`` would say the floor was never reached. The cases below then
-    hold whatever the page's bound is.
-    """
-    reason = "R" * brief_page.TEXT_LIMIT
-    row = brief_page_rows.order_row(7, issue=123456, decision="2026-10-01-brief",
-                                    why=reason)
-    assert row is not None
-    assert row.startswith(f"7{brief_page.ORDER_SUBJECT_SEPARATOR}#123456"
-                          f"{brief_page.REASON_SEPARATOR}R")
-    return reason
-
-
-def test_brief_a_reason_that_scrubs_to_nothing_prints_no_mark_at_the_floor() -> None:
+def test_brief_a_reason_that_scrubs_to_nothing_prints_no_mark() -> None:
     """A reason that survives its callers' checks and empties under the page's scrub is no reason.
 
-    The guard against a bare mark sits in the row builder, not in the two callers that compose
-    a reason: a caller's test of the raw field and the page's test of the printed line are two
+    The guard against a bare mark sits in the row builder, not in the two callers that compose a
+    reason: a caller's test of the raw field and the page's test of the printed line are two
     different answers, and a reason of nothing but what the scrub deletes (zero-width or
     soft-hyphen characters) or of nothing but spaces passes the first and fails the second. The
-    rows are driven at the builder because the artifact's own rationale bound keeps a writer
-    from committing a reason long enough to reach the floor, where the head is dropped instead of
-    clipped: a row that printed "1. ... \u2014" there was a page that promised the operator's
-    reason, named none of it, and clipped the head that identified the row.
+    reason is driven at the bound the writers admit (``ledger_schema.why_max()``), which is the
+    longest field a writer, a census or a hand-edited artifact can hand the builder, so the guard
+    is pinned where the row's own bound bites rather than beside a short reason that never fills
+    the line.
     """
-    for scrubbed_to_nothing in ("\u200b" * 293, " " * 293):
-        row = brief_page._bounded_row("1. #1 (" + "d" * 250 + ")",
-                                      scrubbed_to_nothing, ". ")
+    head = "1. #1 (" + "d" * 250 + ")"
+    for scrubbed_to_nothing in ("\u200b" * 280, " " * 280):
+        row = brief_page._bounded_row(head, scrubbed_to_nothing)
         assert row is not None
         assert not row.rstrip().endswith("\u2014")
         assert brief_page.REASON_SEPARATOR not in row
@@ -346,51 +325,45 @@ def test_brief_a_reason_that_scrubs_to_nothing_prints_no_mark_at_the_floor() -> 
         assert len(row) <= brief_page.TEXT_LIMIT
 
 
-def test_brief_the_floor_of_an_order_row_keeps_the_subject_and_the_reason() -> None:
-    """At the floor the row keeps the half that identifies it and the reason the row is for.
+def test_brief_the_writers_bound_of_an_order_row_keeps_the_reason() -> None:
+    """The longest reason a writer admits is kept whole, and the head is what the bound clips.
 
-    The floor is the one case where clipping the head around the reason cannot work: a reason at
-    the page's bound leaves no room for a statement that says anything, so the head is dropped
-    rather than clipped. What must survive that drop is what tells a reader which row it is. An
-    order row that fell back to the position alone printed ``7. `` over the operator's reason, and
-    an agent that read it could not tell which issue sat at seven. The reason keeps everything the
-    row's own bound allows it: the row's width is the page's, so the reason loses only what the
-    bound takes from the finished line, and it loses it at its end rather than at its start.
+    One row at the bound every writer enforces (``WHY_MAX`` characters of ``why``), pinned by
+    exact value: the reason survives to its last character, the record id it brackets is what the
+    bound takes, and the ellipsis the page leaves sits at the end of the finished line. This is
+    the longest row the writers can hand the builder, so it is the row that decides which half of
+    a too-long row yields.
     """
-    reason = _reason_past_the_floor()
-    row = brief_page_rows.order_row(7, issue=123456, decision="2026-10-01-brief",
+    reason = "a" * ledger_schema.why_max()
+    row = brief_page_rows.order_row(1, issue=123456, decision="2026-10-01-brief",
                                     why=reason)
     assert row is not None
-    subject = (f"7{brief_page.ORDER_SUBJECT_SEPARATOR}#123456"
-               f"{brief_page.REASON_SEPARATOR}")
-    # The whole row is the subject and the reason: none of the head's own statement (the record id
-    # it brackets) survives, and what the reason loses is the page's ellipsis, the mark of the
-    # bound on the finished line, taken from the reason's end and not its start.
-    assert row == subject + "R" * (brief_page.TEXT_LIMIT - len(subject) - 3) + "..."
-    assert "(" not in row and ")" not in row
-    assert len(row) <= brief_page.TEXT_LIMIT
+    assert row == ("1" + brief_page.ORDER_SUBJECT_SEPARATOR + "#123456 (20"
+                   + brief_module.ELLIPSIS + brief_page.REASON_SEPARATOR + reason)
+    assert len(row) == brief_page.TEXT_LIMIT
 
 
-def test_brief_the_floor_of_a_decision_row_keeps_the_record_id() -> None:
-    """The same floor on a decision row keeps the record id, the row's own identifier.
+def test_brief_the_writers_bound_of_a_decision_row_keeps_the_reason(
+        tmp_path: Path) -> None:
+    """The same bound on a decision row: the reason is kept whole and the statement yields.
 
-    The head of a decision row opens with the id the ledger names the record by, and that is the
-    part the row has to keep when the statement yields the whole width to the reason: a reader
-    who means to go and read the record needs the id to find the file with. The statement of a
-    record at its own bound is what is dropped, so the row is the id, the mark, and as much of the
-    reason as the page's bound leaves. Driven at the helper because no writer admits a reason long
-    enough to reach the floor.
+    The row is composed reason-last, so the longest ``why`` the ledger admits does not lose its
+    end to the record id and the settled statement in front of it: the statement is readable in
+    the record file, and the reason is the half the row exists to put in front of a reader that
+    has not read it. Launched through the tool, and the bound is read from the artifact, so a
+    change to either moves this case rather than leaving it pinned to a length nothing states.
     """
-    reason = _reason_past_the_floor()
-    # The row is composed through the page's own builders, so its width is the page's bound less
-    # the ellipsis that marks a bound line: the reason fills exactly that, which is what says the
-    # row is the subject and the reason and nothing else.
-    row = brief_page_rows.decision_row(record_id="2026-10-01-brief",
-                                       statement="Ship the beta", why=reason)
-    assert row is not None
-    subject = ("2026-10-01-brief" + brief_page.RECORD_SEPARATOR + "Ship"
-               + brief_page.REASON_SEPARATOR)
-    assert row == subject + "R" * (brief_page.TEXT_LIMIT - len(subject) - 3) + "..."
+    root = plant_brief_tree(tmp_path)
+    ledger_dir(root).joinpath(f"{RECORD_ID}.json").unlink()
+    reason = "a" * ledger_schema.why_max()
+    write_record(root, record_document("2026-10-25-bound", "2026-10-25T00:00:00Z",
+                                       question="The census stays the arbiter.",
+                                       answer="The census stays the arbiter.",
+                                       options=["The census stays the arbiter."],
+                                       single_option=True, why=reason))
+    row = rows(run_brief(root, "--now", NOW)[1],
+               brief_module.RECENT_DECISIONS_HEADER)[0]
+    assert row.endswith(reason)
     assert len(row) <= brief_page.TEXT_LIMIT
 
 

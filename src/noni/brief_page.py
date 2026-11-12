@@ -44,11 +44,6 @@ QUESTION_SEPARATOR = "; "
 REASON_SEPARATOR = " — "
 DECISION_BRACKETS = ("(", ")")
 
-# The floor of a clipped statement: the shortest rendering the row keeps a statement for. Below
-# it the ellipsis would be most of what stood where the operator's sentence was, and the row is
-# better printed with the reason alone than with a fragment no reader can use.
-_MIN_CLIPPED_PART = 4
-
 # The two separators a row is assembled with before its reason is joined on: ``{position}. `` for
 # an order row and ``{id}: `` for a decision row. Named beside the builders so neither a bound
 # nor a caller can be the place the shape of a row is spelled twice.
@@ -77,7 +72,7 @@ def order_row(position: int, *, issue: object, decision: object,
     head = _order_subject(position, issue)
     if record:
         head += f" {DECISION_BRACKETS[0]}{record}{DECISION_BRACKETS[1]}"
-    return _bounded_row(head, _rendered(why), ORDER_SUBJECT_SEPARATOR)
+    return _bounded_row(head, _rendered(why))
 
 
 def _order_subject(position: int, issue: object) -> str:
@@ -252,7 +247,7 @@ def _decision_row(record: dict) -> str | None:
     if body is None:
         return None
     head = _field(record.get("id")) + RECORD_SEPARATOR + body
-    return _bounded_row(head, _rendered(record.get("why")), RECORD_SEPARATOR)
+    return _bounded_row(head, _rendered(record.get("why")))
 
 
 def _decision_body(record: dict) -> str | None:
@@ -290,7 +285,7 @@ def _statement_segment(question: object) -> str | None:
     return _rendered(question.get("answer")) or None
 
 
-def _bounded_row(head: str, reason: str, keep: str) -> str | None:
+def _bounded_row(head: str, reason: str) -> str | None:
     """One row of a head and a reason, bounded with the reason kept whole.
 
     The reason is scrubbed here and not by the callers, so the two rules a reason answers to --
@@ -299,24 +294,16 @@ def _bounded_row(head: str, reason: str, keep: str) -> str | None:
     too-long row loses. The head yields: it is a settled statement (or, on an order row, the
     position the artifact itself states), which the reader can go and read in the file the row
     names, while the reason is the half the row exists to put in front of an agent that has not
-    read it. Below :data:`_MIN_CLIPPED_PART` a clipped head is mostly the ellipsis that marks it
-    clipped, so at that floor the row keeps the parts that identify the row rather than a
-    fragment: the head up to the first ``keep`` (the position of an order row, the id of a
-    decision row), plus the word that follows it, which is the ``#{issue}`` the order row names
-    its subject by. The separator is the caller's, so it is the caller's word that is kept.
+    read it. One rule bounds the row: the head is clipped around the reason and the finished line
+    is bounded by :func:`page_line`. A reason is capped at :data:`noni._why.WHY_MAX`, which leaves
+    the head room to clip in every case a writer, a census or a hand-edited artifact can hand this
+    reader, so there is no second branch to keep.
     """
     reason = _rendered(reason)
     if not reason:
         return page_line(head, TEXT_LIMIT, frozenset())
     mark = REASON_SEPARATOR + reason
     room = TEXT_LIMIT - len(mark)
-    if room < _MIN_CLIPPED_PART:
-        subject = head.split(keep, 1)
-        kept = subject[0] + keep
-        if len(subject) > 1:
-            kept += subject[1].split(" ", 1)[0]
-        return page_line(kept + REASON_SEPARATOR + reason,
-                         TEXT_LIMIT, frozenset())
     head_text = head if len(head) <= room else _clipped(head, room)
     return page_line(head_text + mark, TEXT_LIMIT, frozenset())
 

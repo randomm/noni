@@ -18,6 +18,12 @@ produce silently:
 The build itself, the skip guard and the entry whitelist live in
 ``test_wheel_contents.py`` and are reused rather than duplicated: one build per
 suite run, one definition of what a buildable tree is.
+
+The version is the third silent defect this module covers. Nothing else in the
+suite reads the ``Version`` header, so the wheel shipped whatever the build
+computed, and the tag and the artifact could disagree without any check going
+red. The assertion below compares that header to the package's own attribute:
+the one place the release names a version, which is what the claim is about.
 """
 
 from __future__ import annotations
@@ -30,6 +36,8 @@ from pathlib import Path
 import pytest
 from _harness import REPO
 from test_wheel_contents import _build_wheel
+
+from noni import __version__ as PACKAGE_VERSION
 
 # What the licensed build needs beyond the helper's default copy list. The
 # license has to reach the build's own input tree: `_build_wheel` copies a named
@@ -53,6 +61,11 @@ EXPECTED_URLS = {
     "Repository": "https://github.com/OWNER/noni",
     "Issues": "https://github.com/OWNER/noni/issues",
 }
+# The version the artifact must carry. Read from the package rather than written
+# as a literal: the release bumps one line in ``src/noni/__init__.py`` and a
+# second copy here would rot on the next bump instead of tracking it.
+EXPECTED_VERSION = PACKAGE_VERSION
+
 EXPECTED_CLASSIFIERS = (
     "Development Status :: 3 - Alpha",
     "License :: OSI Approved :: Apache Software License",
@@ -177,6 +190,22 @@ def test_wheel_metadata_names_the_distribution(licensed_wheel: Path) -> None:
     name = _metadata(licensed_wheel).get("Name")
     assert name == EXPECTED_NAME, (
         f"the wheel's Name is {name!r}, expected exactly {EXPECTED_NAME!r}"
+    )
+
+
+def test_wheel_metadata_carries_the_package_version(licensed_wheel: Path) -> None:
+    """``METADATA`` states the version the package itself states.
+
+    The version has one owner (``noni.__version__``, which ``pyproject.toml``
+    declares dynamic and reads from that attribute), and this is the check that
+    the read actually happened: a build that lost the ``attr`` form, or a
+    resolver that fell back to a default, puts a different number on the
+    artifact than the tag it was cut from. Asserted on the parsed header, never
+    on a substring of the filename, which the build normalises separately.
+    """
+    version = _metadata(licensed_wheel).get("Version")
+    assert version == EXPECTED_VERSION, (
+        f"the wheel's Version is {version!r}, expected exactly {EXPECTED_VERSION!r}"
     )
 
 

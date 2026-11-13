@@ -16,4 +16,4 @@ __all__ = ["__version__"]
 # The one owner of the version: pyproject.toml declares it dynamic and reads it
 # from this attribute, so a release bumps one line and the wheel's metadata
 # cannot disagree with the package.
-__version__ = "0.1.0"
+__version__ = "0.2.0"

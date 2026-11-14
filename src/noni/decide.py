@@ -27,34 +27,30 @@ Exit codes:
     0  the record was written (and committed unless --no-commit)
     2  invalid input: an argparse failure, an empty or malformed slug, a slug
        already starting with a date (the writer adds it), a malformed --date,
-       --question, --option or --answer, a source id that is not a positive
-       integer, a question outside 1-4 or 2-4 options, an empty --decided-by or
-       --on-behalf-of, --on-behalf-of without --decided-by, an empty, multi-line or
-       over-long --why, a question with one
-       option when --single-option was not given, --single-option when no question
-       of the record has one option, or --supersedes with an unanswered question
-    3  a git or identity problem: --repo is not a git work tree, git config
-       user.name is not set (git config user.name <name>), a git probe timed
-       out or failed for a reason that answered nothing, a --repo that is a
-       directory holding no noni/ (pass the state clone, or --init for a new
-       one), or a noni/ or noni/decisions directory -- every one from the state
-       root down to the ledger -- that is no plain path this writer may read or
-       write through (a symlink, a plain file, a socket or a device, each asked
-       of lstat before the git probes, the first read or the mkdir; an absent
-       ledger is admitted because the first record creates it)
-    4  a collision or a bad supersede target: the record path already exists as
-       anything (file, directory or symlink), or the target is missing, already
-       superseded, untracked, locally modified, not a regular file at its path
-       (symlink, directory or device), not readable at all, not in the writer's
-       canonical form, or carries a field the census
-       does not type as a string (including decided_by and on_behalf_of, which the
-       census types as non-empty single-line strings, and why, which it types as one
-       of those within the rationale bound), a status outside decided,
-       open or superseded,
-       questions that are not a non-empty list of objects each with a string id
-       and a string-or-null answer, or a number JSON cannot hold (NaN, Infinity or
-       an overflow). A show reporting no path in HEAD is this code, not 3: git
-       answered
+       --question, --option or --answer, a source id that is not a positive integer, a
+       question outside 1-4 or 2-4 options, an empty --decided-by or --on-behalf-of,
+       --on-behalf-of without --decided-by, an empty, multi-line or over-long --why, a
+       question with one option when --single-option was not given, --single-option when
+       no question of the record has one option, or --supersedes with an unanswered
+       question
+    3  a git or identity problem: --repo is not a git work tree, git config user.name is
+       not set (git config user.name <name>), a git probe timed out or failed for a reason
+       that answered nothing, a --repo that is a directory holding no noni/ (pass the state
+       clone, or --init for a new one), or a noni/ or noni/decisions directory -- every one
+       from the state root down to the ledger -- that is no plain path this writer may read
+       or write through (a symlink, a plain file, a socket or a device, each asked of lstat
+       before the git probes, the first read or the mkdir; an absent ledger is admitted
+       because the first record creates it)
+    4  a collision or a bad supersede target: the record path already exists as anything
+       (file, directory or symlink), or the target is missing, already superseded,
+       untracked, locally modified, not a regular file at its path (symlink, directory or
+       device), not readable at all, not in the writer's canonical form, or carries a field
+       the census does not type as a string (including decided_by and on_behalf_of, which
+       the census types as non-empty single-line strings, and why, which it types as one of
+       those within the rationale bound), a status outside decided, open or superseded,
+       questions that are not a non-empty list of objects each with a string id and a
+       string-or-null answer, or a number JSON cannot hold (NaN, Infinity or an overflow).
+       A show reporting no path in HEAD is this code, not 3: git answered
     5  the commit failed: both paths are rolled back (index reset, target
        restored, new record removed) and anything the undo could not do is named
        (a failed reset and the paths that may still be staged, or a path it could
@@ -65,7 +61,8 @@ Exit codes:
 Every refusal (2, 3 or 4) leaves the ledger and the target untouched: writes happen
 only after every check passes, each file goes to a temp file in its own directory and
 moves into place with os.replace, and a commit failure rolls both paths back. ``by``
-is git config user.name; ``date`` is --date or this run's UTC clock.
+is git config user.name; ``date`` is ``--date`` at UTC midnight, or this run's UTC
+instant to the second with no ``--date``; either way the ``id`` carries that same day.
 
 ``--no-commit`` with ``--supersedes`` writes both files and prints one line naming
 both paths and saying the target's status is now ``superseded``: a run that is then
@@ -113,16 +110,15 @@ EXIT_COMMIT_FAILED: int = 5
 # census accepts as a plain path segment. Dashes only: the split is not ambiguous.
 SLUG_RE = re.compile(r"[a-z0-9-]+")
 ID_RE = re.compile(r"\d{4}-\d{2}-\d{2}-[a-z0-9-]+")
-
 # Status is derived from the answers; it is the one field of an existing record this
-# writer may change. STATUSES, the census's set, is given to the target check.
+# writer may change. STATUSES, the census's set, goes to the target check.
 STATUS_DECIDED = "decided"
 STATUS_OPEN = "open"
 STATUS_SUPERSEDED = "superseded"
 STATUSES = (STATUS_DECIDED, STATUS_OPEN, STATUS_SUPERSEDED)
 
 # ``noni`` first (a link there hides the ledger beneath it from ``lstat``), then the
-# ledger; the walk and its declined-``lstat`` rule live in :mod:`noni._decide_flags`.
+# ledger; the walk and its declined-lstat rule live in :mod:`noni._decide_flags`.
 _GUARDED_DIRS: tuple[str, ...] = ("noni", orderstate.DECISIONS_DIR)
 
 # The field order the census documents; json.dump keeps it. The names after
@@ -191,8 +187,8 @@ def _name_flags(args: argparse.Namespace,
 
     :func:`noni._writer.flag_refusals` holds the rules; this seam hands it the
     writer's printer and usage code, the census's ``is_single_line`` predicate, the
-    bounded predicate with the bound it counts to, and each question's options -- so a
-    shape the census reports at exit 10 is refused at the flag instead.
+    bounded predicate and its bound, and each question's options -- so a shape the
+    census reports at exit 10 is refused at the flag instead.
     """
     return _writer.flag_refusals(_fail, EXIT_USAGE,
                                  _decide_flags.refuse_name,
@@ -217,17 +213,20 @@ def _pair_flags_to_questions(flag: str, pairs: list[tuple[str, str]],
     return None if refusal is None else _fail(EXIT_USAGE, *refusal)
 
 
-# The record's name, its two path spellings, and the caller-cwd tokens its
-# success line prints: see :func:`_record_name`.
+# The record's name and path spellings (``_record_name``), and what a clean flag check
+# hands the run: the two date answers (day for the name, instant for the field), the
+# questions and the ids left open.
 RecordName = tuple[str, Path, str, list[str], list[str]]
+_Checked = tuple[str, str, list[dict], list[str]] | int
 
 
 def _record_name(repo: Path, ledger: Path, date_part: str, slug: str) -> RecordName:
     """The record's ``(id, path, rel, record_paths, target_paths)`` for one run.
 
-    :func:`noni._writer.ledger_name` allocates the name; this seam adds the
-    caller-cwd tokens (#77, AC2), which a supersede extends through
-    :func:`noni._writer.target_paths_of`.
+    :func:`noni._writer.ledger_name` allocates the name from the day alone -- the instant
+    the ``date`` field carries travels beside it, never inside it, so a record's name stays
+    ``<day>-<slug>``. This seam adds the caller-cwd tokens (#77, AC2), which a supersede
+    extends via :func:`noni._writer.target_paths_of`.
     """
     record_id, record_path, record_rel = _writer.ledger_name(repo, ledger, date_part,
                                                              slug)
@@ -317,12 +316,13 @@ def _load_target(repo: Path, ledger: Path,
         path, found[1], found[0])
 
 
-def _build_record_flags(args: argparse.Namespace) -> tuple[str, list[dict], list[str]] | int:
+def _build_record_flags(args: argparse.Namespace) -> _Checked:
     """The flags that assemble the record: :func:`noni._decide_flags.build_record_flags`.
 
-    The rules, their order and their refusals are that module's; these seams hand it
-    this writer's printer, codes, patterns and schema calls, so the census's rules stay
-    the census's and one voice words every refusal.
+    The rules, their order and their refusals are that module's; these seams hand it this
+    writer's printer, codes, patterns and schema calls, so the census's rules stay the
+    census's and one voice words every refusal. The date comes back as the pair the record
+    needs: the day for the name, the instant for the field.
     """
     return _decide_flags.build_record_flags(args, fail=_fail, exit_usage=EXIT_USAGE,
                                             slug_re=SLUG_RE, id_re=ID_RE,
@@ -355,7 +355,7 @@ def _refuse_taken_name(record_path: Path) -> int:
     return _decide_flags.refuse_taken_name(_fail, EXIT_COLLISION, record_path)
 
 
-def _validate_usage(args: argparse.Namespace) -> tuple[str, list[dict], list[str]] | int:
+def _validate_usage(args: argparse.Namespace) -> _Checked:
     """Flags-only checks, before git is consulted: :func:`_build_record_flags`.
 
     The order is the one the refusals need: the record's parts are parsed first
@@ -420,7 +420,7 @@ def main(argv: list[str] | None = None) -> int:
     checked = _validate_usage(args)
     if isinstance(checked, int):
         return checked
-    date_part, built, unanswered = checked
+    date_part, stamp, built, unanswered = checked
 
     source = _source_provenance(args.source_issue, args.source_comment)
     if isinstance(source, int):
@@ -461,7 +461,8 @@ def main(argv: list[str] | None = None) -> int:
         record_paths, target_paths = _writer.target_paths_of(target, record_path)
 
     # --- the writes: every check above has passed --------------------------
-    record = _schema.record_body(record_id=record_id, date_part=date_part,
+    record = _schema.record_body(record_id=record_id,
+                                 date_stamp=stamp,
                                  asked_by=args.asked_by, questions=built, by=by,
                                  scope=args.scope, unanswered=unanswered,
                                  supersedes=args.supersedes, source=source,

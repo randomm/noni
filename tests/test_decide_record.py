@@ -34,6 +34,9 @@ def test_writes_a_decided_record_and_commits_only_that_path(tmp_path):
 
     record = _read(repo, NEW_ID)
     assert record["id"] == NEW_ID
+    # The run passed --date, so the field is that day at UTC midnight and the id
+    # stays date-only: the day is the whole of what the flag asserted.
+    assert record["date"] == f"{NEW_DATE}T00:00:00Z"
     assert record["status"] == "decided"
     assert record["questions"][0]["answer"] == "next train"
     assert record["supersedes"] is None

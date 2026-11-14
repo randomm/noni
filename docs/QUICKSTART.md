@@ -40,8 +40,8 @@ without `pip` at all, the second line stops naming `.venv/bin/pip`, and only the
 `PYTHONPATH` fallback below works: install the distro's venv and pip packages,
 which carry `ensurepip` — what puts `pip` in a new venv — delete the pip-less
 `.venv`, and run the two lines again. Either route installs the same code the
-clone carries: no package index sits between you and it, and neither is a
-release.
+clone carries: no package index sits between you and it, and the only published
+ref is the tag v0.2.0.
 
 Before you run anything, check what you are about to run. An older noni already
 on your PATH shadows the install you just made, and it prints the same version

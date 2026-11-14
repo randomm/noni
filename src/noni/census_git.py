@@ -225,10 +225,18 @@ def _git_config_args() -> list[str]:
     Passed on the command line rather than only through the environment:
     command-line config wins over every file, including one a hostile
     GIT_CONFIG_GLOBAL would still name if the environment were inherited
-    unchanged by a library call that bypasses `_git_env`."""
+    unchanged by a library call that bypasses `_git_env`.
+
+    The three settings answer to the same rule: a config in the audited tree
+    must not turn a read into execution of a program that tree names. The
+    census's own verbs (rev-parse, log, cat-file) never consult
+    ``core.fsmonitor``, so its override is consistency with the writer paths
+    and the hygiene listing, which already pass it, rather than a hole this
+    run falls into."""
     return [
         "-c", "protocol.ext.allow=never",
         "-c", "core.hooksPath=" + os.devnull,
+        "-c", "core.fsmonitor=false",
     ]
 
 

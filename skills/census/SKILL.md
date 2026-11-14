@@ -364,6 +364,7 @@ substitute for running `scripts/public_safety.py` before publishing.
   paths for the same reason.
 - **Read-only git.** Every git call the census makes pins the host's git
   config away (`GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` to the null device,
-  `-c protocol.ext.allow=never -c core.hooksPath=/dev/null` on the command
-  line), so a repository being audited cannot turn a read into execution
-  through `core.hooksPath` or an external protocol helper.
+  `-c protocol.ext.allow=never -c core.hooksPath=/dev/null
+  -c core.fsmonitor=false` on the command line), so a repository being audited
+  cannot turn a read into execution through `core.hooksPath`, an external
+  protocol helper or a `core.fsmonitor` program.

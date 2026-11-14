@@ -74,7 +74,8 @@ def test_the_helper_refuses_through_the_callers_printer_and_code():
     # ``if refused is not None`` is the only signal.
     calls.clear()
     assert _decide_flags.parse_date("2026-10-26", fail=fail,
-                                    exit_usage=decide.EXIT_USAGE) == ("2026-10-26", None)
+                                    exit_usage=decide.EXIT_USAGE) == (
+        ("2026-10-26", "2026-10-26T00:00:00Z"), None)
     assert _decide_flags.parse_questions(["q1=ask"], fail=fail,
                                          exit_usage=decide.EXIT_USAGE) == ([("q1", "ask")], None)
     assert _decide_flags.check_supersede("2026-10-01-x", "2026-10-01",

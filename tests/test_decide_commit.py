@@ -4,7 +4,6 @@ Extracted from the decide writer suite: the git side of the write, the pinned
 author and date, and the refusals before a commit is attempted."""
 
 import json
-import re
 
 from _harness import (
     _git,
@@ -18,6 +17,7 @@ from decide_fixtures import (
     BASE,
     BASELINE_DATE,
     BASELINE_ID,
+    INSTANT_RE,
     NEW_DATE,
     NEW_ID,
     OPTIONS,
@@ -37,11 +37,6 @@ from decide_fixtures import (
     _record_path,
     _run,
 )
-
-# The shape a no-``--date`` run's stamp must have, for the one test here that runs
-# with no ``--date`` at all. A shape rather than a value: that run reads the wall
-# clock, which no test may name and still pass.
-INSTANT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 
 def test_forced_commit_failure_rolls_both_paths_back(tmp_path):

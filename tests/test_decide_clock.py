@@ -18,21 +18,32 @@ the second it fell on. Moving the clock is an in-process matter:
 ``noni.decide.main`` is driven twice with it patched, which writes two records through
 the real writer at two instants, and the order that stamp buys is read where the product
 publishes it: the brief's ``recent decisions`` block.
+
+One clock reading per run is the invariant those cases rest on, and the bug this file
+exists to pin twice over: a run that read the clock for the id's day and again for the
+``date`` field could straddle UTC midnight and file a record whose name names one day
+and whose field names the next, with both censuses reporting it clean. The cases below
+patch the one function with a clock that moves between calls and assert both that the
+record came out of the first reading and that the function was asked only once.
+
+No flag or environment variable sets a record's date, so patching this one function is
+the only way a test moves the clock.
 """
 
 from __future__ import annotations
 
 import contextlib
 import io
-import re
 from pathlib import Path
 
+import pytest
 from _harness import _git, git_pin_date
 from brief_fixtures import NOW, run_brief
 from brief_support import rows
 from decide_fixtures import (
     ANSWERED,
     BASE,
+    INSTANT_RE,
     NEW_DATE,
     OPTIONS,
     QUESTION,
@@ -47,35 +58,41 @@ from noni import _decide_flags
 from noni import brief as brief_module
 from noni import decide as writer
 
-# The shape a stamped ``date`` must have, and nothing more. A shape rather than a value
-# the test chose: the launched writer reads the wall clock, and an assertion against a
-# wall-clock value is a test that fails at midnight UTC.
-INSTANT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
-
 # The instants of the two in-process runs, one second apart on the suite's pinned day.
 # The census and the brief call beside them is pinned to ``brief_fixtures.NOW``, a later
 # stamp on that same day, so neither reads either record as future-dated.
 EARLIER = f"{NEW_DATE}T09:00:00Z"
 LATER = f"{NEW_DATE}T09:00:01Z"
 
+# The two seconds of a run that straddles UTC midnight: the first reading the whole
+# record must come from, and the second a second reading of the clock would hand back.
+MIDNIGHT_FIRST = "2026-11-15T23:59:59Z"
+MIDNIGHT_SECOND = "2026-11-16T00:00:01Z"
+
 # The id slugs of the records the two in-process runs write.
 FIRST_SLUG = "first"
 SECOND_SLUG = "second"
 
 
-def _written_at(repo, slug: str, monkeypatch, instant: str) -> dict:
+def _written_at(repo: Path, slug: str, monkeypatch: pytest.MonkeyPatch,
+                instant: str) -> dict:
     """Write one record through the real writer with its clock at ``instant``.
 
     The clock is patched where the writer looks the name up -- the helper module's own
     globals -- because :func:`noni._decide_flags.run_instant` is the single seam that
-    decides both the id's day and the field's stamp, and ruling 2 allows no other.
+    decides both the id's day and the field's stamp, and no other seam is allowed.
 
     ``decide.main`` is driven here rather than launched because a launched process reads
-    this process's patched function only if the patch is in its environment, and ruling 2
-    rules that out: no variable sets a record's date. No ``--date`` is passed at all, so
-    the clock is the only answer either half of the record can have. Both runs of a
-    pair are made with ``--no-commit`` so the pair can be landed by one commit (see
+    this process's patched function only if the patch is in its environment, and no
+    variable sets a record's date. No ``--date`` is passed at all, so the clock is the
+    only answer either half of the record can have. Both runs of a pair are made with
+    ``--no-commit`` so the pair can be landed by one commit (see
     :func:`_commit_written`).
+
+    The record's ``date`` is required to equal the instant that was installed before the
+    record is handed back: a patch that never took effect leaves the wall clock's answer
+    here, and a caller would otherwise assert against a value its own patch decided and
+    the writer never read.
     """
     monkeypatch.setattr(_decide_flags, "run_instant", lambda: instant)
     out, err = io.StringIO(), io.StringIO()
@@ -83,7 +100,9 @@ def _written_at(repo, slug: str, monkeypatch, instant: str) -> dict:
         code = writer.main(["--repo", str(repo), "--slug", slug, "--no-commit",
                             *BASE, *QUESTION, *OPTIONS, *ANSWERED])
     assert code == 0, err.getvalue()
-    return _read(repo, f"{instant[:10]}-{slug}")
+    record = _read(repo, f"{instant[:10]}-{slug}")
+    assert record["date"] == instant, f"the patched clock was not read: {record}"
+    return record
 
 
 def _printed_decision_ids(out: str) -> list[str]:
@@ -92,7 +111,56 @@ def _printed_decision_ids(out: str) -> list[str]:
             for line in rows(out, brief_module.RECENT_DECISIONS_HEADER)]
 
 
-def test_a_run_with_no_date_stamps_the_instant_it_ran_at(tmp_path):
+def test_the_unpatched_clock_answers_a_utc_second() -> None:
+    """The truncation to the second is a checked property of the seam, not a promise.
+
+    The launched case below can only assert a shape, so the shape is asserted of the seam
+    itself here: read the real function with nothing patched and require the
+    second-resolution UTC form. A fractional or offset-bearing stamp would let two
+    readings of one instant compare unequal, and the brief's newest-first sort compares
+    the field as text.
+    """
+    assert INSTANT_RE.match(_decide_flags.run_instant()), _decide_flags.run_instant()
+
+
+def test_one_run_reads_the_clock_once_so_id_and_date_share_a_day(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A clock that moves mid-run cannot split one record across two days.
+
+    The patched clock answers the first call with one UTC second and every later call
+    with a second one day later: exactly the shape of a run that straddles UTC midnight.
+    A writer that read the clock twice would name the record on the first day and stamp
+    the field with the second, and both censuses read such a record as clean because
+    each half is a valid date on its own.
+
+    Both assertions are needed. The first says which reading the record came from; the
+    second says the run asked only once, which is what makes the first hold for every
+    host clock rather than for the two seconds this test installed.
+    """
+    repo = _baseline_repo(tmp_path)
+    _pin_identity(repo, "Replay")
+    readings = [MIDNIGHT_FIRST, MIDNIGHT_SECOND]
+    calls: list[str] = []
+
+    def moving_clock() -> str:
+        calls.append(readings[0])
+        return readings.pop(0) if len(readings) > 1 else readings[0]
+
+    monkeypatch.setattr(_decide_flags, "run_instant", moving_clock)
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = writer.main(["--repo", str(repo), "--slug", FIRST_SLUG, "--no-commit",
+                            *BASE, *QUESTION, *OPTIONS, *ANSWERED])
+    assert code == 0, err.getvalue()
+    record = _read(repo, f"{MIDNIGHT_FIRST[:10]}-{FIRST_SLUG}")
+    # Both halves are the first reading: the field is that exact instant, and the id is
+    # that instant's day plus the slug, never the later day a second call would give.
+    assert record["date"] == MIDNIGHT_FIRST, record
+    assert record["id"] == f"{MIDNIGHT_FIRST[:10]}-{FIRST_SLUG}", record
+    assert calls == [MIDNIGHT_FIRST], calls
+
+
+def test_a_run_with_no_date_stamps_the_instant_it_ran_at(tmp_path: Path) -> None:
     """The field is a full UTC second, and the name it sits in stays date-only.
 
     One clock reading answers both halves of the record, so the launched case asserts
@@ -120,7 +188,7 @@ def test_a_run_with_no_date_stamps_the_instant_it_ran_at(tmp_path):
     _assert_both_censuses_clean(repo, "a no-date record stamped to the second")
 
 
-def _commit_written(repo) -> None:
+def _commit_written(repo: Path) -> None:
     """Commit what the in-process runs left staged, under the day their records name.
 
     A run that committed its own record would leave the second one standing to the
@@ -134,7 +202,8 @@ def _commit_written(repo) -> None:
                  "steering: clock", "--only", "--", "noni/decisions")
 
 
-def test_two_runs_of_one_instant_keep_the_id_tiebreak(tmp_path, monkeypatch):
+def test_two_runs_of_one_instant_keep_the_id_tiebreak(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A clock read at the same second does not make one record of two runs.
 
     The companion to the ordering fix: stamping to the second only orders records that
@@ -156,7 +225,8 @@ def test_two_runs_of_one_instant_keep_the_id_tiebreak(tmp_path, monkeypatch):
     assert printed == [two["id"], one["id"]]
 
 
-def test_the_record_written_later_prints_first(tmp_path, monkeypatch):
+def test_the_record_written_later_prints_first(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The ordering the instant buys, asserted where the instant is published.
 
     Two real writes by the real writer, the clock moved between them by the one function

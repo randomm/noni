@@ -438,7 +438,7 @@ def source_provenance(issue: int | None,
     return {"issue_number": issue, "comment_id": comment}, None
 
 
-def record_body(*, record_id: str, date_part: str, date_stamp: str,
+def record_body(*, record_id: str, date_stamp: str,
                 asked_by: str, questions: list[dict],
                 by: str, scope: str, unanswered: list[str],
                 supersedes: str | None, source: dict | None, decided_by: str | None,
@@ -453,12 +453,12 @@ def record_body(*, record_id: str, date_part: str, date_stamp: str,
     told, not as a claim about the commit.
 
     The two date answers arrive apart because the writer's caller holds them apart:
-    ``date_part`` is the day the id and the filename are built from, and
+    the day the id and the filename are built from never crosses into the record, and
     ``date_stamp`` is the instant the ``date`` field carries -- already a full
-    ISO-8601 stamp, which the writer's own flag rules produced and nothing here
-    restates. The record's ``date`` is never derived from its id, so a record whose
-    filename names one day and whose field names another is the census's to report,
-    not this function's to invent.
+    ISO-8601 stamp, which the writer's own flag rules produced from one clock reading
+    and nothing here restates. The record's ``date`` is never derived from its id, so a
+    record whose filename names one day and whose field names another is the census's to
+    report, not this function's to invent.
     """
     record: dict = {
         "id": record_id,

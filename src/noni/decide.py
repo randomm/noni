@@ -461,7 +461,7 @@ def main(argv: list[str] | None = None) -> int:
         record_paths, target_paths = _writer.target_paths_of(target, record_path)
 
     # --- the writes: every check above has passed --------------------------
-    record = _schema.record_body(record_id=record_id, date_part=date_part,
+    record = _schema.record_body(record_id=record_id,
                                  date_stamp=stamp,
                                  asked_by=args.asked_by, questions=built, by=by,
                                  scope=args.scope, unanswered=unanswered,

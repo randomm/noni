@@ -21,9 +21,10 @@ handed in as arguments, so a shape the census reports cannot be accepted here. T
 keeps its printer, usage code, two patterns and schema calls; nothing imports decide.py.
 
 The date arrives as the pair the record needs: the day the id is built from, and the
-instant the ``date`` field carries, both read once by :func:`run_instant` -- the system
-clock, which this module reads and never questions -- so a run cannot file a record whose
-name and field fall on either side of midnight.
+instant the ``date`` field carries. :func:`date_pair` reads the system clock once for a
+run with no ``--date`` and cuts both halves from that one answer -- the clock is never
+questioned and never read twice -- so a run cannot file a record whose name and field
+fall on either side of midnight.
 
 The module holds decide's path guards too, the other half of what must be refused before a
 record is written. :mod:`noni._path_kind` owns the ``lstat`` question -- is every directory
@@ -120,40 +121,51 @@ class RecordFlags(Protocol):
 def run_instant() -> str:
     """This run's UTC instant as ``YYYY-MM-DDTHH:MM:SSZ``.
 
-    The wall clock read through :func:`noni.orderstate.now_iso`, the parser the ordering
+    Reads the wall clock through :func:`noni.orderstate.now_iso`, the parser the ordering
     writers' ``--now`` flag already goes through, so every timestamp noni writes has one
     owner for its shape: second resolution, no sub-second carry to make two stamps of one
     instant compare unequal. It takes no argument, reads no environment and has no failure
     to report: a system clock is not an input this writer can be handed a malformed one
-    of, so there is no refusal here to design around and no fallback to invent.
+    of, so there is no refusal here to design around and no fallback to invent. A run asks
+    it at most once, from :func:`date_pair`, which cuts both halves of the record's date
+    from that single answer.
     """
     return now_iso(None)[0]
 
 
-def date_stamp(date: str | None) -> str:
-    """The value the record's ``date`` field carries: ``--date`` at UTC midnight, or
-    the run's instant.
+def date_pair(date: str | None) -> tuple[str, str]:
+    """The two date answers of one run: ``(day, stamp)``.
 
-    An explicit ``--date`` is a day the caller named and nothing more, so it is stamped at
-    midnight of that day. With no flag the record carries :func:`run_instant` -- the same
-    reading :func:`parse_date` took the id's day from, so name and field cannot fall on
-    either side of midnight.
+    The single place a no-``--date`` run reads the clock: :func:`run_instant` is called
+    once here and both halves are cut from that one answer -- the day the id is built
+    from is the stamp's first ten characters, so name and field cannot fall on either
+    side of midnight. An explicit ``--date`` is a day the caller named and nothing more,
+    so it is its own day and it stamps at midnight of that day.
     """
-    return f"{date}T00:00:00Z" if date is not None else run_instant()
+    if date is not None:
+        # A caller that names a day has said what the record is dated, so the clock is
+        # not read at all: the day stands and the stamp is midnight of that day.
+        return date, f"{date}T00:00:00Z"
+    instant = run_instant()
+    return instant[:10], instant
 
 
 def parse_date(date: str | None, *, fail: Fail,
-               exit_usage: int) -> tuple[str | None, int | None]:
-    """The date part of the record id, or the exit code of the refusal printed.
+               exit_usage: int) -> tuple[tuple[str, str] | None, int | None]:
+    """The record's ``(day, stamp)`` pair, or the exit code of the refusal printed.
 
-    ``None`` for the flag's absence means 'today, UTC', and today is taken from the same
-    instant the record's ``date`` is stamped with rather than from a second clock read:
-    one reading answers both, so a run cannot file a record whose id names one day and
-    whose field names another around midnight. The clock is not a flag, so nothing a
-    caller passes can make this half refuse: the refusals here are the two the flag has.
+    The pair comes from :func:`date_pair`, which reads the clock once for it, so a run
+    cannot file a record whose id names one day and whose field names another around
+    midnight. ``None`` for the flag's absence means 'this run, UTC' and is not a refusal
+    the flag can earn: the clock is not a flag, so nothing a caller passes can make this
+    half refuse, and the refusals here are the two the flag's own shape has. The return
+    shape (a value or the code the caller's printer already printed) is the same one
+    every rule here keeps.
     """
     if date is None:
-        return run_instant()[:10], None
+        # The flag's absence is not a refusal the flag can earn, and the calendar has no
+        # opinion about a day nobody named: the pair is the run's own, one clock reading.
+        return date_pair(None), None
     if not DATE_FLAG_RE.fullmatch(date):
         return None, fail(exit_usage, f"--date {date!r} is not YYYY-MM-DD",
                           "pass the record date as --date 2026-10-26")
@@ -162,7 +174,7 @@ def parse_date(date: str | None, *, fail: Fail,
     except ValueError:
         return None, fail(exit_usage, f"--date {date!r} is not a real calendar date",
                           "pass a date that exists, e.g. --date 2026-10-26")
-    return date, None
+    return date_pair(date), None
 
 
 def parse_questions(values: list[str], *, fail: Fail,
@@ -217,8 +229,8 @@ def build_record_flags(args: RecordFlags, *, fail: Fail, exit_usage: int,
     ``date_part`` is the day the id and filename are built from, ``date_stamp`` the
     instant the ``date`` field carries: they travel apart on purpose, the name staying
     ``<day>-<slug>`` while the field keeps the time of day, and both come from the one
-    reading :func:`parse_date` took -- so a ``--date`` run stamps midnight of the day it
-    named, a run with no flag stamps :func:`run_instant`.
+    reading :func:`date_pair` took of :func:`run_instant` -- so a ``--date`` run stamps
+    midnight of the day it named, a run with no flag stamps the instant it ran.
 
     The order is the order the refusals need: slug first (it decides the filename, and so
     what the census accepts as a plain path segment), then date, then questions --
@@ -233,9 +245,10 @@ def build_record_flags(args: RecordFlags, *, fail: Fail, exit_usage: int,
                           slug_re=slug_re)
     if refusal is not None:
         return refusal
-    date_part, refused = parse_date(args.date, fail=fail, exit_usage=exit_usage)
+    date_pair_value, refused = parse_date(args.date, fail=fail, exit_usage=exit_usage)
     if refused is not None:
         return refused
+    date_part, date_stamp_value = date_pair_value
     questions, refused = parse_questions(args.question, fail=fail,
                                         exit_usage=exit_usage)
     if refused is not None:
@@ -279,7 +292,7 @@ def build_record_flags(args: RecordFlags, *, fail: Fail, exit_usage: int,
             return fail(exit_usage,
                         f"--supersedes {args.supersedes!r} is not a record id",
                         "a record id is YYYY-MM-DD-<slug>, e.g. 2026-10-01-steer-order")
-    return date_part, date_stamp(args.date), built, unanswered
+    return date_part, date_stamp_value, built, unanswered
 
 
 def refuse_slug(slug: str, *, fail: Fail, exit_usage: int,

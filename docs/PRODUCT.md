@@ -227,7 +227,9 @@ not a directory, or an `--now` that is not a UTC instant), with the report on
 stdout and the refusal on stderr so a caller can tell the two apart by stream.
 The page is bounded: at most 20 lines of purpose, ten order entries, five recent
 decisions and 200 lines in all, with the recent decisions the first thing the budget
-withholds and the order entries next, so the head of the order outlasts them.
+withholds and the order entries next, so the head of the order outlasts them. Records
+of one day are ordered by the instant each one recorded, so the one written last
+prints first, and records whose instants are equal fall back to the record id.
 
 Metrics are derived, never self-reported: the census reads git history and
 these files. An adapter may additionally join its own run analytics to noni

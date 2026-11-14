@@ -116,7 +116,7 @@ fields (in order), plus the optional fields (`source`, `decided_by`,
 | field | type | meaning |
 |---|---|---|
 | `id` | string | stable identifier, `YYYY-MM-DD-<slug>` |
-| `date` | string | UTC ISO-8601, from commit metadata at write time |
+| `date` | string | UTC ISO-8601, stamped at write time: `--date` at UTC midnight, or this run's UTC instant to the second when no `--date` names the day |
 | `asked_by` | string | the agent role or session that asked |
 | `questions` | array | 1-4 question objects, each `{id, text, options[], answer}` |
 | `by` | string | git author of the record's commit (forgeable; see below) |

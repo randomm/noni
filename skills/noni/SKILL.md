@@ -35,17 +35,16 @@ hold) `noni/direction/` and `noni/decisions/`.
 
 ## How to read the screen's four parts
 
-Two lines need a word before you read them as faults. `dropped: N line(s)` says the page
-withheld N lines of that block to fit its 200-line budget, so the block is longer than
-what you see: the order's head and the operator's prose stay, the oldest decisions go.
+Two lines need a word before you read them as faults. In the recent decisions block
+`dropped: N line(s)` usually means the block showed its five newest records and left
+the rest: the page's 200-line budget spends the recent decisions first, so a day with
+more than five decisions prints five and counts the rest. A record is a plain JSON
+file at `<state root>/noni/decisions/<record id>.json`, and reading it is safe: it
+shows the fields this page's one line of them leaves out.
 `ordering-closed not checked` on the verdict line says the screen does not know whether
 the ordered issues are open, because no issue state reached the census it runs: treat the
 order as possibly stale until you run the census with `--issue-state`, which the census
 skill explains.
-
-A decision row points at a record you can read yourself: a plain JSON file at
-`<state root>/noni/decisions/<record id>.json`. Reading it is safe and shows fields this
-page's one line of them leaves out.
 
 - **Part one, Purpose.** The standing intent's own prose, clipped to a page: what the
   project is for and the principles it will not trade. The direction skill is the
@@ -57,7 +56,8 @@ page's one line of them leaves out.
 - **Part three, Recent decisions.** The five most recent live records, newest first,
   each as its question, its answer, and the reason when the operator gave one. A record
   that asked one question on purpose prints its statement and reason instead. Superseded
-  records never appear here.
+  records never appear here. Within one day the records come out in the order they were
+  written: a record dated later in the day prints first.
 - **Part four, Summary.** The totals, echoed verbatim from `noni census --json`: the
   count of live records beside the count of open ordered entries, and nothing else the
   brief decided on its own.

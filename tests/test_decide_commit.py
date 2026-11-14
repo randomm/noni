@@ -21,10 +21,12 @@ from decide_fixtures import (
     NEW_ID,
     OPTIONS,
     QUESTION,
+    RUN_INSTANT,
     _assert_both_censuses_clean,
     _baseline_repo,
     _census_py,
     _census_sh,
+    _clock_env,
     _commit_tree,
     _decide,
     _forced_commit_failure,
@@ -254,7 +256,11 @@ def test_a_supersede_without_a_date_writes_todays_record(tmp_path):
 
     The run is made with --no-commit so the fixture can name the day it commits
     under: a plain commit would carry the wall-clock day the censuses cannot be
-    pinned to, which is every census call in this suite's rule."""
+    pinned to, which is every census call in this suite's rule.
+
+    The instant the writer stamps comes from the clock seam, not the host: the seam
+    carries the day the id is expected to name, so the day asserted here is the day
+    the run was driven at rather than the day the suite happened to run on."""
     repo = _baseline_repo(tmp_path)
     _pin_identity(repo, "Replay")
     proc = run_decide(
@@ -262,6 +268,7 @@ def test_a_supersede_without_a_date_writes_todays_record(tmp_path):
         "--slug", "scheduler", *BASE, *QUESTION, *OPTIONS, *ANSWERED,
         "--supersedes", BASELINE_ID,
         "--no-commit",
+        env=_clock_env(),
     )
     assert proc.returncode == 0, proc.stderr
     # The new id comes off the writer's own `wrote` line (the record is named
@@ -274,6 +281,9 @@ def test_a_supersede_without_a_date_writes_todays_record(tmp_path):
     assert new_id.endswith("-scheduler"), proc.stdout
     assert (repo / "noni" / "decisions" / f"{new_id}.json").is_file()
     assert _read(repo, new_id)["supersedes"] == BASELINE_ID
+    # The field is the seam's instant and the id is the same day, date-only.
+    assert _read(repo, new_id)["date"] == RUN_INSTANT
+    assert new_id == f"{RUN_INSTANT[:10]}-scheduler"
     assert _read(repo, BASELINE_ID)["status"] == "superseded"
     _git(repo, "add", "-A", "noni/decisions")
     git_pin_date(repo, f"{new_id[:10]}T00:00:00Z", "commit", "-q", "-m", "handoff")

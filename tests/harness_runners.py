@@ -48,8 +48,16 @@ def subprocess_env(base: dict | None = None) -> dict:
     the console route would differ whenever the harness runs under a different
     width than the caller's shell (or no width at all, which is what a piped
     test run gives).
+
+    ``NONI_DECIDE_NOW`` is dropped unless the caller handed its own value. It is the
+    decide writer's clock seam, so an inherited value would stamp records with the
+    host's instant in every launched run and quietly move the two no-``--date``
+    writer tests off the clock they think they set -- the same reason the harness
+    pins ``COLUMNS`` rather than trusting the caller's shell.
     """
     env = dict(os.environ if base is None else base)
+    if base is None or "NONI_DECIDE_NOW" not in base:
+        env.pop("NONI_DECIDE_NOW", None)
     env["COVERAGE_PROCESS_START"] = COVERAGE_PROCESS_START
     env["COLUMNS"] = HELP_COLUMNS
     inherited = env.get("PYTHONPATH")

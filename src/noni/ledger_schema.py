@@ -438,7 +438,8 @@ def source_provenance(issue: int | None,
     return {"issue_number": issue, "comment_id": comment}, None
 
 
-def record_body(*, record_id: str, date_part: str, asked_by: str, questions: list[dict],
+def record_body(*, record_id: str, date_part: str, date_stamp: str,
+                asked_by: str, questions: list[dict],
                 by: str, scope: str, unanswered: list[str],
                 supersedes: str | None, source: dict | None, decided_by: str | None,
                 on_behalf_of: str | None, single_option: bool,
@@ -450,10 +451,18 @@ def record_body(*, record_id: str, date_part: str, asked_by: str, questions: lis
     the commit author and is never overridden: the census reports ``by`` from git,
     so ``decided_by`` and ``on_behalf_of`` sit beside it as what the writer was
     told, not as a claim about the commit.
+
+    The two date answers arrive apart because the writer's caller holds them apart:
+    ``date_part`` is the day the id and the filename are built from, and
+    ``date_stamp`` is the instant the ``date`` field carries -- already a full
+    ISO-8601 stamp, which the writer's own flag rules produced and nothing here
+    restates. The record's ``date`` is never derived from its id, so a record whose
+    filename names one day and whose field names another is the census's to report,
+    not this function's to invent.
     """
     record: dict = {
         "id": record_id,
-        "date": f"{date_part}T00:00:00Z",
+        "date": date_stamp,
         "asked_by": asked_by,
         "questions": questions,
         "by": by,

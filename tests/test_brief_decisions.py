@@ -302,6 +302,28 @@ def test_brief_ties_in_the_record_date_break_by_id(tmp_path: Path) -> None:
         "2026-10-25-charlie", "2026-10-25-bravo", "2026-10-25-alpha"]
 
 
+def test_brief_records_of_one_day_keep_their_order_of_writing(tmp_path: Path) -> None:
+    """Within one day the block still has an order, and it is the time of day.
+
+    The regression this pins: a no-``--date`` writer used to stamp every record of a
+    day at ``T00:00:00Z``, so three decisions filed hours apart were a three-way tie
+    and the block's newest-first claim ordered them by id alone. Now each carries the
+    instant it was written at, so the one written last prints first -- and the id
+    tiebreak stays what it was for records that genuinely share an instant.
+    """
+    root = plant_brief_tree(tmp_path)
+    ledger_dir(root).joinpath(f"{RECORD_ID}.json").unlink()
+    day = "2026-10-25"
+    for hour, name in (("08", "alpha"), ("14", "bravo"), ("21", "charlie")):
+        write_record(root, record_document(
+            f"{day}-{name}", f"{day}T{hour}:30:00Z",
+            question=f"Ship {name} first?", answer=name))
+    body = rows(run_brief(root, "--now", NOW)[1],
+                brief_module.RECENT_DECISIONS_HEADER)
+    assert [line.split(":", 1)[0] for line in body] == [
+        f"{day}-charlie", f"{day}-bravo", f"{day}-alpha"]
+
+
 def test_brief_a_reason_that_scrubs_to_nothing_prints_no_mark() -> None:
     """A reason that survives its callers' checks and empties under the page's scrub is no reason.
 

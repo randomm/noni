@@ -43,12 +43,6 @@ BASELINE_ID = "2026-10-01-baseline"
 BASELINE_DATE = "2026-10-01T10:00:00Z"
 NEW_DATE = "2026-10-26"
 NEW_ID = f"{NEW_DATE}-scheduler"
-# The instant a no-``--date`` decide run is driven at, through the writer's clock
-# seam (``noni._decide_flags.CLOCK_ENV_VAR``): the same day ``NEW_DATE`` names, so the id the
-# writer builds and the instant it stamps are one pinned answer. A test that runs
-# decide with no ``--date`` and no seam set reads the host wall clock, which is the
-# shape the two no-date writer tests had before the seam existed.
-RUN_INSTANT = f"{NEW_DATE}T12:00:00Z"
 # A day beside NEW_DATE, for the supersede tests that name an explicit date other
 # than the baseline's or the run's own: a new constant rather than a reassigned
 # NEW_DATE, so no other decide test moves off its pinned day.
@@ -77,18 +71,6 @@ def _record_path(repo: Path, record_id: str) -> Path:
 
 def _read(repo: Path, record_id: str) -> dict:
     return json.loads(_record_path(repo, record_id).read_text(encoding="utf-8"))
-
-
-def _clock_env(instant: str | None = RUN_INSTANT) -> dict:
-    """The harness git identity with the writer's clock pinned to ``instant``.
-
-    The launched writer reads its no-``--date`` instant from the environment (see
-    ``noni._decide_flags.CLOCK_ENV_VAR``), so a test that wants a record stamped at a stated
-    second passes this as its ``env``. ``None`` pins the seam to the empty string,
-    which is the shape ``noni._decide_flags.run_instant`` refuses: that is how a test reaches
-    the refusal without the product growing a flag for it.
-    """
-    return {**_identity_env(), "NONI_DECIDE_NOW": instant or ""}
 
 
 def _run(repo: Path, *args: str, env: dict | None = None) -> subprocess.CompletedProcess[str]:

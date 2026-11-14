@@ -4,6 +4,7 @@ Extracted from the decide writer suite: the git side of the write, the pinned
 author and date, and the refusals before a commit is attempted."""
 
 import json
+import re
 
 from _harness import (
     _git,
@@ -21,12 +22,10 @@ from decide_fixtures import (
     NEW_ID,
     OPTIONS,
     QUESTION,
-    RUN_INSTANT,
     _assert_both_censuses_clean,
     _baseline_repo,
     _census_py,
     _census_sh,
-    _clock_env,
     _commit_tree,
     _decide,
     _forced_commit_failure,
@@ -38,6 +37,11 @@ from decide_fixtures import (
     _record_path,
     _run,
 )
+
+# The shape a no-``--date`` run's stamp must have, for the one test here that runs
+# with no ``--date`` at all. A shape rather than a value: that run reads the wall
+# clock, which no test may name and still pass.
+INSTANT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 
 def test_forced_commit_failure_rolls_both_paths_back(tmp_path):
@@ -258,9 +262,11 @@ def test_a_supersede_without_a_date_writes_todays_record(tmp_path):
     under: a plain commit would carry the wall-clock day the censuses cannot be
     pinned to, which is every census call in this suite's rule.
 
-    The instant the writer stamps comes from the clock seam, not the host: the seam
-    carries the day the id is expected to name, so the day asserted here is the day
-    the run was driven at rather than the day the suite happened to run on."""
+    Nothing here names the day. The writer reads it from its own clock, so what is
+    asserted is the SHAPE of the stamp, the relation between the two halves of the
+    record (the id is the field's day plus the slug), and a commit date the fixture
+    derives from the day the written record names -- never a constant the wall clock
+    could cross out from under it."""
     repo = _baseline_repo(tmp_path)
     _pin_identity(repo, "Replay")
     proc = run_decide(
@@ -268,7 +274,6 @@ def test_a_supersede_without_a_date_writes_todays_record(tmp_path):
         "--slug", "scheduler", *BASE, *QUESTION, *OPTIONS, *ANSWERED,
         "--supersedes", BASELINE_ID,
         "--no-commit",
-        env=_clock_env(),
     )
     assert proc.returncode == 0, proc.stderr
     # The new id comes off the writer's own `wrote` line (the record is named
@@ -281,12 +286,17 @@ def test_a_supersede_without_a_date_writes_todays_record(tmp_path):
     assert new_id.endswith("-scheduler"), proc.stdout
     assert (repo / "noni" / "decisions" / f"{new_id}.json").is_file()
     assert _read(repo, new_id)["supersedes"] == BASELINE_ID
-    # The field is the seam's instant and the id is the same day, date-only.
-    assert _read(repo, new_id)["date"] == RUN_INSTANT
-    assert new_id == f"{RUN_INSTANT[:10]}-scheduler"
+    # The field is a full UTC second and the id is that second's day, date-only:
+    # one reading, checked against itself rather than against the host clock.
+    date = _read(repo, new_id)["date"]
+    assert INSTANT_RE.match(date), date
+    assert new_id == f"{date[:10]}-scheduler"
     assert _read(repo, BASELINE_ID)["status"] == "superseded"
     _git(repo, "add", "-A", "noni/decisions")
-    git_pin_date(repo, f"{new_id[:10]}T00:00:00Z", "commit", "-q", "-m", "handoff")
+    # The pinned commit date is the day this very record names, so a run that
+    # straddles midnight still files its own handoff under the day the censuses
+    # read the record as carrying.
+    git_pin_date(repo, f"{date[:10]}T00:00:00Z", "commit", "-q", "-m", "handoff")
     _assert_both_censuses_clean(repo, "committing a no-date supersede by hand")
 
 

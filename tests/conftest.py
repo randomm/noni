@@ -94,10 +94,6 @@ NONI_ENV_VARS = (
     "GIT_COMMITTER_EMAIL",
     "NONI_SCRUB_DENYLIST",
     "NONI_SCRUB_ALLOWLIST",
-    # The decide writer's clock seam. A value left in the developer's shell would
-    # stamp every no-``--date`` record in the suite with the host's instant rather
-    # than the one the test named, so no verdict may turn on it unless the test set it.
-    "NONI_DECIDE_NOW",
 )
 
 # Make the package importable from test files whether or not it was installed:

@@ -21,8 +21,9 @@ handed in as arguments, so a shape the census reports cannot be accepted here. T
 keeps its printer, usage code, two patterns and schema calls; nothing imports decide.py.
 
 The date arrives as the pair the record needs: the day the id is built from, and the
-instant the ``date`` field carries, both read once by :func:`run_instant` so a run
-cannot file a record whose name and field fall on either side of midnight.
+instant the ``date`` field carries, both read once by :func:`run_instant` -- the system
+clock, which this module reads and never questions -- so a run cannot file a record whose
+name and field fall on either side of midnight.
 
 The module holds decide's path guards too, the other half of what must be refused before a
 record is written. :mod:`noni._path_kind` owns the ``lstat`` question -- is every directory
@@ -56,7 +57,6 @@ a guard reaching for its own ``lstat`` would read one path twice, the failure
 
 from __future__ import annotations
 
-import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -112,40 +112,32 @@ class RecordFlags(Protocol):
     supersedes: str | None
 
 
-# The seam a test moves a no-``--date`` run's clock with, and the only name this module
-# reads from the environment. A variable and not a flag: a flag would be a second way
-# to say what ``--date`` says, and a flag is added only where a rule needs one. The
-# ``NONI_`` prefix is the writer's other test seam's, so nothing sets it by accident.
-CLOCK_ENV_VAR = "NONI_DECIDE_NOW"
-
-
+# The seam a no-``--date`` run's stamp comes from: the one function this module reads
+# the time from, and the only name it reads no argument for. No flag and no environment
+# variable sits in front of it -- a variable a caller could set is a way to backdate a
+# record, and a ledger dated by whoever ran the command is not a ledger. Tests move it
+# by patching this function, never by setting something.
 def run_instant() -> str:
-    """This run's UTC instant as ``YYYY-MM-DDTHH:MM:SSZ``, or ``""`` for no instant.
+    """This run's UTC instant as ``YYYY-MM-DDTHH:MM:SSZ``.
 
-    Unset, the answer is the wall clock read through :func:`noni.orderstate.now_iso`, the
-    parser the ordering writers' ``--now`` flag already goes through, so every timestamp
-    noni writes has one owner for its shape: second resolution, no sub-second carry to
-    make two stamps of one instant compare unequal. Set, the answer is that value by the
-    same rule -- a UTC instant, normalised. A value that is no UTC instant returns the
-    empty string rather than a fallback: a record dated ``T00:00:00Z`` after a clock the
-    writer could not read would claim a time it never observed (the fail-closed rule). The
-    empty string is this rule's only refusal; :func:`parse_date` words it and codes it.
+    The wall clock read through :func:`noni.orderstate.now_iso`, the parser the ordering
+    writers' ``--now`` flag already goes through, so every timestamp noni writes has one
+    owner for its shape: second resolution, no sub-second carry to make two stamps of one
+    instant compare unequal. It takes no argument, reads no environment and has no failure
+    to report: a system clock is not an input this writer can be handed a malformed one
+    of, so there is no refusal here to design around and no fallback to invent.
     """
-    raw = os.environ.get(CLOCK_ENV_VAR)
-    if raw is None:
-        return now_iso(None)[0]
-    stamp, problem = now_iso(raw)
-    return "" if problem else stamp
+    return now_iso(None)[0]
 
 
 def date_stamp(date: str | None) -> str:
     """The value the record's ``date`` field carries: ``--date`` at UTC midnight, or
-    the clock seam's instant.
+    the run's instant.
 
     An explicit ``--date`` is a day the caller named and nothing more, so it is stamped at
     midnight of that day. With no flag the record carries :func:`run_instant` -- the same
     reading :func:`parse_date` took the id's day from, so name and field cannot fall on
-    either side of midnight. It answers ``""`` only for a run that function refused.
+    either side of midnight.
     """
     return f"{date}T00:00:00Z" if date is not None else run_instant()
 
@@ -157,16 +149,11 @@ def parse_date(date: str | None, *, fail: Fail,
     ``None`` for the flag's absence means 'today, UTC', and today is taken from the same
     instant the record's ``date`` is stamped with rather than from a second clock read:
     one reading answers both, so a run cannot file a record whose id names one day and
-    whose field names another around midnight. An instant the seam cannot read is refused
-    here -- ahead of the git probes and any write -- not dated at a midnight never seen.
+    whose field names another around midnight. The clock is not a flag, so nothing a
+    caller passes can make this half refuse: the refusals here are the two the flag has.
     """
     if date is None:
-        instant = run_instant()
-        if not instant:
-            return None, fail(exit_usage, "this run's clock named no UTC instant",
-                              f"unset {CLOCK_ENV_VAR}, or name one there as "
-                              "2026-10-26T09:10:00Z")
-        return instant[:10], None
+        return run_instant()[:10], None
     if not DATE_FLAG_RE.fullmatch(date):
         return None, fail(exit_usage, f"--date {date!r} is not YYYY-MM-DD",
                           "pass the record date as --date 2026-10-26")

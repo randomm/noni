@@ -4,6 +4,7 @@ Extracted from the decide writer suite: the supersede path, the record it writes
 and refuses to write, and what the census says about the pair."""
 
 import json
+import re
 import sys
 
 from _harness import (
@@ -20,10 +21,8 @@ from decide_fixtures import (
     OPTIONS,
     OTHER_DATE,
     QUESTION,
-    RUN_INSTANT,
     _assert_both_censuses_clean,
     _baseline_repo,
-    _clock_env,
     _commit_tree,
     _decide,
     _head_paths,
@@ -34,6 +33,11 @@ from decide_fixtures import (
     _record_path,
     _run,
 )
+
+# The shape a no-``--date`` run's stamp must have, for the one test here that runs
+# with no ``--date`` at all. A shape rather than a value: that run reads the wall
+# clock, which no test may name and still pass.
+INSTANT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 
 def _between(text: str, start: str, end: str | None = None) -> str:
@@ -286,16 +290,17 @@ def test_a_supersede_without_a_date_takes_todays_day(tmp_path):
     """Without --date a supersede is dated as any other record is, by the run's
     own UTC day, and lands beside the target it flips.
 
-    The run is driven at the clock seam, so the day the id names is the day the test
-    chose and the ``date`` field is the seam's own instant -- neither comes from the
-    host wall clock."""
+    Nothing here names the day: the writer reads it from its own clock. So the
+    assertions are the SHAPE of the stamp and the relation between the two halves of
+    the record -- the field is a full second, the id is that second's day plus the
+    slug -- and never an exact wall-clock value, which a run across midnight would
+    answer differently."""
     repo = _baseline_repo(tmp_path)
     _pin_identity(repo, "Replay")
     proc = run_decide(
         repo,
         "--slug", "scheduler", *BASE, *QUESTION, *OPTIONS, *ANSWERED,
         "--supersedes", BASELINE_ID,
-        env=_clock_env(),
     )
     assert proc.returncode == 0, proc.stderr
     # The day the writer stamped is read off its own `wrote` line rather than
@@ -308,8 +313,9 @@ def test_a_supersede_without_a_date_takes_todays_day(tmp_path):
     assert new_rel.endswith("-scheduler.json"), proc.stdout
     new_id = new_rel[: -len(".json")]
     assert _read(repo, new_id)["supersedes"] == BASELINE_ID
-    assert _read(repo, new_id)["date"] == RUN_INSTANT
-    assert new_id == f"{RUN_INSTANT[:10]}-scheduler"
+    date = _read(repo, new_id)["date"]
+    assert INSTANT_RE.match(date), date
+    assert new_id == f"{date[:10]}-scheduler"
     assert _read(repo, BASELINE_ID)["status"] == "superseded"
     assert _porcelain(repo, "noni/decisions") == ""
     _assert_both_censuses_clean(repo, "a supersede with no --date")

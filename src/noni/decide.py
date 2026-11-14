@@ -217,7 +217,7 @@ def _pair_flags_to_questions(flag: str, pairs: list[tuple[str, str]],
 # hands the run: the two date answers (day for the name, instant for the field), the
 # questions and the ids left open.
 RecordName = tuple[str, Path, str, list[str], list[str]]
-_Checked = tuple[tuple[str, str], list[dict], list[str]] | int
+_Checked = tuple[str, str, list[dict], list[str]] | int
 
 
 def _record_name(repo: Path, ledger: Path, date_part: str, slug: str) -> RecordName:

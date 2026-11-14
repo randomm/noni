@@ -56,8 +56,8 @@ skill explains.
 - **Part three, Recent decisions.** The five most recent live records, newest first,
   each as its question, its answer, and the reason when the operator gave one. A record
   that asked one question on purpose prints its statement and reason instead. Superseded
-  records never appear here. Within one day the records come out in the order they were
-  written: a record dated later in the day prints first.
+  records never appear here. A record with no `--date` carries the instant of its run, so the last
+  written prints first; a `--date` run stamps midnight; equal instants fall back to the record id.
 - **Part four, Summary.** The totals, echoed verbatim from `noni census --json`: the
   count of live records beside the count of open ordered entries, and nothing else the
   brief decided on its own.

@@ -456,9 +456,9 @@ def record_body(*, record_id: str, date_stamp: str,
     the day the id and the filename are built from never crosses into the record, and
     ``date_stamp`` is the instant the ``date`` field carries -- already a full
     ISO-8601 stamp, which the writer's own flag rules produced from one clock reading
-    and nothing here restates. The record's ``date`` is never derived from its id, so a
-    record whose filename names one day and whose field names another is the census's to
-    report, not this function's to invent.
+    and nothing here restates. The record's ``date`` is never derived from its id: it is
+    the instant the caller's flag rules produced. Nothing here or in the census compares
+    its day with the id's; the writer's single clock reading is what keeps them equal.
     """
     record: dict = {
         "id": record_id,

@@ -28,7 +28,11 @@ def test_the_helper_carries_no_copy_of_decides_usage_code_or_date_shape():
         "the helper restates decide's usage exit code instead of taking it"
     assert not hasattr(_decide_flags, "_fail"), \
         "the helper owns a printer of its own instead of the caller's"
-    assert _decide_flags.DATE_FLAG_RE.pattern == r"^\d{4}-\d{2}-\d{2}$", \
+    # Digits are spelled as a class, not ``\\d``: ``\\d`` matches Unicode decimal digits,
+    # so an Arabic-Indic --date passed the shape and ``strptime`` read it as numbers,
+    # and the record reached the ledger under a filename the census calls not a plain
+    # path segment. Same choice ``SLUG_DATE_PREFIX`` already makes in this module.
+    assert _decide_flags.DATE_FLAG_RE.pattern == r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$", \
         _decide_flags.DATE_FLAG_RE.pattern
     source = (REPO / "src" / "noni" / "decide.py").read_text(encoding="utf-8")
     assert not hasattr(decide, "DATE_FLAG_RE"), \
@@ -54,6 +58,16 @@ def test_the_helper_refuses_through_the_callers_printer_and_code():
                                     exit_usage=decide.EXIT_USAGE)[1] == decide.EXIT_USAGE
     assert _decide_flags.parse_date("2026-02-30", fail=fail,
                                     exit_usage=decide.EXIT_USAGE)[1] == decide.EXIT_USAGE
+    # Each non-ASCII digit form is refused by the shape, not the calendar: the
+    # all-Unicode date and the mixed one both reached ``strptime`` before, and a
+    # superscript digit is refused whatever the route.
+    for bad_date in ("\u0662\u0660\u0662\u0666-11-15", "202\u0666-11-15",
+                     "\u00b2\u00b2\u00b2\u00b2-11-15"):
+        assert _decide_flags.parse_date(bad_date, fail=fail,
+                                        exit_usage=decide.EXIT_USAGE) == (
+            None, decide.EXIT_USAGE), bad_date
+        assert calls[-1][1].startswith(f"--date {bad_date!r} is not YYYY-MM-DD"), (
+            f"{bad_date!r}: {calls[-1]}")
     assert _decide_flags.parse_questions([], fail=fail,
                                          exit_usage=decide.EXIT_USAGE)[1] == decide.EXIT_USAGE
     assert _decide_flags.parse_questions(["q1"], fail=fail,

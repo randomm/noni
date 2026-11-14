@@ -27,6 +27,10 @@ the entry points are the thing that has to agree.
 And because a refusal that wrote a file before refusing would have lost the
 point, every refusal run asserts an untouched tree: no record at either the
 doubled or the corrected path, and an empty ``git status --porcelain``.
+
+The ``--date`` half of the same digit rule lives in
+``test_decide_date_non_ascii_digits.py``, which imports the Unicode shapes and the
+tree assertions below; this module is the ``--slug`` half.
 """
 
 from __future__ import annotations
@@ -89,6 +93,20 @@ ACCEPTED = (
 # test_the_rule_is_shape_only_and_is_shared_by_both_validators, which reads it off
 # the shipped file).
 PREFIX = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}-")
+
+# The non-ASCII forms of a YYYY-MM-DD date, imported by
+# ``test_decide_date_non_ascii_digits.py``, which owns the --date half of this rule.
+# Each one read as a real day at baseline: ``\\d`` matched them and ``datetime.strptime``
+# converted them, so the run wrote a record whose filename both censuses reported as
+# not a plain path segment. The list is the three kinds of digit: an all-Unicode decimal
+# form (Arabic-Indic), a mixed ASCII/Unicode form, and a non-decimal form (superscript).
+UNICODE_DATES = (
+    "\u0662\u0660\u0662\u0666-11-15",  # Arabic-Indic 2026-11-15
+    "202\u0666-11-15",                # one mixed ASCII/Unicode year
+    "\u00b2\u00b2\u00b2\u00b2-11-15",  # superscript digits, a digit to isdigit()
+)
+# Each refusal's own record path: the id the writer would have built for it.
+UNICODE_IDS = {date: f"{date}-scheduler" for date in UNICODE_DATES}
 # The two patterns decide.py hands both validators, spelled here so a direct call to
 # either helper is driven with the same patterns the writer uses.
 SLUG_PATTERN = r"[a-z0-9-]+"
@@ -322,6 +340,10 @@ def test_the_rule_is_shape_only_and_is_shared_by_both_validators():
     either way. And the shape lives in one module that both validators import, so
     the two entry points cannot drift apart -- which is checked here by reading
     the shipped source rather than by trusting two behavioural tests to agree.
+
+    The ``--date`` shape is asserted beside it because the two are one rule about
+    digits stated twice: both were ``\\d``, which matched Unicode digits, and only
+    the slug's author wrote the class down.
     """
     from _harness import REPO
 
@@ -332,6 +354,12 @@ def test_the_rule_is_shape_only_and_is_shared_by_both_validators():
     assert shape.pattern == PREFIX.pattern == r"^[0-9]{4}-[0-9]{2}-[0-9]{2}-", shape.pattern
     assert shape.match("2026-13-45-topic"), "the shape must not consult the calendar"
     assert shape.match(DATED_SLUG) and not shape.match("2026-11-08")
+
+    date_shape = getattr(_decide_flags, "DATE_FLAG_RE", None)
+    assert date_shape is not None, "_decide_flags owns no shape for --date"
+    assert date_shape.pattern == r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$", date_shape.pattern
+    assert not date_shape.fullmatch("\u0662\u0660\u0662\u0666-11-15"), (
+        "the date shape matches a Unicode digit")
 
     writer = (REPO / "src" / "noni" / "_writer.py").read_text(encoding="utf-8")
     assert "_decide_flags" in writer, "the writer's slug rule no longer shares the shape"

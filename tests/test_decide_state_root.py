@@ -243,15 +243,24 @@ def test_too_many_questions_exits_two(tmp_path):
 
 
 def test_a_bad_date_exits_two(tmp_path):
-    """A --date that is not a real YYYY-MM-DD day would produce an id and a
-    date field the census rejects, so it is refused up front."""
+    """A --date that is not a real ASCII YYYY-MM-DD day would produce an id and a
+    date field the census rejects, so it is refused up front.
+
+    The digits count as much as the shape: ``\\d`` matched the Arabic-Indic forms
+    below and ``datetime.strptime`` read them as numbers, so the run wrote a record
+    named ``٢٠٢٦-11-15-scheduler.json`` that both censuses then reported as not a
+    plain path segment. No traceback either: a Unicode digit is a refusal, not a
+    crash (the same rule the order writer's issue number obeys).
+    """
     repo = _baseline_repo(tmp_path)
-    for bad in ("2026-13-01", "not-a-date", "2026-10"):
+    for bad in ("2026-13-01", "not-a-date", "2026-10",
+                "\u0662\u0660\u0662\u0666-11-15", "202\u0666-11-15", "\u00b2\u00b2\u00b2\u00b2-11-15"):
         proc = _run(
             repo, "--slug", "scheduler", "--date", bad, *BASE, *QUESTION, *OPTIONS, *ANSWERED
         )
-        assert proc.returncode == 2, f"--date {bad}: {proc.stderr}"
+        assert proc.returncode == 2, f"--date {bad}: {proc.returncode} {proc.stderr}"
         assert "--date" in proc.stderr
+        assert "Traceback" not in proc.stderr, f"--date {bad}: {proc.stderr}"
     assert _porcelain(repo, "noni/decisions") == ""
 
 

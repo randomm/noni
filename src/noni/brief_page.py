@@ -193,11 +193,13 @@ def _read_record(path: Path) -> dict | None:
 def _newest_first(records: list[dict]) -> list[dict]:
     """``records`` in the order the block prints them: newest ``date`` first, then id.
 
-    The sort is total and reads no clock. Two records dated to the same instant -- what a
-    writer run twice in one second, or a ``--date`` carried over, produces -- still have one
-    order between them, the same tiebreak the candidates of the store beside this one use on
-    their own two fields. A record that carries no usable ``date`` sorts as the oldest there
-    is, which keeps it from crowding the recent records off a five-row block.
+    The sort is total and reads no clock. A record written with no ``--date`` carries the
+    instant of its run, so the decisions of one day keep the order they were made in; two
+    records at one identical instant -- what a ``--date`` carried over, or a writer run twice
+    in a second, produces -- still have one order between them by their ids, the same
+    tiebreak the candidates of the store beside this one use on their own two fields. A
+    record that carries no usable ``date`` sorts as the oldest there is, which keeps it from
+    crowding the recent records off a five-row block.
     """
     return sorted(records, key=lambda record: (_record_date(record),
                                                _record_id(record)), reverse=True)

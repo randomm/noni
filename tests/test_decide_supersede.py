@@ -15,6 +15,7 @@ from decide_fixtures import (
     BASE,
     BASELINE_DATE,
     BASELINE_ID,
+    INSTANT_RE,
     NEW_DATE,
     NEW_ID,
     OPTIONS,
@@ -282,7 +283,13 @@ def test_a_supersede_dated_earlier_than_its_target_is_written(tmp_path):
 
 def test_a_supersede_without_a_date_takes_todays_day(tmp_path):
     """Without --date a supersede is dated as any other record is, by the run's
-    own UTC day, and lands beside the target it flips."""
+    own UTC day, and lands beside the target it flips.
+
+    Nothing here names the day: the writer reads it from its own clock. So the
+    assertions are the SHAPE of the stamp and the relation between the two halves of
+    the record -- the field is a full second, the id is that second's day plus the
+    slug -- and never an exact wall-clock value, which a run across midnight would
+    answer differently."""
     repo = _baseline_repo(tmp_path)
     _pin_identity(repo, "Replay")
     proc = run_decide(
@@ -301,6 +308,9 @@ def test_a_supersede_without_a_date_takes_todays_day(tmp_path):
     assert new_rel.endswith("-scheduler.json"), proc.stdout
     new_id = new_rel[: -len(".json")]
     assert _read(repo, new_id)["supersedes"] == BASELINE_ID
+    date = _read(repo, new_id)["date"]
+    assert INSTANT_RE.match(date), date
+    assert new_id == f"{date[:10]}-scheduler"
     assert _read(repo, BASELINE_ID)["status"] == "superseded"
     assert _porcelain(repo, "noni/decisions") == ""
     _assert_both_censuses_clean(repo, "a supersede with no --date")

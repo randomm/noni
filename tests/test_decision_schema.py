@@ -344,3 +344,23 @@ def test_supersedes_must_be_null_or_string(tmp_path):
     rec["supersedes"] = 42
     code, out, err = _run_census_on_record(tmp_path, rec)
     assert code == 10, f"expected exit 10 for numeric supersedes, got {code}\nstderr: {err}"
+
+
+def test_a_time_of_day_date_censuses_clean(tmp_path):
+    """A record dated to a second, not a midnight, is a valid record.
+
+    The decide writer now stamps the run's UTC instant when no ``--date`` names the
+    day, so a time of day is the shape every fresh record carries. It is not a new
+    shape: ``ledger_schema.DATE_RE`` already admitted seconds precision and
+    ``_DATE_RANGES`` already bounds the hour, minute and second, which is why the
+    census at the commit this change branches from reads such a record the same way
+    -- and there is no earlier ledger schema level to check against, because
+    ``LEDGER_SCHEMA_LEVEL`` has had one value the whole time. So the oracle here is
+    simply: the unified census and the ledger shim both report the record clean.
+    """
+    rec = json.loads(json.dumps(_fixture("decision-valid.json")))
+    rec["date"] = "2026-10-01T09:10:00Z"
+    code, out, err = _run_census_on_record(tmp_path, rec)
+    assert code == 0, f"expected exit 0 for a date with a time of day, got {code}\n{out}"
+    code, out, err = _run_census_sh_on_record(tmp_path, rec, "time-of-day.json")
+    assert code == 0, f"expected census.sh exit 0 for a dated second, got {code}\n{out}"

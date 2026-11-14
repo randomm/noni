@@ -48,6 +48,12 @@ NEW_ID = f"{NEW_DATE}-scheduler"
 # NEW_DATE, so no other decide test moves off its pinned day.
 OTHER_DATE = "2026-11-05"
 
+# The shape a stamped ``date`` must have, and nothing more. A shape rather than a value
+# any test chose: the launched writer reads the wall clock, and an assertion against a
+# wall-clock value is a test that fails at midnight UTC. Shared by every decide module
+# that reads a no-``--date`` stamp back, so the second-resolution rule is spelled once.
+INSTANT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
 # One question, two options: the smallest shape both censuses accept. Flags are
 # kept as lists so each test reads as the command line it runs.
 QUESTION = ["--question", "q1=Which release carries the scheduler?"]

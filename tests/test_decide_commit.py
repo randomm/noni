@@ -17,6 +17,7 @@ from decide_fixtures import (
     BASE,
     BASELINE_DATE,
     BASELINE_ID,
+    INSTANT_RE,
     NEW_DATE,
     NEW_ID,
     OPTIONS,
@@ -254,7 +255,13 @@ def test_a_supersede_without_a_date_writes_todays_record(tmp_path):
 
     The run is made with --no-commit so the fixture can name the day it commits
     under: a plain commit would carry the wall-clock day the censuses cannot be
-    pinned to, which is every census call in this suite's rule."""
+    pinned to, which is every census call in this suite's rule.
+
+    Nothing here names the day. The writer reads it from its own clock, so what is
+    asserted is the SHAPE of the stamp, the relation between the two halves of the
+    record (the id is the field's day plus the slug), and a commit date the fixture
+    derives from the day the written record names -- never a constant the wall clock
+    could cross out from under it."""
     repo = _baseline_repo(tmp_path)
     _pin_identity(repo, "Replay")
     proc = run_decide(
@@ -274,9 +281,17 @@ def test_a_supersede_without_a_date_writes_todays_record(tmp_path):
     assert new_id.endswith("-scheduler"), proc.stdout
     assert (repo / "noni" / "decisions" / f"{new_id}.json").is_file()
     assert _read(repo, new_id)["supersedes"] == BASELINE_ID
+    # The field is a full UTC second and the id is that second's day, date-only:
+    # one reading, checked against itself rather than against the host clock.
+    date = _read(repo, new_id)["date"]
+    assert INSTANT_RE.match(date), date
+    assert new_id == f"{date[:10]}-scheduler"
     assert _read(repo, BASELINE_ID)["status"] == "superseded"
     _git(repo, "add", "-A", "noni/decisions")
-    git_pin_date(repo, f"{new_id[:10]}T00:00:00Z", "commit", "-q", "-m", "handoff")
+    # The pinned commit date is the day this very record names, so a run that
+    # straddles midnight still files its own handoff under the day the censuses
+    # read the record as carrying.
+    git_pin_date(repo, f"{date[:10]}T00:00:00Z", "commit", "-q", "-m", "handoff")
     _assert_both_censuses_clean(repo, "committing a no-date supersede by hand")
 
 

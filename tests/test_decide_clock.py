@@ -52,6 +52,27 @@ def test_a_run_with_no_date_stamps_the_instant_it_ran_at(tmp_path):
     _assert_both_censuses_clean(repo, "a no-date record stamped to the second")
 
 
+def test_two_runs_of_one_instant_keep_the_id_tiebreak(tmp_path):
+    """A clock read at the same second does not make one record of two runs.
+
+    The companion to the ordering fix: stamping to the second only orders records
+    that were written apart. Two runs the clock cannot tell apart must still land as
+    two records with one order between them, which is what the id's slug is for."""
+    repo = _baseline_repo(tmp_path)
+    first = _run(repo, "--slug", "scheduler", *BASE, *QUESTION, *OPTIONS, *ANSWERED,
+                 env=_clock_env())
+    assert first.returncode == 0, first.stderr
+    second = _run(repo, "--slug", "follow-up", *BASE, *QUESTION, *OPTIONS, *ANSWERED,
+                  env=_clock_env())
+    assert second.returncode == 0, second.stderr
+    one = _read(repo, NEW_ID)
+    two = _read(repo, f"{RUN_INSTANT[:10]}-follow-up")
+    # One instant, two records: the field is shared, the names are not.
+    assert one["date"] == two["date"] == RUN_INSTANT
+    assert one["id"] != two["id"]
+    _assert_both_censuses_clean(repo, "two records stamped at one instant")
+
+
 def test_an_unreadable_clock_refuses_the_run(tmp_path):
     """A clock the seam cannot read stops the write instead of dating it midnight.
 

@@ -68,8 +68,8 @@ from .orderstate import now_iso
 
 # A date flag is four-digit year, month, day; a real calendar day is checked against the
 # calendar on top of the shape. Anchored, and used with fullmatch: '$' alone also matches
-# before a trailing newline.
-DATE_FLAG_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# before a trailing newline. Digits as a class, for the reason ``SLUG_DATE_PREFIX`` gives.
+DATE_FLAG_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 
 # A slug may not begin with a date, because the record id is ``<date>-<slug>`` and the
 # writer supplies the date: ``2026-11-08-topic`` would become

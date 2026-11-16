@@ -263,8 +263,10 @@ The same rule extends to the classes that report their own absence:
   that gates on the exit code must therefore not name `ordering-closed` in `--skip`,
   nor use `--only` to name another class: either filter silences the row and its code,
   and the job is back to reading a dead order as a live one. An
-  order that holds no issue owes no row: a recipe that produces the state file with
-  a tracker command line and `jq` is in `docs/QUICKSTART.md`.
+  order that holds no issue owes no row. The census ships no producer: the recipe
+  that builds the map is
+  [the `--issue-state` map section of docs/QUICKSTART.md](../../docs/QUICKSTART.md#the---issue-state-map-and-what-the-census-skips-without-it),
+  and it is documented there once, so this page does not copy it.
   A missing `noni/direction/order.json` is not a finding at all — the ordering
   layer is optional — so an attached project that has never ordered anything
   adds no ordering rows to its census.

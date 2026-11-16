@@ -105,15 +105,16 @@ not a legitimate operator decision.
 
 ## Attribution
 
-`by` is the **git author of the record's commit**, read as
+`by` is the **git author of the record's commit** and nothing else: it answers who
+committed, never who decided, and no flag sets it. Read it as:
 
 ```
 git log -1 --format=%an -- noni/decisions/<id>.json
 ```
 
-not from the file body. A forged `by` in the file body never reaches the
-census report: it reports `by` from git, so a body value the commit does not
-carry is simply not what appears in the report — the census does not flag a
+not from the file body. A forged `by` in the file body decides nothing: neither the
+census nor `noni brief` prints attribution at all, so the only `by` a reader gets is
+the one git gives back for the commit, and the census does not flag a
 mismatch between body and commit. The default posture is signed commits;
 stranger-detection is advisory until forge-verified pushes. This mirrors the
 precedent that a reply edited by a non-allowed account voids the reply — the
@@ -122,7 +123,8 @@ author is the legitimacy check, and it is the commit author, not the body.
 ### Who decided, when the commit author is not that person
 
 Agents commit under the operator's identity, so `by` names who committed and
-not who decided. `decided_by` records the decider separately, and
+not who decided. `decided_by` records the decider separately -- it answers who
+decided, is written by `--decided-by`, and never stands in `by`'s place -- and
 `on_behalf_of` names the party a delegate acted for (the writer is a wrapper, so
 the `noni` package must be installed or importable on `PYTHONPATH` first -- see
 the *Install noni* section of
@@ -134,8 +136,8 @@ scripts/decide.py --repo . --decided-by operator-ann --on-behalf-of "the platfor
 
 The three rules that keep this honest without pretending to verify anyone:
 
-- The record's `by` still comes from git and the report's `by` column still
-  reads `git log -1 --format=%an`. `decided_by` never overrides it, so a body
+- The record's `by` still comes from git: `git log -1 --format=%an` on the
+  record's path, and never from a flag. `decided_by` never stands in its place, so a body
   value cannot buy an author it does not have.
 - A record with no `decided_by` means the commit author decided. That is the
   reading for every record written before the field existed, and it is why no

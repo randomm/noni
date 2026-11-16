@@ -16,6 +16,8 @@ import argparse
 import sys
 from collections.abc import Callable, Sequence
 
+from noni import __version__
+
 # subcommand -> (module, entry point). Every entry's module owns its own
 # docstring, parser and exit-code table; nothing is re-declared here.
 TOOLS: dict[str, tuple[str, str]] = {
@@ -60,6 +62,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="noni",
         description="The noni direction layer: one command, one subcommand per tool.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"noni {__version__}",
+        help="print the package version and exit",
     )
     sub = parser.add_subparsers(dest="tool", metavar="TOOL")
     for name in TOOLS:

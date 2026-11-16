@@ -56,6 +56,11 @@ from quickstart_runner import install_commands
 
 from noni import public_safety
 
+# The opening words of the clause that warns about a noni already on the PATH.
+# Located by phrase rather than line number, like the route-choice clause above:
+# the page rewraps, the contract does not.
+_STALE_INSTALL_START = "Before you run anything, check what you are about to run."
+
 
 def _page() -> str:
     return page_text()
@@ -156,6 +161,44 @@ def test_the_page_names_the_deny_list_a_strict_run_needs() -> None:
     for phrase in (*DENYLIST_STATES, "#"):
         assert phrase in text or phrase in lowered, (
             f"the deny-list section does not mention {phrase!r}")
+
+
+def test_the_stale_install_clause_names_both_commands_that_identify_it() -> None:
+    """The clause that warns about a shadowing noni gives the reader two commands.
+
+    An older noni on the PATH shadows the install just made and prints the same
+    version string, so a reader told only where to look has a path and no way to
+    tell the two installs apart. The page has to name `noni --version` beside
+    `command -v noni`, or the warning it opens with has no command behind it. Both
+    are pinned inside the Install section rather than over the page, so a mention
+    of either string under another heading is not this claim. The clause is located
+    by its opening words rather than a line number, so a rewrap of the page is a
+    passing edit rather than a dropped promise.
+    """
+    section = flowed_section("Install noni")
+    start = section.find(_STALE_INSTALL_START)
+    assert start >= 0, (
+        "the install section no longer warns about an older noni on the PATH, in "
+        f"the words this test pins ({_STALE_INSTALL_START!r})")
+    clause = section[start:]
+    # The flag is located by the console module's own source rather than typed here:
+    # the page is held to the spelling the command defines, so a rename on the
+    # product side reddens this page instead of leaving it documenting a flag the
+    # command does not accept. The literal is found, not parsed, so no module body is
+    # imported to answer a question about a page.
+    from _harness import REPO
+
+    source = (REPO / "src" / "noni" / "cli.py").read_text(encoding="utf-8")
+    flag = re.search(r'add_argument\(\s*"(--[\w-]+)",\s*action="version"', source)
+    assert flag, (
+        "noni/cli.py no longer defines a long-option --version on its own parser, "
+        "so this page's command has no product source to read")
+    flag = flag.group(1)
+    assert "command -v noni" in clause, (
+        f"the stale-install clause no longer names `command -v noni`: {clause!r}")
+    assert f"noni {flag}" in clause, (
+        f"the stale-install clause no longer names `noni {flag}`, so a reader has a "
+        f"path and no version to compare it against: {clause!r}")
 
 
 def test_the_install_block_installs_without_touching_the_system_python() -> None:

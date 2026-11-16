@@ -43,13 +43,13 @@ which carry `ensurepip` — what puts `pip` in a new venv — delete the pip-les
 clone carries: no package index sits between you and it, and the only published
 ref is the tag v0.2.0.
 
-Before you run anything, check what you are about to run. An older noni already
-on your PATH shadows the install you just made, and it prints the same version
-string, so nothing but its own location tells you which one answered:
-`command -v noni` prints the path the shell will exec, and it must be the one you
-just installed (`.venv/bin/noni`, or uv's tool directory). An install that has to
-replace an existing one is re-run over it — the same line a second time, not a
-second install beside the first.
+Before you run anything, check what you are about to run. An older noni already on
+your PATH shadows the install you just made. `noni --version` prints the version it
+carries, and a release older than v0.2.1 has no such flag: it exits with a usage
+error, which is itself the sign that an old install answered. `command -v noni`
+prints the path the shell will exec, and it must be yours (`.venv/bin/noni`, or uv's
+tool directory). An install that has to replace an existing one is re-run over it,
+the same line a second time, not a second install beside the first.
 
 The wrappers under `skills/<skill>/scripts/` import the package rather than
 carrying logic, so before any of them runs the package must be installed, installed

@@ -13,6 +13,9 @@ belong to the command rather than to any one tool:
   exit code of a bare run must be identical to the console route's; a third
   dispatcher that quietly diverged is exactly what the equivalence pairings exist to
   catch (issue #98 added that route).
+- **The command reports its own version.** ``noni --version`` names the package
+  version the installed tree owns, so a reader who suspects a stale install on the
+  PATH has a command that answers rather than only a path (issue #187).
 
 The fixtures and the byte-comparison come from ``console_route_support``, the module
 the other half of this pair shares them from.
@@ -77,6 +80,67 @@ def test_the_module_route_names_the_same_subcommands():
         assert f"{name}  " in module.stdout, f"-m noni --help omits {name}"
     for absent in ("register", "claim", "close", "release"):
         assert f"{absent}  " not in module.stdout, f"-m noni grew a {absent} verb"
+
+
+def test_noni_version_prints_the_package_version_and_exits_zero():
+    """``noni --version`` prints ``noni <version>`` on stdout and exits 0.
+
+    The expected value is read in-process from ``noni.__version__``, the single
+    owner (``src/noni/__init__.py``), so a release bump moves this assertion by
+    exact value instead of leaving a second literal in ``tests/``. The two routes
+    are paired rather than asserted twice: a ``python -m noni`` route that printed a
+    different program name, a different stream or a different exit code would keep
+    the console half green. Output goes to stdout on purpose, which the pairing
+    cannot settle on its own, so stdout is asserted for both routes.
+    """
+    from noni import __version__
+
+    expected = f"noni {__version__}\n"
+    console, module = run_noni("--version"), run_module("--version")
+    assert_same(console, module, "noni --version")
+    for proc in (console, module):
+        assert proc.returncode == 0, proc.stderr
+        assert proc.stdout == expected, proc.stdout
+        assert proc.stderr == "", proc.stderr
+
+
+def test_noni_help_still_names_the_five_tools_after_the_version_flag():
+    """``--version`` is an option of the top-level parser, not a sixth tool.
+
+    argparse prints the flag as an option row, so the help bytes do gain a line;
+    what must not change is the subcommand list. Asserted against ``noni.cli.TOOLS``,
+    the one dispatch table, so a verb added there without a test fails, and a
+    ``--version`` implemented as a subcommand fails on the count.
+    """
+    import noni.cli
+
+    proc = run_noni("--help")
+    assert proc.returncode == 0, proc.stderr
+    listed = proc.stdout
+    for name in noni.cli.TOOLS:
+        assert f"{name}  " in listed, f"noni --help omits {name}: {listed}"
+    for absent in ("session", "register", "claim", "close", "release"):
+        assert f"{absent}  " not in listed, f"noni grew a {absent} placeholder: {listed}"
+    # ``version`` is the option the flag adds, so the check for a sixth verb is
+    # that no subcommand row carries it: a row of the subcommand block is
+    # indented two columns and followed by the summary's gap.
+    assert "\n  version  " not in listed, f"noni grew a version subcommand: {listed}"
+
+
+def test_a_tool_still_owns_its_own_version_flag():
+    """The flag belongs to the top-level parser only.
+
+    ``noni census --version`` is the census's own argument business, and the argv
+    after the subcommand is handed to that tool verbatim: a top-level
+    ``--version`` that swallowed it would make the census answer with the package
+    version, which is a second owner of that output. Exit 2 with a refusal naming
+    the tool's own script is what proves the flag never left the top level.
+    """
+    for tool in ("census", "decide"):
+        proc = run_noni(tool, "--version")
+        assert proc.returncode == 2, (tool, proc.stdout, proc.stderr)
+        assert f"{tool}.py" in proc.stderr, (tool, proc.stderr)
+        assert "noni " not in proc.stdout, (tool, proc.stdout)
 
 
 def test_noni_console_script_is_installed_in_this_environment():

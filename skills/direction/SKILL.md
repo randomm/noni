@@ -57,10 +57,10 @@ whether work may start. The census is the arbiter of its shape: `order.py`
 refuses what the census would report, and the census reports what the writer
 would have refused, so the artifact and the arbiter cannot drift apart.
 
-The writer never contacts a tracker. An issue number is checked only for being
-a positive integer, so the core stays viable with no adapter installed, and
-whether an issue is still open is a question the census answers from an
-`--issue-state` file somebody else produced.
+Whether an issue is still open is a question the census answers from an
+`--issue-state` file somebody else produced. The writer never contacts a tracker
+and never produces that file; the recipe is
+[the `--issue-state` map section of docs/QUICKSTART.md](../../docs/QUICKSTART.md#the---issue-state-map-and-what-the-census-skips-without-it).
 
 ## The standing intent
 
@@ -138,7 +138,8 @@ entry whose `decision` is `null`, blank or absent is not an order this writer
 writes (exit 4, naming the entry) and the census reports it as
 `ordering-malformed` (15) -- a position nobody can look up is a position nobody
 decided. `confirmed` is the UTC timestamp the writer stamped when the operator
-last confirmed the entry. `why` is optional: an entry written without it holds the three fields it held before the field existed, byte for byte, and `add --why REASON` records the operator's one line of reason for the position. It obeys the same rule a decision record's rationale obeys: one non-blank line within the 280-character bound `_why.WHY_MAX` states, counted in code points, refused at the flag (exit 2) and reported by both censuses naming the field `why`. A move or a confirm restamps an entry and never drops the reason it carries.
+last confirmed the entry; `order confirm` restamps the entry it names, or every
+entry when no issue is named, with a fresh confirmation time. `why` is optional: an entry written without it holds the three fields it held before the field existed, byte for byte, and `add --why REASON` records the operator's one line of reason for the position. It obeys the same rule a decision record's rationale obeys: one non-blank line within the 280-character bound `_why.WHY_MAX` states, counted in code points, refused at the flag (exit 2) and reported by both censuses naming the field `why`. A move or a confirm restamps an entry and never drops the reason it carries.
 
 **An order that still names the removed item store is refused, never rewritten.**
 A file whose `schema` is `noni.order/2`, or an entry that still carries an `item`
@@ -156,6 +157,11 @@ rewrite.
 
 An absent file is not an error. Nothing ordered yet is a state, and the first
 `add` creates the file.
+
+To read the order without writing it, read `noni/direction/order.json` (a plain
+JSON file) or run `noni brief --repo DIR`, which prints and writes nothing; a
+hand edit of `noni/direction/order.json` is not a supported route, because the
+writer is what keeps the file in the one form the census accepts.
 
 The path is resolved from `--repo` — the one flag that names the state root: the
 attached project's own repository by default, or a separate directory carrying

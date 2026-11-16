@@ -10,9 +10,12 @@ must agree with (issue #77, AC1), so the positional reading of both lives in
 parity this module already pinned. The rendered help itself is run by
 ``tests/test_order_writer_usage.py``, which compares it against these lines."""
 
+from __future__ import annotations
+
 from _harness import (
     ORDER,
     REPO,
+    run_module,
 )
 from order_doc_readers import (
     SKILL_DIR,
@@ -299,6 +302,58 @@ def test_skill_md_documents_the_writer_within_the_line_cap():
         assert row in text, f"SKILL.md does not say how to repair a {row} row"
     assert text.count("\n") <= 400, f"SKILL.md is {text.count(chr(10))} lines; cap is 400"
     assert text.startswith("---") and "\ndescription:" in text, "SKILL.md has no frontmatter"
+
+
+# What the page owes beside that sentence: the file named as what it is, the one
+# read-only command that reaches the same state, and the sentence closing the route a
+# reader might otherwise take. Checked in the same section rather than the whole page,
+# for the reason `_skill_section` states -- a mention anywhere cannot stand in for the
+# paragraph a reader who wants to look, rather than to write, actually reaches.
+READ_WITHOUT_WRITING = (
+    "read the order without writing it",
+    "noni/direction/order.json",
+    "plain json",
+    "noni brief",
+    "hand edit",
+    "not a supported route",
+)
+
+
+def test_skill_md_offers_a_route_to_the_order_that_writes_nothing(tmp_path):
+    """The page tells a reader how to look at the order without becoming a writer.
+
+    Every verb of `order.py` is a write, and before this sentence the page offered no
+    other route, so a reader who only wanted the queue had two ways to get it: open the
+    file by hand (which the page never ruled out, and which the writer then refuses to
+    open again), or run a verb and move the order they meant to leave alone. The
+    alternative is the artifact as a plain JSON file, or the read-only brief; the hand
+    edit is closed off in the same breath so the two sentences cannot be read against
+    each other.
+
+    The read-only claim is not taken on the page's word. `noni brief` is asked of the
+    fixture's own tree, because the tree `order_fixtures._repo` builds has no commit at
+    all and the brief's last line is the census's verdict: a page that named a command
+    that refused to run, or that wrote a byte, would still have matched every phrase
+    above.
+    """
+    writing = _flat(_skill_section("The artifact"))
+    for phrase in READ_WITHOUT_WRITING:
+        assert phrase in writing.lower(), (
+            f"SKILL.md's The artifact section omits {phrase!r}: {writing}")
+
+    # The command the page names is the command that answers: it prints the order and
+    # leaves the tree exactly as it found it.
+    repo = _repo(tmp_path)
+    _seed(repo, _entry(1, BASELINE_ID), _entry(2, BASELINE_ID))
+    before = sorted(p.relative_to(repo).as_posix() for p in repo.rglob("*")
+                    if p.is_file() and ".git" not in p.parts)
+    brief = run_module("brief", "--repo", str(repo))
+    assert brief.returncode == 0, f"{brief.returncode}: {brief.stderr}"
+    assert "#1" in brief.stdout and "#2" in brief.stdout, brief.stdout
+    after = sorted(p.relative_to(repo).as_posix() for p in repo.rglob("*")
+                   if p.is_file() and ".git" not in p.parts)
+    assert before == after, (
+        f"the read-only route the page names is not read-only: {before} vs {after}")
 
 
 def test_skill_layout_includes_the_writer_and_its_executable_bit():

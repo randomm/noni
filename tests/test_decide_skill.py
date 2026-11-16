@@ -196,3 +196,77 @@ def test_the_decline_rule_matches_the_writers_open_chain_root():
     ).read_text(encoding="utf-8")
     assert "chain-root record" in text, "modes.md must name the open chain-root form"
     assert "null" in text, "modes.md must state the null answer form"
+
+
+# The phantom the two attribution pages used to promise: a per-record `by` column
+# printed by a report. Nothing prints one -- the census renders finding rows and
+# `noni brief` prints three blocks -- so the claim is not merely unhelpful, it is
+# untrue. The pattern needs the field name and the word "column" in one phrase: the
+# true uses elsewhere (`references/supersede.md`'s `live` column, the direction page's
+# "column 0") are about other things, and a page that said "the census has no `by`
+# column" the way `references/census.md` does is stating the fact, not the phantom.
+PHANTOM_BY_COLUMN = re.compile(r"\bby`? column", re.IGNORECASE)
+
+
+def test_the_attribution_pages_promise_no_printed_by_column():
+    """Neither steering-ledger page claims a `by` column that no tool prints.
+
+    These two pages are the operator's answer to "who committed, and who decided", and
+    for a while both answered it by pointing at a report column that stopped existing
+    when the per-record report was deleted. Nothing caught the claim: the wording read
+    as authority, so a rewrite that restored it read as a restoration and not as a
+    falsehood. Pinned as a negative on both pages, and positively on the sentences that
+    replace the claim, so a page cannot drop the truth while keeping the fiction out.
+    """
+    for path in (SKILL, REFERENCES):
+        text = path.read_text(encoding="utf-8")
+        rel = path.relative_to(REPO).as_posix()
+        for lineno, line in enumerate(text.splitlines(), 1):
+            assert not PHANTOM_BY_COLUMN.search(line), (
+                f"{rel}:{lineno} promises a printed by column: {line.strip()}")
+
+    for path in (SKILL, REFERENCES):
+        text = path.read_text(encoding="utf-8")
+        rel = path.relative_to(REPO).as_posix()
+        for phrase in ("who committed", "git log -1 --format=%an"):
+            assert phrase in text, (
+                f"{rel} no longer states the attribution that replaced the claim: "
+                f"{phrase!r}")
+        # The flag sentence is where the page says `by` is nobody's to set, so the
+        # wording is allowed to be the equivalent one a rewrite chooses -- what is
+        # pinned is that the page rules a flag out beside the field name.
+        assert re.search(r"(never|not) (set by|from) a flag", text), (
+            f"{rel} no longer says a flag cannot set `by`")
+        assert "noni brief" in text, (
+            f"{rel} must say which read-only command prints no attribution either")
+
+
+def test_the_skill_pages_say_which_field_answers_who_committed_and_who_decided():
+    """One callout beside the field table tells the reader which name is which.
+
+    A reader asking who committed and a reader asking who decided look at the same table
+    and find two plausible strings in it; the callout is what stops them guessing. So it
+    is pinned as one line carrying both questions, both fields, the flag that writes one
+    of them, and the statement that neither is printed today. The two field rows are
+    pinned to the same split so the table and its callout cannot drift into two voices.
+    """
+    text = SKILL.read_text(encoding="utf-8")
+    callouts = [index for index, line in enumerate(text.splitlines())
+                if line.lstrip().startswith("**Reading the two names:**")]
+    assert len(callouts) == 1, (
+        f"SKILL.md must carry exactly one attribution callout beside the field table: "
+        f"{callouts}")
+    callout_start, callout_end = callouts[0], callouts[0] + 1
+    lines = text.splitlines()
+    while callout_end < len(lines) and lines[callout_end].strip():
+        callout_end += 1
+    callout = " ".join(
+        line.strip() for line in text.splitlines()[callout_start:callout_end])
+    for phrase in ("`by`", "`decided_by`", "`--decided-by`", "who committed",
+                   "who decided", "from git", "noni brief", "census"):
+        assert phrase in callout, f"the attribution callout omits {phrase!r}: {callout}"
+
+    by_rows = _field_rows(text, "by")
+    assert by_rows and "who committed" in by_rows[0], by_rows
+    decided_rows = _field_rows(text, "decided_by")
+    assert decided_rows and "who decided" in decided_rows[0], decided_rows

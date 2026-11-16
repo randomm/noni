@@ -119,15 +119,20 @@ fields (in order), plus the optional fields (`source`, `decided_by`,
 | `date` | string | UTC ISO-8601, stamped at write time: `--date` at UTC midnight, or this run's UTC instant to the second when no `--date` names the day |
 | `asked_by` | string | the agent role or session that asked |
 | `questions` | array | 1-4 question objects, each `{id, text, options[], answer}` |
-| `by` | string | git author of the record's commit (forgeable; see below) |
+| `by` | string | who committed: the git author of the record's commit, never set by a flag (forgeable; see below) |
 | `scope` | string | the direction area the decision covers |
 | `status` | string | `decided`, `open`, or `superseded` |
 | `supersedes` | string | id of the record this one replaces, or `null` |
 | `source` | object, or `null` (optional) | tracker provenance: `{"issue_number": <int>, "comment_id": <int>}` when the record was produced from a tracker-sourced answer; `null` or absent otherwise (a record without it stays valid) |
-| `decided_by` | string (optional) | who made the decision, when that is not the commit author: a login or pseudonym, never a personal-name requirement. Written by `--decided-by`; absent means the commit author decided, which is how every record written before this field stays valid. It never overrides `by` in the report (see Attribution) |
+| `decided_by` | string (optional) | who made the decision, when that is not the commit author: a login or pseudonym, never a personal-name requirement. Written by `--decided-by`; absent means the commit author decided, which is how every record written before this field stays valid. It answers who decided and never stands in `by`'s place (see Attribution) |
 | `on_behalf_of` | string (optional) | the party a delegated decision was made for, written by `--on-behalf-of`, which the writer refuses without `--decided-by` |
 | `single_option` | `true` (optional) | the marker `--single-option` writes to say a question was asked with one option on purpose, so nothing had to be invented. It is a per-record marker over a per-question bound: with it set, any question may carry one option, and at least one question of the record must. A one-option record without it is a schema violation, and a marker no question of the record carries one option is one too |
 | `why` | string (optional) | the operator's one line of reason for the decision, written by `--why`: a non-empty single line of at most 280 characters, counted in code points. The bound is shared with an order entry's `why`, so one number holds the product's rationales. Absent means no reason was recorded, which keeps every record written before the field valid |
+
+**Reading the two names:** `by` answers "who committed" and comes from git; `decided_by`
+answers "who decided" and comes from `--decided-by`, never written in `by`'s place. Neither
+name is printed by `noni brief` or by the census, so attribution is read from the record
+body and from git.
 
 A `question` object is `{id, text, options, answer}`. `options` is an array of
 2-4 strings, or exactly one string for a question of a record that carries
@@ -147,19 +152,22 @@ open chain-root record; that is the only state "records nothing" can mean.
 
 ## Attribution
 
-`by` is the **git author of the record's commit** — read with
-`git log -1 --format=%an -- <record path>`, not from the file body. This is
+`by` is the **git author of the record's commit**, read with
+`git log -1 --format=%an -- <record path>`, not from the file body. It answers
+who committed, never who decided, and no flag sets it. This is
 forgeable locally; the default posture is signed commits, and stranger-detection
-is advisory until forge-verified pushes. The census reports `by` from git so a
-forged file body cannot claim a different author. The full attribution rule is
-in `references/decisions.md`.
+is advisory until forge-verified pushes. The census types `by` as a non-empty
+string and prints no attribution of its own, so a forged file body buys no author:
+the commit is the only answer. The full attribution rule is in
+`references/decisions.md`.
 
 Because agents commit under the operator's identity, `by` alone cannot say who
 *decided*. `--decided-by <who>` records that separately, and `--on-behalf-of
 <who>` names the party a delegate acted for. Both are written next to `by`, never
-in place of it: the report's `by` column keeps coming from git, and the census
-checks only that each value is a non-empty single line — it never verifies an
-identity. A record without `decided_by` still means the commit author decided.
+in place of it: `by` stays the git author of the record's commit and no flag sets
+it, and the census checks only that each value is a non-empty single line —
+it never verifies an identity. Neither name is printed by `noni brief` or by the
+census. A record without `decided_by` still means the commit author decided.
 
 `--why <reason>` records the operator's own line of reason beside the attribution.
 It says nothing about who decided: it is the answer to why the decision went that way.

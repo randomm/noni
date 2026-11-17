@@ -355,6 +355,7 @@ def _render_human(findings: list[dict], counts: dict[str, int], ok: bool,
     if state_note is not None:
         print(f"note: {state_note}")
     warns = _warn_count(findings)
+    fails = len(findings) - warns
     if not findings and not notes:
         print("census: no findings; all checks passed")
     elif not findings:
@@ -362,7 +363,7 @@ def _render_human(findings: list[dict], counts: dict[str, int], ok: bool,
         # that is true of this run: no rows, and these checks unasked.
         print(f"census: no findings{_not_evaluated_headline(notes)}")
     else:
-        print(f"census: {warns} warning(s), {len(findings)} finding(s)"
+        print(f"census: {len(findings)} finding(s) ({fails} fail, {warns} warn)"
               + _not_evaluated_headline(notes, findings))
         for f in sorted(findings, key=_finding_sort_key):
             tag = {"fail": "FAIL", "warn": "WARN"}.get(f["severity"], "?")

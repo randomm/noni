@@ -17,6 +17,8 @@ exit code alone and moves not at all (the CI readers in
 
 Split out of ``tests/test_census_reporting.py`` for the size limit; the builders
 are in ``tests/census_fixtures.py`` and the runners in ``tests/census_run.py``.
+The whole-line pins of the counts headline, which build their own findings list
+and call the renderer directly, live in ``tests/test_census_headline_counts.py``.
 """
 
 from __future__ import annotations
@@ -76,8 +78,12 @@ class TestHumanVerdict:
             f"the headline denied findings the report prints below it: {first!r}")
         assert "all checks passed" not in first, (
             f"the headline claimed every check passed above warn rows: {first!r}")
-        assert "1 warning(s)" in first, (
-            f"the headline did not name the warn count: {first!r}")
+        # The tree's own second line fact: the run carried no --issue-state, so the
+        # closed class reports its unasked question as a second row (issue #148).
+        assert first == "census: 1 finding(s) (0 fail, 1 warn), " \
+            "ordering-closed did not run", (
+            f"the headline did not split the findings between fail and warn: "
+            f"{first!r}")
         last = out.splitlines()[-1]
         assert not last.startswith("summary: clean"), (
             f"the summary line called a warn-bearing run clean: {last!r}")
@@ -282,9 +288,10 @@ class TestHumanVerdict:
         assert "ledger-edited" in out and "cannot verify" in out, out
         assert "WARN" in out, f"the row must print as a warning to test this: {out}"
         first = self._first_line(out)
-        assert "1 warning(s)" in first, (
-            f"a run that printed a WARN row counted no warning: {first!r}")
-        assert "0 warning(s)" not in first, (
+        assert first == "census: 1 finding(s) (0 fail, 1 warn), " \
+            "ordering-closed did not run", (
+            f"a run that printed a WARN row did not count it as a warning: {first!r}")
+        assert "(0 fail, 0 warn)" not in first, (
             f"the headline denied the warning it printed below: {first!r}")
         last = out.splitlines()[-1]
         assert not last.startswith("summary: clean"), (
@@ -317,7 +324,8 @@ class TestHumanVerdict:
         assert "FAIL" in out, f"a promoted row must not print as a warning: {out}"
         assert "WARN" not in out, out
         first = self._first_line(out)
-        assert "0 warning(s)" in first, (
+        assert first == "census: 1 finding(s) (1 fail, 0 warn), " \
+            "ordering-closed did not run", (
             f"a promoted row is no longer a warning, whatever its class says: "
             f"{first!r}")
         last = out.splitlines()[-1]
@@ -367,96 +375,3 @@ class TestHumanVerdict:
                 f"a warn-bearing human run still printed the all-clear {line!r}")
         _, out_json_again, _ = _run_census(repo, *args, json_out=True)
         assert out_json == out_json_again, "two --json runs of one tree differed"
-
-
-def test_not_evaluated_note_without_a_named_class_glues_nothing():
-    """A not-evaluated note naming no class contributes no headline clause.
-
-    Regression: the counts branch used to append ``{n} check(s) did not run``
-    flush against the counts (``1 finding(s)1 check(s) did not run``). With no
-    named class the headline carries no extra clause at all: the first line is
-    exactly the counts, and the note line below the rows says what was not
-    evaluated.
-    """
-    import io
-    import sys as _sys
-
-    from noni.census_render import (
-        NO_STATE_ROOT_NOTE,
-        _render,
-    )
-
-    findings = [{"check": "hygiene", "severity": "warn",
-                 "subject": "noni/direction/order.json",
-                 "artifact": "noni/direction/order.json",
-                 "message": "not a hygiene-clean guarantee"}]
-    note = NO_STATE_ROOT_NOTE.format(repo="state/repo")
-    buf = io.StringIO()
-    saved = _sys.stdout
-    _sys.stdout = buf
-    try:
-        _render(findings, {"hygiene": 1}, True, 0, False, (note,))
-    finally:
-        _sys.stdout = saved
-    lines = buf.getvalue().splitlines()
-    headline = [line for line in lines if line.startswith("census:")][0]
-    assert headline == "census: 1 warning(s), 1 finding(s)", lines[:3]
-    assert "did not run" not in headline, headline
-    assert f"note: {note}" in lines, lines
-
-
-def test_rowless_run_naming_a_class_keeps_the_semicolon():
-    """A rowless run that names a class separates the clause with a semicolon.
-
-    `census: no findings; ordering-closed did not run` -- the rowless site keeps
-    the semicolon it had before issue #166's PR glued the clause onto the counts
-    with a comma. The counts site keeps its comma. Fails on the PR's current
-    comma output until the renderer restores the semicolon for the rowless case.
-    """
-    import io
-    import sys as _sys
-
-    from noni.census_render import (
-        ORDERING_CLOSED_NOT_EVALUATED,
-        _render,
-    )
-
-    buf = io.StringIO()
-    saved = _sys.stdout
-    _sys.stdout = buf
-    try:
-        _render([], {}, True, 0, False, (ORDERING_CLOSED_NOT_EVALUATED,))
-    finally:
-        _sys.stdout = saved
-    lines = buf.getvalue().splitlines()
-    headline = [line for line in lines if line.startswith("census:")][0]
-    assert headline == "census: no findings; ordering-closed did not run", lines
-
-
-def test_rowless_run_whose_note_names_no_class_prints_only_no_findings():
-    """A rowless run whose note names no class prints exactly `census: no findings`.
-
-    No trailing semicolon, and never the all-clear banner: a note exists, so the
-    run is not all-clear. The note itself still prints below the rows.
-    """
-    import io
-    import sys as _sys
-
-    from noni.census_render import (
-        NO_STATE_ROOT_NOTE,
-        _render,
-    )
-
-    note = NO_STATE_ROOT_NOTE.format(repo="state/repo")
-    buf = io.StringIO()
-    saved = _sys.stdout
-    _sys.stdout = buf
-    try:
-        _render([], {}, True, 0, False, (note,))
-    finally:
-        _sys.stdout = saved
-    lines = buf.getvalue().splitlines()
-    headline = [line for line in lines if line.startswith("census:")][0]
-    assert headline == "census: no findings", lines
-
-

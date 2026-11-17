@@ -93,7 +93,9 @@ def test_a_confirmed_time_past_the_threshold_is_a_warn_at_forty_five(tmp_path):
     # no --issue-state, so the closed class reports its unasked question as the second
     # warn row issue #148 gave it. The count and the row are one fact read two ways, so
     # the headline's number is pinned to the rows the NDJSON run above reported.
-    assert lines[0].startswith(f"census: {len(rows)} warning(s), {len(rows)} finding(s)"), (
+    assert lines[0] == (
+        f"census: {len(rows)} finding(s) (0 fail, {len(rows)} warn), "
+        "ordering-closed not checked"), (
         f"the headline did not count the run's warn rows: {lines[0]!r} vs {rows}")
     # The verdict carries the closed class's clause because the run carries that row;
     # the clause is the product's and is matched as a clause rather than spelled again.

@@ -222,7 +222,7 @@ def test_the_headline_separates_the_clause_from_the_counts_it_qualifies(tmp_path
     first = out.splitlines()[0]
     # The counts are the ordering group's own (the human helper confines the run to
     # it); pinned as one exact line on the concrete tree below.
-    assert first == "census: 1 warning(s), 1 finding(s), ordering-closed not checked", first
+    assert first == "census: 1 finding(s) (0 fail, 1 warn), ordering-closed not checked", first
 
 
 def test_the_row_never_invents_a_closed_issue(tmp_path):

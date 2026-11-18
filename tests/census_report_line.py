@@ -90,10 +90,19 @@ def _documented_summary_shape() -> tuple[str, str | None, bool]:
     ``_CLEAN_RUN_WARN_ROWS``), which the page tells the reader to expect.
 
     The human word is read positionally rather than matched as the literal
-    ``clean``: the run the try-it block performs carries warn rows, so the word
-    the page has to show there is a warn count and the all-clear word belongs to
-    a run with no rows at all (issue #117). A page that printed ``clean`` in that
-    position is refused by whoever compares this line against a real run.
+    ``clean``: the run a tree with a recordless ledger and a broken deny-list
+    performs carries warn rows, so the word the page has to show there is a warn
+    count and the all-clear word belongs to a run with no rows at all (issue
+    #117). A page that printed ``clean`` in that position is refused by whoever
+    compares this line against a real run.
+
+    Both numbers stay the page's own placeholders. The row set of the try-it tree
+    is not something the suite can pin: it turns on the state of the tree the
+    reader ran in and on whether an ``--issue-state`` map was supplied, and a
+    first tree with no deny-list configured now reports that half as a note and
+    no row at all (issue #194). So the count a caller compares against a real run
+    is filled by the harness rather than by a tuple of expected subjects, and a
+    page that fixed a number of its own would be compared against it.
 
     Returns the line, the page's human word (``None`` when the page held it
     open), and whether it held it open: a page that pinned a number can be

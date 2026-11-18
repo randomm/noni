@@ -15,13 +15,13 @@ consumers should branch on it rather than matching message prose:
 |---|---|---|
 | `path:line` of a tracked file | a built-in or active deny-list violation, or an allowlist finding (stale, refused) at line 0 | that file, root-relative |
 | `hygiene scan` | the scan itself did not run (no git tree, `git ls-files` failed or hung, `public_safety` not importable, or the committed allowlist unreadable or refused) | the checker, in the hygiene artifact namespace (`noni/public_safety.py`) |
-| `deny-list` | the deny-list half of the scan did not run; the state word (`absent`, `corrupt`, `present but empty`) is in the message | the checker, as above |
+| `deny-list` | the deny-list half of the scan gave no verdict; the state word (`corrupt`, `present but empty`) is in the message. A deny-list that was never configured is not a row at all: the default run says it in a `note:` line, and only `--strict` reports it as this row, at 50 | the checker, as above |
 
 A violating file's artifact is rooted in the tree being audited; the two
 probe-failure rows name the census's own checker, which ships inside the
 package rather than beside the tree, so they are rooted in the hygiene artifact
 namespace instead — the census never prints a machine-local absolute path either
-way. A tracked path may contain a
+way, and neither does the note. A tracked path may contain a
 colon, so the census splits public_safety's `path:line: label` on its known
 label set rather than on the first colon, and a violation of an unexpected
 shape is reported verbatim instead of split; an allowlist finding is reported at line 0.

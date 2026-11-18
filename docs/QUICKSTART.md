@@ -112,10 +112,10 @@ the same step the writer wrote it. `--init` is the word that a tree with no
 `noni/` is a state root you mean to start: without it `decide` refuses at exit 3
 rather than create direction content in a checkout you pointed at by mistake. A tree
 that already holds a `noni/` is a state root whatever it holds, and needs no flag. The
-census reads the tree, from git history plus those files, so a first run reports the two
-warnings a tree without operator configuration carries — the inactive deny-list and the
-ledger with nothing to arbitrate — and still ends `verdict ok`: its last line names them,
-`summary: W warning(s); N finding(s); verdict ok`. The census never writes.
+census reads the tree, from git history plus those files, so a first run reports one
+warning (the ledger with nothing to arbitrate), says in a `note:` line that the
+deny-list check is off, and still ends `verdict ok`: its last line names the
+warning, `summary: W warning(s); N finding(s); verdict ok`. The census never writes.
 
 ## Route B: a separate private state repository
 
@@ -253,13 +253,12 @@ census's own classes split by their default severity:
 - **report without failing** on 41, 42, 45, 46 and 50.
 
 `skills/census/SKILL.md` owns that table with the class names beside each code.
-A warning never moves the exit code on its own, so a first CI run on a tree with
-no deny-list exits 0 and prints the inactive row (`deny-list class inactive
-(absent)`) as its only finding: that is the expected output, not a failure, and
-[the deny-list section](#the-deny-list-and-why---strict-fails-on-a-fresh-attach)
-says what switches the class on. `--strict` is the opt-in a team adds once that
-file holds at least one usable entry, and under it every warn class above fails
-the build at its own code.
+A warning never moves the exit code on its own, so a first CI run exits 0 with no
+deny-list row and one `note:` line, `deny-list check is off`: expected output, not a
+failure. [The deny-list section](#the-deny-list-and-why---strict-fails-on-a-fresh-attach)
+says what switches it on. `--strict` is the opt-in a team adds once that file holds
+at least one usable entry, and under it every warn class above fails the build at
+its own code — an absent deny-list among them, at 50.
 
 ## Using noni alongside a driver that keeps its own claims
 
@@ -281,11 +280,12 @@ per-issue state, worktree claims and a queue. noni does not compete with it.
 
 ## The deny-list, and why --strict fails on a fresh attach
 
-`--strict` promotes every warn class to a failure at its own code, `hygiene`
-(50) included. A freshly attached project has no deny-list, so the hygiene
-class is inactive, and a `--strict` run fails on it even though nothing in the
-tree is wrong. The row is honest about the state it found: `deny-list class
-inactive (absent)`, or `corrupt`, or `present but empty`.
+`--strict` promotes every warn class to a failure at its own code, `hygiene` (50)
+included. A freshly attached project has no deny-list, and a `--strict` run fails on
+it (exit 50) though nothing in the tree is wrong; without `--strict` the same run
+prints no deny-list row and says the check is off in a `note:` line. A deny-list
+that exists and gave no verdict is a finding in any mode, and its row names the
+state: `deny-list class inactive (corrupt)`, or `present but empty`.
 
 The file `.noni-scrub-denylist` holds one entry per line, at the root of the tree
 being audited — `<project>/.noni-scrub-denylist` on Route A,

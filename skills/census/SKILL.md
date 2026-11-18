@@ -210,15 +210,23 @@ The same rule extends to the classes that report their own absence:
   `noni/items/` directory left by the removed item store, earns no row, no error
   and no warning in any mode: the census reads no claim files and no item files,
   so an artifact it was never given cannot be a failed read.
-- **`hygiene` (50)** always reports under `noni census`, a clean tree included
-  (the per-artifact wrappers run one group each and report no hygiene row). When the
-  deny-list class is not active (its file is `absent`, `corrupt`, or present
-  with no entries) the run emits one `hygiene` row naming that state; a scan
+- **`hygiene` (50)** always reports what it checked under `noni census`, the
+  built-in half on a clean tree included (the per-artifact wrappers run one group
+  each and report no hygiene row). When a deny-list was configured and gave no
+  verdict (its file is `corrupt`, or `present but empty`) the run emits one
+  `hygiene` row naming that state. When none was configured at all (`absent`: no
+  `.noni-scrub-denylist` in the audited tree and no `NONI_SCRUB_DENYLIST` file)
+  the default run emits no row and prints one `note:` line instead, saying the
+  deny-list check is off, that names and hostnames were not checked, and how to
+  switch it on; under `--strict` that same state keeps its row and fails at 50, so
+  the strict gate is not weakened. A scan
   that cannot run at all (`--repo` is not a git repo, `git ls-files` fails or
   hangs, `public_safety` is not importable, or the scanner raises
-  for any reason) emits one row saying the scan did not run. Neither is ever
-  reported as hygiene-clean, and no scanner failure can take the census down:
-  every finding the run already collected is still reported. The scan runs
+  for any reason) emits one row saying the scan did not run. None of the three is
+  ever reported as hygiene-clean, and no scanner failure can take the census down:
+  every finding the run already collected is still reported. The note rides the
+  notes channel, so it adds no check class, no row kind and no exit code, and a
+  run that took the class out with `--skip hygiene` prints no note. The scan runs
   in-process over the census's own git tree — the `--ledger` and other path
   overrides never re-target it.
 
@@ -231,7 +239,9 @@ The same rule extends to the classes that report their own absence:
   inactive: it needs at least one usable entry. It stays untracked by design —
   the names it guards must not be committed — which is why `--strict` fails on a
   freshly attached tree and why `docs/PUBLISHING.md` step 1 runs
-  `scripts/public_safety.py` rather than trusting a clean census.
+  `scripts/public_safety.py` rather than trusting a clean census: the census is
+  not the publishing gate, and that gate still exits non-zero when no deny-list is
+  configured.
 - **The deletion classes report what they could not check.** A
   `--ledger` override that points outside the audited git tree
   switches off the append-only question for that group; it says so in a

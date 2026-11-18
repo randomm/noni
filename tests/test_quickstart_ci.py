@@ -184,19 +184,22 @@ def test_the_ci_step_exits_zero_on_a_clean_route_a_tree(world: World) -> None:
 
     The tree is what the page's own Route A steps leave behind, so the clean half
     is asserted on the tree the reader has, not on an empty directory that would
-    pass for the wrong reason. That tree is not a run with nothing to report:
-    without a deny-list its census counts warn rows, so the step is pinned to end
-    ``verdict ok`` on a warn-bearing run too, which is what the page's "a first
-    CI run exits 0" promise is actually made of (issue #117).
+    pass for the wrong reason. That tree is not a run with nothing to report: its
+    deny-list is unconfigured, so the census says so in a note and the record's
+    shape decides the rows, and the step is pinned to end ``verdict ok`` with the
+    note printed -- which is what the page's "a first CI run exits 0" promise is
+    actually made of (issue #117, and issue #194 for the note).
     """
     for argv in route_commands(("Route A",)):
         checked(launch(world, argv, world.project), f"Route A command {argv}")
     code, stdout = _run_route_a(world, _ci_census_command(state=False))
     lines = _assert_verdict(code, stdout, 0, "the CI census step on a clean tree")
     line = _verdict_line(lines, "verdict ok")
-    assert "warning(s)" in line, (
-        f"the page's tree carries warn rows, so the step's summary line should "
-        f"name them rather than read all-clear: {line!r}")
+    assert any(note.startswith("note: deny-list check is off") for note in lines), (
+        f"a tree with no deny-list must say the check is off, in a note and not a "
+        f"warn row: {lines!r}")
+    assert not [line for line in lines if " deny-list" in line], (
+        f"the unconfigured deny-list must not reach the rows: {lines!r}")
     assert not git(world.project, "status", "--porcelain",
                    env=world.env).stdout.splitlines(), (
         "the documented CI step left the tree dirty")

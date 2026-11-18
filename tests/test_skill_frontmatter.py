@@ -22,12 +22,17 @@ unwrapped ``description:`` line, never a folded or literal block.
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 from _harness import REPO
 
 FIELD = re.compile(r"^([a-z-]+):(.*)$")
 REQUIRED_FIELDS = ("name", "description")
+# The commit whose skills/noni/SKILL.md first carries the wording this ticket's
+# quoting must preserve: the page landed there intact and was untouched until
+# this ticket, so the wording check has a committed reference, not a literal.
+PRE_FIX_REV = "60838c6"
 
 
 def skill_pages() -> list[Path]:
@@ -69,20 +74,26 @@ def value_defect(value: str) -> str | None:
       so the parsed text silently differs from the source line.
     - A single-quoted value must close, and ``''`` is the only inner quote it
       may hold; one lone ``'`` ends the scalar early.
+
+    A quote character is checked inside the quotes only where one can be told
+    apart from content: a lone ``"`` or ``'`` closes nothing, so it is reported
+    as the empty value it loads to rather than as an unclosed scalar.
     """
     body = value[1:] if value.startswith(" ") else value
-    if not body:
+    marker = body[:1]
+    if not body.strip(' "\''):
+        # Covers the bare empty value, "" and '' (and a lone quote, which is no
+        # pair): an empty quoted scalar is what YAML hands back as None, so the
+        # field a loader needs is gone.
         return "the value is empty, so the field a loader needs would be missing"
-    if body.startswith('"'):
-        if not (len(body) > 1 and body.endswith('"')):
-            return "a double-quoted value does not close"
-        if '"' in body[1:-1] or "\\" in body[1:-1]:
-            return "a double-quoted value holds an unescaped \" or backslash"
-        return None
-    if body.startswith("'"):
-        if not (len(body) > 1 and body.endswith("'")):
-            return "a single-quoted value does not close"
-        if "'" in body[1:-1].replace("''", ""):
+    if marker in ("'", '"'):
+        if len(body) < 2 or not body.endswith(marker):
+            named = {"'": "single", '"': "double"}[marker]
+            return f"a {named}-quoted value does not close"
+        inner = body[1:-1]
+        if marker == '"' and ('"' in inner or "\\" in inner):
+            return 'a double-quoted value holds an unescaped " or backslash'
+        if marker == "'" and "'" in inner.replace("''", ""):
             return "a single-quoted value holds a quote that '' does not escape"
         return None
     if ": " in body:
@@ -93,19 +104,23 @@ def value_defect(value: str) -> str | None:
 
 
 def page_defects(page: Path) -> list[str]:
-    """Every reason this page's frontmatter would not load as string values."""
-    defects = []
+    """Every reason this page's frontmatter would not load as string values.
+
+    The two field-presence and field-emptiness checks are delegated to
+    ``value_defect`` by the loop at the bottom, so there is one rule per shape
+    and no second place to update.
+    """
     try:
         fields = frontmatter_fields(page.read_text(encoding="utf-8"))
     except AssertionError as exc:
         return [str(exc)]
-    if not fields:
-        defects.append("the frontmatter block holds no field at all")
-    for name in REQUIRED_FIELDS:
-        if name not in fields:
-            defects.append(f"the frontmatter has no {name!r} field")
-        elif not fields[name].strip():
-            defects.append(f"the {name!r} value is empty")
+    except OSError as exc:
+        # A page the listing named but the tree cannot offer is a failure to
+        # report, not a crash and not a skip: same shape as the size gate.
+        return [f"unreadable: {type(exc).__name__}"]
+    defects = [] if fields else ["the frontmatter block holds no field at all"]
+    defects += [f"the frontmatter has no {name!r} field"
+                for name in REQUIRED_FIELDS if name not in fields]
     for name, raw in fields.items():
         defect = value_defect(raw)
         if defect is not None:
@@ -130,12 +145,31 @@ def test_every_shipped_skill_page_has_the_frontmatter_a_loader_reads() -> None:
 def test_quoted_values_round_trip_to_their_own_text() -> None:
     """Quoting changed the line, not the wording it carries.
 
-    The quoting this ticket added can neither eat a character nor gain one:
-    every value, unwrapped, re-quotes to the exact raw text it came from, and
-    no value picks up surrounding space. The three pages that needed no
-    quoting are the control: their values are bare and exact already.
+    Three halves. On every page: the raw value, unwrapped, re-quotes to the
+    exact text it came from and carries no surrounding space, so a quote pair
+    can neither eat nor gain a character. On the page this ticket changed: the
+    working tree's description must equal what ``git`` holds at ``PRE_FIX_REV``,
+    the commit whose page first carries that wording, so a rewording cannot hide
+    inside a quoting change and the reference is committed text, not a literal
+    that would rot. And the check itself is proved to fire: the same comparison
+    over a reworded page must refuse it, because a wording check that compared
+    the page to itself would pass forever.
     """
-    for page in skill_pages():
+    def unwrapped(text: str) -> str:
+        raw = frontmatter_fields(text)["description"]
+        body = raw[1:] if raw.startswith(" ") else raw
+        if body[:1] in ("'", '"'):
+            return body[1:-1].replace("''", "'")
+        return body
+
+    def git_show(rev: str, path: str) -> str:
+        proc = subprocess.run(["git", "-C", str(REPO), "show", f"{rev}:{path}"],
+                              capture_output=True, text=True, timeout=30)
+        assert proc.returncode == 0, f"git show {rev}:{path} failed: {proc.stderr}"
+        return proc.stdout
+
+    pages = skill_pages()
+    for page in pages:
         for name, raw in frontmatter_fields(page.read_text(encoding="utf-8")).items():
             body = raw[1:] if raw.startswith(" ") else raw
             marker = body[:1] if body[:1] in ("'", '"') else ""
@@ -147,6 +181,22 @@ def test_quoted_values_round_trip_to_their_own_text() -> None:
                 f"{page}: {name} carries no text or gained surrounding space")
             rejoined = f"{marker}{text}{marker}" if marker else text
             assert rejoined == body, f"{page}: {name} lost characters under quoting"
+
+    noni = REPO / "skills" / "noni" / "SKILL.md"
+    assert noni in pages, (
+        f"{noni} is not in the gate's page listing, so the wording check below "
+        "would compare a page the gate never measured")
+    reference = unwrapped(git_show(PRE_FIX_REV, "skills/noni/SKILL.md"))
+    assert unwrapped(noni.read_text(encoding="utf-8")) == reference, (
+        f"skills/noni/SKILL.md's description is no longer the wording it carried "
+        f"at {PRE_FIX_REV}: this ticket was allowed to add a quote pair, not to reword")
+    # The proof that the comparison above is a real check: the same comparison
+    # against planted wording refuses, so a green run is not the two sides being
+    # the same string by construction.
+    reworded = noni.read_text(encoding="utf-8").replace("read-only screen",
+                                                         "read-only pane", 1)
+    assert unwrapped(reworded) != reference, (
+        "the wording comparison accepts a reworded description, so it checks nothing")
 
 
 def test_the_guard_refuses_a_planted_page_whose_value_is_unquoted() -> None:
@@ -161,9 +211,14 @@ def test_the_guard_refuses_a_planted_page_whose_value_is_unquoted() -> None:
         '---\nname: demo\ndescription: an attached project: one screen\n---\n':
             'an unquoted value contains ": "',
         '---\nname: demo\ndescription:\n---\n': "the value is empty",
+        '---\nname: demo\ndescription: ""\n---\n': "the value is empty",
+        "---\nname: demo\ndescription: ''\n---\n": "the value is empty",
         '---\nname: demo\ndescription: a value ending in a colon:\n---\n':
             "ends in a colon",
+        '---\nname: demo\ndescription: "\n---\n': "the value is empty",
         '---\nname: demo\ndescription: "unterminated\n---\n': "does not close",
+        '---\nname: demo\ndescription: " a value with text and no close\n---\n':
+            "does not close",
         '---\nname: demo\ndescription: "holds \\"a quote\\""\n---\n':
             'holds an unescaped',
         "---\nname: demo\ndescription: 'holds 'a quote'\n---\n":

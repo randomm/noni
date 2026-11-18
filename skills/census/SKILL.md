@@ -110,9 +110,9 @@ keyed to what the run found:
 | state of the run | first line | verdict word of the summary line |
 |---|---|---|
 | no rows, no note | `census: no findings; all checks passed` | `clean` |
-| rows counted | `census: W warning(s), N finding(s)` | `W warning(s)` |
+| rows counted | `census: N finding(s) (F fail, W warn)` | `W warning(s)` |
 | no rows, a note | `census: no findings; <class> did not run` | `clean` |
-| the unasked-closed row is carried | `census: …, N finding(s), ordering-closed not checked` | `ordering-closed not checked` |
+| the unasked-closed row is carried | `census: N finding(s) (F fail, W warn), ordering-closed not checked` | `ordering-closed not checked` |
 
 The last row is the one state in which the word `clean` is displaced by a class
 id: the run that holds issues and got no `--issue-state` carries the class's own
@@ -123,8 +123,10 @@ the verdict word of the rows above and is described by the rows before it.
 So the all-clear banner and the word `clean` are reserved for a report that
 carried nothing at all: a run whose only findings are warnings names how many it
 counted instead of calling itself `clean`, and a run that skipped a check names
-that class instead of claiming every check passed. The warn count is the number
-of rows whose own severity is `warn`, read off the same field as the `WARN` tag
+that class instead of claiming every check passed. The headline states the row
+total once and splits it in parentheses, so `F + W` is `N`: the warn count is the
+number of rows whose own severity is `warn`, read off the same field as the `WARN`
+tag
 beside each row, so a cannot-verify or cannot-tell row of a fail class (warn by
 default, escalated by `--strict`) is counted as the warning it prints as; under
 `--strict` a promoted row reads `FAIL` and leaves that count, and the exit code

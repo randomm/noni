@@ -17,7 +17,9 @@ What this module pins, in the order the run meets them:
 - ``confirm --all`` is the old bare confirm byte for byte, including the commit
   subject ``direction: confirm all``, and ``--no-commit`` keeps its contract;
 - ``--all`` is ``confirm``'s flag alone, and it is refused beside an issue number in
-  either order.
+  either order; which sentence refuses the flag-first order is the interpreter's, so that
+  half pins the code and the untouched state and not the wording (see the test);
+- the unknown-verb fix line offers only confirm forms the parser actually takes.
 
 The wording is asserted from the product's own constants rather than a copy typed
 here, the way ``tests/order_race_fixtures.py`` pins the guard's refusals: a test that
@@ -61,6 +63,7 @@ ALL = order_plan.ALL_FLAG
 # read-without-writing route the operator was really after.
 REFUSAL_HEADLINE = order_plan.BARE_CONFIRM[0]
 READ_WITHOUT_WRITING = order_plan.BARE_CONFIRM[1]
+ALL_WITH_ISSUE_HEADLINE = order_plan.ALL_WITH_ISSUE[0]
 
 
 def _git_out(repo, *args: str) -> str:
@@ -329,36 +332,57 @@ def test_all_is_refused_by_the_verbs_that_do_not_own_it(tmp_path):
 
 
 def test_all_beside_an_issue_is_a_usage_error_in_either_order(tmp_path):
-    """An issue names one entry and ``--all`` names every entry: refused together,
-    in either order, at the same code and with the flag named.
+    """An issue names one entry and ``--all`` names every entry, so the pair is
+    refused whichever order the tokens came in, at exit 2 and having written nothing.
 
-    The two orders reach the refusal by different routes, and the difference is
-    argparse's, not this writer's: the optional positional is filled only by the pass
-    that walks args left to right, so ``confirm 1 --all`` arrives with ``issue="1"`` and
-    ``all_entries`` set and the confirm gate (`order_plan.confirm_usage_rule`) names the
-    pair, while ``confirm --all 1`` leaves the ``1`` stranded in argparse's extras and
-    argparse refuses it as an unrecognised argument. What the writer promises is that
-    neither order restamps anything, so both exit 2 and both name ``--all``; which of the
-    two sentences says it is not a claim a caller can act on, and the stranded-token
-    wording is pinned here so a change of parser shape that silently took the ``1`` as
-    the subject still has to answer for it.
+    Only one order is the writer's own refusal. ``confirm 1 --all`` always arrives with
+    ``issue="1"`` and ``all_entries`` set, so ``order_plan.confirm_usage_rule`` answers
+    it with the writer's headline on every Python this project supports, and that
+    wording is pinned exactly. The other order is argparse's business: ``confirm --all
+    1`` puts the flag before the optional positional, and whether the positional still
+    gets filled is the interpreter's. On 3.11 it does not -- the ``1`` is left over and
+    argparse refuses the run as an unrecognised argument; on 3.14 it does, and the
+    writer's own ALL_WITH_ISSUE refusal answers instead. Both exit 2 and neither writes.
+    So the version-dependent half asserts only what holds on every supported version:
+    the code, the untouched artifact, an unmoved HEAD, a clean tree, and a stderr that is
+    one of those two known refusals rather than a traceback. Pinning either wording for
+    this order would fail on the other half of the supported range.
     """
     repo = _seeded(tmp_path, "all-issue")
     before = _order_path(repo).read_bytes()
     head_before = _head(repo)
-    for argv in (("confirm", "1", ALL), ("confirm", ALL, "1")):
-        proc = _order(repo, *argv, "--now", NOW)
-        assert proc.returncode == 2, f"{argv}: {proc.returncode} {proc.stderr}"
-        assert ALL in proc.stderr, f"{argv}: {proc.stderr}"
-    # The order argparse can route through the gate is the one that gets the writer's own
-    # refusal; the other gets argparse's answer to a token it could not place.
+    # The order that reaches the writer on every supported version: exact wording.
     routed = _order(repo, "confirm", "1", ALL, "--now", NOW)
-    assert "does not go with it" in routed.stderr, routed.stderr
+    assert routed.returncode == 2, f"{routed.returncode}: {routed.stderr}"
+    assert ALL_WITH_ISSUE_HEADLINE in routed.stderr, routed.stderr
+    # The order whose refusal depends on the interpreter: version-independent claims.
     stranded = _order(repo, "confirm", ALL, "1", "--now", NOW)
-    assert "unrecognized arguments: 1" in stranded.stderr, stranded.stderr
+    assert stranded.returncode == 2, f"{stranded.returncode}: {stranded.stderr}"
+    assert ALL_WITH_ISSUE_HEADLINE in stranded.stderr or \
+        "unrecognized arguments: 1" in stranded.stderr, stranded.stderr
+    for proc in (routed, stranded):
+        assert "Traceback" not in proc.stderr, proc.stderr
+        assert "Traceback" not in proc.stdout, proc.stdout
     assert _order_path(repo).read_bytes() == before
     assert _head(repo) == head_before
     assert _porcelain(repo) == "", _porcelain(repo)
+
+
+def test_the_unknown_verb_fix_line_names_the_confirm_forms_that_are_accepted(tmp_path):
+    """A line a reader copies must be a line the parser takes (issue #193).
+
+    The unknown-verb refusal advertised ``confirm [ISSUE]``, a form this writer refuses,
+    so a caller who mistyped the verb was told to run a command that refuses them. The
+    two arms of ``confirm`` are pinned in the words the refusal prints: the bracketed form
+    every other verb takes says the subject is optional, and a confirm naming no subject
+    is not, so the bracket is asserted absent rather than each fragment spelled a second
+    time here.
+    """
+    repo = _seeded(tmp_path, "unknown-verb")
+    proc = _order(repo, "shuffle", "7", "--now", NOW)
+    assert proc.returncode == 2, f"{proc.returncode}: {proc.stderr}"
+    assert "confirm [ISSUE]" not in proc.stderr, proc.stderr
+    assert f"confirm ISSUE | confirm {ALL}" in proc.stderr, proc.stderr
 
 
 def test_the_help_line_names_the_flag_on_the_confirm_form(tmp_path):

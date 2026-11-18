@@ -76,7 +76,8 @@ def unknown_verb(subcommand: str, label: str) -> tuple[str, str]:
     return (f"subcommand {subcommand!r} is not one of "
             "add, move, remove or confirm",
             f"{label} --repo REPO add ISSUE --decision ID | "
-            "move ISSUE [--to N] [--decision ID] | remove ISSUE | confirm [ISSUE]")
+            "move ISSUE [--to N] [--decision ID] | remove ISSUE | "
+            f"confirm ISSUE | confirm {order_plan.ALL_FLAG}")
 
 
 def plan_add(repo: Path, entries: list, issue: int | None,

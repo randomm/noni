@@ -43,10 +43,12 @@ from . import labels, orderschema, orderstate
 # plan asks for it by the name the writer and the censuses both use.
 WHY_FIELD = orderschema.WHY_FIELD
 
-# The flag that means "every entry", spelled once: the usage line below, the parser's
-# declaration in ``order.py``, the ownership table in ``order_add``, this gate's refusals
-# and the tests all reach it through here, so a rename cannot leave one of them naming a
-# flag that nothing accepts.
+# The flag that means "every entry", spelled once: the usage line below, this gate's
+# refusals and the ownership table in ``order_add`` all reach it through here, so a
+# rename cannot leave one of them naming a flag that nothing accepts. The parser's own
+# ``add_argument`` in ``order.py`` is a deliberate literal: it is what
+# ``tests/test_order_writer_docs.py`` compares the documentation against, and a constant
+# there would let both sides of that check move together.
 ALL_FLAG = "--all"
 
 
@@ -95,10 +97,15 @@ def confirm_usage_rule(subcommand: str, issue: str | None,
     never opens the artifact and never calls git, so a no-``noni/`` tree stays without
     one and a malformed file stays unopened. Two shapes are refused, and neither is
     quietly preferred over the other: a confirm naming no subject at all, and a confirm
-    naming both an issue and ``--all``. Only the second as ``confirm 1 --all`` reaches
-    this gate: argparse fills the optional positional in the pass that walks args left to
-    right, so ``confirm --all 1`` leaves the ``1`` in its extras and argparse refuses that
-    order as an unrecognised argument -- at the same exit code, having written nothing.
+    naming both an issue and ``--all``.
+
+    ``confirm 1 --all`` always reaches this gate, so on every supported Python that pair
+    is answered by :data:`ALL_WITH_ISSUE` here. ``confirm --all 1`` depends on the
+    interpreter: argparse fills an optional positional that follows a flag in some
+    versions and leaves it in its extras in others, so on Python 3.11 that order is
+    refused by argparse as an unrecognised argument and on newer versions it reaches this
+    gate like the other. Either way it exits 2 having written nothing, so no caller or
+    test may rely on which of the two sentences says it.
 
     The pair is refused here rather than by :func:`noni.order_add.misplaced_flag`
     because the table's question is whether the verb owns the flag, and ``confirm`` does

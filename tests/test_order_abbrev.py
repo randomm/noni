@@ -15,6 +15,9 @@ place the parser is built. What this module pins:
   to, and reached the same way, from argv alone;
 - ``--a`` is refused too (it stands for no single flag, so argparse is the one that says
   no);
+- the single-dash lookalikes ``-all``, ``-a`` and ``-all 1`` are refused as well.
+  ``allow_abbrev=False`` governs ``--`` prefixes only, so these forms are not covered by
+  the switch above and have to be answered for themselves;
 - every flag of the writer is still accepted in full, so what died is the abbreviation
   and not the flag.
 """
@@ -107,6 +110,32 @@ def test_a_prefix_that_stands_for_two_flags_is_refused_by_argparse(tmp_path):
     assert _head(repo) == head_before
     assert _porcelain(repo) == "", _porcelain(repo)
     assert [entry["confirmed"] for entry in _read(repo)["entries"]] == STAMPS
+
+
+def test_a_single_dash_spelling_of_the_whole_order_flag_does_not_restamp(tmp_path):
+    """``-all``, ``-a`` and ``-all 1`` reach the whole-order write no more than ``--al``.
+
+    ``allow_abbrev=False`` switches off prefix matching for long ``--`` options; it says
+    nothing about a single dash, which argparse reads as a cluster of short options. This
+    writer has none, so each form below is a token it cannot place. What is asserted is
+    the outcome rather than the sentence: exit 2, the artifact's bytes, HEAD, and a clean
+    tree, with the stamps still the three unequal ones the fixture was seeded at. The
+    ``1`` case is the one that would restamp an entry if the token were ever taken as the
+    subject, and it is refused too.
+    """
+    for argv in (("confirm", "-all"), ("confirm", "-a"), ("confirm", "-all", "1")):
+        name = "dash" + argv[1].lstrip("-") + ("-subject" if len(argv) > 2 else "")
+        repo = _seeded(tmp_path, name)
+        before = _order_path(repo).read_bytes()
+        head_before = _head(repo)
+
+        proc = _order(repo, *argv, "--now", NOW)
+
+        assert proc.returncode == 2, f"{argv}: {proc.returncode} {proc.stdout}{proc.stderr}"
+        assert _order_path(repo).read_bytes() == before, f"{argv} rewrote the order"
+        assert _head(repo) == head_before, f"{argv} committed"
+        assert _porcelain(repo) == "", f"{argv} left the tree dirty: {_porcelain(repo)!r}"
+        assert [entry["confirmed"] for entry in _read(repo)["entries"]] == STAMPS
 
 
 def test_every_flag_is_still_accepted_in_full(tmp_path):

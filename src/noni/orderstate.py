@@ -45,12 +45,12 @@ STATUS_SUPERSEDED = "superseded"
 # unreadable record: a hand-edited status must not decide an ordering.
 STATUSES = ("decided", "open", "superseded")
 
-# The line every refusal of a citation a record must ends with, so a reader is
-# told what to do before re-running, not only that the id was wrong. Written once
-# here because the sites that print it live in two modules -- ``order.py``'s exit-2
-# ``add`` refusal, this module's absent-record and malformed-id arms, and ``intent
-# set``'s citation through :func:`decision_problems` -- and a hint spelled at each
-# drifts. :func:`record_first_hint` is the form callers use: it says nothing on the
+# The line every refusal of a citation a record must ends with, so a reader is told
+# what to do before re-running, not only that the id was wrong. Written once here
+# because the sites that print it live in two modules -- ``order.py``'s exit-2 ``add``
+# refusal, this module's absent-record and malformed-id arms, and ``intent set``'s
+# citation through :func:`decision_problems` -- and a hint spelled at each drifts.
+# :func:`record_first_hint` is the form callers use: it says nothing on the
 # no-``noni/`` branch, where the run is aimed at the wrong tree.
 RECORD_FIRST_HINT = ("Record the decision first with noni decide, then run this "
                      "command again with that record's id.")
@@ -98,12 +98,12 @@ def now_iso(value: str | None) -> tuple[str, str | None]:
 def file_kind(path: Path) -> tuple[str, str | None]:
     """Classify a path for this writer: ("absent"|"regular"|"dir"|"refusal", why).
 
-    Only a regular, non-symlinked file is readable. A link or any other
-    non-regular entry is refused, never opened: reading through a link puts a file
-    outside the tree into the writer's decisions, and writing onto one replaces
-    somebody's link with an order file. A directory is reported as itself rather
-    than as a generic refusal, because the two callers ask differently: for the
-    ledger an empty directory is a readable answer, for the artifact it is a fault.
+    Only a regular, non-symlinked file is readable. A link or any other non-regular
+    entry is refused, never opened: reading through one puts a file outside the tree
+    into the writer's decisions, and writing onto one replaces somebody's link. A
+    directory is reported as itself rather than as a generic refusal, because the two
+    callers ask differently: for the ledger it is a readable answer, for the artifact
+    a fault.
     """
     try:
         mode = os.lstat(path).st_mode
@@ -271,7 +271,7 @@ def record_first_hint(repo: Path | None) -> str:
 
     That branch is a wrong ``--repo``, not a decision left unrecorded, and the
     state-root sentence beside it already names the fix. A caller with no state
-    root keeps the hint: it asked about a record, not about a tree.
+    root keeps it: it asked about a record, not about a tree.
     """
     return "" if repo is not None and _path_kind.has_no_noni(repo) else RECORD_FIRST_HINT
 
@@ -282,6 +282,10 @@ def _citation_hint(repo: Path | None, remedy: str) -> str:
     One line carrying both halves, so the reader sees one ``fix:`` prefix and no
     unlabelled tail, and nothing added for a tree the sentence would mislead. Each
     site keeps the remedy it always said.
+
+    Only the two "no such record" arms call it: the exit-3 arms and the superseded
+    arms (which already name the record to pass) keep their hints byte for byte, so a
+    refusal the reader settles another way is never sent to ``noni decide``.
     """
     first = record_first_hint(repo)
     return remedy if not first else f"{remedy} {first}"
@@ -320,20 +324,18 @@ def read_record(path: Path, exit_io: int, exit_refusal: int,
     try:
         raw = path.read_bytes()
     except OSError:
-        # The name is the record's own path relative to the repo, so no
-        # machine-local absolute path reaches the message.
-        return None, (exit_io,
-                      (f"the decision record {rel} could not be read",
-                       "check that the ledger is readable, or name a different "
-                       "--decision"))
+        # The name is the record's path relative to the repo, so no machine-local
+        # absolute path reaches the message.
+        return None, (exit_io, (f"the decision record {rel} could not be read",
+                                "check that the ledger is readable, or name a "
+                                "different --decision"))
     try:
         value = orderschema.load_json_checked(raw)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError):
-        # As for the artifact: one strict reader for both files this writer reads
-        # but did not write, and the wording names no content from either.
-        return None, (exit_io,
-                      ("the decision record is not readable JSON",
-                       "repair the record or name a different --decision"))
+        # As for the artifact: one strict reader for both files this writer reads but
+        # did not write, and the wording names no content from either.
+        return None, (exit_io, ("the decision record is not readable JSON",
+                                 "repair the record or name a different --decision"))
     if not isinstance(value, dict):
         return None, (exit_io,
                       ("the decision record is not a JSON object",

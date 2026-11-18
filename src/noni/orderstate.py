@@ -45,6 +45,16 @@ STATUS_SUPERSEDED = "superseded"
 # unreadable record: a hand-edited status must not decide an ordering.
 STATUSES = ("decided", "open", "superseded")
 
+# The line every refusal of a citation a record must ends with, so a reader is
+# told what to do before re-running, not only that the id was wrong. Written once
+# here because the sites that print it live in two modules -- ``order.py``'s exit-2
+# ``add`` refusal, this module's absent-record and malformed-id arms, and ``intent
+# set``'s citation through :func:`decision_problems` -- and a hint spelled at each
+# drifts. :func:`record_first_hint` is the form callers use: it says nothing on the
+# no-``noni/`` branch, where the run is aimed at the wrong tree.
+RECORD_FIRST_HINT = ("Record the decision first with noni decide, then run this "
+                     "command again with that record's id.")
+
 
 def _fail(code: int, message: str, hint: str | None = None,
           label: str | None = None) -> int:
@@ -53,9 +63,8 @@ def _fail(code: int, message: str, hint: str | None = None,
 
     The label is the running program's own name from ``noni.labels``, not this
     file's name: a refusal raised by the reader still has to read as coming from
-    ``order.py``, whichever route reached it. ``intent.py`` passes its own label,
-    because a second writer reuses these reads and its refusals are its own, so
-    the name a caller sees is the name it invoked.
+    ``order.py``. ``intent.py`` passes its own, because a second writer reuses these
+    reads and the name a caller sees is the name it invoked.
     """
     label = label or f"{labels.ORDER}:"
     print(label, message, file=sys.stderr)
@@ -67,10 +76,10 @@ def _fail(code: int, message: str, hint: str | None = None,
 def now_iso(value: str | None) -> tuple[str, str | None]:
     """(timestamp, problem): the run's clock, or the --now the caller fixed.
 
-    Both are normalised to a UTC second-resolution stamp, so what lands in the
-    file and what the census compares against have one shape. A malformed
-    --now is a usage error: a run that silently used the clock instead would
-    report a confirmed time it did not say it used.
+    Both are normalised to a UTC second-resolution stamp, so the file and the
+    census that compares against it have one shape. A malformed --now is a usage
+    error: a run that used the clock instead would report a confirmed time it did
+    not say it used.
     """
     if value is None:
         stamp = datetime.now(timezone.utc)
@@ -80,7 +89,8 @@ def now_iso(value: str | None) -> tuple[str, str | None]:
         except ValueError:
             return "", f"--now {value!r} is not a valid ISO-8601 timestamp"
         if stamp.tzinfo is None:
-            return "", f"--now {value!r} carries no UTC offset (pass e.g. 2026-10-27T09:00:00Z)"
+            return "", (f"--now {value!r} carries no UTC offset "
+                        "(pass e.g. 2026-10-27T09:00:00Z)")
         stamp = stamp.astimezone(timezone.utc)
     return stamp.strftime("%Y-%m-%dT%H:%M:%SZ"), None
 
@@ -89,12 +99,11 @@ def file_kind(path: Path) -> tuple[str, str | None]:
     """Classify a path for this writer: ("absent"|"regular"|"dir"|"refusal", why).
 
     Only a regular, non-symlinked file is readable. A link or any other
-    non-regular entry is refused, never opened: reading through a link puts a
-    file outside the tree into the writer's decisions, and writing onto one
-    replaces somebody's link with an order file. A directory is reported as
-    itself rather than as a generic refusal, because the two callers ask
-    differently: for the ledger an empty directory is a readable answer ('no
-    records'), for the artifact it is a fault.
+    non-regular entry is refused, never opened: reading through a link puts a file
+    outside the tree into the writer's decisions, and writing onto one replaces
+    somebody's link with an order file. A directory is reported as itself rather
+    than as a generic refusal, because the two callers ask differently: for the
+    ledger an empty directory is a readable answer, for the artifact it is a fault.
     """
     try:
         mode = os.lstat(path).st_mode
@@ -125,17 +134,15 @@ class OrderRefused(NamedTuple):
 
 class OrderFaulted(NamedTuple):
     # The artifact's path could not be read as a file at all (a symlink, a
-    # directory, an unreadable regular file), or a git call hung: the
-    # environment, not the order.
+    # directory, an unreadable regular file): the environment, not the order.
     headline: str
     hint: str
 
 
 class RenderRefused(NamedTuple):
-    # The plan could not be turned into the bytes this writer commits. Every
-    # value in a plan is validated before it gets here, so this is the writer's
-    # own bug rather than the operator's; the artifact is left exactly as it was
-    # and nothing is claimed as committed.
+    # The plan could not be turned into the bytes this writer commits. Every value
+    # in a plan is validated before it gets here, so this is the writer's own bug;
+    # the artifact is left exactly as it was and nothing is claimed as committed.
     headline: str
     hint: str
 
@@ -146,16 +153,16 @@ def render(body: dict) -> bytes | RenderRefused:
         return orderschema.order_bytes(body)
     except ValueError:
         return RenderRefused("the planned order cannot be written as JSON",
-                             "re-run order.py; if it repeats, rebuild the order from "
-                             "order.py add after removing the artifact")
+                             "re-run order.py; if it repeats, rebuild the order "
+                             "with order.py add after removing the artifact")
 
 
 def body_of(value: dict) -> dict:
     """The {schema, entries} mapping a parsed artifact holds, in canonical key order.
 
-    The version travels with the body: the canonical comparison renders this back
-    through the version the file states, so a file that names a version this artifact
-    does not have is refused for what it says rather than silently re-rendered.
+    The version travels with the body, so the canonical comparison renders back
+    through the version the file states: a file naming a version this artifact does
+    not have is refused for what it says, never silently re-rendered.
     """
     return {"schema": value["schema"], "entries": value["entries"]}
 
@@ -163,8 +170,8 @@ def body_of(value: dict) -> dict:
 def _artifact_hint(why: str) -> str:
     """The 'repair the artifact' hint, naming the version a repair may use.
 
-    The one version is named because it is the only one a reader accepts: a file that
-    states another is refused for what it says, not repaired by this writer.
+    One version is named because it is the only one a reader accepts: a file stating
+    another is refused for what it says, not repaired by this writer.
     """
     return (f"repair the file {why} (it must hold "
             f"{orderschema.ORDER_SCHEMA!r}) or remove it and rebuild the order with "
@@ -175,26 +182,25 @@ def read_order(path: Path) -> OrderOk | OrderRefused | OrderFaulted:
     """The order ``path`` holds, or the refusal naming why this run may not write.
 
     Absent is not a refusal: an empty order is what the first ``add`` extends.
-    Anything else at the path that this writer would render differently is
-    refused (exit 4) rather than overwritten, because destroying an order the
-    operator committed is worse than refusing the run.
+    Anything else at the path that this writer would render differently is refused
+    (exit 4) rather than overwritten: destroying an order the operator committed is
+    worse than refusing the run.
     """
     kind, why = file_kind(path)
     if kind == "absent":
         return OrderOk([], None)
     if kind == "dir":
-        # A directory at the artifact path is not an empty order: nothing was
-        # read, so this run may not write. The wording names the shape the
-        # caller has to remove, which is not the fix for broken contents.
+        # A directory at the artifact path is not an empty order: nothing was read,
+        # so this run may not write. The wording names the shape the caller has to
+        # remove, which is not the fix for broken contents.
         return OrderFaulted(f"{orderschema.ORDER_REL} is not a regular file: a directory "
                             "sits at that path",
                             f"remove the directory at {orderschema.ORDER_REL}, then "
                             "re-run order.py")
     if kind == "refusal":
-        # An environment fault, not a refusal of the order: nothing is wrong
-        # with the ordering, this run cannot reach it. A caller who fixes the
-        # path re-runs the same command; a caller who repairs the artifact's
-        # contents does not, and the two are different work.
+        # An environment fault, not a refusal of the order: nothing is wrong with
+        # the ordering, this run cannot reach it, and repairing the path and
+        # repairing the contents are two different jobs.
         return OrderFaulted(f"{orderschema.ORDER_REL} {why}",
                             "remove that path or point --repo at the tree that holds "
                             "the order, then re-run order.py")
@@ -208,14 +214,13 @@ def read_order(path: Path) -> OrderOk | OrderRefused | OrderFaulted:
     try:
         value = orderschema.load_json_checked(raw)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError):
-        # The shared strict reader: the three literals no noni writer emits and
-        # the depth bound, all of them ValueError. RecursionError is named because
-        # it is no kind of ValueError: the bound answers for a document between it
-        # and the interpreter's own ceiling, but past that ceiling the decoder
-        # raises first (on 3.11 that ceiling sits just under the recursion limit,
-        # about 990 levels at the default 1000), so the arm is reachable there and
-        # a reader without it would die here instead of refusing the file. No text
-        # from the file reaches the operator.
+        # The shared strict reader: the three literals no noni writer emits and the
+        # depth bound, all of them ValueError. RecursionError is named because it is
+        # no kind of ValueError: the bound answers for a document between it and the
+        # interpreter's own ceiling, but past that ceiling the decoder raises first
+        # (just under the recursion limit on 3.11), so the arm is reachable there and
+        # a reader without it would die instead of refusing the file. No text from
+        # the file reaches the operator.
         return OrderRefused(f"{orderschema.ORDER_REL} is not valid JSON this writer can "
                             "extend",
                             _artifact_hint(""))
@@ -224,12 +229,11 @@ def read_order(path: Path) -> OrderOk | OrderRefused | OrderFaulted:
         return OrderRefused(f"{orderschema.ORDER_REL} is not an order this writer writes: "
                             + "; ".join(found),
                             _artifact_hint("to the documented shape"))
-    # Render the parsed value and compare bytes: a file this writer did not
-    # produce is refused rather than reformatted. A renderer that cannot render
-    # its own validated output is the writer's own bug, not a property of the
-    # file, so a broken renderer cannot make a canonical file look malformed:
-    # the canonical comparison is skipped in that case and the plan's own
-    # render step reports the fault.
+    # Render the parsed value and compare bytes: a file this writer did not produce
+    # is refused rather than reformatted. A renderer that cannot render its own
+    # validated output is the writer's own bug, so it cannot make a canonical file
+    # look malformed: the comparison is skipped then and the plan's render step
+    # reports the fault.
     canonical = render(body_of(value))
     if not isinstance(canonical, RenderRefused) and canonical != raw:
         return OrderRefused(f"{orderschema.ORDER_REL} is not in the canonical form this "
@@ -242,20 +246,19 @@ def read_order(path: Path) -> OrderOk | OrderRefused | OrderFaulted:
 def _no_record_headline(repo: Path, rel: str) -> str:
     """The sentence for a record this run cannot find, worded for the tree it looked in.
 
-    The ticket's own reproduction ends here: ``order add`` / ``intent set`` against a
-    tree whose state root is empty (or absent) answered "no decision record ... is in
-    the ledger", which is true of the record and useless as an account of the tree --
-    neither run named a state root, and the caller had no way to see they had aimed at
-    the wrong repository. The writer's state-root guard cannot answer this one: the two
-    verbs are the sanctioned creators of ``noni/direction``, so they must be admitted
-    past it. What this can do is say the second fact beside the first, from the same
-    ``lstat`` every other guard in the family asks: the ledger's absence is reported as
-    the reason, never as a record nobody committed.
+    The ticket's reproduction ends here: ``order add`` / ``intent set`` against an
+    empty or absent state root answered "no decision record ... is in the ledger",
+    true of the record and useless as an account of the tree -- neither run named a
+    state root, so the caller could not see it had aimed at the wrong repository.
+    The state-root guard cannot answer this one: both verbs are sanctioned creators
+    of ``noni/direction`` and must be admitted past it, so this says the second fact
+    beside the first, from the same ``lstat`` every other guard in the family asks.
+    The ledger's absence is the reason given, never a record nobody committed.
 
     ``repo`` is the state root the caller was given, asked of the guard rather than
-    rebuilt from the record's path: the path is ``<repo>/noni/decisions/<id>.json`` and
-    a probe asked of its grandparent would be asking ``<repo>/noni/noni``, which answers
-    "absent" on every real state root and would sentence the right ``--repo``.
+    rebuilt from the record's path: a probe of the record's grandparent would ask
+    ``<repo>/noni/noni``, which answers "absent" on every real state root and would
+    sentence the right ``--repo``.
     """
     if _path_kind.has_no_noni(repo):
         return (f"no decision record {rel} is in the ledger: this tree holds no "
@@ -263,29 +266,51 @@ def _no_record_headline(repo: Path, rel: str) -> str:
     return f"no decision record {rel} is in the ledger"
 
 
+def record_first_hint(repo: Path | None) -> str:
+    """The record-first sentence, or nothing for a tree that holds no ``noni/``.
+
+    That branch is a wrong ``--repo``, not a decision left unrecorded, and the
+    state-root sentence beside it already names the fix. A caller with no state
+    root keeps the hint: it asked about a record, not about a tree.
+    """
+    return "" if repo is not None and _path_kind.has_no_noni(repo) else RECORD_FIRST_HINT
+
+
+def _citation_hint(repo: Path | None, remedy: str) -> str:
+    """A site's own remedy plus the shared sentence, or the remedy alone.
+
+    One line carrying both halves, so the reader sees one ``fix:`` prefix and no
+    unlabelled tail, and nothing added for a tree the sentence would mislead. Each
+    site keeps the remedy it always said.
+    """
+    first = record_first_hint(repo)
+    return remedy if not first else f"{remedy} {first}"
+
+
 def read_record(path: Path, exit_io: int, exit_refusal: int,
                 repo: Path | None = None
                 ) -> tuple[dict, None] | tuple[None, tuple[int, tuple[str, str]]]:
     """The decision record at ``path``, or the (code, (headline, hint)) refusal.
 
-    The two codes travel with the refusal because the two ways a lookup fails
-    are different kinds of failure: the record is not there (the caller's
-    refusal code) and the record could not be read (the caller's I/O code). See
-    :func:`decision_problems`.
+    The two codes travel with the refusal because the two ways a lookup fails are
+    different kinds of failure: the record is not there (the caller's refusal code)
+    and it could not be read (its I/O code). See :func:`decision_problems`.
 
     ``repo`` is the state root the refusal may describe (see
-    :func:`_no_record_headline`); a caller that has none -- a test that reads one
-    record by its path, a scan over the ledger -- leaves it None and gets the plain
-    sentence, which is what it always got.
+    :func:`_no_record_headline`); a caller with none leaves it None and gets the
+    plain sentence, which is what it always got.
     """
     rel = f"{DECISIONS_DIR}/{path.name}"
     kind, why = file_kind(path)
     if kind == "absent":
+        # The arm whose hint carries the record-first sentence beside its own remedy:
+        # the file is not there, so recording it is the next step.
         return None, (exit_refusal,
                       (_no_record_headline(repo, rel) if repo is not None
                        else f"no decision record {rel} is in the ledger",
-                       "name the record that set the position, or add it with the "
-                       "steering-ledger writer first"))
+                       _citation_hint(repo, "name the record that set the position, "
+                                           "or add it with the steering-ledger "
+                                           "writer first")))
     if kind != "regular":
         return None, (exit_io,
                       (f"the decision record {rel} is not readable: "
@@ -319,12 +344,10 @@ def read_record(path: Path, exit_io: int, exit_refusal: int,
 def ledger_is_readable(repo: Path) -> bool:
     """Whether the ledger path is a directory the writer may look in.
 
-    Path.is_dir follows a symlink and answers yes for a link to a directory,
-    which is what this writer refuses elsewhere: reading through a link puts a
-    tree outside the repo into the writer's decisions. lstat and S_ISDIR ask
-    the question actually meant, is the ledger path itself a directory, and a
-    link, a plain file or a device all answer no, so the run says it could not
-    look rather than reporting an absence it did not observe.
+    ``Path.is_dir`` follows a symlink and answers yes for a link to a directory,
+    which is what this writer refuses elsewhere. lstat and S_ISDIR ask the question
+    actually meant, and a link, a plain file or a device all answer no, so the run
+    says it could not look rather than reporting an absence it did not observe.
     """
     try:
         return stat.S_ISDIR(os.lstat(repo / DECISIONS_DIR).st_mode)
@@ -336,17 +359,15 @@ def ledger_is_readable(repo: Path) -> bool:
 def decision_problems(repo: Path, decision: str, exit_io: int, exit_refusal: int
                       ) -> tuple[int, str, str] | None:
     """The (code, headline, hint) refusal for a ``decision`` id this order may
-    not cite, or None when the record it names is a record whose ordering stands.
+    not cite, or None when the record it names is one whose ordering stands.
 
-    The code is part of the answer because a failed lookup is two different
-    failures: the record is not there (the caller's refusal code, so the caller
-    names another record) and the ledger could not be looked in (the caller's
-    I/O code, so the caller fixes the tree). Collapsing them would make an
-    unreadable ledger read as an ordering the operator should change.
+    The code is part of the answer because a failed lookup is two failures: the
+    record is not there (the caller's refusal code, so it names another record) and
+    the ledger could not be looked in (its I/O code, so the caller fixes the tree).
+    Collapsing them would read an unreadable ledger as an ordering to change.
 
-    A decision record is identified by the filename stem of
-    ``noni/decisions/<id>.json``, the path decide.py names its records by, so
-    one file carrying the id is the whole answer.
+    A record is identified by the filename stem of ``noni/decisions/<id>.json``, the
+    path decide.py names its records by, so one file carrying the id answers it.
     """
     path = repo / DECISIONS_DIR / f"{decision}.json"
     if not DECISION_ID_RE.fullmatch(decision):
@@ -354,8 +375,9 @@ def decision_problems(repo: Path, decision: str, exit_io: int, exit_refusal: int
         # path from it is not worth the risk: same answer as no such file.
         return (exit_refusal,
                 f"decision {decision!r} matches no record file under {DECISIONS_DIR}/",
-                "name the record that set the position, in the form "
-                "YYYY-MM-DD-<slug>; the census report lists the ledger's records")
+                _citation_hint(repo, "name the record that set the position, in the "
+                                     "form YYYY-MM-DD-<slug>; the census report lists "
+                                     "the ledger's records"))
     if not ledger_is_readable(repo):
         return (exit_io,
                 f"the decision ledger {DECISIONS_DIR}/ could not be looked in: it is not "
@@ -391,10 +413,9 @@ def decision_problems(repo: Path, decision: str, exit_io: int, exit_refusal: int
 def _successor(repo: Path, decision: str, exit_io: int, exit_refusal: int) -> str | None:
     """The id of the live record that supersedes ``decision``, if the ledger holds one.
 
-    Scans the ledger for the record whose ``supersedes`` names ``decision``.
-    Only a record whose own status is not superseded answers: a chain that has
-    moved on again is superseded by the newest of its links, and that is the id
-    the hint should name. A ledger that cannot be listed answers nothing.
+    Scans the ledger for the record whose ``supersedes`` names ``decision``, and
+    answers only with one whose status is not superseded: a chain that moved on again
+    is superseded by its newest link, which is the id the hint should name.
     """
     ledger = repo / DECISIONS_DIR
     try:
@@ -420,10 +441,9 @@ def is_index_text(raw: str) -> bool:
     """Whether ``raw`` is text ``int`` can read as a plain decimal number.
 
     ``isdigit`` is True for a superscript or an Arabic-Indic digit and ``int``
-    refuses both, so a gate that stops at ``isdigit`` lets a token through to an
-    ``int`` call that raises: the writer dies with a traceback where it owes the
-    operator a usage refusal. ASCII decimal digits are what a position and an
-    issue number are spelled with, and this is the one rule both tokens obey.
+    refuses both, so a gate that stops at ``isdigit`` hands a token to an ``int``
+    call that raises, where the writer owes a usage refusal. ASCII decimal digits
+    are what a position and an issue number are spelled with.
     """
     return raw.isascii() and raw.isdecimal()
 
@@ -431,11 +451,10 @@ def is_index_text(raw: str) -> bool:
 def parse_index(raw: str, flag: str, count: int) -> tuple[int, tuple[str, str] | None]:
     """The 1-based position ``raw`` names for a list of ``count`` entries.
 
-    1-based because the order is printed and read 1-based, and a position is
-    counted, not an offset. The range is the list this run produces, so the
-    last position of an ``add`` is the new length and of a ``move`` the current
-    one: an out-of-range index answers nothing about an order, so it is refused
-    rather than clamped.
+    1-based because the order is printed and read 1-based. The range is the list this
+    run produces, so ``add``'s last position is the new length and ``move``'s the
+    current one: an out-of-range index answers nothing about an order, so it is
+    refused rather than clamped.
     """
     if not is_index_text(raw):
         return 0, (f"{flag} {raw!r} is not a position",
@@ -456,10 +475,9 @@ def print_order(entries: list[dict], label: str) -> None:
     ``order.py``), which the line opens: this module has no opinion on which
     command printed the order it just read.
 
-    The subject is the issue (``#7``): the ``#`` belongs to a tracker issue,
-    and printing ``#None`` for the entry the operator most needs
-    to recognise would be worse than printing what it is. The columns stay in one
-    position either way, so a reader still cuts the line by field.
+    The subject is the issue (``#7``): the ``#`` belongs to a tracker issue, and
+    printing ``#None`` for the entry the operator most needs to recognise would be
+    worse than printing what it is. The columns stay in one position either way.
     """
     print(f"{label}: {orderschema.ORDER_REL} ({len(entries)} entr"
           f"{'y' if len(entries) == 1 else 'ies'})")
@@ -472,9 +490,9 @@ def _subject_of(entry: dict) -> str:
     """What one printed line calls an entry: its issue.
 
     One rule for both writers of this line, so the print path and a refusal that
-    names an entry cannot spell the same subject two ways. An entry the shape rules
-    have not refused always names an issue; the fallback only keeps a malformed value
-    from printing nothing where the operator reads the subject.
+    names an entry cannot spell the subject two ways. An entry the shape rules have
+    not refused always names an issue; the fallback only keeps a malformed value
+    from printing nothing where the subject is read.
     """
     issue = orderschema.entry_issue(entry)
     return f"#{issue}" if issue is not None else "(unnamed entry)"

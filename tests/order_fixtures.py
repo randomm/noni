@@ -46,9 +46,10 @@ __all__ = [
     "_schema_module", "_gitwrite_module", "_order_module", "_orderstate_module",
     "_order_path", "_read", "_issues", "_repo", "_record_json", "_commit_record",
     "_supersede_baseline", "_order", "_order_inprocess", "_census_ordering",
+    "GHOST_ID",
     "_assert_census_clean", "_head_paths", "_porcelain", "_canonical", "_seed",
     "_spied_git", "_writer_git_call", "_git_verb", "_entry",
-    "_committed_order", "_bare_repo", "_schema_case", "git_input", "git_output",
+    "_committed_order", "_bare_repo", "_schema_case",
     "_read",
     "_doc_block", "_doc_usage_flags", "_docstring", "_module_exit_codes",
     "_order_ast", "_parser_flags", "_skill_section",
@@ -69,6 +70,12 @@ SUPERSEDING_ID = "2026-10-20-scheduler"
 # commits it with :func:`_commit_record`, so a tree that never asks the question is
 # not quietly holding a record nobody asked for.
 OTHER_ID = "2026-10-10-alternative"
+
+# A slug-shaped id no fixture ever commits, so the citation reaches the ledger and
+# is refused there (exit 4) rather than by the id shape. A date-shaped name is what
+# the ticket's own reproduction passes, and the difference matters: a malformed id
+# is refused by ``DECISION_ID_RE`` before any file is looked at.
+GHOST_ID = "2026-10-09-ghost"
 
 # The stamp the rival writer of the race tests commits at, and the stamp its
 # losing opponent's baseline is seeded at. Both differ from ``NOW`` for the same
@@ -442,52 +449,6 @@ def _bare_repo(tmp_path: Path, subdir: str = "bare-repo") -> Path:
     _git(repo, "config", "user.email", "replay@fixture.invalid")
     _commit_record(repo, BASELINE_ID, "decided", None)
     return repo
-
-
-# --- add ----------------------------------------------------------------------
-
-
-def git_output(repo: Path, *args: str) -> str:
-    """One git call whose ANSWER is stdout, with the harness identity and no stdin.
-
-    The checked half of the harness's two stdin-less shapes: ``_git`` checks and
-    discards stdout, ``_git_e2`` keeps stdout and does not check. A fixture that reads
-    an object id out of git wants both, and wants the failure to be a clear message
-    rather than an empty string the next step mistakes for an answer.
-    """
-    import subprocess
-
-    cmd = ["git", "-C", str(repo),
-           "-c", "user.name=Replay",
-           "-c", "user.email=replay@fixture.invalid",
-           "-c", "commit.gpgsign=false",
-           "-c", f"core.hooksPath={os.devnull}", *args]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode != 0:
-        raise RuntimeError(f"git {args} failed: {proc.stderr.strip()}")
-    return proc.stdout.strip()
-
-
-def git_input(repo: Path, *args: str, text: str) -> str:
-    """One git call that feeds ``text`` on stdin, with the harness identity.
-
-    The harness's ``_git`` / ``_git_e2`` pipe no stdin, so a fixture that must hand git
-    bytes (a blob written with ``hash-object -w --stdin``) builds the same argv here
-    rather than inventing a fourth shape for the harness's git calls. ``-w`` STORES the
-    object: an id the index is told to hold must be one the store can answer for, or a
-    later comparison would be measuring a dangling fixture rather than its own read.
-    """
-    import subprocess
-
-    cmd = ["git", "-C", str(repo),
-           "-c", "user.name=Replay",
-           "-c", "user.email=replay@fixture.invalid",
-           "-c", "commit.gpgsign=false",
-           "-c", f"core.hooksPath={os.devnull}", *args]
-    proc = subprocess.run(cmd, capture_output=True, text=True, input=text)
-    if proc.returncode != 0:
-        raise RuntimeError(f"git {args} failed: {proc.stderr.strip()}")
-    return proc.stdout.strip()
 
 
 def _schema_case(**entry_fields):

@@ -17,8 +17,8 @@ from order_fixtures import (
     _entry,
     _order_module,
     _order_path,
-    git_input,
 )
+from order_git_shapes import git_input
 from order_race_fixtures import RIVAL_STAMP, _rival_raced
 
 __all__ = ["_path_kind_file_bytes", "_restore_head", "_staged_conflict"]

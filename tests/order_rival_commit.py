@@ -17,8 +17,8 @@ from order_fixtures import (
     RIVAL_DATE,
     _canonical,
     _order_path,
-    git_input,
 )
+from order_git_shapes import git_input
 
 __all__ = ["_rival_commit"]
 

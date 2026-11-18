@@ -57,6 +57,7 @@ from order_usage_support import (
     first_usage_line,
     skill_md_verb_lines,
 )
+from orderstate_hint_support import RECORD_FIRST
 
 # The state root as a Route B reader names it, and the artifact path that form
 # produces: --repo joined to the path under the state root, which is the token
@@ -343,10 +344,8 @@ def test_a_repo_that_is_not_a_directory_is_a_fault(tmp_path):
 def _code_repo(tmp_path, name: str):
     """A committed git tree holding source and no ``noni/``: the pilot's mistake.
 
-    Built with a commit rather than an empty ``_init_repo`` tree, because that is the
-    shape a caller actually points ``--repo`` at (their code repository, where the
-    state clone was meant) and the writers' git probes answer differently on a tree
-    with no commit at all.
+    Committed rather than an empty ``_init_repo`` tree, because the writers' git
+    probes answer differently on a tree with no commit at all.
     """
     repo = _init_repo(tmp_path / name)
     _git(repo, "config", "user.name", "Replay")
@@ -359,14 +358,12 @@ def _code_repo(tmp_path, name: str):
 def test_a_repo_that_holds_no_noni_directory_is_a_fault(tmp_path):
     """A committed git tree with no noni/ is the same fault, and the same exit 2.
 
-    The case above names a path that does not exist, which every state-root test in
-    this suite did -- so a directory that exists, is a valid git work tree and simply
-    holds no noni/ fell past the is_dir check into the reads and answered "no decision
-    record ... is in the ledger" about a repository holding no ledger (issue #120,
-    reproduced from the quickstart's Route B block with --repo aimed at the project
-    instead of the clone). The contrast cases stay distinct and stay theirs: a tree
-    with an empty ledger is exit 4, a noni/ that is not a directory is exit 3, and
-    neither of those is this state.
+    The case above names a path that does not exist. A directory that exists, is a
+    valid git work tree and simply holds no noni/ once fell past the is_dir check into
+    the reads and answered "no decision record ... is in the ledger" about a repository
+    holding no ledger (issue #120, reproduced from the quickstart's Route B block with
+    the flag aimed at the project instead of the clone). The contrast cases stay theirs:
+    an empty ledger is exit 4 and a noni/ that is not a directory is exit 3.
     """
     repo = _code_repo(tmp_path, "code-repo")
     proc = _order(repo, "move", "7", "--to", "1", "--now", NOW)
@@ -379,6 +376,9 @@ def test_a_repo_that_holds_no_noni_directory_is_a_fault(tmp_path):
         f"the hint must name the flag the caller passed wrong: {proc.stderr}")
     assert "is in the ledger" not in proc.stderr, (
         f"the reads must not answer for a tree with no state root: {proc.stderr}")
+    # Issue #198's exception: a no-noni/ tree is a wrong --repo, so its fix line
+    # names the flag and never sends the caller to noni decide.
+    assert RECORD_FIRST not in proc.stderr, proc.stderr
     # --init is decide's flag alone: an order fix line that named it would send the
     # operator to a flag order itself answers with argparse's exit 2.
     assert "--init" not in proc.stderr, (

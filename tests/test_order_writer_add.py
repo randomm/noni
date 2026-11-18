@@ -70,7 +70,8 @@ def test_an_entry_whose_decision_is_null_is_refused_by_every_verb(tmp_path):
         _order_path(repo).parent.mkdir(parents=True, exist_ok=True)
         _order_path(repo).write_text(body, encoding="utf-8")
         before = _order_path(repo).read_bytes()
-        for verb in (("confirm",), ("confirm", "1"), ("move", "1", "--to", "1"),
+        for verb in (("confirm", "--all"), ("confirm", "1"),
+                     ("move", "1", "--to", "1"),
                      ("remove", "2"), ("add", "9", "--decision", BASELINE_ID)):
             proc = _order(repo, *verb, "--now", NOW)
             assert proc.returncode == 4, f"{label} {verb}: {proc.returncode} {proc.stderr}"
@@ -83,7 +84,7 @@ def test_an_entry_whose_decision_is_null_is_refused_by_every_verb(tmp_path):
     # documented order, and the census content with it.
     repo = _repo(tmp_path, "decision-cited")
     _seed(repo, _entry(1, BASELINE_ID))
-    assert _order(repo, "confirm", "--now", NOW).returncode == 0
+    assert _order(repo, "confirm", "--all", "--now", NOW).returncode == 0
     body = _order_path(repo).read_text(encoding="utf-8")
     assert '"decision": "2026-10-01-baseline"' in body, body
     assert list(json.loads(body)["entries"][0]) == ["issue", "decision", "confirmed"]

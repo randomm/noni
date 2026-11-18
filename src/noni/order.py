@@ -19,9 +19,12 @@ one is refused (exit 4) when no file under
 noni/decisions/ carries that id, or when the record it finds is already
 superseded, and the hint names the record that superseded it. ``confirmed`` is
 stamped by the writer (add and confirm stamp it with this run's UTC time, or
-with --now when given); a run never leaves it empty. ``why`` is optional: an entry
-written without it holds the three fields it held before the field existed, byte for
-byte, and ``add --why REASON`` records the operator's one line of reason for the
+with --now when given); a run never leaves it empty. ``confirm`` restamps the entry its
+issue names, or every entry when ``--all`` is given: a confirm naming neither is a usage
+error (exit 2, answered from argv before anything is read), because a run that only meant
+to look must not flatten the queue it was reading. ``why`` is optional: an entry written
+without it holds the three fields it held before the field existed, byte for byte, and
+``add --why REASON`` records the operator's one line of reason for the
 position. It is the same rule a decision record's rationale obeys: one non-blank
 line within the bound ``_why.WHY_MAX`` states, refused at the flag (exit 2) and
 reported by both censuses naming the field ``why``. A move or a confirm restamps an
@@ -48,7 +51,7 @@ Usage:
     order.py --repo REPO add ISSUE [--at N] [--decision ID] [--why REASON] [--now ISO-8601] [--no-commit]
     order.py --repo REPO move ISSUE [--to N] [--decision ID] [--now ISO-8601] [--no-commit]
     order.py --repo REPO remove ISSUE [--now ISO-8601] [--no-commit]
-    order.py --repo REPO confirm [ISSUE] [--now ISO-8601] [--no-commit]
+    order.py --repo REPO confirm [ISSUE|--all] [--now ISO-8601] [--no-commit]
 
 Exit codes:
     0  the order was written (and committed unless --no-commit)
@@ -58,7 +61,8 @@ Exit codes:
        empty, multi-line or over-long --why or a --why handed to a verb that is not
        add, an --at or
        --to that is not a 1-based position of the resulting list, a flag passed to the
-       verb that does not own it (--decision belongs to add and move), --now that is not a valid ISO-8601 timestamp, a
+       verb that does not own it (--decision belongs to add and move, --all belongs to
+       confirm), a confirm that names neither an issue nor --all, --now that is not a valid ISO-8601 timestamp, a
        --repo that is not a directory, or a noni/, noni/direction or noni/decisions
        directory -- every one from the state root down to the artifact -- that is not
        a plain path this writer may read or write through (a symlink, a plain file, a
@@ -315,7 +319,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("subcommand", help="add, move, remove or confirm")
     parser.add_argument("issue", nargs="?", default=None,
                         help="the issue number (required for add, move and remove; "
-                             "optional for confirm)")
+                             "confirm names one issue or passes --all)")
+    # The flag's own spelling, not a name imported for the reader that pins this block
+    # against the docstring's Usage: it reads these add_argument calls for their own
+    # string literals, and a reference would hide the flag from it.
+    parser.add_argument("--all", dest="all_entries", action="store_true",
+                        help="confirm every entry of the order (confirm only)")
     parser.add_argument("--at", default=None, metavar="N",
                         help="position (1-based) to place the added issue")
     parser.add_argument("--to", default=None, metavar="N",
@@ -343,9 +352,16 @@ def main(argv: list[str] | None = None) -> int:
     # verb it came with is a usage error, not a hint the run quietly ignores. The table of
     # owners lives with the verb that owns most of them.
     misplaced = order_add.misplaced_flag(subcommand, args.at, args.to,
-                                         args.decision, args.why)
+                                         args.decision, args.why, args.all_entries)
     if misplaced is not None:
         return _fail(EXIT_USAGE, *misplaced)
+
+    # The confirm subject, asked of argv before the state root, the artifact and git are
+    # reached: a bare ``confirm`` restamps the whole queue, so it is refused here rather
+    # than answered by a run that had already opened the file it meant to leave alone.
+    bare = order_plan.confirm_usage_rule(subcommand, args.issue, args.all_entries)
+    if bare is not None:
+        return _fail(EXIT_USAGE, *bare)
 
 
     # The subject token: an issue number, or nothing at all for a bare ``confirm``.

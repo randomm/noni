@@ -236,7 +236,7 @@ def test_an_unstaged_or_staged_absent_path_is_not_the_index_arm(tmp_path):
     # The same index answer, reached by taking the path out of the index. The file
     # still holds what HEAD holds, so no arm of the guard has anything to report.
     _git(repo, "rm", "--cached", "--quiet", "--", ORDER_REL)
-    code, out, err = _order_inprocess(repo, "confirm", "--now", NOW)
+    code, out, err = _order_inprocess(repo, "confirm", "--all", "--now", NOW)
     assert code == 0, (code, out + err)
     assert STAGED not in err, err
 

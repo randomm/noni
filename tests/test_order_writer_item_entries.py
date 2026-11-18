@@ -29,7 +29,7 @@ VERBS = (
     ("add", "9", "--decision", "2026-10-01-baseline"),
     ("move", "7", "--to", "1"),
     ("remove", "7"),
-    ("confirm",),
+    ("confirm", "--all"),
 )
 
 # The two shapes the removal left behind: the document that still states the retired
@@ -74,7 +74,7 @@ def test_every_verb_refuses_a_pre_removal_order_and_writes_nothing(tmp_path):
 def test_the_refusal_names_the_repair(tmp_path):
     for label in PRE_REMOVAL:
         repo = _writer_tree(tmp_path, label, 90)
-        proc = _order(repo, "confirm", "--now", NOW)
+        proc = _order(repo, "confirm", "--all", "--now", NOW)
         text = proc.stdout + proc.stderr
         assert MIGRATION_HINT in text, (label, text)
 

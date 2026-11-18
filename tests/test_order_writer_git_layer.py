@@ -71,7 +71,7 @@ def test_a_git_call_that_times_out_is_never_read_as_a_clean_answer(tmp_path, mon
 
     monkeypatch.setattr(module.gitwrite, "git", hung)
     with contextlib.redirect_stderr(io.StringIO()) as err:
-        code = module.main(["--repo", str(repo), "confirm", "--now", NOW])
+        code = module.main(["--repo", str(repo), "confirm", "--all", "--now", NOW])
     assert code == module.EXIT_IO, code
     assert "timed out" in err.getvalue(), err.getvalue()
     assert str(_gitwrite_module().GIT_TIMEOUT) in err.getvalue(), err.getvalue()

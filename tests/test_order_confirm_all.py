@@ -330,11 +330,18 @@ def test_all_is_refused_by_the_verbs_that_do_not_own_it(tmp_path):
 
 def test_all_beside_an_issue_is_a_usage_error_in_either_order(tmp_path):
     """An issue names one entry and ``--all`` names every entry: refused together,
-    and refused before anything is read.
+    in either order, at the same code and with the flag named.
 
-    argparse takes the optional positional greedily, so ``confirm 1 --all`` and
-    ``confirm --all 1`` both arrive with ``issue="1"``: the two orders must be refused
-    alike rather than one reading quietly preferred.
+    The two orders reach the refusal by different routes, and the difference is
+    argparse's, not this writer's: the optional positional is filled only by the pass
+    that walks args left to right, so ``confirm 1 --all`` arrives with ``issue="1"`` and
+    ``all_entries`` set and the confirm gate (`order_plan.confirm_usage_rule`) names the
+    pair, while ``confirm --all 1`` leaves the ``1`` stranded in argparse's extras and
+    argparse refuses it as an unrecognised argument. What the writer promises is that
+    neither order restamps anything, so both exit 2 and both name ``--all``; which of the
+    two sentences says it is not a claim a caller can act on, and the stranded-token
+    wording is pinned here so a change of parser shape that silently took the ``1`` as
+    the subject still has to answer for it.
     """
     repo = _seeded(tmp_path, "all-issue")
     before = _order_path(repo).read_bytes()
@@ -343,7 +350,12 @@ def test_all_beside_an_issue_is_a_usage_error_in_either_order(tmp_path):
         proc = _order(repo, *argv, "--now", NOW)
         assert proc.returncode == 2, f"{argv}: {proc.returncode} {proc.stderr}"
         assert ALL in proc.stderr, f"{argv}: {proc.stderr}"
-        assert "does not go with it" in proc.stderr, f"{argv}: {proc.stderr}"
+    # The order argparse can route through the gate is the one that gets the writer's own
+    # refusal; the other gets argparse's answer to a token it could not place.
+    routed = _order(repo, "confirm", "1", ALL, "--now", NOW)
+    assert "does not go with it" in routed.stderr, routed.stderr
+    stranded = _order(repo, "confirm", ALL, "1", "--now", NOW)
+    assert "unrecognized arguments: 1" in stranded.stderr, stranded.stderr
     assert _order_path(repo).read_bytes() == before
     assert _head(repo) == head_before
     assert _porcelain(repo) == "", _porcelain(repo)

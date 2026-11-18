@@ -43,6 +43,12 @@ from . import labels, orderschema, orderstate
 # plan asks for it by the name the writer and the censuses both use.
 WHY_FIELD = orderschema.WHY_FIELD
 
+# The flag that means "every entry", spelled once: the usage line below, the parser's
+# declaration in ``order.py``, the ownership table in ``order_add``, this gate's refusals
+# and the tests all reach it through here, so a rename cannot leave one of them naming a
+# flag that nothing accepts.
+ALL_FLAG = "--all"
+
 
 # The usage line, spelled once and handed to argparse as ``usage=``. argparse composes a
 # usage line as ``optionals + positionals`` unconditionally, so with ``--repo`` required
@@ -58,25 +64,20 @@ WHY_FIELD = orderschema.WHY_FIELD
 # declaration, in declaration order, with the metavar argparse prints for each, and it is
 # compared against that declaration by ``tests/test_order_writer_usage.py`` and the
 # flag-set parity of ``tests/test_order_writer_docs.py``: a flag added to the parser
-# belongs here too.
+# belongs here too. That parity reads the AST for the literal a declared flag carries, so
+# the interpolation below is what keeps the usage line and the parser naming one spelling.
 USAGE = (f"{labels.ORDER} --repo REPO subcommand [issue]"
-          " [--at N] [--to N] [--decision ID] [--why REASON] [--all]"
-          " [--now ISO-8601] [--no-commit] [-h]")
-
-# The flag that means "every entry", spelled once: the parser's declaration in
-# ``order.py``, the ownership table in ``order_add``, this gate's refusal and the tests
-# all reach it through here, so a rename cannot leave one of them naming a flag that
-# nothing accepts.
-ALL_FLAG = "--all"
+         f" [--at N] [--to N] [--decision ID] [--why REASON] [{ALL_FLAG}]"
+         f" [--now ISO-8601] [--no-commit] [-h]")
 
 # The bare-confirm refusal, in the headline-plus-hint shape every refusal of this
 # writer takes. The headline names what the run refused to do; the hint answers the
 # question the caller usually really had, which was how to read the order at all.
 BARE_CONFIRM = ("a bare confirm restamps the confirmed time of every entry, which "
-                "this run was not told to do; naming every entry needs --all",
+                "this run was not told to do; naming every entry needs " + ALL_FLAG,
                 "to read the order without writing it, read "
                 "noni/direction/order.json (a plain JSON file) or run noni brief "
-                "--repo REPO; to restamp every entry, pass --all")
+                "--repo REPO; to restamp every entry, pass " + ALL_FLAG)
 
 # The refusal for an issue and ``--all`` together: one names that entry, the other
 # names every entry, so the run would have to choose a subject the caller left open.
@@ -94,8 +95,10 @@ def confirm_usage_rule(subcommand: str, issue: str | None,
     never opens the artifact and never calls git, so a no-``noni/`` tree stays without
     one and a malformed file stays unopened. Two shapes are refused, and neither is
     quietly preferred over the other: a confirm naming no subject at all, and a confirm
-    naming both an issue and ``--all`` (argparse takes the optional positional greedily,
-    so ``confirm 1 --all`` and ``confirm --all 1`` arrive alike and refuse alike).
+    naming both an issue and ``--all``. Only the second as ``confirm 1 --all`` reaches
+    this gate: argparse fills the optional positional in the pass that walks args left to
+    right, so ``confirm --all 1`` leaves the ``1`` in its extras and argparse refuses that
+    order as an unrecognised argument -- at the same exit code, having written nothing.
 
     The pair is refused here rather than by :func:`noni.order_add.misplaced_flag`
     because the table's question is whether the verb owns the flag, and ``confirm`` does
@@ -123,8 +126,14 @@ def build_parser(parser_class: type, usage: str, prog: str,
     refusals, and a module that reached for it would be reaching back into the file that
     calls it. ``prog``, ``usage`` and ``description`` travel the same way so the
     three strings a reader copies from stay in the file whose docstring publishes them.
+
+    ``allow_abbrev`` is off, the way :mod:`noni.brief` builds its parser. Argparse's
+    default prefix matching would let ``confirm --al`` stand for ``--all``, so the
+    whole-order restamp this module's gate exists to make deliberate would be reachable
+    by two characters; a flag has to be spelled out to mean anything.
     """
-    return parser_class(prog=prog, description=description, usage=usage)
+    return parser_class(prog=prog, description=description, usage=usage,
+                        allow_abbrev=False)
 
 
 class Planned(NamedTuple):

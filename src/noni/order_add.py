@@ -60,7 +60,7 @@ def misplaced_flag(subcommand: str, at: str | None, to: str | None,
                 "only add records a reason; the other verbs answer to an entry that "
                 "already carries one")
     if all_entries and subcommand != "confirm":
-        return (f"--all belongs to confirm, not {subcommand}",
+        return (f"{order_plan.ALL_FLAG} belongs to confirm, not {subcommand}",
                 "only confirm restamps entries; add places one, move re-positions one "
                 "and remove drops one")
     return None

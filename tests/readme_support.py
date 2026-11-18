@@ -131,25 +131,27 @@ _NUMBER_WORDS: dict[str, int] = {
 
 
 # The warn rows a reader's first census run carries, and the reason each is
-# counted without changing the verdict. The hygiene row is the one the page's
-# wording depends on: with the checker present (the clone topology) it names the
-# ``deny-list`` half that did not run, operator config a first run does not have,
-# and never ``hygiene scan`` reporting that its checker sat outside the tree (see
-# ``_HYGIENE_NOT_RUN_MARKER``, which the run below asserts absent). The
-# second row appears until the first record exists (the ledger has nothing to
-# arbitrate), which is why the count is compared as a floor rather than pinned:
-# the run the page describes is the one after ``decide.py`` has written, and the
-# census is read in the same sitting. Keeping the rows as data here, and
-# requiring the count the page shows to be the number of rows the run reports,
-# is what stops the page's line and the census's line drifting apart quietly.
-_CLEAN_RUN_WARN_ROWS: tuple[str, ...] = ("deny-list", "ledger-empty")
-
-# The reason the first run's summary line says "2 warning(s)" and not "clean":
-# both rows above are warn classes, so the warn count of that run is exactly
-# the number of rows the page shows. Kept beside the rows themselves because the
-# two facts are one fact: a page that printed "clean" above two WARN rows would
-# read as all-clear, which is the bug this tuple's wording now forecloses.
-_CLEAN_RUN_WARN_COUNT: int = len(_CLEAN_RUN_WARN_ROWS)
+# counted without changing the verdict. A fresh tree carries one: `ledger-empty`,
+# the row a ledger with no record in it earns, which disappears once `decide.py`
+# in the block has written the record the try-it block asks for.
+#
+# `deny-list` used to be a second row here. A tree with no deny-list configured
+# now says so in a `note:` line and emits no row (issue #194): the row warned on
+# every run of every project that had not configured the list, and teams answered
+# it by pointing NONI_SCRUB_DENYLIST at another repository's list, which made the
+# row a lie. A deny-list that was configured and gave no verdict keeps its row and
+# is added to the tuple below by whoever tests that state, and `--strict` keeps the
+# absent one's row too; both are pinned in `tests/test_census_hygiene.py`. What the
+# hygiene class must never do in this topology is report `hygiene scan` as not run,
+# which is what `_HYGIENE_NOT_RUN_MARKER` guards, so the checker stays present
+# beside the scripts the block runs (the clone layout).
+#
+# The count the page shows is held open (`W warning(s)`) rather than pinned to this
+# tuple's length: how many warn rows a reader's tree carries depends on state the
+# page cannot know. Keeping the rows as data here is what still stops the page's
+# line and the census's line drifting apart quietly, row by row: the harness
+# compares each counted row against the entry at its position.
+_CLEAN_RUN_WARN_ROWS: tuple[str, ...] = ("ledger-empty",)
 
 # coverage's subprocess data file name, as [tool.coverage.run] produces it with
 # parallel = true: ``.coverage.<host>.pid<pid>.<seq>``. Pinned here against the
@@ -380,6 +382,13 @@ def _reader_repository(tmp_path: Path) -> Path:
 
 def _reader_env() -> dict[str, str]:
     """The env for the documented launches: nothing ambient, and no writes.
+
+    No deny-list is planted here on purpose. The try-it census of a reader tree
+    that has committed nothing yet carries one warn row -- a ledger with nothing
+    to arbitrate -- and says in a `note:` line that the deny-list check is off
+    (issue #194). A fixture that configured a deny-list of the harness's own would
+    test a tree the page does not describe, the way pinning the git identity here
+    would hide a page that forgot to tell the reader to set one.
 
     Built from an empty mapping rather than ``os.environ`` because the block runs
     ``decide.py --repo .`` and ``census.py --repo .``, so anything git inherits

@@ -41,18 +41,18 @@ HYGIENE_SCAN_ARTIFACT = "noni/public_safety.py"
 # configured at all (status ``absent``). A row would warn on every run of every
 # project that has not configured the list, and teams answer that by pointing
 # NONI_SCRUB_DENYLIST at another repository's list, which makes the row a lie. The
-# corrupt and present-but-empty states keep their row: a list somebody meant to
-# use and that does not work is a finding. The note rides the run's notes channel,
-# so no check class, row kind or exit code is added, ``--strict`` keeps the row
-# (see ``DENYLIST_INACTIVE_MESSAGE``), and the text names no path.
+# corrupt and present-but-empty states keep their row: a list somebody meant to use
+# and that does not work is a finding. The note rides the run's notes channel, so it
+# adds no check class, row kind or exit code, ``--strict`` keeps the row (see
+# ``DENYLIST_INACTIVE_MESSAGE``), and the text names no path.
 HYGIENE_DENYLIST_NOTE = (
     "deny-list check is off: no deny-list is configured, so no entry was checked "
     "and operator names, external project/tool names and hostnames were not "
     "checked. Turn it on with NONI_SCRUB_DENYLIST, or an untracked "
     ".noni-scrub-denylist at the root of the audited tree")
 
-# The row for a deny-list that was configured and gave no verdict: a broken list
-# is a finding, where an absent one is only the note above.
+# The row for a deny-list that was configured and gave no verdict: a broken list is
+# a finding, where an absent one is only the note above.
 DENYLIST_INACTIVE_MESSAGE = (
     "deny-list class inactive ({state}): no deny-list entry was checked, so "
     "operator names, external project/tool names and hostnames are NOT covered "
@@ -164,17 +164,15 @@ def _hygiene_labels(public_safety) -> set[str]:
 
     Read from the live module rather than duplicated here: the census must not
     hard-code vocabulary that public_safety owns. All of its pattern tables are
-    scanned (built-in, fixture home-path, and any other ``*_PATTERNS`` it
-    exposes) plus the deny-list label, because the deny-list label is not in
+    scanned (built-in, fixture home-path, and any other ``*_PATTERNS`` it exposes)
+    plus the deny-list label, because the deny-list label is not in
     BUILTIN_PATTERNS — scrub_tracked_files appends it per entry. Tables are
-    iterables of ``(pattern, label)`` tuples (the contract public_safety
-    declares next to their annotations); anything else contributes no label.
-    The walk is defensive throughout: a table whose iteration protocol raises
-    contributes nothing, and the caller falls back to verbatim rows rather than
-    losing every finding this run already collected.
-
-    Compute this once per scan and pass the set to `_split_violation`: it is
-    invariant for the whole run.
+    iterables of ``(pattern, label)`` tuples (the contract public_safety declares
+    next to their annotations); anything else contributes no label. The walk is
+    defensive throughout: a table whose iteration protocol raises contributes
+    nothing, and the caller falls back to verbatim rows rather than losing every
+    finding this run already collected. Compute it once per scan and pass the set
+    to `_split_violation`: it is invariant for the whole run.
     """
     labels: set[str] = {"deny-list entry"}
     try:

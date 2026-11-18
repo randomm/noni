@@ -198,7 +198,16 @@ def test_the_ci_step_exits_zero_on_a_clean_route_a_tree(world: World) -> None:
     assert any(note.startswith("note: deny-list check is off") for note in lines), (
         f"a tree with no deny-list must say the check is off, in a note and not a "
         f"warn row: {lines!r}")
-    assert not [row for row in lines if " deny-list" in row], (
+    # The rows only. The note asserted above is itself a line that contains the
+    # words " deny-list", so scanning every line of the report would fail on the
+    # very sentence the census prints to say the check did not run. A row is what
+    # the census raises a finding with: the check name padded into column one,
+    # followed by its severity tag (see ``_render_human``).
+    rows = [line for line in lines
+            if line.startswith("census: ")
+            or line.startswith("note: ")
+            or line.startswith("summary: ")]
+    assert not [row for row in lines if row not in rows and " deny-list" in row], (
         f"the unconfigured deny-list must not reach the rows: {lines!r}")
     assert not git(world.project, "status", "--porcelain",
                    env=world.env).stdout.splitlines(), (

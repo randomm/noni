@@ -262,6 +262,8 @@ def test_a_fifo_at_the_deny_list_path_leaves_the_class_reporting_itself_inactive
     assert "inactive" in hygiene[0]["message"], hygiene[0]
     assert "hygiene-clean" not in hygiene[0]["message"].replace(
         "not a hygiene-clean", ""), hygiene[0]["message"]
+
+
 def test_an_absent_denylist_is_a_note_while_a_fifo_at_its_path_is_a_row(tmp_path):
     """The absent/corrupt split does not collapse into one answer.
 

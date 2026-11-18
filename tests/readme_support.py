@@ -135,13 +135,18 @@ _NUMBER_WORDS: dict[str, int] = {
 # the row a ledger with no record in it earns, which disappears once `decide.py`
 # in the block has written the record the try-it block asks for.
 #
-# `deny-list` used to be a second row here. A tree with no deny-list configured
-# now says so in a `note:` line and emits no row (issue #194): the row warned on
-# every run of every project that had not configured the list, and teams answered
-# it by pointing NONI_SCRUB_DENYLIST at another repository's list, which made the
-# row a lie. A deny-list that was configured and gave no verdict keeps its row and
-# is added to the tuple below by whoever tests that state, and `--strict` keeps the
-# absent one's row too; both are pinned in `tests/test_census_hygiene.py`. What the
+# `deny-list` used to be a second row here, and is out of the tuple on purpose:
+# the default try-it run no longer carries that row. A tree with no deny-list
+# configured now says so in a `note:` line and emits no row (issue #194): the row
+# warned on every run of every project that had not configured the list, and teams
+# answered it by pointing NONI_SCRUB_DENYLIST at another repository's list, which
+# made the row a lie. The states that mean somebody configured a list and got no
+# verdict -- `corrupt` and `present but empty` -- keep their rows, and `--strict`
+# keeps the absent one's row too; the configured-inactive pair is pinned in
+# `tests/test_census_hygiene.py` and the absent-state pins (the note, and the row
+# `--strict` still fails on) live in
+# `tests/test_census_hygiene_denylist_absent.py`. Whoever tests a configured
+# inactive state adds it to the tuple below. What the
 # hygiene class must never do in this topology is report `hygiene scan` as not run,
 # which is what `_HYGIENE_NOT_RUN_MARKER` guards, so the checker stays present
 # beside the scripts the block runs (the clone layout).

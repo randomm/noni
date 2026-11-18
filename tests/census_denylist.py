@@ -16,11 +16,12 @@ DENYLIST_ENV_VAR = "NONI_SCRUB_DENYLIST"
 def _with_denylist(tmp_path: Path, *entries: str):
     """Activate the deny-list class for a hygiene test.
 
-    The hygiene class always reports: with an absent deny-list its only row is
-    the "class inactive" notice. Tests that want the violation rows write an
-    env-named deny-list with at least one entry (the seam
-    tests/test_public_safety.py uses), so the deny-list row does not drown the
-    violation under test. conftest's isolated env has already cleared
+    A hygiene test that plants a violation needs an active class: with no list
+    configured the class says so in a note and emits no row at all (issue #194),
+    and a list that exists and cannot be read answers with its own inactive row.
+    Writing an env-named file with at least one entry (the seam
+    tests/test_public_safety.py uses) leaves the deny-list row out of the way of
+    the violation under test. conftest's isolated env has already cleared
     NONI_SCRUB_DENYLIST, so this only ever sees the fixture file.
     """
     import os

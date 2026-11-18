@@ -18,8 +18,8 @@ bug rather than report it:
 - **The skip is silent.** A non-regular path holds no stored content, so there is
   nothing to scan and no row is emitted for it: no new warn row, no new artifact
   class. What is asserted instead is the *absence* of a row for the pipe beside
-  the presence of every row the run owes the caller -- and, for the tree with no
-  deny-list, the one inactive-class row the class always reports.
+  the presence of every row the run owes the caller -- and, for the tree with a
+  deny-list that cannot be read, the one inactive-class row it still owes.
 
 The FIFO fixtures are the repo's one builder (``tests/harness_faults.py``), shared
 with the scrub level and the gate-CLI level so the three cannot mean three

@@ -44,7 +44,9 @@ TOKEN_LABEL = "GitHub classic token"
 
 class TestHygiene:
     """The hygiene class (warn 50): the in-process public_safety scan over the
-    census's own git tree, which always reports — a clean tree included."""
+    census's own git tree, which reports what it checked: violations on a dirty
+    tree, and the states of a deny-list that was configured and gave no verdict.
+    A deny-list nobody configured is said in a note, not a row (issue #194)."""
 
     def test_planted_violation_is_reported(self, tmp_path):
         repo = _init_repo(tmp_path / "repo")

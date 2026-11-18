@@ -194,11 +194,11 @@ def test_the_ci_step_exits_zero_on_a_clean_route_a_tree(world: World) -> None:
         checked(launch(world, argv, world.project), f"Route A command {argv}")
     code, stdout = _run_route_a(world, _ci_census_command(state=False))
     lines = _assert_verdict(code, stdout, 0, "the CI census step on a clean tree")
-    line = _verdict_line(lines, "verdict ok")
+    _verdict_line(lines, "verdict ok")
     assert any(note.startswith("note: deny-list check is off") for note in lines), (
         f"a tree with no deny-list must say the check is off, in a note and not a "
         f"warn row: {lines!r}")
-    assert not [line for line in lines if " deny-list" in line], (
+    assert not [row for row in lines if " deny-list" in row], (
         f"the unconfigured deny-list must not reach the rows: {lines!r}")
     assert not git(world.project, "status", "--porcelain",
                    env=world.env).stdout.splitlines(), (

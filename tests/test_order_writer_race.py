@@ -242,7 +242,7 @@ def test_the_refused_run_leaves_the_ordering_census_clean(tmp_path):
     repo = _repo(tmp_path)
     _seed(repo, _race_entry(11))
     _rival_raced(repo, (55, BASELINE_ID))
-    assert _order_inprocess(repo, "confirm", "--now", NOW)[0] == 4
+    assert _order_inprocess(repo, "confirm", "--all", "--now", NOW)[0] == 4
     _assert_census_clean(repo, "the refused run")
 
 
@@ -304,7 +304,7 @@ _WRITE_VERBS = [
     # the entry does not already hold is what keeps it a write rather than a shortcut.
     ("move --decision", ("move", "22", "--decision", OTHER_ID)),
     ("remove", ("remove", "22")),
-    ("confirm", ("confirm",)),
+    ("confirm", ("confirm", "--all")),
 ]
 
 

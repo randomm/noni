@@ -69,7 +69,7 @@ def test_a_deeply_nested_artifact_is_refused_at_four_and_not_a_traceback(tmp_pat
     before = _deep_artifact(STAMP)
     _order_path(repo).parent.mkdir(parents=True, exist_ok=True)
     _order_path(repo).write_text(before, encoding="utf-8")
-    proc = _order(repo, "confirm", "--now", NOW)
+    proc = _order(repo, "confirm", "--all", "--now", NOW)
     combined = proc.stdout + proc.stderr
     assert "RecursionError" not in combined, combined[-2000:]
     assert proc.returncode == 4, (proc.returncode, combined[-2000:])
@@ -230,7 +230,7 @@ def test_a_writer_run_leaves_the_ordering_census_clean(tmp_path):
     assert by_issue[7]["decision"] == OTHER_ID, by_issue
     assert by_issue[8]["decision"] == BASELINE_ID, by_issue
     assert [entry["issue"] for entry in _read(repo)["entries"]] == [8, 7], _read(repo)
-    assert _order(repo, "confirm", "--now", NOW).returncode == 0
+    assert _order(repo, "confirm", "--all", "--now", NOW).returncode == 0
     assert _order(repo, "remove", "8", "--now", NOW).returncode == 0
     _assert_census_clean(repo, "the full verb round trip")
 
@@ -247,7 +247,7 @@ def test_the_committed_fixture_is_the_shape_the_writer_accepts(tmp_path):
     _git(repo, "add", ORDER_REL)
     git_pin_date(repo, NOW, "commit", "-q", "-m", "direction: seed from the fixture")
     _assert_census_clean(repo, "the committed fixture")
-    assert _order(repo, "confirm", "--now", NOW).returncode == 0
+    assert _order(repo, "confirm", "--all", "--now", NOW).returncode == 0
 
 
 def test_the_fixture_bytes_are_the_writer_canonical_form(tmp_path):
@@ -281,7 +281,7 @@ def test_the_ordering_census_reports_what_the_writer_refused(tmp_path):
     for index, (label, (body, _needle)) in enumerate(sorted(shapes.items())):
         repo = _repo(tmp_path, f"arb-{index}")
         commit_artifact(repo, body)
-        writer = _order(repo, "confirm", "--now", NOW)
+        writer = _order(repo, "confirm", "--all", "--now", NOW)
         assert writer.returncode == 4, f"{label}: writer exit {writer.returncode}"
         code, rows, output = census_ordering_faults(repo)
         assert code == 15, f"{label}: census exit {code}: {output}"
@@ -309,7 +309,7 @@ def test_every_malformed_shape_is_refused_by_the_writer_and_reported_by_the_cens
     for index, (label, (body, needle)) in enumerate(sorted(drift.items())):
         repo = _repo(tmp_path, f"drift-{index}")
         commit_artifact(repo, body)
-        writer = _order(repo, "confirm", "--now", NOW)
+        writer = _order(repo, "confirm", "--all", "--now", NOW)
         assert writer.returncode == 4, f"{label}: writer exit {writer.returncode}"
         assert needle in writer_text(writer), \
             f"{label}: the writer refused for another reason: {writer_text(writer)}"

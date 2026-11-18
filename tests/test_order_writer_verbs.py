@@ -275,7 +275,8 @@ def test_confirm_restamps_one_entry_and_then_the_whole_order(tmp_path):
     assert _order(repo, "confirm", "1", "--now", NOW).returncode == 0
     entries = _read(repo)["entries"]
     assert entries[0]["confirmed"] == STAMP and entries[1]["confirmed"] == "2026-10-01T00:00:00Z"
-    assert _order(repo, "confirm", "--now", "2026-10-28T09:00:00Z").returncode == 0
+    assert _order(repo, "confirm", "--all", "--now",
+                "2026-10-28T09:00:00Z").returncode == 0
     entries = _read(repo)["entries"]
     assert [e["confirmed"] for e in entries] == ["2026-10-28T09:00:00Z"] * 2
     _assert_census_clean(repo, "confirm")

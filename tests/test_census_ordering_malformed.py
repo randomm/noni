@@ -302,7 +302,7 @@ def test_a_null_or_absent_decision_is_malformed_on_both_sides(tmp_path):
         repo = _repo(tmp_path, f"decision-{index}")
         _order(repo, body)
         writer = subprocess.run(
-            [sys.executable, str(ORDER), "--repo", str(repo), "confirm", "--now", NOW],
+            [sys.executable, str(ORDER), "--repo", str(repo), "confirm", "--all", "--now", NOW],
             capture_output=True, text=True, env=subprocess_env(), timeout=120)
         assert writer.returncode == 4, f"{label}: {writer.returncode} {writer.stderr}"
         assert needle in writer.stderr, f"{label}: {writer.stderr}"
@@ -354,7 +354,7 @@ def test_the_writer_and_the_census_refuse_the_same_non_finite_artifact(tmp_path)
     repo = _repo(tmp_path, "nonfinite-both-sides")
     _order(repo, body)
     writer = subprocess.run(
-        [sys.executable, str(ORDER), "--repo", str(repo), "confirm", "--now", NOW],
+        [sys.executable, str(ORDER), "--repo", str(repo), "confirm", "--all", "--now", NOW],
         capture_output=True, text=True, env=subprocess_env(), timeout=120)
     assert writer.returncode == 4, (writer.returncode, writer.stdout, writer.stderr)
     code, rows, out, err = _run(repo)
@@ -409,7 +409,7 @@ def test_a_file_the_writer_emits_is_never_the_file_this_class_faults(tmp_path):
         # (The canonical form is the writer's own contract and is tested there; these
         # fixtures are spelled by hand, so a refusal naming the form is not drift.)
         writer = subprocess.run(
-            [sys.executable, str(ORDER), "--repo", str(repo), "confirm", "--now", NOW],
+            [sys.executable, str(ORDER), "--repo", str(repo), "confirm", "--all", "--now", NOW],
             capture_output=True, text=True, env=subprocess_env(), timeout=120)
         assert writer.returncode in (0, 4), writer.returncode
         assert "canonical form" in writer.stderr or writer.returncode == 0, (

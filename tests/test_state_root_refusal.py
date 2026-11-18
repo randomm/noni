@@ -73,7 +73,7 @@ NO_NONI_REFUSAL: tuple[tuple[str, tuple[str, ...], int], ...] = (
     # The bug the ticket reproduced live: confirm with no issue arg wrote a valid
     # empty order.json and exited 0 on a tree with no noni/. Nothing legitimate is
     # created by it, so it is refused.
-    ("order", ("confirm", "--now", "2026-10-02T00:00:00Z"), 2),
+    ("order", ("confirm", "--all", "--now", "2026-10-02T00:00:00Z"), 2),
     # decide is the writer that creates a state root, so before `--init` existed it was
     # the one entry point that committed direction content into a public project
     # checkout. The row is that reproduction: same tool, same tree, and the answer the

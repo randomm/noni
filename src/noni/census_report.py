@@ -109,7 +109,7 @@ CHECKS: dict[str, tuple[int, str, str]] = {
     ),
     "ordering-stale": (
         45, "warn",
-        "confirm the entry again (order.py confirm ISSUE, or confirm with no issue for the whole "
+        "confirm the entry again (order.py confirm ISSUE, or confirm --all for the whole "
         "order); an entry nobody has confirmed since --stale-after is the operator's last word "
         "on the order only as far back as that",
     ),

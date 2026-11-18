@@ -290,6 +290,9 @@ def test_a_flag_passed_to_the_wrong_verb_exits_two(tmp_path):
         ("confirm", "1", "--decision", BASELINE_ID, "--now", NOW),
         ("remove", "1", "--decision", BASELINE_ID, "--now", NOW),
         ("confirm", "--decision", BASELINE_ID, "--now", NOW),
+        ("confirm", "--all", "--at", "1", "--now", NOW),
+        ("move", "1", "--to", "1", "--all", "--now", NOW),
+        ("remove", "1", "--all", "--now", NOW),
     ]
     for argv in cases:
         proc = _order(repo, *argv)
@@ -392,7 +395,7 @@ def test_confirm_without_an_issue_creates_nothing_on_a_repo_with_no_noni(tmp_pat
     verbs may create noni/ has to close, since confirm creates nothing legitimate.
     """
     repo = _code_repo(tmp_path, "code-repo-confirm")
-    proc = _order(repo, "confirm", "--now", NOW, "--no-commit")
+    proc = _order(repo, "confirm", "--all", "--now", NOW, "--no-commit")
     assert proc.returncode == 2, f"{proc.returncode}: {proc.stderr}"
     assert "is not a noni state root" in proc.stderr, proc.stderr
     assert not (repo / "noni").exists(), (

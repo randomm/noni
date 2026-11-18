@@ -32,16 +32,17 @@ WHY_FIELD = orderschema.WHY_FIELD
 
 
 def misplaced_flag(subcommand: str, at: str | None, to: str | None,
-                   decision: str | None,
-                   why: str | None) -> tuple[str, str] | None:
+                   decision: str | None, why: str | None,
+                   all_entries: bool) -> tuple[str, str] | None:
     """The (headline, hint) refusal for a flag the verb does not own, or None.
 
     The owners, stated once: ``--at`` and ``--why`` belong to ``add``, ``--to`` to
-    ``move``, and ``--decision`` to both -- ``add`` sets the record a new position rests
-    on and ``move`` re-cites the record an entry rests on. Each arm says who does own the
-    flag, because the caller's mistake is a reasonable one and the fix is to name the verb
-    that answers it. A run whose only flag the verb does own is not a hint this writer may
-    quietly drop: the operator typed it, and dropping it loses what they typed.
+    ``move``, ``--decision`` to both, and ``--all`` to ``confirm`` alone -- ``add`` sets
+    the record a new position rests on, ``move`` re-cites the record an entry rests on,
+    and only ``confirm`` restamps what stands. Each arm says who does own the flag,
+    because the caller's mistake is a reasonable one and the fix is to name the verb
+    that answers it. A run whose only flag the verb does own is not a hint this writer
+    may quietly drop: the operator typed it, and dropping it loses what they typed.
     """
     if subcommand != "add" and at is not None:
         return (f"--at belongs to add, not {subcommand}",
@@ -58,6 +59,10 @@ def misplaced_flag(subcommand: str, at: str | None, to: str | None,
         return (f"--why belongs to add, not {subcommand}",
                 "only add records a reason; the other verbs answer to an entry that "
                 "already carries one")
+    if all_entries and subcommand != "confirm":
+        return (f"{order_plan.ALL_FLAG} belongs to confirm, not {subcommand}",
+                "only confirm restamps entries; add places one, move re-positions one "
+                "and remove drops one")
     return None
 
 
@@ -71,7 +76,8 @@ def unknown_verb(subcommand: str, label: str) -> tuple[str, str]:
     return (f"subcommand {subcommand!r} is not one of "
             "add, move, remove or confirm",
             f"{label} --repo REPO add ISSUE --decision ID | "
-            "move ISSUE [--to N] [--decision ID] | remove ISSUE | confirm [ISSUE]")
+            "move ISSUE [--to N] [--decision ID] | remove ISSUE | "
+            f"confirm ISSUE | confirm {order_plan.ALL_FLAG}")
 
 
 def plan_add(repo: Path, entries: list, issue: int | None,

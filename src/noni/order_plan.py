@@ -19,6 +19,13 @@ the command that ran. ``move`` is the one plan that reads state for itself: it r
 the record it is told to cite against ``noni/decisions/`` before it places anything, on
 the same lookup and the same codes ``add`` uses for a new entry's citation.
 
+The whole-order restamp lives behind a flag the operator has to type. A bare
+``confirm`` used to mean "restamp every entry", and twice that run was made by somebody
+who only wanted to see the queue, both times committed and pushed with every
+``confirmed`` time flattened. So :func:`confirm_usage_rule` refuses a confirm naming
+neither an issue nor ``--all``, and it is asked of argv alone, ahead of the state root,
+the artifact and git: the refusal cannot be the reads answering instead of the gate.
+
 Why the plan is built before any write and never after: a reorder restamps the moved
 entry (the operator confirming it again), so a plan computed from entries the writer had
 already restamped would not be a plan anybody approved -- and the freshness guard later
@@ -36,6 +43,14 @@ from . import labels, orderschema, orderstate
 # plan asks for it by the name the writer and the censuses both use.
 WHY_FIELD = orderschema.WHY_FIELD
 
+# The flag that means "every entry", spelled once: the usage line below, this gate's
+# refusals and the ownership table in ``order_add`` all reach it through here, so a
+# rename cannot leave one of them naming a flag that nothing accepts. The parser's own
+# ``add_argument`` in ``order.py`` is a deliberate literal: it is what
+# ``tests/test_order_writer_docs.py`` compares the documentation against, and a constant
+# there would let both sides of that check move together.
+ALL_FLAG = "--all"
+
 
 # The usage line, spelled once and handed to argparse as ``usage=``. argparse composes a
 # usage line as ``optionals + positionals`` unconditionally, so with ``--repo`` required
@@ -51,10 +66,58 @@ WHY_FIELD = orderschema.WHY_FIELD
 # declaration, in declaration order, with the metavar argparse prints for each, and it is
 # compared against that declaration by ``tests/test_order_writer_usage.py`` and the
 # flag-set parity of ``tests/test_order_writer_docs.py``: a flag added to the parser
-# belongs here too.
+# belongs here too. That parity reads the AST for the literal a declared flag carries, so
+# the interpolation below is what keeps the usage line and the parser naming one spelling.
 USAGE = (f"{labels.ORDER} --repo REPO subcommand [issue]"
-          " [--at N] [--to N] [--decision ID] [--why REASON]"
-          " [--now ISO-8601] [--no-commit] [-h]")
+         f" [--at N] [--to N] [--decision ID] [--why REASON] [{ALL_FLAG}]"
+         f" [--now ISO-8601] [--no-commit] [-h]")
+
+# The bare-confirm refusal, in the headline-plus-hint shape every refusal of this
+# writer takes. The headline names what the run refused to do; the hint answers the
+# question the caller usually really had, which was how to read the order at all.
+BARE_CONFIRM = ("a bare confirm restamps the confirmed time of every entry, which "
+                "this run was not told to do; naming every entry needs " + ALL_FLAG,
+                "to read the order without writing it, read "
+                "noni/direction/order.json (a plain JSON file) or run noni brief "
+                "--repo REPO; to restamp every entry, pass " + ALL_FLAG)
+
+# The refusal for an issue and ``--all`` together: one names that entry, the other
+# names every entry, so the run would have to choose a subject the caller left open.
+ALL_WITH_ISSUE = (f"an issue names one entry, so {ALL_FLAG} does not go with it",
+                  f"confirm one entry with '{labels.ORDER} confirm ISSUE', or the "
+                  f"whole order with '{labels.ORDER} confirm {ALL_FLAG}'")
+
+
+def confirm_usage_rule(subcommand: str, issue: str | None,
+                       all_entries: bool) -> tuple[str, str] | None:
+    """The (headline, hint) usage refusal a ``confirm`` owes its subject, or None.
+
+    Asked of argv alone and answered before anything is read, which is what lets the
+    ticket's promise hold on every tree: a refused run never asks about the state root,
+    never opens the artifact and never calls git, so a no-``noni/`` tree stays without
+    one and a malformed file stays unopened. Two shapes are refused, and neither is
+    quietly preferred over the other: a confirm naming no subject at all, and a confirm
+    naming both an issue and ``--all``.
+
+    ``confirm 1 --all`` always reaches this gate, so on every supported Python that pair
+    is answered by :data:`ALL_WITH_ISSUE` here. ``confirm --all 1`` depends on the
+    interpreter: argparse fills an optional positional that follows a flag in some
+    versions and leaves it in its extras in others, so on Python 3.11 that order is
+    refused by argparse as an unrecognised argument and on newer versions it reaches this
+    gate like the other. Either way it exits 2 having written nothing, so no caller or
+    test may rely on which of the two sentences says it.
+
+    The pair is refused here rather than by :func:`noni.order_add.misplaced_flag`
+    because the table's question is whether the verb owns the flag, and ``confirm`` does
+    own ``--all`` -- what it cannot accompany is a subject.
+    """
+    if subcommand != "confirm":
+        return None
+    if all_entries and issue is not None:
+        return ALL_WITH_ISSUE
+    if not all_entries and issue is None:
+        return BARE_CONFIRM
+    return None
 
 # The missing-positional message argparse composes for a required positional, and the
 # line argparse prints above it. argparse turns this refusal into usage-plus-error itself,
@@ -70,8 +133,14 @@ def build_parser(parser_class: type, usage: str, prog: str,
     refusals, and a module that reached for it would be reaching back into the file that
     calls it. ``prog``, ``usage`` and ``description`` travel the same way so the
     three strings a reader copies from stay in the file whose docstring publishes them.
+
+    ``allow_abbrev`` is off, the way :mod:`noni.brief` builds its parser. Argparse's
+    default prefix matching would let ``confirm --al`` stand for ``--all``, so the
+    whole-order restamp this module's gate exists to make deliberate would be reachable
+    by two characters; a flag has to be spelled out to mean anything.
     """
-    return parser_class(prog=prog, description=description, usage=usage)
+    return parser_class(prog=prog, description=description, usage=usage,
+                        allow_abbrev=False)
 
 
 class Planned(NamedTuple):
@@ -242,12 +311,15 @@ def plan_confirm(entries: list, subject: int | None, stamp: str, report,
                  exit_refusal: int) -> Planned:
     """The list ``confirm`` writes: the same entries, with ``confirmed`` restamped.
 
-    With a subject, the one entry naming it; without one, every entry, which is how "the
-    whole queue still stands" is said. The list is the same length and the same order in
-    both cases -- a confirm places nothing and drops nothing -- and a subject the list does
-    not hold is refused rather than confirmed into silence, because a run that reported
-    success for an entry nobody can find would be reporting a confirmation that never
-    happened.
+    With a subject, the one entry naming it; with ``None``, every entry, which is how "the
+    whole queue still stands" is said. ``None`` arrives only from ``confirm --all``: the
+    writer refuses a confirm naming neither an issue nor the flag before this plan is
+    reached (:func:`confirm_usage_rule`), so a run that only meant to look at the queue
+    never reaches the run that flattens it. The list is the same length and the same
+    order in both cases -- a confirm places nothing and drops nothing -- and a subject the
+    list does not hold is refused rather than confirmed into silence, because a run that
+    reported success for an entry nobody can find would be reporting a confirmation that
+    never happened.
     """
     if subject is not None and not _holds(entries, subject):
         return Planned([], "", report(exit_refusal, _absent(subject),

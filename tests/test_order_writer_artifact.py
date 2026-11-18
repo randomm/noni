@@ -75,13 +75,13 @@ def test_non_canonical_bytes_are_refused_rather_than_reformatted(tmp_path):
                       indent=1) + "\n"
     _order_path(repo).parent.mkdir(parents=True, exist_ok=True)
     _order_path(repo).write_text(body, encoding="utf-8")
-    proc = _order(repo, "confirm", "--now", NOW)
+    proc = _order(repo, "confirm", "--all", "--now", NOW)
     assert proc.returncode == 4, proc.stderr
     assert "canonical form" in proc.stderr, proc.stderr
     assert _order_path(repo).read_text(encoding="utf-8") == body
     # The committed canonical form of the same content is accepted.
     _seed(repo, _entry(1, BASELINE_ID))
-    assert _order(repo, "confirm", "--now", NOW).returncode == 0
+    assert _order(repo, "confirm", "--all", "--now", NOW).returncode == 0
 
 
 def test_a_key_order_that_is_not_the_documented_one_is_refused(tmp_path):
@@ -92,7 +92,7 @@ def test_a_key_order_that_is_not_the_documented_one_is_refused(tmp_path):
                       indent=2) + "\n"
     _order_path(repo).parent.mkdir(parents=True, exist_ok=True)
     _order_path(repo).write_text(body, encoding="utf-8")
-    proc = _order(repo, "confirm", "--now", NOW)
+    proc = _order(repo, "confirm", "--all", "--now", NOW)
     assert proc.returncode == 4, proc.stderr
     assert _order_path(repo).read_text(encoding="utf-8") == body
 
@@ -112,7 +112,7 @@ def test_a_symlink_at_the_artifact_path_is_refused_never_followed(tmp_path):
     (repo / "elsewhere.json").write_text(_canonical([_entry(1, BASELINE_ID)]), encoding="utf-8")
     _order_path(repo).parent.mkdir(parents=True, exist_ok=True)
     _order_path(repo).symlink_to(repo / "elsewhere.json")
-    proc = _order(repo, "confirm", "--now", NOW)
+    proc = _order(repo, "confirm", "--all", "--now", NOW)
     assert proc.returncode == 3, proc.stderr
     assert "symlink" in proc.stderr, proc.stderr
     assert _order_path(repo).is_symlink(), "the writer replaced a symlink"

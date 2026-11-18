@@ -65,7 +65,7 @@ def _order_healthier(clone: Path) -> None:
     """
     for issue, decision in ORDER_PLANS:
         _run_order(clone, "add", str(issue), "--decision", decision)
-    _run_order(clone, "confirm")
+    _run_order(clone, "confirm", "--all")
     _push(clone, NOW)
     # The adapter's side of the closed question, committed so a fresh clone
     # carries it and the census can be pointed at it explicitly.

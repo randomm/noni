@@ -213,7 +213,7 @@ def test_a_confirm_keeps_the_reason_of_every_entry_it_restamps(tmp_path):
     _seed(repo, _entry(7), _entry(8, confirmed="2026-10-01T00:00:00Z"))
     _add(repo, 9, f"--{FIELD}", REASON)
 
-    proc = _order(repo, "confirm", "--now", NOW)
+    proc = _order(repo, "confirm", "--all", "--now", NOW)
 
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert _entries(repo)[2][FIELD] == REASON

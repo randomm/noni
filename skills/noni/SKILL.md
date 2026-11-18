@@ -81,8 +81,8 @@ and restates no flags of.
    behalf -- a declined or cancelled question stays open and records nothing.
    [`skills/steering-ledger/SKILL.md`](../steering-ledger/SKILL.md) owns the record,
    the two steer modes and the writer.
-3. **When work lands or an entry is done, update the order.** Remove it or move it,
-   and re-confirm what the operator last confirmed.
+3. **When work lands or an entry is done, update the order.** Remove it or move it, and
+   re-confirm what the operator last confirmed.
    [`skills/direction/SKILL.md`](../direction/SKILL.md) owns the ordered list, the
    standing intent, and the two writers that produce them.
 

@@ -52,7 +52,7 @@ directory, is a usage error (exit 2) before any check runs.
 | `ordering-stale` | 45 | an order entry whose `confirmed` is older than the `--stale-after` threshold relative to `--now` (warn by default; fail under `--strict`) |
 | `ordering-closed` | 46 | an ordered issue the `--issue-state` file says is closed; also the `cannot-tell` row for an entry the file does not mention (warn by default; fail under `--strict`) |
 | `intent` | 51 | `noni/direction/intent.md` is there and is not the artifact: a `## Purpose` / `## Principles` / `## Never` / `## Ask first` heading missing, repeated or out of order, the `Last-confirmed:` line absent or repeated, or the file past its line cap; or the last commit that touched it is not an `intent: <decision-id>` headline naming a record the ledger holds (`uncited`). The `cannot-tell` row for a file this run could not read, for a cited decision record that is a symlink or any other non-regular path, for a ledger directory reached through a symlink, or for a file no commit touched, is a warn (fail under `--strict`); an absent file adds no row at all |
-| `hygiene` | 50 | a tracked file fails the public-repo hygiene scan (machine-local home path, secret shape, active deny-list entry), a committed allowlist entry matches nothing, or the scan/deny-list did not run (warn by default; fail under `--strict`) |
+| `hygiene` | 50 | a tracked file fails the public-repo hygiene scan (machine-local home path, secret shape, active deny-list entry), a committed allowlist entry matches nothing, or the scan did not run; a deny-list that was configured and gave no verdict is a row, while one never configured is a `note:` line outside `--strict` (warn by default; fail under `--strict`) |
 
 The `warn` classes are reported either way and never move the exit code on
 their own: a run whose only findings are warnings exits 0, and `--strict`
@@ -100,12 +100,12 @@ line. One note is printed first of all, ahead of the headline and every row: on 
 `--repo` holding no `noni/` directory — what a caller gets by pointing `--repo` at
 a code repository instead of a state root — the run says `note: no noni/ directory
 was found under --repo <path>` before rows that would otherwise read as a project
-that has not steered yet (a no-`noni/` tree is just a `ledger-empty` warn beside an
-inactive `deny-list`). It is a note, not a row: no check class, no row kind and no
-exit code is added, and under `--json` it rides the summary row's `not_evaluated`
-like any other note. It is not printed when `--ledger`, `--ordering`
-or `--intent` replaces the path under the state root. The first and last lines are
-keyed to what the run found:
+that has not steered yet (a no-`noni/` tree is just a `ledger-empty` warn, plus a
+`note:` line saying the deny-list check is off). It is a note, not a row: no check
+class, no row kind and no exit code is added, and under `--json` it rides the
+summary row's `not_evaluated` like any other note. It is not printed when
+`--ledger`, `--ordering` or `--intent` replaces the path under the state root. The
+first and last lines are keyed to what the run found:
 
 | state of the run | first line | verdict word of the summary line |
 |---|---|---|

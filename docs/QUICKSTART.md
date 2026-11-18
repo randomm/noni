@@ -257,8 +257,8 @@ A warning never moves the exit code on its own, so a first CI run exits 0 with n
 deny-list row and one `note:` line, `deny-list check is off`: expected output, not a
 failure. [The deny-list section](#the-deny-list-and-why---strict-fails-on-a-fresh-attach)
 says what switches it on. `--strict` is the opt-in a team adds once that file holds
-at least one usable entry, and under it every warn class above fails the build at
-its own code — an absent deny-list among them, at 50.
+at least one usable entry, and under it every warn class above fails the build
+at its own code — an absent deny-list among them, at 50.
 
 ## Using noni alongside a driver that keeps its own claims
 

@@ -51,6 +51,25 @@ class TestHumanVerdict:
 
     ALL_CLEAR = "census: no findings; all checks passed"
 
+    # The deny-list seams this class's fixtures bent, kept on the class because
+    # pytest builds one instance per test and the teardown hook has to see what
+    # the test added. See ``teardown_method`` for why leaving them set is wrong.
+    _DENYLIST_SEAMS: list = []
+
+    def teardown_method(self):
+        """Put every deny-list seam this test bent back on the checker module.
+
+        The census holds the checker in ``sys.modules`` under its own key, so a
+        seam left set outlives the test that set it: every later census run in
+        the same process reads a deny-list its own fixture never wrote, and the
+        absent state this issue moved to a note comes back as a row. conftest's
+        autouse fixture clears the environment variable per test and cannot undo
+        an attribute on a module.
+        """
+        while TestHumanVerdict._DENYLIST_SEAMS:
+            module, original = TestHumanVerdict._DENYLIST_SEAMS.pop()
+            module._default_denylist_file = original
+
     def _warn_only_tree(self, tmp_path, name="warn-only"):
         """A tree whose only row is a warning: a deny-list somebody configured and
         that the scan cannot read.
@@ -72,7 +91,16 @@ class TestHumanVerdict:
         corrupt.write_bytes(b"\xff\xfe\x00\x01not utf8")
         import public_safety
 
+        # Restored, not left set. An earlier form of this fixture wrote the seam
+        # and never put the module back, so every census test that ran after this
+        # one in the same process saw a corrupt deny-list: the absent state this
+        # issue moved to a note came back as a row, and the pinned --json digests
+        # broke on a host the fixture had quietly rewritten. conftest's autouse
+        # fixture clears the environment variable per test and cannot undo an
+        # attribute on the checker.
+        original = public_safety._default_denylist_file
         public_safety._default_denylist_file = lambda repo: corrupt
+        TestHumanVerdict._DENYLIST_SEAMS.append((public_safety, original))
         return repo
 
     def _first_line(self, out: str) -> str:

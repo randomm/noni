@@ -339,7 +339,14 @@ def test_denylist_is_read_from_the_audited_tree_not_the_cwd(tmp_path, monkeypatc
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
+    # The same two closures as the test below: the tree's own default path pinned
+    # through the module's seam, and the env route deleted rather than trusted to
+    # conftest (a hygiene test leaks NONI_SCRUB_DENYLIST into the session's
+    # os.environ, and a stale value would answer for this tree instead of the file
+    # this test just wrote into it).
     monkeypatch.delenv(public_safety.DENYLIST_ENV_VAR, raising=False)
+    monkeypatch.setattr(public_safety, "_default_denylist_file",
+                        lambda repo: repo / public_safety.DENYLIST_FILENAME)
 
     result = public_safety.load_denylist(repo)
     assert result.status == "ok", f"the audited tree's deny-list was not read: {result}"
@@ -364,7 +371,15 @@ def test_denylist_is_loaded_from_the_audited_tree(tmp_path, monkeypatch):
     (repo / public_safety.DENYLIST_FILENAME).write_text(
         "synthetic-project-name\n", encoding="utf-8"
     )
+    # Both routes closed but the tree's own: the env variable is cleared per test
+    # by conftest's autouse fixture, and that clear is undone for the rest of the
+    # session by a hygiene test that plants a deny-list with os.environ and never
+    # pops it again (tests/census_denylist.py). Deleting here, and pinning the
+    # tree's default path through the seam every other test of this module uses,
+    # is what makes the tree the only source this test can be reading from.
     monkeypatch.delenv(public_safety.DENYLIST_ENV_VAR, raising=False)
+    monkeypatch.setattr(public_safety, "_default_denylist_file",
+                        lambda repo: repo / public_safety.DENYLIST_FILENAME)
 
     result = public_safety.load_denylist(repo)
     assert result.entries == ["synthetic-project-name"], result

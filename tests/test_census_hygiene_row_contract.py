@@ -68,10 +68,15 @@ class TestHygieneRowContract:
             f"a violation row's subject is path:line: {rows}"
         )
 
-    def test_not_run_and_denylist_rows_use_their_own_subjects(self, tmp_path):
+    def test_not_run_and_denylist_rows_use_their_own_subjects(self, tmp_path, monkeypatch):
         """`hygiene scan` and `deny-list` are the documented subject values for
         the two probe-failure states, so a caller can ask "did the scan run?"
-        without matching English."""
+        without matching English.
+
+        The deny-list half needs a configured list that does not work: with no
+        list at all the class answers in a note and emits no row (see
+        ``tests/test_census_hygiene.py``), so this subject would never be made.
+        """
         plain = tmp_path / "plain"
         plain.mkdir()
         (plain / "note.txt").write_text("hello\n", encoding="utf-8")
@@ -82,6 +87,10 @@ class TestHygieneRowContract:
         repo = _init_repo(tmp_path / "repo")
         _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
                       json.dumps(_valid_record(), indent=2))
+        corrupt = tmp_path / "corrupt-denylist.txt"
+        corrupt.write_bytes(b"\xff\xfe\x00\x01not utf8")
+        monkeypatch.setattr(_hygiene_target(), "_default_denylist_file",
+                            lambda repo: corrupt)
         _rc, out, _err = _run_census(repo, json_out=True)
         rows = [r for r in _ndjson_rows(out) if r.get("check") == "hygiene"]
         assert [r["subject"] for r in rows] == ["deny-list"], f"rows: {rows}"
@@ -357,15 +366,20 @@ class TestHygieneRowContract:
         _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
                       json.dumps(_valid_record(), indent=2))
         # The foreign entry is rejected and the real file loaded in its place:
-        # the run reports the deny-list half (the real checker, no deny-list),
-        # never an all-clear from the impostor's active=True.
+        # the run reports the deny-list half (the real checker, a corrupt list),
+        # never an all-clear from the impostor's active=True. An absent list
+        # answers in a note and would leave this run nothing to assert on.
+        corrupt = tmp_path / "corrupt-denylist.txt"
+        corrupt.write_bytes(b"\xff\xfe\x00\x01not utf8")
+        monkeypatch.setattr(_hygiene_target(), "_default_denylist_file",
+                            lambda repo: corrupt)
         _rc, out, err = _run_census(repo, json_out=True)
         rows = [r for r in _ndjson_rows(out) if r.get("check") == "hygiene"]
         assert [r["subject"] for r in rows] == ["deny-list"], f"rows: {rows}"
         # The impostor's _denylist_active() -> True would have silenced this row
         # entirely, i.e. reported a hygiene-clean guarantee on a scan that never
-        # ran; the real checker's absent deny-list is what the row must name.
-        assert "absent" in rows[0]["message"], f"row: {rows[0]}"
+        # ran; the real checker's corrupt deny-list is what the row must name.
+        assert "corrupt" in rows[0]["message"], f"row: {rows[0]}"
 
     def test_object_under_the_bare_public_safety_alias_is_not_trusted(self, monkeypatch):
         """The bare "public_safety" sys.modules entry is not a trust anchor.

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 
 from _harness import _commit_file, _git, _init_repo
+from census_denylist import _clear_denylist, _with_denylist
 from census_fixtures import _ndjson_rows, _valid_record
 from census_run import _run_census, _run_census_from
 
@@ -217,7 +218,14 @@ class TestClean:
         repo = _init_repo(tmp_path / "note-order")
         _commit_file(repo, "README.md", "# empty\n")
         _commit_file(repo, "src/app.py", "def main() -> int:\n    return 0\n")
-        rc, out, err = _run_census(repo)
+        # A configured deny-list, so this run owes exactly the two notes whose
+        # order is under test. With none configured the class adds a third note of
+        # its own, which is a different fact (see tests/test_census_hygiene.py).
+        _with_denylist(tmp_path, "synthetic-project-name")
+        try:
+            rc, out, err = _run_census(repo)
+        finally:
+            _clear_denylist()
         lines = out.splitlines()
         assert rc == 0, f"{rc}\n{out}\n{err}"
         assert lines[0].startswith("note: "), (
@@ -275,9 +283,9 @@ class TestJsonMode:
         """A state root with no findings for the non-hygiene classes.
 
         Hygiene stays in ``requested``: with no deny-list configured (the
-        autouse conftest clears ``NONI_SCRUB_DENYLIST``) that is the one class
-        that always reports, and so the only one that ever printed the banner
-        this contract removes.
+        autouse conftest clears ``NONI_SCRUB_DENYLIST``) the class still runs,
+        and its checker is the one thing here that ever printed the banner this
+        contract removes.
         """
         repo = _init_repo(tmp_path / "repo")
         _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
@@ -290,8 +298,10 @@ class TestJsonMode:
         The state root is deliberately one whose deny-list is INACTIVE: an
         active deny-list prints nothing, so a test written that way would pass
         whether the banner fired or not. The paired non-vacuity assertion is the
-        deny-list row on stdout: the state is still reported, as a documented
-        finding row with its fix hint, which is why the banner is redundant.
+        deny-list note on the summary row: with no list configured at all the
+        state is reported as a note rather than a finding row (the corrupt state
+        keeps its row, and the test below pins this run's stderr against that
+        file, which is the notice that leaked an absolute path).
         """
         repo = self._clean_repo(tmp_path)
         rc, out, err = _run_census(repo, "--now", "2026-10-02T00:00:00Z",
@@ -299,10 +309,11 @@ class TestJsonMode:
         assert err == "", f"a clean --json run wrote to stderr: {err!r}"
         assert rc == 0, f"expected 0, got {rc}\n{out}\n{err}"
         rows = _ndjson_rows(out)
-        deny_rows = [r for r in rows if r.get("kind") == "finding"
-                     and r.get("subject") == "deny-list"]
-        assert len(deny_rows) == 1, (
-            f"the run must still report the inactive deny-list as a row: {rows}")
+        assert [r for r in rows if r.get("subject") == "deny-list"] == [], (
+            f"an absent deny-list is a note, not a row: {rows}")
+        summary = [r for r in rows if r.get("kind") == "summary"][0]
+        assert any("deny-list check is off" in line
+                   for line in summary.get("not_evaluated", [])), summary
 
     def test_json_writes_nothing_to_stderr_with_a_corrupt_denylist(self, tmp_path):
         """The second stderr writer is silenced too, and it leaked an absolute path.

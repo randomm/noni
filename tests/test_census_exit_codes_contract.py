@@ -178,6 +178,25 @@ def test_exit_42_ledger_absent(tmp_path):
     assert _run(repo, "--only", "ledger-empty", "--strict") == 42
 
 
+def test_exit_50_hygiene_on_an_absent_denylist(tmp_path, monkeypatch):
+    """A tree with no deny-list configured at all still fails under --strict.
+
+    The default run answers that state with a note and no row (issue #194); the
+    strict gate is not weakened by it, so the same class and the same code 50
+    still fire. Asserted at the level a caller runs it (``--only hygiene
+    --strict``) because the other exit-50 test plants a violation against an
+    active list, which is a different arm of the class.
+    """
+    from census_denylist import _with_no_denylist
+
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/decisions/2026-10-01-a.json",
+                 json.dumps(_valid_record(), indent=2))
+    _with_no_denylist(monkeypatch, tmp_path)
+    assert _run(repo, "--only", "hygiene") == 0
+    assert _run(repo, "--only", "hygiene", "--strict") == 50
+
+
 def test_exit_50_hygiene(tmp_path):
     """A tracked file with a home path / secret shape is the warn hygiene
     class: exit 0 without --strict, 50 under --strict. The deny-list is made

@@ -86,8 +86,7 @@ Read the result. A run with rows ends with the line
 summary: W warning(s); N finding(s); verdict ok
 ```
 
-where `W` counts the warnings among the `N` rows above it (on a first tree, a
-missing deny-list and a ledger with nothing to arbitrate), and does not move it.
+where `W` counts the warnings among the `N` rows above it, and does not move it.
 
 ## How it works
 
@@ -111,9 +110,10 @@ creates the ledger record only: `intent.md` appears when you first run `intent.p
 and `order.json` when you first run `order.py`. Both are optional, and only a run that counted
 no row and skipped no check reads all-clear (`census: no findings; all checks
 passed`, `summary: clean; 0 finding(s); verdict ok`); the try-it run above does
-not: the always-reporting hygiene class leaves a first tree a warn row. The
-census also reads input it does not own: the `--issue-state` map an adapter or
-the operator supplies, whose absence it reports as an unevaluated check. It
+not: a first tree has a ledger with nothing to arbitrate. A deny-list the scan
+cannot read is a warn row; one never configured is a `note:` line. The census
+also reads input it does not own: the `--issue-state` map an adapter or the
+operator supplies, whose absence it reports as an unevaluated check. It
 recomputes everything from git history plus those files, so metrics are derived,
 never self-reported. Each `skills/<skill>/SKILL.md` names its script, flags and
 exit codes; [docs/ONBOARDING.md](docs/ONBOARDING.md) covers the skills.

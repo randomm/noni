@@ -262,6 +262,41 @@ def test_a_fifo_at_the_deny_list_path_leaves_the_class_reporting_itself_inactive
     assert "inactive" in hygiene[0]["message"], hygiene[0]
     assert "hygiene-clean" not in hygiene[0]["message"].replace(
         "not a hygiene-clean", ""), hygiene[0]["message"]
+def test_an_absent_denylist_is_a_note_while_a_fifo_at_its_path_is_a_row(tmp_path):
+    """The absent/corrupt split does not collapse into one answer.
+
+    Both leave the class inactive, and the two runs differ only in whether a list
+    was configured: the pipe at the env-named path is a list somebody meant to
+    use, so it keeps its row and its warning; nothing configured at all is said in
+    a note and counts no warning. If both were silenced the class could report a
+    clean-looking run over a tree whose deny-list cannot be read.
+    """
+    repo = _init_repo(tmp_path / "repo")
+    _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
+                 json.dumps(_valid_record(), indent=2))
+
+    pipe = tmp_path / "denylist-pipe.txt"
+    os.mkfifo(pipe)
+    os.environ[DENYLIST_ENV_VAR] = str(pipe)
+    try:
+        code, rows, err = _census_rows_in_time(repo)
+    finally:
+        _clear_env_denylist()
+    corrupt = _hygiene_rows(rows)
+    assert len(corrupt) == 1, f"a fifo at the deny-list path keeps its row: {corrupt}"
+    assert corrupt[0]["subject"] == "deny-list", corrupt[0]
+    assert "inactive" in corrupt[0]["message"], corrupt[0]
+    assert "hygiene-clean" not in corrupt[0]["message"].replace(
+        "not a hygiene-clean", ""), corrupt[0]["message"]
+    assert code == CENSUS_CLEAN_EXIT, f"expected 0 (warn), got {code}\n{err}"
+
+    code, rows, err = _census_rows_in_time(repo)
+    assert code == CENSUS_CLEAN_EXIT, f"expected 0, got {code}\n{err}"
+    assert _hygiene_rows(rows) == [], f"an absent deny-list emits no row: {rows}"
+    summary = [r for r in rows if r.get("kind") == "summary"][0]
+    assert "hygiene" not in summary["counts"], summary
+    assert any("deny-list check is off" in note
+               for note in summary.get("not_evaluated", [])), summary
 
 
 def test_a_non_git_tree_still_reports_the_scan_did_not_run(tmp_path):

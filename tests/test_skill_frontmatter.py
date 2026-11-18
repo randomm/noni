@@ -130,17 +130,23 @@ def test_every_shipped_skill_page_has_the_frontmatter_a_loader_reads() -> None:
 def test_quoted_values_round_trip_to_their_own_text() -> None:
     """Quoting changed the line, not the wording it carries.
 
-    Each quoted value is unwrapped and compared against what the same value
-    reads as without its quotes, so the quoting this ticket added cannot have
-    eaten or gained a character. The three pages that needed no quoting are
-    the control: their values are bare and already exact.
+    The quoting this ticket added can neither eat a character nor gain one:
+    every value, unwrapped, re-quotes to the exact raw text it came from, and
+    no value picks up surrounding space. The three pages that needed no
+    quoting are the control: their values are bare and exact already.
     """
     for page in skill_pages():
         for name, raw in frontmatter_fields(page.read_text(encoding="utf-8")).items():
             body = raw[1:] if raw.startswith(" ") else raw
-            text = body[1:-1].replace("''", "'") if body[:1] in ("'", '"') else body
-            assert text == text.strip(), f"{page}: {name} gained or lost surrounding space"
-            assert text, f"{page}: {name} carries no text"
+            marker = body[:1] if body[:1] in ("'", '"') else ""
+            text = body[1:-1] if marker else body
+            if marker:
+                # The unescape the loader does: '' stands for one apostrophe.
+                text = text.replace("''", "'")
+            assert text and text == text.strip(), (
+                f"{page}: {name} carries no text or gained surrounding space")
+            rejoined = f"{marker}{text}{marker}" if marker else text
+            assert rejoined == body, f"{page}: {name} lost characters under quoting"
 
 
 def test_the_guard_refuses_a_planted_page_whose_value_is_unquoted() -> None:

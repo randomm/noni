@@ -2,7 +2,7 @@
 
 ``intent.py`` is the only writer of ``noni/direction/intent.md``; these tests are
 the contract that claim rests on. The file is written only after every read and
-every check has passed, is committed with the subject that cites the record that
+every check has passed, is committed under the subject that cites the record that
 set the direction, and a refusal leaves the tracked files byte-identical.
 """
 
@@ -36,6 +36,7 @@ from intent_writer_support import (
     intent_run,
     tracked_digests,
 )
+from orderstate_hint_support import INTENT_LABEL, RECORD_FIRST, fix_lines
 from parent_link_fixtures import (
     assert_outside_untouched,
     plant_parent_link,
@@ -199,10 +200,16 @@ def test_a_decision_id_that_could_name_no_file_is_exit_4(tmp_path, decision):
 
 def test_a_record_the_ledger_does_not_hold_is_exit_4(tmp_path):
     repo = repo_with_record(tmp_path, records=())
+    (repo / "noni" / "decisions").mkdir(parents=True, exist_ok=True)
     result = intent_run(repo, SET, "--from", draft(tmp_path, GOOD_INTENT),
                         "--decision", RECORD_ID)
     assert result.returncode == 4
     assert RECORD_ID in result.stderr
+    # The record is simply not there, so recording it is the next step, and this
+    # writer says so on its own label: one fix line, ending in the one sentence.
+    lines = fix_lines(result.stderr, INTENT_LABEL)
+    assert len(lines) == 1, result.stderr
+    assert lines[0].endswith(RECORD_FIRST), result.stderr
 
 
 def test_a_superseded_record_is_exit_4_and_names_the_successor(tmp_path):
@@ -254,13 +261,13 @@ def test_a_symlink_where_the_intent_directory_was_is_refused_never_written_throu
     """A committed ``noni/direction`` that is a link outside the tree is a wrong
     path, not a directory to write into (issue #104).
 
-    The writer probed the parent with ``exists()``/``is_dir()`` and created it with
-    ``mkdir(parents=True)``, both of which follow links, so the probe answered yes,
-    the mkdir was a no-op, and the intent landed outside -- exit 0, and the committed
-    route then heard git refuse a path "beyond a symbolic link". The guard asks every
-    component under ``--repo`` of ``lstat`` before the draft is opened, so the answer
-    is now the wrong-path code docs/PRODUCT.md 7 gives ``intent`` (2) with the path
-    named, and the decoy outside still holds the bytes the fixture wrote.
+    The old probe used ``exists()``/``is_dir()`` and the write ``mkdir(parents=True)``,
+    all three of which follow links: the probe answered yes, the mkdir was a no-op and
+    the intent landed outside -- exit 0, and the committed route then heard git refuse
+    a path "beyond a symbolic link". The guard now asks every component under ``--repo``
+    of ``lstat`` before the draft is opened, so the answer is the wrong-path code
+    docs/PRODUCT.md 7 gives ``intent`` (2), the path is named, and the decoy outside
+    still holds the bytes the fixture wrote.
     """
     repo = repo_with_record(tmp_path)
     outside = tmp_path / "outside"
@@ -284,10 +291,9 @@ def test_a_symlinked_noni_directory_is_refused_though_the_directory_below_it_is_
     real directory: ``lstat`` resolves the intermediate component, so a guard that
     asked only the leaf the writer writes into hears "directory" and mkdirs nothing.
 
-    The ledger the ``--decision`` citation reads lives under the same link, so the
-    outside tree carries a decoy at the artifact's name and at the record's: the
-    first says nothing was written outside, the second is the bytes a following read
-    would have answered from.
+    The cited ledger lives under the same link, so the outside tree carries a decoy at
+    the artifact's name and at the record's: the first says nothing was written outside,
+    the second is what a following read would have answered from.
     """
     repo = repo_with_record(tmp_path)
     outside = tmp_path / "outside"
@@ -323,10 +329,8 @@ def test_set_is_admitted_on_a_tree_with_no_noni_and_refused_for_the_ledger(tmp_p
     refusal must not fire for it -- refusing it would break the first intent file, the
     very exception the rule exists for. What still refuses the run is the citation: the
     record it names does not exist, which is the writer's own exit 4. The two refusals
-    staying separate is the contract: a wrong --repo must not be allowed to invent an
-    intent, and a legitimate first run must not be stopped by a state-root check. The
-    draft is a valid one, so the code below is the citation's answer and not the
-    draft's.
+    staying separate is the contract, and the draft is a valid one, so the code below is
+    the citation's answer and not the draft's.
     """
     repo = _code_repo(tmp_path)
     result = intent_run(repo, SET, "--from", draft(tmp_path, GOOD_INTENT),
@@ -336,6 +340,9 @@ def test_set_is_admitted_on_a_tree_with_no_noni_and_refused_for_the_ledger(tmp_p
         f"a sanctioned creator must not meet the state-root refusal: "
         f"{result.stderr}")
     assert "is in the ledger" in result.stderr, result.stderr
+    # The tree holds no ledger at all, so sending this caller to ``noni decide``
+    # would advertise a step that cannot fix the path they named.
+    assert RECORD_FIRST not in result.stderr, result.stderr
     assert not (repo / "noni").exists(), "a refused run created noni/"
 
 
@@ -356,20 +363,18 @@ def _code_repo(tmp_path: Path) -> Path:
 
 def test_a_missing_draft_argument_is_exit_2(tmp_path):
     repo = repo_with_record(tmp_path)
-    result = intent_run(repo, SET, "--decision", RECORD_ID)
-    assert result.returncode == 2
+    assert intent_run(repo, SET, "--decision", RECORD_ID).returncode == 2
 
 
 def test_a_missing_decision_argument_is_exit_2(tmp_path):
     repo = repo_with_record(tmp_path)
-    result = intent_run(repo, SET, "--from", draft(tmp_path, GOOD_INTENT))
-    assert result.returncode == 2
+    assert intent_run(repo, SET,
+                      "--from", draft(tmp_path, GOOD_INTENT)).returncode == 2
 
 
 def test_an_unknown_verb_is_exit_2(tmp_path):
     repo = repo_with_record(tmp_path)
-    result = intent_run(repo, "show")
-    assert result.returncode == 2
+    assert intent_run(repo, "show").returncode == 2
 
 
 def test_a_missing_subcommand_names_the_verb_it_wants(tmp_path):
@@ -377,10 +382,9 @@ def test_a_missing_subcommand_names_the_verb_it_wants(tmp_path):
 
     ``intent --repo X --from f --decision d`` with no ``set`` reached argparse's own
     missing-positional refusal, which names the slot and not the word that fills it:
-    only an *invalid* verb printed the fix line that did. The wording argparse
-    composes is kept (it is the same refusal every tool prints) and the verb is
-    named beside it, with the usage line above, at the usage code and with no
-    traceback. Nothing is written by a run this early in the checks.
+    only an *invalid* verb printed the fix line that did. The wording argparse composes
+    is kept and the verb is named beside it, with the usage line above, at the usage
+    code and with no traceback. Nothing is written by a run this early in the checks.
     """
     repo = repo_with_record(tmp_path)
     result = intent_run(repo, "--from", draft(tmp_path, GOOD_INTENT),
@@ -420,8 +424,8 @@ def test_an_indented_stamp_line_survives_and_the_real_one_is_restamped(tmp_path)
 def test_a_draft_whose_fences_balance_installs(tmp_path):
     """A worked example is allowed: the refusal is the unclosed opener, not fences.
 
-    The control for ``unclosed-fence`` in the shared shape table -- a rule that
-    refused any fenced example would pass every other test in this file.
+    The control for ``unclosed-fence`` in the shared shape table -- a rule refusing any
+    fenced example would pass every other test here.
     """
     repo = repo_with_record(tmp_path)
     before = commit_count(repo)
@@ -436,10 +440,9 @@ def test_a_draft_whose_fences_balance_installs(tmp_path):
 def test_an_unclosed_fence_is_exit_4_and_writes_nothing(tmp_path, opener):
     """The tail an unclosed opener hides is refused, not read as nothing.
 
-    Both fence tokens are driven: the walk pairs a backtick opener only with a
-    backtick closer and a tilde only with a tilde, so a fix that checked one token
-    and not the other -- or counted openers instead of tracking them -- fails on
-    one of the two parameters.
+    Both fence tokens are driven: the walk pairs a backtick opener only with a backtick
+    closer and a tilde only with a tilde, so a fix that checked one token and not the
+    other -- or counted openers instead of tracking them -- fails on one parameter.
     """
     repo = repo_with_record(tmp_path)
     before = tracked_digests(repo)
@@ -466,7 +469,7 @@ def test_the_commit_stages_only_the_intent_file(tmp_path):
 
 
 def test_the_writer_writes_nothing_outside_the_state_root(tmp_path):
-    """HOME, XDG and git's own config dirs are empty for the whole run."""
+    """HOME, XDG and git's own config dirs stay empty for the whole run."""
     repo = repo_with_record(tmp_path)
     home = tmp_path / "home"
     home.mkdir()
@@ -474,14 +477,13 @@ def test_the_writer_writes_nothing_outside_the_state_root(tmp_path):
                                    draft(tmp_path, GOOD_INTENT),
                                    "--decision", RECORD_ID)
     assert result.returncode == 0, result.stderr
-    assert _home_is_empty(home)
+    assert not any(home.iterdir()), "the run wrote under HOME/XDG"
 
 
 def _git(repo, *args):
-    return subprocess.run(
-        ["git", "-c", "user.name=T", "-c", "user.email=t@example.invalid",
-         "-c", "commit.gpgsign=false", "-C", str(repo), *args],
-        capture_output=True, text=True, check=True)
+    argv = ["git", "-c", "user.name=T", "-c", "user.email=t@example.invalid",
+            "-c", "commit.gpgsign=false", "-C", str(repo), *args]
+    return subprocess.run(argv, capture_output=True, text=True, check=True)
 
 
 def _subject(repo) -> str:
@@ -494,7 +496,3 @@ def _head(repo) -> str:
 
 def _touched(repo) -> list[str]:
     return _git(repo, "show", "--name-only", "--format=", "HEAD").stdout.split()
-
-
-def _home_is_empty(home) -> bool:
-    return not any(home.iterdir())

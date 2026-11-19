@@ -16,9 +16,8 @@ from order_fixtures import (
     _canonical,
     _entry,
     _record_json,
-    git_input,
-    git_output,
 )
+from order_git_shapes import git_input, git_output
 
 __all__ = [
     "CONFLICTED", "STAGED", "UNMERGED", "_conflicted_repo", "_no_commit_repo",

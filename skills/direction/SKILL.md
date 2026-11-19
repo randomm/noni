@@ -342,15 +342,21 @@ The write itself goes to a temp file in its own directory and moves into place w
 - **A `decision` id is identified by its filename stem.** `add --decision ID`
   looks for `noni/decisions/<ID>.json`, the path `decide.py` names its records
   by. A ledger that is not there at all is the same answer as no file with that
-  name: the id matches no record. A record whose body disagrees with its own
-  name is the census's `ledger-record` / `ledger-chain` problem, not this
-  writer's.
-- **A superseded record cannot set a position.** The refusal names the record
-  that superseded it and shows the flag to pass. A chain that moved on again is
-  superseded by the newest of its links. The rule holds for `move --decision` just
-  as it does for `add`: a run that would cite a record the ledger has replaced is
-  refused before the position is taken, so no reorder leaves an entry resting on a
-  dead decision.
+  name: the id matches no record. A record whose body disagrees with its own name is
+  the census's `ledger-record` / `ledger-chain` problem, not this writer's.
+- **A citation the ledger cannot answer sends you to `noni decide` first.** The
+  refusal for a missing `--decision` on `add`, and the exit-4 refusal for an id no
+  record carries (`add`, `move --decision` and `intent set` alike), ends its fix line
+  with one sentence: `Record the decision first with noni decide, then run this
+  command again with that record's id.` Record it, read the id off the writer's
+  `wrote` line, and re-run. The exit-3 refusals stay free of it, and so does a tree
+  holding no `noni/` at all -- there the run is aimed at the wrong repository, and
+  the sentence beside it names `--repo` instead.
+- **A superseded record cannot set a position.** The refusal names the record that
+  superseded it and shows the flag to pass; a chain that moved on again is superseded
+  by its newest link. The rule holds for `move --decision` as for `add`: a run that
+  would cite a record the ledger has replaced is refused before the position is
+  taken, so no reorder leaves an entry resting on a dead decision.
 - **An unreadable record is exit 3, not exit 4.** "I could not read it" and "it
   is not there" are different answers, and the caller fixes them differently.
 - **A non-regular path is refused, never followed.** A symlink, a directory or a

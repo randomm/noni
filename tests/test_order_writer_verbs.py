@@ -12,6 +12,7 @@ from _harness import (
 )
 from order_fixtures import (
     BASELINE_ID,
+    GHOST_ID,
     NOW,
     ORDER_REL,
     OTHER_ID,
@@ -36,6 +37,7 @@ from order_fixtures import (
 )
 from order_race_fixtures import REFUSAL, RIVAL_STAMP
 from order_rival_commit import _rival_commit
+from orderstate_hint_support import RECORD_FIRST, fix_lines
 
 
 def test_move_replaces_the_entry_and_restamps_it(tmp_path):
@@ -118,15 +120,22 @@ def test_move_refuses_a_decision_that_resolves_to_no_live_record(tmp_path):
     _supersede_baseline(repo)
     head_before = _git_e2(repo, "rev-parse", "HEAD").stdout.strip()
 
-    proc = _order(repo, "move", "1", "--decision", "2026-10-09-ghost", "--now", NOW)
+    proc = _order(repo, "move", "1", "--decision", GHOST_ID, "--now", NOW)
     assert proc.returncode == 4, f"{proc.returncode}: {proc.stderr}"
     assert "is in the ledger" in proc.stderr or "matches no record" in proc.stderr, \
         proc.stderr
+    # A move cites a record exactly the way add does, so it is sent to the same
+    # next step: record the decision, then run the verb again with its id.
+    assert len(fix_lines(proc.stderr)) == 1, proc.stderr
+    assert fix_lines(proc.stderr)[0].endswith(RECORD_FIRST), proc.stderr
 
     proc = _order(repo, "move", "1", "--decision", BASELINE_ID, "--now", NOW)
     assert proc.returncode == 4, f"{proc.returncode}: {proc.stderr}"
     assert SUPERSEDING_ID in proc.stderr, proc.stderr
     assert f"--decision {SUPERSEDING_ID}" in proc.stderr, proc.stderr
+    # The record exists and names its own successor, so a decide-first line would
+    # contradict the one that tells the caller which id to pass.
+    assert RECORD_FIRST not in proc.stderr, proc.stderr
 
     # The ledger this run cannot read: the environment's code (3), never the exit-4
     # sentence about a record nobody committed. Same shape as the add suite's unreadable
@@ -143,6 +152,7 @@ def test_move_refuses_a_decision_that_resolves_to_no_live_record(tmp_path):
             raise AssertionError(f"{proc.returncode}: {proc.stderr}")
         assert "could not be read" in proc.stderr, proc.stderr
         assert "is in the ledger" not in proc.stderr, proc.stderr
+        assert RECORD_FIRST not in proc.stderr, proc.stderr
     finally:
         record.chmod(0o644)
 

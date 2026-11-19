@@ -403,3 +403,21 @@ def test_the_census_skill_documents_the_three_new_classes():
     assert "--issue-state" in text and "--ordering" in text, "new flags undocumented"
     # Both defaults the table promises are the paths the census actually uses.
     assert "<repo>/noni/direction/order.json" in text, "the ordering default is undocumented"
+
+
+def test_skill_md_states_the_record_first_remedy_in_the_product_voice():
+    """The page that documents the citation refusals says what the run says.
+
+    The sentence is the product's constant, not this module's copy of it, so the
+    check is the one ``order_probe.CHANGED`` gets: a page reworded to a near-miss
+    of what the refusal prints stays red, and so does one that dropped the verb the
+    reader has to run. It is read from the edge-cases section rather than the whole
+    page, because that is the section a caller reaches for a refusal they just got.
+    """
+    from noni import orderstate
+
+    edge = _flat(_skill_section("The order edge cases that matter"))
+    assert orderstate.RECORD_FIRST_HINT in edge, (
+        f"the order edge cases do not carry the record-first hint verbatim: {edge}")
+    for phrase in ("noni decide", "exit-4", "no `noni/`"):
+        assert phrase in edge, f"the order edge cases omit {phrase!r}: {edge}"

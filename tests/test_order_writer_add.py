@@ -11,6 +11,7 @@ from _harness import (
 )
 from order_fixtures import (
     BASELINE_ID,
+    GHOST_ID,
     NOW,
     ORDER_REL,
     SUPERSEDING_ID,
@@ -32,6 +33,10 @@ from order_fixtures import (
 )
 from ordering_shapes import (
     MALFORMED_SHAPES,
+)
+from orderstate_hint_support import (
+    RECORD_FIRST,
+    fix_lines,
 )
 
 
@@ -143,10 +148,20 @@ def test_add_stamps_confirmed_with_the_run_time_when_now_is_omitted(tmp_path):
 
 
 def test_add_without_a_decision_refuses_with_two(tmp_path):
+    """No ``--decision`` on ``add``: exit 2, and the fix line says to record first.
+
+    The hint is the whole of what this run tells its caller to do next, so it is
+    pinned as the complete fix line rather than as a fragment of it: the headline
+    and code are unchanged by issue #198, and the one line that was added has to
+    be the product's own constant, byte for byte.
+    """
     repo = _repo(tmp_path)
     proc = _order(repo, "add", "7", "--now", NOW)
     assert proc.returncode == 2
     assert "--decision" in proc.stderr
+    assert fix_lines(proc.stderr) == [f"name the decision record that put this issue "
+                                      f"there, or order it with order.py confirm if "
+                                      f"it is already listed {RECORD_FIRST}"]
     assert not _order_path(repo).exists()
 
 
@@ -163,9 +178,11 @@ def test_add_of_an_already_listed_issue_refuses_with_four_and_changes_nothing(tm
 
 def test_add_refuses_a_decision_that_matches_no_record(tmp_path):
     repo = _repo(tmp_path)
-    proc = _order(repo, "add", "7", "--decision", "2026-10-09-ghost", "--now", NOW)
+    proc = _order(repo, "add", "7", "--decision", GHOST_ID, "--now", NOW)
     assert proc.returncode == 4, proc.stderr
     assert "is in the ledger" in proc.stderr or "matches no record" in proc.stderr, proc.stderr
+    assert len(fix_lines(proc.stderr)) == 1, proc.stderr
+    assert fix_lines(proc.stderr)[0].endswith(RECORD_FIRST), proc.stderr
     assert not _order_path(repo).exists()
     code, rows, _ = _census_ordering(repo)
     assert code == 0 and not rows, rows
@@ -178,6 +195,9 @@ def test_add_refuses_a_superseded_decision_and_names_its_successor(tmp_path):
     assert proc.returncode == 4, proc.stderr
     assert SUPERSEDING_ID in proc.stderr, proc.stderr
     assert f"--decision {SUPERSEDING_ID}" in proc.stderr, proc.stderr
+    # The record exists, so a decide-first line would send the caller to a step
+    # they already took: only the missing-record refusals carry the hint.
+    assert RECORD_FIRST not in proc.stderr, proc.stderr
     assert not _order_path(repo).exists()
     # The successor itself sets a position without complaint.
     assert _order(repo, "add", "7", "--decision", SUPERSEDING_ID, "--now", NOW).returncode == 0
@@ -203,6 +223,24 @@ def test_an_empty_ledger_answers_that_the_id_is_not_there(tmp_path):
     proc = _order(repo, "add", "7", "--decision", BASELINE_ID, "--now", NOW)
     assert proc.returncode == 4, proc.stderr
     assert "is in the ledger" in proc.stderr, proc.stderr
+    assert fix_lines(proc.stderr)[0].endswith(RECORD_FIRST), proc.stderr
+
+
+def test_add_refuses_a_malformed_decision_id_with_the_same_hint(tmp_path):
+    """A name the writer never produces is refused before any path is built from it.
+
+    This is the second of the two arms behind one exit 4 (``DECISION_ID_RE`` in
+    ``orderstate.decision_problems``, versus ``read_record``'s absent-file arm), and
+    until now the add suite pinned neither arm's fix line. Same code, same hint, so
+    the caller's next step is the same whichever arm refused the run.
+    """
+    repo = _repo(tmp_path)
+    proc = _order(repo, "add", "7", "--decision", "not-a-date", "--now", NOW)
+    assert proc.returncode == 4, proc.stderr
+    assert "matches no record" in proc.stderr, proc.stderr
+    assert len(fix_lines(proc.stderr)) == 1, proc.stderr
+    assert fix_lines(proc.stderr)[0].endswith(RECORD_FIRST), proc.stderr
+    assert not _order_path(repo).exists()
 
 
 def test_a_record_that_is_not_a_regular_file_cannot_set_a_position(tmp_path):
@@ -240,6 +278,8 @@ def test_a_ledger_that_is_not_a_directory_cannot_be_looked_in(tmp_path):
     assert "noni/decisions" in proc.stderr, proc.stderr
     assert "is not a directory" in proc.stderr, proc.stderr
     assert "is in the ledger" not in proc.stderr, proc.stderr
+    # Nothing was looked at, so the ledger holds no answer to send the caller to.
+    assert RECORD_FIRST not in proc.stderr, proc.stderr
 
 
 def test_add_creates_the_direction_directory_for_the_first_entry(tmp_path):

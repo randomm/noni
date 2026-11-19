@@ -31,8 +31,8 @@ from order_fixtures import (
     _porcelain,
     _repo,
     _seed,
-    git_input,
 )
+from order_git_shapes import git_input
 from order_probe_shared import (
     CONFLICTED,
     STAGED,

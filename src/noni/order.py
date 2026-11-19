@@ -76,7 +76,8 @@ Exit codes:
        timed out or failed for a reason that told us nothing)
     4  what the order itself refuses: the issue is already listed (add), absent from the
        order (move, remove, confirm), no file under noni/decisions/ carries the given
-       --decision id (add or move), the record it finds is superseded (the hint names its
+       --decision id (add or move; the fix line says to record the decision first),
+       the record it finds is superseded (the hint names its
        successor),
        an entry of the existing file whose decision is null, blank or absent (the refusal
        names the entry), or the existing order file is not the artifact this writer writes
@@ -88,6 +89,15 @@ Exit codes:
        at the artifact's path did ("the file changed since it was read; restore it
        or discard the change", which no re-run settles -- the fix names the
        checkout that does)
+
+The record-first line. A refusal of a citation the ledger cannot answer -- ``add``
+with no --decision, or an id no record carries -- ends its fix line with the one
+sentence naming what to do before re-running, held as the constant
+``orderstate.RECORD_FIRST_HINT`` and printed by every such refusal of ``order``
+and ``intent``: ``Record the decision first with noni decide, then run this command
+again with that record's id.`` It says nothing where the tree holds no ``noni/`` at
+all, because there the run is aimed at the wrong repository rather than late to a
+decision.
 
 Every refusal (2, 3 or 4) leaves the artifact untouched: reads and checks
 happen before any write -- including the re-read of the committed bytes that
@@ -371,9 +381,13 @@ def main(argv: list[str] | None = None) -> int:
         return subject
 
     if subcommand == "add" and args.decision is None:
+        # The one citation refusal printed outside orderstate, so it appends the
+        # shared record-first sentence itself: an added position is a decision, and
+        # a run with no record to cite has to make one before it re-runs.
         return _fail(EXIT_USAGE, "add needs --decision ID: an added position is a decision",
                      "name the decision record that put this issue there, or order it "
-                     "with order.py confirm if it is already listed")
+                     f"with order.py confirm if it is already listed "
+                     f"{orderstate.RECORD_FIRST_HINT}")
 
     stamp, err = orderstate.now_iso(args.now)
     if err:

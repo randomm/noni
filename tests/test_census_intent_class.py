@@ -11,6 +11,7 @@ from drifting apart. The rows this run raises when it could not make a read are 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from intent_fixtures import (
@@ -314,16 +315,17 @@ def test_the_row_carries_a_fix_that_names_the_writer(tmp_path):
     assert "skills/direction/scripts/intent.py" in rows[0]["fix"]
 
 
-def test_the_artifact_of_a_path_that_cannot_be_resolved_is_the_path_itself(tmp_path):
-    """Naming the artifact is not allowed to end the run.
+def test_the_artifact_of_a_link_loop_inside_the_root_is_root_relative(tmp_path):
+    """Naming the artifact is not allowed to end the run, nor leak the host.
 
     The row's identifier comes from ``resolve()``, which follows the chain a
-    symlinked artifact stands at, and ``pathlib`` turns an ``ELOOP`` it cannot
-    attach an errno to into ``RuntimeError`` -- not an ``OSError``, and so not a
-    fault any of this class's readers was catching. A row that reports a file this
-    run could not read still has to name it, and the path it was given is the only
-    spelling of it the run has: the report prints paths root-relative by
-    convention, not by contract.
+    symlinked artifact stands at. On 3.11 and 3.12 ``pathlib`` turns an ``ELOOP`` it
+    cannot attach an errno to into ``RuntimeError`` -- not an ``OSError``, and so not
+    a fault any of this class's readers was catching; on 3.13 and 3.14 the same call
+    returns the loop path unchanged. Either way a row that reports a file this run
+    could not read still has to name it, and inside the root the spelling the run
+    keeps is the root-relative one, so no host path reaches the row on any
+    interpreter.
     """
     import noni.census as census
 
@@ -334,4 +336,27 @@ def test_the_artifact_of_a_path_that_cannot_be_resolved_is_the_path_itself(tmp_p
     a.symlink_to(b)
     b.symlink_to(a)
 
-    assert census._rel_to_root(repo, a) == str(a)
+    assert census._rel_to_root(repo, a) == "noni/direction/a.md"
+
+
+def test_a_resolve_that_raises_names_an_in_root_path_from_the_root(tmp_path, monkeypatch):
+    """The 3.11/3.12 ``RuntimeError`` arm, exercised on every interpreter.
+
+    Whether the filesystem refuses a link loop is a property of the interpreter,
+    so the arm is driven here by making ``resolve()`` refuse instead. A path the
+    census was told to read and that sits lexically inside the root is spelled from
+    the root; a path outside it comes back verbatim, which is what keeps a host
+    location out of the row when there is no root-relative spelling to give.
+    """
+    import noni.census as census
+
+    def refusing_resolve(self, *args, **kwargs):
+        raise RuntimeError("Symlink loop from %r" % str(self))
+
+    monkeypatch.setattr(Path, "resolve", refusing_resolve)
+    root = tmp_path / "repo"
+    inside = root / "noni" / "decisions" / "d.md"
+    outside = tmp_path / "elsewhere" / "d.md"
+
+    assert census._rel_to_root(root, inside) == "noni/decisions/d.md"
+    assert census._rel_to_root(root, outside) == str(outside)

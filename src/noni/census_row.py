@@ -51,17 +51,34 @@ def _rel_to_root(root: Path, path: Path) -> str:
     """``path`` spelled from ``root``, or verbatim when it does not live under it.
 
     ``resolve`` is the one step that cannot be trusted: it follows the chain a
-    symlinked artefact stands at, and ``pathlib`` turns an ``ELOOP`` into
-    ``RuntimeError``, which is no kind of answer about a path. A row's artifact is
-    its root-relative identifier and nothing more, so the unresolvable path is
-    reported as it was given rather than ending the run.
+    symlinked artefact stands at, and on 3.11 and 3.12 only ``pathlib`` turns an
+    ``ELOOP`` into ``RuntimeError`` (3.13 and 3.14 hand the loop path back
+    unchanged), which is no kind of answer about a path. A row's artifact is its
+    root-relative identifier and nothing more, so a path the resolver refused is
+    spelled from the root by the name it was given, and only a path outside the
+    root comes back verbatim rather than ending the run.
     """
     try:
         return path.resolve().relative_to(root.resolve()).as_posix()
     except ValueError:
         return str(path)
     except RuntimeError:
-        return str(path)
+        lexical = _lexical_rel_to_root(root, path)
+        return str(path) if lexical is None else lexical
+
+
+def _lexical_rel_to_root(root: Path, path: Path) -> str | None:
+    """``path`` spelled from ``root`` by its segments alone, or ``None``.
+
+    The spelling a resolver cannot give is still available where the given path
+    never left the root: neither side needs resolving for ``relative_to`` to answer
+    over the segments the caller was handed, and that is the only spelling that
+    keeps a host location out of the row.
+    """
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return None
 
 
 def _row(check: str, strict: bool, subject: str, artifact: str, message: str,

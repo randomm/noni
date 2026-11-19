@@ -50,7 +50,7 @@ STATUSES = ("decided", "open", "superseded")
 # because the sites that print it live in two modules -- ``order.py``'s exit-2 ``add``
 # refusal, this module's absent-record and malformed-id arms, and ``intent set``'s
 # citation through :func:`decision_problems` -- and a hint spelled at each drifts.
-# :func:`record_first_hint` is the form callers use: it says nothing on the
+# :func:`_citation_hint` is the form callers use: it says nothing on the
 # no-``noni/`` branch, where the run is aimed at the wrong tree.
 RECORD_FIRST_HINT = ("Record the decision first with noni decide, then run this "
                      "command again with that record's id.")
@@ -266,16 +266,6 @@ def _no_record_headline(repo: Path, rel: str) -> str:
     return f"no decision record {rel} is in the ledger"
 
 
-def record_first_hint(repo: Path | None) -> str:
-    """The record-first sentence, or nothing for a tree that holds no ``noni/``.
-
-    That branch is a wrong ``--repo``, not a decision left unrecorded, and the
-    state-root sentence beside it already names the fix. A caller with no state
-    root keeps it: it asked about a record, not about a tree.
-    """
-    return "" if repo is not None and _path_kind.has_no_noni(repo) else RECORD_FIRST_HINT
-
-
 def _citation_hint(repo: Path | None, remedy: str) -> str:
     """A site's own remedy plus the shared sentence, or the remedy alone.
 
@@ -283,12 +273,19 @@ def _citation_hint(repo: Path | None, remedy: str) -> str:
     unlabelled tail, and nothing added for a tree the sentence would mislead. Each
     site keeps the remedy it always said.
 
+    The gate is the wrong-``--repo`` case: a tree that holds no ``noni/`` is not a
+    decision left unrecorded, and the state-root sentence beside it already names
+    the fix, so sending that caller to ``noni decide`` advertises a step that cannot
+    repair the path it was given. A caller with no state root keeps the sentence:
+    it asked about a record, not about a tree.
+
     Only the two "no such record" arms call it: the exit-3 arms and the superseded
     arms (which already name the record to pass) keep their hints byte for byte, so a
     refusal the reader settles another way is never sent to ``noni decide``.
     """
-    first = record_first_hint(repo)
-    return remedy if not first else f"{remedy} {first}"
+    if repo is not None and _path_kind.has_no_noni(repo):
+        return remedy
+    return f"{remedy} {RECORD_FIRST_HINT}"
 
 
 def read_record(path: Path, exit_io: int, exit_refusal: int,

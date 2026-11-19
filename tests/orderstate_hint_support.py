@@ -10,7 +10,10 @@ module imports it and never copies it.
 
 from __future__ import annotations
 
+import subprocess
+
 from _harness import ORDER, run_module, run_noni, run_wrapper
+from order_fixtures import STAMP
 
 from noni import orderstate
 
@@ -19,10 +22,6 @@ RECORD_FIRST = orderstate.RECORD_FIRST_HINT
 # The label each writer prints its refusals under (``noni.labels`` owns the words).
 ORDER_LABEL = "order.py:"
 INTENT_LABEL = "intent.py:"
-
-# The pinned clock every launched run here uses, so two routes of one parity
-# check compare the same refusal rather than two stamps.
-STAMP = "2026-10-27T12:00:00Z"
 
 
 def fix_lines(stderr: str, label: str = ORDER_LABEL) -> list[str]:
@@ -48,7 +47,8 @@ ADD_ROUTES: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
-def launch_add_without_decision(route: str, prefix: tuple[str, ...], repo) -> object:
+def launch_add_without_decision(route: str, prefix: tuple[str, ...],
+                               repo) -> subprocess.CompletedProcess[str]:
     """One route's launched ``order add 7`` with no ``--decision``."""
     argv = ["--repo", str(repo), "add", "7", "--now", STAMP]
     if route == "wrapper":

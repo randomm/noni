@@ -50,7 +50,6 @@ __all__ = [
     "_assert_census_clean", "_head_paths", "_porcelain", "_canonical", "_seed",
     "_spied_git", "_writer_git_call", "_git_verb", "_entry",
     "_committed_order", "_bare_repo", "_schema_case",
-    "_read",
     "_doc_block", "_doc_usage_flags", "_docstring", "_module_exit_codes",
     "_order_ast", "_parser_flags", "_skill_section",
 ]

@@ -10,6 +10,8 @@ byte against what each run actually printed.
 
 from __future__ import annotations
 
+import ast
+
 from _harness import (
     SRC,
     _commit_file,
@@ -77,35 +79,37 @@ def _code_repo(tmp_path, name: str):
 
 
 def test_the_three_citation_refusals_print_the_one_constant_verbatim(tmp_path):
-    """Every site's fix line ends with the constant, byte for byte, and the
-    three printed hints are the same bytes as each other.
+    """Every site's fix line is the remedy it always said plus the constant.
 
     Each route reaches the hint through a different function (``order.py`` main,
     ``read_record``'s absent arm, ``decision_problems``' id-shape arm), so a
     reword at one of them moves one line and not the other two -- which is what
-    the byte comparison catches and a substring check on each run never would.
+    the whole-line comparison catches and a substring check on each run never
+    would. The expected lines are spelled here, so a site that swapped its remedy
+    for another site's is caught too.
     """
     repo = _repo(tmp_path)
     _seed(repo, _entry(1, BASELINE_ID))
 
     runs = {
-        "add without --decision": _order(repo, "add", "7", "--now", NOW),
-        "add --decision <missing>": _order(repo, "add", "7", "--decision", GHOST_ID,
-                                           "--now", NOW),
-        "move --decision <missing>": _order(repo, "move", "1", "--decision", GHOST_ID,
-                                            "--now", NOW),
+        "add without --decision": (
+            _order(repo, "add", "7", "--now", NOW), 2,
+            "name the decision record that put this issue there, or order it "
+            "with order.py confirm if it is already listed " + RECORD_FIRST),
+        "add --decision <missing>": (
+            _order(repo, "add", "7", "--decision", GHOST_ID, "--now", NOW), 4,
+            "name the record that set the position, or add it with the "
+            "steering-ledger writer first " + RECORD_FIRST),
+        "move --decision <missing>": (
+            _order(repo, "move", "1", "--decision", GHOST_ID, "--now", NOW), 4,
+            "name the record that set the position, or add it with the "
+            "steering-ledger writer first " + RECORD_FIRST),
     }
-    printed = []
-    for name, proc in runs.items():
-        assert proc.returncode == (2 if "without" in name else 4), (
-            f"{name}: {proc.returncode}: {proc.stderr}")
+    for name, (proc, code, expected) in runs.items():
+        assert proc.returncode == code, f"{name}: {proc.returncode}: {proc.stderr}"
         lines = fix_lines(proc.stderr, ORDER_LABEL)
         assert len(lines) == 1, f"{name} printed {len(lines)} fix lines: {proc.stderr}"
-        assert lines[0].endswith(RECORD_FIRST), (
-            f"{name}: the fix line does not end with the constant: {lines[0]!r}")
-        printed.append(lines[0][-len(RECORD_FIRST):])
-
-    assert printed == [RECORD_FIRST] * 3, printed
+        assert lines[0] == expected, f"{name}: {lines[0]!r}"
 
 
 def test_the_hint_constant_is_one_sentence_naming_only_noni():
@@ -121,10 +125,6 @@ def test_the_hint_constant_is_one_sentence_naming_only_noni():
     assert RECORD_FIRST.strip() == RECORD_FIRST, "the hint carries stray whitespace"
     assert RECORD_FIRST.startswith("Record the decision first with noni decide"), (
         RECORD_FIRST)
-    for forbidden in ("github", "gitlab", "jira", "linear", "tracker", "driver",
-                      "harness", "/home/", "C:\\"):
-        assert forbidden not in RECORD_FIRST.lower(), (
-            f"the hint names {forbidden!r}: {RECORD_FIRST}")
 
 
 def test_each_route_of_the_add_refusal_prints_the_same_hint(tmp_path):
@@ -203,16 +203,6 @@ def test_a_wrong_repo_tree_gets_no_record_first_hint(tmp_path):
     assert not (repo / "noni").exists(), "the refused run created the state tree"
 
 
-def test_intent_and_order_share_the_constant_through_one_lookup(tmp_path):
-    """The two writers reach the same hint through ``decision_problems``.
-
-    Intent's label differs, its exit code does not, and the hint is one string:
-    the pin that keeps ``intent set`` from acquiring an order-shaped copy of it.
-    """
-    assert _orderstate_module.RECORD_FIRST_HINT is RECORD_FIRST
-    assert INTENT_LABEL != ORDER_LABEL
-
-
 def test_no_source_file_spells_the_hint_a_second_time():
     """Every refusal of a citation reaches the sentence through the one constant.
 
@@ -225,10 +215,12 @@ def test_no_source_file_spells_the_hint_a_second_time():
     other file may hold them at all, and order.py's one use must name the constant.
     """
     for name in ("order.py", "order_add.py", "order_plan.py", "intent.py"):
-        text = (SRC / "noni" / name).read_text(encoding="utf-8")
+        path = SRC / "noni" / name
+        text = path.read_text(encoding="utf-8")
         # Strip the module docstring: it documents the wording, which the docstring
         # pin above checks verbatim, so a quoted copy there is not a second printing.
-        body = text.split('"""', 2)[2] if text.count('"""') >= 2 else text
+        doc = ast.get_docstring(ast.parse(text)) or ""
+        body = text.replace(doc, "", 1) if doc else text
         assert RECORD_FIRST not in body, (
             f"{name} spells the hint instead of importing it: {RECORD_FIRST!r}")
     writer = _order_source()

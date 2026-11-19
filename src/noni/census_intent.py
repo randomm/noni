@@ -181,9 +181,10 @@ def check_intent(
         return
 
     try:
-        # ``read_bytes`` and not ``open``: pathlib's own read raises
-        # ``RuntimeError`` (``OSError`` for an ``ELOOP`` it can classify), and this
-        # row is the class's answer for a file it was told to read and could not.
+        # ``read_bytes`` and not ``open``: on 3.11 and 3.12 pathlib's own read
+        # raises ``RuntimeError`` for an ``ELOOP`` it cannot classify (3.13 and
+        # 3.14 raise ``OSError``), and this row is the class's answer for a file it
+        # was told to read and could not.
         raw = intent.read_bytes()
     except (OSError, RuntimeError) as exc:
         add(SUBJECT_CANNOT_TELL,

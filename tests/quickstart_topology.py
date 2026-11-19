@@ -38,7 +38,7 @@ from pathlib import Path
 from _harness import REPO, subprocess_env
 from conftest import NONI_ENV_VARS
 from docs_promises import STATE_DIR
-from harness_paths import COVERAGE_PROCESS_START, SRC
+from harness_paths import COVERAGE_PROCESS_START, SRC, scratch_ignore
 
 # What a page launch may not inherit: the harness's ``PYTHONPATH`` pin and
 # coverage's subprocess hook. One explicit set, used by the one helper that builds
@@ -241,12 +241,13 @@ def seed_origin(origin: Path, env: dict[str, str],
 
 
 def materialise_clone(dest: Path) -> None:
-    """The noni clone the page's ``git clone`` produces: this tree's content."""
-    shutil.copytree(REPO, dest, symlinks=True,
-                    ignore=shutil.ignore_patterns(".git", "__pycache__", ".venv",
-                                                  "*.pyc", ".pytest_cache",
-                                                  ".coverage", ".coverage.*",
-                                                  "noni.egg-info", "noni_noni.egg-info", ".worktrees"))
+    """The noni clone the page's ``git clone`` produces: this tree's content.
+
+    The scratch rule comes from :func:`harness_paths.scratch_ignore`: the destination
+    lives under the session scratch, so a copy that took ``tmp/`` would walk into its
+    own output and never return (issue #205).
+    """
+    shutil.copytree(REPO, dest, symlinks=True, ignore=scratch_ignore(REPO))
 
 
 def install_venv(installed: InstalledWorld) -> None:

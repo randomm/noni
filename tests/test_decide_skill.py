@@ -15,6 +15,7 @@ from _harness import (
     DECIDE,
     REPO,
 )
+from harness_paths import in_scratch
 from ledger_schema_fixtures import WHY_FIELD, WHY_MAX, product_why_max
 
 # The two steering-ledger documents that carry the rationale's field row.
@@ -132,7 +133,10 @@ def test_no_page_outside_the_docs_that_pin_the_bound_states_it(tmp_path):
     their field rows and their ``add --why`` paragraph claim it; every other page that
     mentioned it would be a fourth copy no test reads back. The tree is walked rather
     than a list of pages, so a doc added later is caught by the rule and not by
-    whoever remembered to add it here.
+    whoever remembered to add it here. The walk uses the shared scratch rule
+    (``harness_paths.in_scratch``): a dev tree keeps venvs and whole worktrees under
+    ``tmp/`` and ``.worktrees/``, and reading those is both slow and beside the point
+    (issue #205).
     """
     owner = str(product_why_max())
     allowed = {SKILL.relative_to(REPO).as_posix(),
@@ -141,8 +145,7 @@ def test_no_page_outside_the_docs_that_pin_the_bound_states_it(tmp_path):
     offenders = []
     for path in sorted(REPO.rglob("*.md")):
         rel = path.relative_to(REPO).as_posix()
-        if rel in allowed or any(part in {".git", ".venv", "node_modules"}
-                                 for part in path.parts):
+        if rel in allowed or in_scratch(REPO, path):
             continue
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if f"{owner}-character" in line or f"of at most {owner} characters" in line:

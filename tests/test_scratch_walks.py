@@ -1,0 +1,284 @@
+"""The repo-rooted harness walks skip the scratch folders AGENTS.md sanctions (issue #205).
+
+Three walks start at the repository root: the two ``shutil.copytree`` clones
+(``quickstart_topology.materialise_clone`` and ``readme_support._materialise_clone``)
+and the decide-skill page scan, which walks ``REPO.rglob("*.md")`` in
+``tests/test_decide_skill.py``. All three copied or read ``tmp/`` and ``.worktrees/``,
+which is exactly where a dev run keeps its per-issue scratch (AGENTS.md: one ignored
+folder per issue, ``tmp/issue-N/``). The copies then walked into their own output and
+never finished; the page scan read every Markdown file a venv or a whole worktree
+happened to hold.
+
+The rule has one owner: :func:`harness_paths.scratch_ignore` (the copytree callable)
+and :func:`harness_paths.in_scratch` (the walk predicate). ``tmp`` is skipped only
+directly under the root the walk started from, so a page nested below a directory that
+happens to be named ``tmp`` is still read; ``.worktrees`` is skipped by name at any
+depth. The planted tree below carries no name the pre-existing ignore list already
+skips (no ``.venv``, ``.git``, ``__pycache__`` or egg-info name), so every skip proven
+here is attributable to the new rule.
+"""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+from pathlib import Path
+
+import readme_support
+from _harness import REPO
+from quickstart_topology import materialise_clone
+
+# ``harness_paths`` is imported inside the tests that exercise the rule: a baseline
+# run (the pre-fix code, to watch these tests fail) must still be able to import this
+# module and reach the two clone helpers.
+
+# The scratch pages the plant puts under each ignored folder, and the tracked-shaped
+# pages it puts outside them. One pair of dicts so the copy assertions and the walk
+# assertions are answered by the same names. Nothing under ``tmp`` or ``.worktrees``
+# reuses a name the clone ignore list already carried.
+SCRATCH_PAGES = {
+    "tmp/issue-1/a/b/note.md": "# scratch note\n",
+    "tmp/issue-1/venv/lib/x.py": "raise RuntimeError('scratch venv')\n",
+    ".worktrees/wt/page.md": "# worktree page\n",
+    "tmp/deep/caches/pip/index.md": "# cache page\n",
+}
+TRACKED_PAGES = {
+    "README.md": "# top\n",
+    "docs/deep/nested/page.md": "# deep\n",
+    "docs/tmp/issue-7/page.md": "# a tracked page below a directory named tmp\n",
+    "docs/sub/deeper/page.md": "# deeper\n",
+}
+PLANTED = {**SCRATCH_PAGES, **TRACKED_PAGES}
+
+# The page the clones must still carry: tracked, and under a name no ignore rule
+# touches. It is the control that says a clone that skipped scratch copied something.
+REPO_PAGE = "src/noni/_why.py"
+
+# The scratch plant's path *inside a clone*: it is made at ``REPO/tmp/issue-205-plant``
+# and the clone keeps the ``tmp`` segment when the rule is missing, so the clone-side
+# name is what the assertions look for.
+PLANT_PATH = "tmp/issue-205-plant"
+
+# The droppings both clones dropped before issue #205. Pinned here because the fix
+# moved them to one shared tuple: a name dropped from that tuple would start copying
+# build garbage into every clone, and only this test would say so.
+PREVIOUSLY_IGNORED = (".git", "__pycache__", ".venv", "*.pyc", ".pytest_cache",
+                      ".coverage", ".coverage.*", "noni.egg-info",
+                      "noni_noni.egg-info", ".worktrees")
+
+
+def _plant_repo(root: Path) -> Path:
+    """A throwaway repo-shaped tree holding the plant: scratch plus tracked pages.
+
+    Built entirely under ``tmp_path``. Nothing here is made with ``git worktree add``:
+    the ``.worktrees`` entry is a plain directory, so the assertion that it is skipped
+    cannot be explained by a ``.git`` entry a real worktree would have brought with it.
+    """
+    for rel, text in PLANTED.items():
+        target = root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    return root
+
+
+def _plant_real_scratch() -> Path:
+    """Scratch planted in the real checkout, for the two clones to copy out of.
+
+    The ``tmp_path`` plant proves the rule on a throwaway tree; it cannot prove the
+    clones skip the scratch the harness actually meets, since both copies start at
+    ``REPO``. So a scratch subtree is planted in the checkout for the duration of one
+    test and removed in its ``finally``: scratch left behind would dirty the tree for
+    the next cycle's status gate.
+    """
+    scratch = REPO / "tmp" / "issue-205-plant"
+    (scratch / "a" / "b").mkdir(parents=True, exist_ok=True)
+    (scratch / "a" / "b" / "note.md").write_text("# planted scratch\n", encoding="utf-8")
+    (scratch / "venv" / "lib").mkdir(parents=True, exist_ok=True)
+    (scratch / "venv" / "lib" / "x.py").write_text("pass\n", encoding="utf-8")
+    return scratch
+
+
+def _copied_paths(dest: Path) -> set[str]:
+    return {p.relative_to(dest).as_posix() for p in dest.rglob("*") if p.is_file()}
+
+
+def _assert_clone_skips_planted_scratch(dest: Path) -> None:
+    """No path under the scratch planted in the real tree reached the clone.
+
+    The plant lives at ``REPO/tmp/issue-205-plant``, so in the clone it sits at
+    ``tmp/issue-205-plant``: the check is on the full clone-relative path, because a
+    check on the bare plant name passes while the whole scratch subtree is present.
+    """
+    leaked = [rel for rel in _copied_paths(dest)
+              if rel == PLANT_PATH or rel.startswith(PLANT_PATH + "/")]
+    assert not leaked, (
+        f"the clone copied scratch from the real tree: {sorted(leaked)[:5]} "
+        f"({len(leaked)} paths)")
+
+
+def _assert_real_repo_clone(dest: Path, copied: set[str]) -> None:
+    """Common assertions for a clone made from the real ``REPO``.
+
+    The scratch half is the point; the tracked half is the control that says the copy
+    copied: a rule that skipped everything would satisfy a bare "no scratch" check.
+    The bound is the one the real tree sets today (the suite runs with no ``tmp/``
+    under it): a copy that recursed wrote the scratch into the clone, and a copy of
+    this tree costs seconds, not minutes.
+    """
+    _assert_clone_skips_planted_scratch(dest)
+    assert REPO_PAGE in copied, f"the clone lost the tracked page {REPO_PAGE}"
+    tracked = _tracked_markdown()
+    assert tracked, f"git listed no Markdown page under {REPO}"
+    missing = sorted(p for p in tracked if p not in copied)
+    assert not missing, f"the clone lost tracked pages: {missing[:5]}"
+    assert len(copied) < 2000, (
+        f"the clone copied {len(copied)} files from a tree whose tracked source is "
+        "far smaller: the copy walked scratch, or its own output")
+
+
+def _tracked_markdown() -> list[str]:
+    """Every Markdown path git tracks under ``REPO``, as the product lists it."""
+    listed = subprocess.run(["git", "-C", str(REPO), "ls-files", "*.md"],
+                            capture_output=True, text=True, timeout=120)
+    assert listed.returncode == 0, listed.stderr
+    return [line for line in listed.stdout.splitlines() if line]
+
+
+def test_materialise_clone_skips_scratch_and_keeps_the_rest(tmp_path) -> None:
+    """The quickstart clone holds no scratch and loses no tracked page.
+
+    The copy is the first thing the session fixture does, and today it walks into its
+    own output when the tree carries ``tmp/``. Asserting on contents (not on elapsed
+    time) is what reddens on the old code: a copy that recursed left every scratch path
+    in the destination.
+    """
+    from harness_paths import in_scratch  # noqa: F401  (see the module note above)
+
+    _plant_repo(tmp_path / "repo")
+    dest = tmp_path / "clone"
+    _plant_real_scratch()
+    try:
+        materialise_clone(dest)
+    finally:
+        shutil.rmtree(REPO / "tmp" / "issue-205-plant", ignore_errors=True)
+    _assert_real_repo_clone(dest, _copied_paths(dest))
+
+
+def test_readme_support_clone_skips_scratch_and_keeps_the_rest(tmp_path) -> None:
+    """The README try-it clone carries the same rule, not a second copy of it.
+
+    The two clones held byte-identical ignore literals and nothing compared them, so a
+    fix landed in one left the other broken and green.
+    """
+    from harness_paths import in_scratch  # noqa: F401  (see the module note above)
+
+    _plant_repo(tmp_path / "repo")
+    dest = tmp_path / "clone"
+    _plant_real_scratch()
+    try:
+        readme_support._materialise_clone(dest)
+    finally:
+        shutil.rmtree(REPO / "tmp" / "issue-205-plant", ignore_errors=True)
+    _assert_real_repo_clone(dest, _copied_paths(dest))
+
+
+def test_the_page_walk_skips_scratch_and_keeps_every_page(tmp_path) -> None:
+    """The predicate the page scan uses prunes both scratch folders and nothing else.
+
+    The same planted tree as the two clones, walked the way the decide-skill test walks
+    it. ``docs/tmp/issue-7/page.md`` is the over-pruning control: a basename glob at
+    any depth would have skipped a directory named ``tmp`` wherever it appeared, and
+    the rule is root-only.
+    """
+    from harness_paths import in_scratch
+
+    root = _plant_repo(tmp_path / "repo")
+    walked = {p.relative_to(root).as_posix() for p in sorted(root.rglob("*"))
+              if p.is_file() and not in_scratch(root, p)}
+    for rel in SCRATCH_PAGES:
+        assert rel not in walked, f"the walk reached scratch: {rel}"
+    for rel in TRACKED_PAGES:
+        assert rel in walked, f"the walk pruned a planted page: {rel}"
+
+
+def test_the_ignore_callable_and_the_predicate_agree(tmp_path) -> None:
+    """One rule, two shapes: what the copytree hides, the predicate hides too.
+
+    The copytree half takes basenames and the walk half takes paths, so the two
+    representations can drift without either test noticing. ``shutil.copytree`` is what
+    consumes the callable, so the comparison runs through a real copy: whatever the
+    predicate calls scratch is exactly what the copy is missing, and nothing else.
+    """
+    from harness_paths import in_scratch, scratch_ignore
+
+    root = _plant_repo(tmp_path / "repo")
+    dest = tmp_path / "copy"
+    shutil.copytree(root, dest, ignore=scratch_ignore(root))
+    kept = {p.relative_to(root).as_posix() for p in sorted(root.rglob("*"))
+            if p.is_file() and not in_scratch(root, p)}
+    copied = _copied_paths(dest)
+    assert copied == kept, (
+        f"the copytree ignore and the walk predicate disagree; "
+        f"only predicate: {sorted(kept - copied)}, "
+        f"only ignore: {sorted(copied - kept)}")
+
+
+def test_the_repo_page_walk_still_yields_every_tracked_markdown() -> None:
+    """The control against over-pruning, run on the real repository.
+
+    The page scan's walk must still reach every Markdown file git tracks. ``git
+    ls-files '*.md'`` is the listing the product itself reads, so it is the standard
+    the walk is measured against rather than a list this file maintains.
+    """
+    from harness_paths import in_scratch
+
+    tracked = _tracked_markdown()
+    assert tracked, f"git listed no Markdown page under {REPO}"
+    walked = {p.relative_to(REPO).as_posix() for p in REPO.rglob("*.md")
+              if not in_scratch(REPO, p)}
+    missing = sorted(set(tracked) - walked)
+    assert not missing, f"the scratch rule pruned tracked pages: {missing}"
+
+
+def test_the_shared_clone_rule_still_drops_every_build_dropping(tmp_path) -> None:
+    """The shared rule is a superset of the two lists it replaced, not a shorter one.
+
+    Both clones carried the same ten literals; the fix folded them into one tuple with
+    the scratch names added. A name quietly lost from that tuple copies build garbage
+    into every clone, which is a bug of its own and invisible to the scratch assertions
+    above, so it is asserted on its own terms.
+    """
+    from harness_paths import CLONE_IGNORE_NAMES, SCRATCH_DIR_NAME, scratch_ignore
+
+    kept = set(CLONE_IGNORE_NAMES) | {SCRATCH_DIR_NAME}
+    assert set(PREVIOUSLY_IGNORED) <= kept, (
+        f"the shared clone rule lost a name the two lists dropped before: "
+        f"{sorted(set(PREVIOUSLY_IGNORED) - kept)}")
+    root = tmp_path / "droppings"
+    for name in PREVIOUSLY_IGNORED:
+        if "*" not in name:
+            (root / name / "sub").mkdir(parents=True, exist_ok=True)
+            (root / name / "sub" / "f").write_text("x\n", encoding="utf-8")
+    (root / "keep.pyc").write_text("x\n", encoding="utf-8")
+    (root / "tracked.md").write_text("# kept\n", encoding="utf-8")
+    dest = tmp_path / "copy"
+    shutil.copytree(root, dest, ignore=scratch_ignore(root))
+    copied = _copied_paths(dest)
+    assert copied == {"tracked.md"}, f"the clone copied a dropping or lost a page: {copied}"
+
+
+def test_a_page_under_a_non_root_tmp_directory_is_still_walked(tmp_path) -> None:
+    """A directory named ``tmp`` below the root is ordinary content, not scratch.
+
+    The root-only half of the rule, stated on its own so a widening to a name match at
+    any depth reddens one named test rather than a loop over a dict.
+    """
+    from harness_paths import in_scratch
+
+    root = _plant_repo(tmp_path / "repo")
+    nested = root / "docs" / "tmp" / "issue-2" / "page.md"
+    nested.parent.mkdir(parents=True, exist_ok=True)
+    nested.write_text("# nested\n", encoding="utf-8")
+    assert in_scratch(root, nested) is False
+    assert in_scratch(root, root / "tmp" / "issue-1" / "a" / "b" / "note.md") is True
+    assert in_scratch(root, root / "docs" / "x" / ".worktrees" / "y.md") is True

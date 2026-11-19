@@ -16,11 +16,12 @@ DENYLIST_ENV_VAR = "NONI_SCRUB_DENYLIST"
 def _with_denylist(tmp_path: Path, *entries: str):
     """Activate the deny-list class for a hygiene test.
 
-    The hygiene class always reports: with an absent deny-list its only row is
-    the "class inactive" notice. Tests that want the violation rows write an
-    env-named deny-list with at least one entry (the seam
-    tests/test_public_safety.py uses), so the deny-list row does not drown the
-    violation under test. conftest's isolated env has already cleared
+    A hygiene test that plants a violation needs an active class: with no list
+    configured the class says so in a note and emits no row at all (issue #194),
+    and a list that exists and cannot be read answers with its own inactive row.
+    Writing an env-named file with at least one entry (the seam
+    tests/test_public_safety.py uses) leaves the deny-list row out of the way of
+    the violation under test. conftest's isolated env has already cleared
     NONI_SCRUB_DENYLIST, so this only ever sees the fixture file.
     """
     import os
@@ -34,3 +35,22 @@ def _clear_denylist() -> None:
     import os
 
     os.environ.pop(DENYLIST_ENV_VAR, None)
+
+
+def _with_no_denylist(monkeypatch, tmp_path: Path):
+    """Close both deny-list routes, so the class is in the ``absent`` state.
+
+    The state the census now answers with a note rather than a warn row: no
+    ``NONI_SCRUB_DENYLIST`` and no default file the checker could find. The env
+    route is already cleared by conftest's autouse fixture, so the seam that
+    decides the state is ``_default_denylist_file``, pointed at a path that does
+    not exist (the shape ``tests/test_env_isolation.py`` uses). Returns the target
+    module so a caller can hold on to the object the census will actually run.
+    """
+    from census_hygiene_target import _hygiene_target
+
+    monkeypatch.delenv(DENYLIST_ENV_VAR, raising=False)
+    target = _hygiene_target()
+    monkeypatch.setattr(target, "_default_denylist_file",
+                        lambda repo: tmp_path / "no-such-denylist.txt")
+    return target

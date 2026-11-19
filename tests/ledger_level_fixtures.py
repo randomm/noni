@@ -93,7 +93,7 @@ def _census_rows(repo: Path) -> list[dict]:
     """One ``--json`` census over ``repo``, as rows; a non-zero exit is a failure.
 
     ``skip_hygiene`` is what the ledger and session fixtures pass for the same
-    reason: an isolated tree has no deny-list, and the hygiene class always reports
+    reason: an isolated tree has no deny-list, and the hygiene class says so
     its absence, so leaving it in would put a row no test here is about in every
     finding list the pair asserts on.
     """

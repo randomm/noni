@@ -52,7 +52,7 @@ directory, is a usage error (exit 2) before any check runs.
 | `ordering-stale` | 45 | an order entry whose `confirmed` is older than the `--stale-after` threshold relative to `--now` (warn by default; fail under `--strict`) |
 | `ordering-closed` | 46 | an ordered issue the `--issue-state` file says is closed; also the `cannot-tell` row for an entry the file does not mention (warn by default; fail under `--strict`) |
 | `intent` | 51 | `noni/direction/intent.md` is there and is not the artifact: a `## Purpose` / `## Principles` / `## Never` / `## Ask first` heading missing, repeated or out of order, the `Last-confirmed:` line absent or repeated, or the file past its line cap; or the last commit that touched it is not an `intent: <decision-id>` headline naming a record the ledger holds (`uncited`). The `cannot-tell` row for a file this run could not read, for a cited decision record that is a symlink or any other non-regular path, for a ledger directory reached through a symlink, or for a file no commit touched, is a warn (fail under `--strict`); an absent file adds no row at all |
-| `hygiene` | 50 | a tracked file fails the public-repo hygiene scan (machine-local home path, secret shape, active deny-list entry), a committed allowlist entry matches nothing, or the scan/deny-list did not run (warn by default; fail under `--strict`) |
+| `hygiene` | 50 | a tracked file fails the public-repo hygiene scan (machine-local home path, secret shape, active deny-list entry), a committed allowlist entry matches nothing, or the scan did not run; a deny-list that was configured and gave no verdict is a row, while one never configured is a `note:` line outside `--strict` (warn by default; fail under `--strict`) |
 
 The `warn` classes are reported either way and never move the exit code on
 their own: a run whose only findings are warnings exits 0, and `--strict`
@@ -100,12 +100,12 @@ line. One note is printed first of all, ahead of the headline and every row: on 
 `--repo` holding no `noni/` directory — what a caller gets by pointing `--repo` at
 a code repository instead of a state root — the run says `note: no noni/ directory
 was found under --repo <path>` before rows that would otherwise read as a project
-that has not steered yet (a no-`noni/` tree is just a `ledger-empty` warn beside an
-inactive `deny-list`). It is a note, not a row: no check class, no row kind and no
-exit code is added, and under `--json` it rides the summary row's `not_evaluated`
-like any other note. It is not printed when `--ledger`, `--ordering`
-or `--intent` replaces the path under the state root. The first and last lines are
-keyed to what the run found:
+that has not steered yet (a no-`noni/` tree is just a `ledger-empty` warn, plus a
+`note:` line saying the deny-list check is off). It is a note, not a row: no check
+class, no row kind and no exit code is added, and under `--json` it rides the
+summary row's `not_evaluated` like any other note. It is not printed when
+`--ledger`, `--ordering` or `--intent` replaces the path under the state root. The
+first and last lines are keyed to what the run found:
 
 | state of the run | first line | verdict word of the summary line |
 |---|---|---|
@@ -210,15 +210,23 @@ The same rule extends to the classes that report their own absence:
   `noni/items/` directory left by the removed item store, earns no row, no error
   and no warning in any mode: the census reads no claim files and no item files,
   so an artifact it was never given cannot be a failed read.
-- **`hygiene` (50)** always reports under `noni census`, a clean tree included
-  (the per-artifact wrappers run one group each and report no hygiene row). When the
-  deny-list class is not active (its file is `absent`, `corrupt`, or present
-  with no entries) the run emits one `hygiene` row naming that state; a scan
+- **`hygiene` (50)** always reports what it checked under `noni census`, the
+  built-in half on a clean tree included (the per-artifact wrappers run one group
+  each and report no hygiene row). When a deny-list was configured and gave no
+  verdict (its file is `corrupt`, or `present but empty`) the run emits one
+  `hygiene` row naming that state. When none was configured at all (`absent`: no
+  `.noni-scrub-denylist` in the audited tree and no `NONI_SCRUB_DENYLIST` file)
+  the default run emits no row and prints one `note:` line instead, saying the
+  deny-list check is off, that names and hostnames were not checked, and how to
+  switch it on; under `--strict` that same state keeps its row and fails at 50, so
+  the strict gate is not weakened. A scan
   that cannot run at all (`--repo` is not a git repo, `git ls-files` fails or
   hangs, `public_safety` is not importable, or the scanner raises
-  for any reason) emits one row saying the scan did not run. Neither is ever
-  reported as hygiene-clean, and no scanner failure can take the census down:
-  every finding the run already collected is still reported. The scan runs
+  for any reason) emits one row saying the scan did not run. None of the three is
+  ever reported as hygiene-clean, and no scanner failure can take the census down:
+  every finding the run already collected is still reported. The note rides the
+  notes channel, so it adds no check class, no row kind and no exit code, and a
+  run that took the class out with `--skip hygiene` prints no note. The scan runs
   in-process over the census's own git tree — the `--ledger` and other path
   overrides never re-target it.
 
@@ -231,7 +239,9 @@ The same rule extends to the classes that report their own absence:
   inactive: it needs at least one usable entry. It stays untracked by design —
   the names it guards must not be committed — which is why `--strict` fails on a
   freshly attached tree and why `docs/PUBLISHING.md` step 1 runs
-  `scripts/public_safety.py` rather than trusting a clean census.
+  `scripts/public_safety.py` rather than trusting a clean census: the census is
+  not the publishing gate, and that gate still exits non-zero when no deny-list is
+  configured.
 - **The deletion classes report what they could not check.** A
   `--ledger` override that points outside the audited git tree
   switches off the append-only question for that group; it says so in a

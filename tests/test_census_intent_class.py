@@ -138,8 +138,8 @@ def test_the_filter_cannot_drop_the_intent_class_can_never_read(tmp_path):
     repo = repo_with_record(tmp_path)
     write_intent(repo)
     _commit(repo, "README.md", "hello\n")
-    # hygiene always reports on an isolated fixture repo (its deny-list row), and
-    # is not the row under test: every assertion here is about the intent class.
+    # hygiene runs on an isolated fixture repo and may carry a row of its own,
+    # and it is not the row under test: every assertion here is about intent.
     intent_rows = [(r["check"], r["subject"])
                    for r in _rows(repo) if r["check"] == "intent"]
     assert intent_rows == [("intent", "cannot-tell")], intent_rows

@@ -169,8 +169,28 @@ def test_json_rows_for_the_new_classes_follow_the_schema(tmp_path):
         assert row["fix"], f"{check}: no fix hint"
 
     hygiene_rows = _run_census_json(repo, "--only", "hygiene")[1]
-    hygiene = [r for r in hygiene_rows if r["kind"] == "finding"]
-    assert hygiene, "hygiene must always report, a clean tree included"
+    # A tree with no deny-list configured. The built-in half still reports rows
+    # when it finds something; the deny-list half is now a note rather than the
+    # warn row this assertion used to lean on, so the schema half below is
+    # asserted against a tree whose deny-list is configured and broken (the state
+    # that keeps a row, planted as a corrupt file below.
+    assert [r for r in hygiene_rows if r["kind"] == "finding"] == [], (
+        f"an absent deny-list is a note, not a row: {hygiene_rows}")
+    summary = [r for r in hygiene_rows if r["kind"] == "summary"][0]
+    assert any("deny-list check is off" in line
+               for line in summary.get("not_evaluated", [])), summary
+    corrupt = tmp_path / "corrupt-hygiene-denylist.txt"
+    corrupt.write_bytes(b"\xff\xfe\x00\x01not utf8")
+    import public_safety
+
+    saved = public_safety._default_denylist_file
+    public_safety._default_denylist_file = lambda repo: corrupt
+    try:
+        hygiene_rows = _run_census_json(repo, "--only", "hygiene")[1]
+        hygiene = [r for r in hygiene_rows if r["kind"] == "finding"]
+        assert hygiene, "hygiene must always report a list that cannot be read"
+    finally:
+        public_safety._default_denylist_file = saved
     for row in hygiene:
         assert row["check"] == "hygiene" and row["code"] == 50
         assert row["severity"] == "warn"
@@ -188,11 +208,20 @@ def test_a_warn_only_run_keeps_the_machine_summary_row(tmp_path):
     word ``clean`` onto the summary row fails here, and the rest of this file
     would not have caught it -- it covers the fail path and the ``not_evaluated``
     field, not a warn-only tree read in both modes.
+
+    The warn row comes from an ordered issue whose closed state went unasked
+    (``ordering-closed``): a tree with no deny-list used to supply this run's only
+    warn row, and that row is a note now, so the tree is built with the row the
+    run really does owe.
     """
-    repo = _init_repo(tmp_path / "repo")
-    _commit_file(repo, "noni/decisions/2026-10-01-a.json",
-                 json.dumps(_valid_record(), indent=2))
-    rc, rows = _run_census_json(repo)
+    from ordering_fixtures import _entry, _repo, _seed
+
+    repo = _repo(tmp_path / "repo", records=True)
+    _seed(repo, _entry(7))
+    # Hygiene is filtered out of every run below: the deny-list the tree has no
+    # need of would otherwise add a note to some of them and not others, and the
+    # reproducibility assertion at the end compares whole streams.
+    rc, rows = _run_census_json(repo, "--skip", "hygiene")
     assert rc == 0, f"warn rows alone exit 0, got {rc}: {rows}"
     findings = [r for r in rows if r["kind"] == "finding"]
     assert findings and all(r["severity"] == "warn" for r in findings), rows
@@ -206,7 +235,7 @@ def test_a_warn_only_run_keeps_the_machine_summary_row(tmp_path):
     assert "verdict" not in json.dumps(summary), summary
     assert "clean" not in json.dumps(list(summary["counts"])), summary
     before = [json.dumps(r, sort_keys=True) for r in rows]
-    _rc2, rows2 = _run_census_json(repo)
+    _rc2, rows2 = _run_census_json(repo, "--skip", "hygiene")
     assert [json.dumps(r, sort_keys=True) for r in rows2] == before, (
         "two --json runs of one warn-only tree differed")
 

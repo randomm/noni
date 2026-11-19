@@ -215,8 +215,9 @@ def test_a_filter_that_named_no_ledger_class_at_all_still_reports_the_fault(
     _fault_the_ledger_listing(monkeypatch, repo / "noni" / "decisions")
 
     rows = _rows(repo, "--only", "hygiene")
-    # hygiene is the class the filter named, and it always reports (an isolated
-    # fixture repo has no active deny-list). The row under test is the ledger one.
+    # hygiene is the class the filter named, and it runs whatever the tree holds
+    # (an isolated fixture repo has no active deny-list). The row under test is
+    # the ledger one.
     ledger_rows = [r for r in rows if r["check"] != "hygiene"]
     assert [r["check"] for r in ledger_rows] == ["ledger-edited"], (
         f"a run that could not list the ledger must say so under a filter that "

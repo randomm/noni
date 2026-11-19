@@ -308,13 +308,15 @@ def _check_ledger(ledger: Path, git: Git | None, root: Path, findings: list[dict
 
 
 def _check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
-                   row: Callable[..., dict], bounded: Callable[..., str]) -> None:
+                   row: Callable[..., dict], bounded: Callable[..., str]) -> str | None:
     """The hygiene group, run by the module beside this file.
 
     The census's own row factory and message bounder are handed in at the call,
-    as the other three groups do it, so no second file composes a row.
+    as the other three groups do it, so no second file composes a row. Whatever
+    the group returns is its note for the run (see ``check_hygiene``), which this
+    body does not own and therefore hands back to the caller.
     """
-    _helpers.check_hygiene(top, strict, findings, row=row, bounded=bounded)
+    return _helpers.check_hygiene(top, strict, findings, row=row, bounded=bounded)
 
 
 # The command line lives in the two modules beside this file: ``census_cli.py``

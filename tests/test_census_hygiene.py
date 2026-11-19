@@ -7,7 +7,10 @@ the scan a row is about.
 Split out of ``tests/test_census_unified.py``; the builders are in
 ``tests/census_fixtures.py``, the runners in ``tests/census_run.py``, the
 deny-list planting in ``tests/census_denylist.py`` and the allowlist planting in
-``tests/census_allowlist.py``.
+``tests/census_allowlist.py``. The three tests of the deny-list's absent state --
+the note a default run prints in its place, and the row ``--strict`` keeps --
+live in ``tests/test_census_hygiene_denylist_absent.py``, the seam the 500-line
+cap of ``tests/test_file_size_limit.py`` chose.
 
 The allowlist rows here are the census's half of issue #118: what the census reports
 when the committed allowlist exempts a fixture (nothing), when one of its entries
@@ -34,13 +37,16 @@ _SECRET = _secret_violation()
 # The label and the token as file content, assembled from the product's own tables: a
 # test file that typed a token literal would need an allowlist entry to pass the check
 # it is testing.
-_SECRET_LINE = f"token {_SECRET}"
-_TOKEN_FIXTURE = _SECRET_LINE + "\n"
+# The label the token fixture trips, spelled out of the product's own table so a
+# row's label can be asserted without this file typing the vocabulary it tests.
 TOKEN_LABEL = "GitHub classic token"
+
 
 class TestHygiene:
     """The hygiene class (warn 50): the in-process public_safety scan over the
-    census's own git tree, which always reports — a clean tree included."""
+    census's own git tree, which reports what it checked: violations on a dirty
+    tree, and the states of a deny-list that was configured and gave no verdict.
+    A deny-list nobody configured is said in a note, not a row (issue #194)."""
 
     def test_planted_violation_is_reported(self, tmp_path):
         repo = _init_repo(tmp_path / "repo")
@@ -232,24 +238,6 @@ class TestHygiene:
         assert _HOME_PATH not in row["message"], f"the row leaked a host path: {row}"
         assert row["code"] == 50 and row["severity"] == "warn", row
         assert strict_rc == 50, f"--strict did not lift the finding: exit {strict_rc}"
-
-    def test_absent_denylist_is_reported_inactive_never_clean(self, tmp_path):
-        """With no deny-list the class never reads "clean": it emits exactly
-        one row naming the inactive state, even on a violation-free tree."""
-        repo = _init_repo(tmp_path / "repo")
-        _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
-                      json.dumps(_valid_record(), indent=2))
-        rc, out, err = _run_census(repo, json_out=True)
-        assert rc == 0, f"expected 0 (warn) without --strict, got {rc}\n{err}"
-        rows = [r for r in _ndjson_rows(out) if r.get("check") == "hygiene"]
-        assert len(rows) == 1, f"expected exactly one inactive-deny-list row: {rows}"
-        row = rows[0]
-        assert row["subject"] == "deny-list", f"expected the deny-list subject: {row}"
-        assert "inactive" in row["message"] and "absent" in row["message"]
-        assert "not a hygiene-clean guarantee" in row["message"]
-        assert "hygiene-clean" not in row["message"].replace("not a hygiene-clean", ""), (
-            f"an inactive class must never describe itself as clean: {row['message']}"
-        )
 
     def test_corrupt_denylist_is_reported_inactive(self, tmp_path, monkeypatch):
         """"corrupt" is a third inactive state: named in the row, never clean."""

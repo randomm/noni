@@ -143,8 +143,10 @@ def test_an_unlistable_ledger_is_reported_by_the_ledger_group_too(tmp_path):
 
     Run unfiltered (no ``--only`` at all), so no group's rows are dropped by a
     filter: the fault row of each group is whole-artifact and survives on its own
-    merits. ``--skip hygiene`` is named because hygiene always reports, and its
-    "deny-list class inactive" row belongs to no ledger or ordering contract."""
+    merits. ``--skip hygiene`` is named because the scan runs on a tree whose
+    deny-list is not configured, and a row of that class belongs to no ledger or
+    ordering contract. --strict is not used here, which is what keeps that state
+    a note rather than a row (issue #194)."""
     repo = _repo(tmp_path)
     _seed(repo, _entry(3, BASELINE_ID))
     with _listing_faults_all_reads(repo / "noni" / "decisions"):

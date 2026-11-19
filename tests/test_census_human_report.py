@@ -51,13 +51,56 @@ class TestHumanVerdict:
 
     ALL_CLEAR = "census: no findings; all checks passed"
 
+    # The deny-list seams this class's fixtures bent, kept on the class because
+    # pytest builds one instance per test and the teardown hook has to see what
+    # the test added. See ``teardown_method`` for why leaving them set is wrong.
+    _DENYLIST_SEAMS: list = []
+
+    def teardown_method(self):
+        """Put every deny-list seam this test bent back on the checker module.
+
+        The census holds the checker in ``sys.modules`` under its own key, so a
+        seam left set outlives the test that set it: every later census run in
+        the same process reads a deny-list its own fixture never wrote, and the
+        absent state this issue moved to a note comes back as a row. conftest's
+        autouse fixture clears the environment variable per test and cannot undo
+        an attribute on a module.
+        """
+        while TestHumanVerdict._DENYLIST_SEAMS:
+            module, original = TestHumanVerdict._DENYLIST_SEAMS.pop()
+            module._default_denylist_file = original
+
     def _warn_only_tree(self, tmp_path, name="warn-only"):
-        """A tree whose only rows are warnings: one committed record (so the
-        ledger group is silent), and no deny-list, which is the always-reporting
-        hygiene warn. Exit 0, so the old renderer called this ``clean``."""
+        """A tree whose only row is a warning: a deny-list somebody configured and
+        that the scan cannot read.
+
+        The run exits 0, so the old renderer called it ``clean``. One committed
+        record keeps the ledger group silent and no order exists, so the ordering
+        group owes no row either: this class's row is the run's only finding.
+
+        The row used to be the absent deny-list, which the always-reporting rule
+        made the fixture's warn. A tree with no list configured at all now says so
+        in a note and counts nothing (issue #194), so the configured-but-broken
+        state is what a warn-only tree has to be built from: a warning this file
+        can hold the report to.
+        """
         repo = _init_repo(tmp_path / name)
         _commit_file(repo, "noni/decisions/2026-10-01-alpha.json",
                      json.dumps(_valid_record(), indent=2))
+        corrupt = tmp_path / f"{name}-corrupt-denylist.txt"
+        corrupt.write_bytes(b"\xff\xfe\x00\x01not utf8")
+        import public_safety
+
+        # Restored, not left set. An earlier form of this fixture wrote the seam
+        # and never put the module back, so every census test that ran after this
+        # one in the same process saw a corrupt deny-list: the absent state this
+        # issue moved to a note came back as a row, and the pinned --json digests
+        # broke on a host the fixture had quietly rewritten. conftest's autouse
+        # fixture clears the environment variable per test and cannot undo an
+        # attribute on the checker.
+        original = public_safety._default_denylist_file
+        public_safety._default_denylist_file = lambda repo: corrupt
+        TestHumanVerdict._DENYLIST_SEAMS.append((public_safety, original))
         return repo
 
     def _first_line(self, out: str) -> str:

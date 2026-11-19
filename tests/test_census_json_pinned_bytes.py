@@ -51,7 +51,11 @@ _JSON_CONTRACT: tuple[tuple[str, tuple[str, ...], str], ...] = (
     (
         "the whole run, hygiene included",
         ("--json",),
-        "0bc8445fb48c30f6c129a470ba21c67ff3eff173893b01548a897e2393f99c57",
+        # Re-pinned for issue #194, which moved the absent deny-list out of the
+        # rows and onto the summary's ``not_evaluated`` list: the run loses its
+        # deny-list finding row and gains the note. The other two cases are
+        # unchanged, both because they skip the hygiene class.
+        "39fb3c91b19834be7b57eb6ea75b994060e9285985dc1ddce5103dece64eaa71",
     ),
 )
 

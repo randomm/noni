@@ -262,9 +262,10 @@ def test_census_hygiene_does_not_read_the_scrub_denylist(tmp_path, monkeypatch):
     assert "flagged-note.md" not in out, (
         f"a deny-list reached the census hygiene scan while the env was isolated: {out}{err}"
     )
-    # Isolation must not become a mute button: the class still reports that its
-    # deny-list half did not run (the census's probe-honesty rule).
-    assert "deny-list class inactive" in out, f"expected the inactive notice: {out}{err}"
+    # Isolation must not become a mute button: the class still says out loud that
+    # its deny-list half did not run (the census's probe-honesty rule). With no
+    # list configured at all that saying is the note rather than a warn row.
+    assert "deny-list check is off" in out, f"expected the inactive notice: {out}{err}"
 
 
 def test_without_the_fixture_the_scrub_denylist_is_visible(tmp_path, monkeypatch):

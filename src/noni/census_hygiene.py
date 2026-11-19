@@ -37,6 +37,27 @@ from .census_text import fault_text
 # from the wheel. See docs/HYGIENE.md, "The hygiene artifact namespace".
 HYGIENE_SCAN_ARTIFACT = "noni/public_safety.py"
 
+# What the default run says instead of a deny-list row when no deny-list is
+# configured at all (status ``absent``). A row would warn on every run of every
+# project that has not configured the list, and teams answer that by pointing
+# NONI_SCRUB_DENYLIST at another repository's list, which makes the row a lie. The
+# corrupt and present-but-empty states keep their row: a list somebody meant to use
+# and that does not work is a finding. The note rides the run's notes channel, so it
+# adds no check class, row kind or exit code, ``--strict`` keeps the row (see
+# ``DENYLIST_INACTIVE_MESSAGE``), and the text names no path.
+HYGIENE_DENYLIST_NOTE = (
+    "deny-list check is off: no deny-list is configured, so no entry was checked "
+    "and operator names, external project/tool names and hostnames were not "
+    "checked. Turn it on with NONI_SCRUB_DENYLIST, or an untracked "
+    ".noni-scrub-denylist at the root of the audited tree")
+
+# The row for a deny-list that was configured and gave no verdict: a broken list is
+# a finding, where an absent one is only the note above.
+DENYLIST_INACTIVE_MESSAGE = (
+    "deny-list class inactive ({state}): no deny-list entry was checked, so "
+    "operator names, external project/tool names and hostnames are NOT covered "
+    "— this run is not a hygiene-clean guarantee")
+
 
 class PublicSafetyModule(Protocol):
     """The slice of ``noni.public_safety`` the census depends on.
@@ -44,13 +65,11 @@ class PublicSafetyModule(Protocol):
     The scanner is reached through a lookup rather than a static import, so this
     is the only checked description of the contract between the arbiter and the
     checker it runs: a signature drift on public_safety's side is a type error
-    against this Protocol rather than an AttributeError at census time.
-    ``_denylist_active`` is a private helper of that module; the census calls it
-    because public_safety is a gate file whose surface this release may not
-    widen, and `_trusted_public_safety` requires it at runtime precisely so the
-    coupling is detected as a not-run row rather than an AttributeError. The same
-    is true of ``load_allowlist``: the census asks it directly for the committed
-    allowlist's state, and the state is part of the verdict this class reports.
+    against this Protocol rather than an AttributeError at census time. The two
+    private helpers are reached because public_safety is a gate file whose surface
+    this release may not widen, and `_trusted_public_safety` requires them at
+    runtime precisely so the coupling is detected as a not-run row rather than an
+    AttributeError. The allowlist's state is part of the verdict this reports.
     """
 
     def scrub_tracked_files(self, repo: Path) -> tuple[list[str], str | None, Any, Any]: ...
@@ -60,27 +79,26 @@ class PublicSafetyModule(Protocol):
     def load_allowlist(self, repo: Path) -> Any: ...
 
 
-# A census-owned registry key, never the shared "public_safety" name: the
-# census is a read-only arbiter and must not replace a host application's
-# module (or a second census instance's) while it runs its scan.
+# A census-owned registry key, never the shared "public_safety" name: the census
+# is a read-only arbiter and must not replace a host application's module (or a
+# second census instance's) while it runs its scan.
 CENSUS_PS_MODULE_KEY = "noni_census_public_safety"
 
 # The git environment every census git call runs under. The census reads a
 # repository someone else may have prepared, with its own privileges, so the
 # host's git config must not be able to redirect those read-only calls:
 # core.hooksPath and protocol.ext.allow are the two that turn a read into
-# arbitrary execution, and an alternate object directory or a rewritten
-# objects dir points the reads somewhere else entirely. GIT_CONFIG_GLOBAL /
-# GIT_CONFIG_SYSTEM are pinned to the null device rather than merely removed,
-# so a system config baked into the image cannot leak back in either.
+# arbitrary execution, and an alternate object directory or a rewritten objects
+# dir points the reads somewhere else entirely. GIT_CONFIG_GLOBAL /
+# GIT_CONFIG_SYSTEM are pinned to the null device rather than merely removed, so
+# a system config baked into the image cannot leak back in either.
 #
 # GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE and friends are deliberately NOT
 # touched: clearing them would break the census's honest answer for a git
-# worktree, where the tree's .git file is a pointer and the ambient (or
-# per-invocation) git environment is what makes `git -C <worktree>` resolve at
-# all — and worktree-based callers are exactly who runs the census. A hostile
-# GIT_DIR can only make the census read a *different* repository, which every
-# class then reports about that tree; it cannot execute anything.
+# worktree, where the tree's .git file is a pointer and the ambient git
+# environment is what makes `git -C <worktree>` resolve at all — and worktree
+# callers are exactly who runs the census. A hostile GIT_DIR can only make the
+# census read a *different* repository; it cannot execute anything.
 GIT_ENV_NEUTRAL = {
     "GIT_CONFIG_GLOBAL": os.devnull,
     "GIT_CONFIG_SYSTEM": os.devnull,
@@ -97,9 +115,9 @@ def _load_public_safety() -> PublicSafetyModule | None:
     The module is taken from the census's own ``sys.modules`` slot when that
     entry already *is* the package's checker — the seams tests monkeypatch
     (``_default_denylist_file``, ``DENYLIST_ENV_VAR``) live on that one object,
-    and a fresh import could hand back a different one. Anything else under
-    that key is not this census's checker, so the package module is returned
-    instead (see :func:`_trusted_public_safety` for what makes it the checker).
+    and a fresh import could hand back a different one. Anything else under that
+    key is not this census's checker, so the package module answers instead (see
+    :func:`_trusted_public_safety`).
     """
     existing = sys.modules.get(CENSUS_PS_MODULE_KEY)
     if _trusted_public_safety(existing):
@@ -122,18 +140,15 @@ def _trusted_public_safety(module: object) -> bool:
     ``types.ModuleType``). The bare ``"public_safety"`` ``sys.modules`` alias is
     deliberately *not* consulted: it is a convenience name the test harness
     registers for tests written against the old flat ``scripts/`` layout, and an
-    entry under a name that short is a substitution route, not an anchor. An
-    object that merely carries the same attributes (or that an earlier tree put
-    under the census's own key) is neither executed nor trusted.
+    entry under a name that short is a substitution route, not an anchor.
 
     The name "trusted" is scoped honestly: public_safety is a committed, editable
     file of the very tree being audited when that tree ships its own copy, so
     this is a *consistency* check (the census ran the checker it intends to
     report about, not a stale or foreign module), not a defence against a
-    repository that rewrites its own gate. The gate that cannot be satisfied by
-    editing the audited tree is `scripts/public_safety.py` run from a clean
-    operator checkout before publishing — see skills/census/SKILL.md, "census
-    exit 50 is not the public_safety gate".
+    repository that rewrites its own gate. The gate no edit of an audited tree
+    can satisfy is `scripts/public_safety.py` from a clean operator checkout —
+    see skills/census/SKILL.md, "census exit 50 is not the public_safety gate".
     """
     if module is not _PACKAGE_PUBLIC_SAFETY:
         return False
@@ -149,19 +164,15 @@ def _hygiene_labels(public_safety) -> set[str]:
 
     Read from the live module rather than duplicated here: the census must not
     hard-code vocabulary that public_safety owns. All of its pattern tables are
-    scanned (built-in, fixture home-path, and any other ``*_PATTERNS`` it
-    exposes) plus the deny-list label, because the deny-list label is not in
+    scanned (built-in, fixture home-path, and any other ``*_PATTERNS`` it exposes)
+    plus the deny-list label, because the deny-list label is not in
     BUILTIN_PATTERNS — scrub_tracked_files appends it per entry. Tables are
-    iterables of ``(pattern, label)`` tuples (the contract public_safety
-    declares next to their annotations); anything else contributes no label.
-    The census never crashes on a table it cannot walk: the whole walk is
-    defensive, so a table whose iteration protocol raises contributes nothing
-    and the caller falls back to verbatim rows instead of a traceback that
-    would discard every finding this run already collected.
-
-    Compute this once per scan and pass the set to `_split_violation`: it is
-    invariant for the whole run, and walking ``vars()`` per violation row buys
-    nothing.
+    iterables of ``(pattern, label)`` tuples (the contract public_safety declares
+    next to their annotations); anything else contributes no label. The walk is
+    defensive throughout: a table whose iteration protocol raises contributes
+    nothing, and the caller falls back to verbatim rows rather than losing every
+    finding this run already collected. Compute it once per scan and pass the set
+    to `_split_violation`: it is invariant for the whole run.
     """
     labels: set[str] = {"deny-list entry"}
     try:
@@ -192,39 +203,41 @@ def _hygiene_labels(public_safety) -> set[str]:
 
 
 def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
-                  row: Callable[..., dict], bounded: Callable[[str], str]) -> None:
+                  row: Callable[..., dict],
+                  bounded: Callable[[str], str]) -> str | None:
     """The public-repo hygiene class (warn 50): the tracked-file scan, run
     in-process (an import, never a subprocess) over the census's own git tree.
 
     Scope follows the git tree the census already reads (``top``), never the
-    ``--ledger`` override: the hygiene rule is about tracked
-    files of a repository, which is what the other git-backed checks use too.
+    ``--ledger`` override: the hygiene rule is about tracked files of a
+    repository, which is what the other git-backed checks use too.
 
-    The class always reports, a clean tree included: when the deny-list class
-    is not active (absent, corrupt, or present with no entries) exactly one
-    warn row says so, so a run that never checked operator names or external
-    project names is never mistaken for a hygiene-clean one. Built-in
-    violations (machine-local home paths, secret shapes, active deny-list
-    entries) get one row each.
+    A deny-list that was configured and does not work (``corrupt``, or present
+    with no entries) costs exactly one warn row, so a run that never checked
+    operator names or external project names is never mistaken for a
+    hygiene-clean one. One state is said in a note instead of a row: no deny-list
+    configured at all (``absent``), and only outside ``--strict``, which keeps the
+    row. Built-in violations (machine-local home paths, secret shapes, active
+    deny-list entries) get one row each.
 
     A scan that cannot run (no git tree, or public_safety raising on a failing
-    or hung ``git ls-files``) is probe honesty: one warn row naming the scan
-    as not run, never a clean.
+    or hung ``git ls-files``) is probe honesty: one warn row naming the scan as
+    not run, never a clean. Returns the note above, or None when this run owed
+    none.
 
-    The two families of row are told apart by ``subject``, not by prose:
-    ``hygiene scan`` = the scan itself, ``deny-list`` = the deny-list half of
-    the scan, anything else = ``path:line`` of a violating tracked file (whose
-    artifact is that file, root-relative, while the first two name the checker
-    in the package-relative hygiene namespace — see docs/HYGIENE.md, "The
-    hygiene artifact namespace"). The deny-list read follows public_safety's own
-    precedence, so this class reports the same verdict the operator's own
-    ``scripts/public_safety.py`` gate gives.
+    Rows are told apart by ``subject``, not by prose: ``hygiene scan`` = the scan
+    itself, ``deny-list`` = the deny-list half, anything else = ``path:line`` of a
+    violating tracked file (whose artifact is that file, root-relative, while the
+    first two name the checker in the package-relative hygiene namespace — see
+    docs/HYGIENE.md, "The hygiene artifact namespace"). The deny-list read follows
+    public_safety's own precedence, so this class reports the verdict the
+    operator's own ``scripts/public_safety.py`` gate gives.
     """
     def add(subject: str, artifact: str, message: str) -> None:
         # The artifact is already the string the row must carry: either the
-        # violating file's path as public_safety reported it (already
-        # tree-relative) or the checker's id in the hygiene artifact namespace.
-        # It is never a path to be re-rooted into --repo.
+        # violating file's path as public_safety reported it (tree-relative
+        # already) or the checker's id in the hygiene artifact namespace. Never a
+        # path to be re-rooted into --repo.
         findings.append(row("hygiene", strict, subject, artifact, message, Path(),
                             relative_artifact=False))
 
@@ -254,14 +267,12 @@ def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
 
     # The deny-list is operator config, not tree content: the env-named file is
     # the authoritative route, and a deny-list sitting inside the audited tree
-    # is not trusted to supply the vocabulary the publishing gate checks.
-    # Without it the class reports itself inactive below rather than pretending
-    # the operator-name half ran.
+    # is not trusted to supply the vocabulary the publishing gate checks. Without
+    # it the class says so below rather than pretending the name half ran.
     #
-    # The scan's own stderr is silenced for the census (see
-    # :class:`_QuietScanStderr`): the deny-list state it announces is the row
-    # appended below, and a --json run's stderr is to carry this run's own usage
-    # and tool faults and nothing else.
+    # The scan's own stderr is silenced (see :class:`_QuietScanStderr`): the state
+    # it announces is the row or the note this function gives back, and a --json
+    # run's stderr carries only this run's own usage and tool faults.
     with _pinned_hygiene_env(), _QuietScanStderr():
         try:
             violations, _source, denylist, allowlist = public_safety.scrub_tracked_files(top)
@@ -269,11 +280,10 @@ def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
             # The scan's own read of the tree faulted. ``OSError`` renders itself
             # as the errno words *plus the path it failed on*, so the row is
             # built from the exception's fields rather than from its string:
-            # ``fault_text`` keeps the class and the ``strerror`` (the half that
-            # says what failed) and never the filename (the half that says where,
-            # which no row may print). The scrubber would be the only thing
-            # between a host directory and a published report if the string were
-            # quoted, and it has lost every race it has been in.
+            # ``fault_text`` keeps the class and the ``strerror`` and never the
+            # filename, which no row may print. The scrubber would be the only
+            # thing between a host directory and a published report if the string
+            # were quoted, and it has lost every race it has been in.
             add(
                 "hygiene scan",
                 scan_artifact,
@@ -285,16 +295,14 @@ def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
             # "Report, never crash": any exception from the scan (a failing or
             # hung git ls-files, an unreadable deny-list store, a malformed
             # pattern table) becomes the not-run row, never a traceback that
-            # discards every finding already collected in this run. A public
-            # safety scan must not be able to take the whole census down.
+            # discards every finding already collected in this run.
             #
             # Not a filesystem fault, so there is no filename to withhold and
             # the exception's own message IS the finding: public_safety raises
             # RuntimeError(f"git ls-files failed: ...") for a scan whose git call
-            # did not come back, and a row that named only the class would say
-            # that something failed and nothing about what. The text is still
-            # somebody else's, so it goes through the scrub-and-clip net that
-            # ``bounded`` is.
+            # did not come back, and a row naming only the class would say
+            # nothing about what. The text is foreign, so it still goes through
+            # the scrub-and-clip net that ``bounded`` is.
             add(
                 "hygiene scan",
                 scan_artifact,
@@ -305,12 +313,12 @@ def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
 
     labels = _hygiene_labels(public_safety)
 
-    # The committed allowlist decides whether this run had a verdict at all. A file the
-    # operator wrote and the scan could not read (or refused to honour) is the gate-
-    # could-not-run state: it gets the not-run row, which outranks the `--only` filter as
-    # every whole-artifact row does, so a filtered run cannot report hygiene-clean on a
-    # tree whose exemptions went unread. The gate's exit 3 is the same verdict told the
-    # other way, and the census has no 3 to give: the row is this entry point's answer.
+    # The committed allowlist decides whether this run had a verdict at all. A
+    # file the operator wrote and the scan could not read (or refused to honour)
+    # is the gate-could-not-run state: it gets the not-run row, which outranks the
+    # `--only` filter as every whole-artifact row does, so a filtered run cannot
+    # report hygiene-clean on a tree whose exemptions went unread. The gate's exit
+    # 3 is the same verdict told the other way, and the census has no 3 to give.
     if getattr(allowlist, "status", "absent") in ("malformed", "unreadable"):
         add(
             "hygiene scan",
@@ -336,22 +344,23 @@ def check_hygiene(top: Path | None, strict: bool, findings: list[dict], *,
             f"public hygiene: {rel}:{line_no}: {label}")
 
     if not public_safety._denylist_active(denylist):
-        add(
-            "deny-list",
-            scan_artifact,
-            f"deny-list class inactive ({_denylist_state(denylist)}): no deny-list "
-            "entry was checked, so operator names, external project/tool names and hostnames "
-            "are NOT covered — this run is not a hygiene-clean guarantee",
-        )
+        state = _denylist_state(denylist)
+        if state == "absent" and not strict:
+            # The caller prints the note and counts no row, so the class stays
+            # honest without a warning every unconfigured tree must explain.
+            return HYGIENE_DENYLIST_NOTE
+        add("deny-list", scan_artifact,
+            DENYLIST_INACTIVE_MESSAGE.format(state=state))
+    return None
 
 
 def _allowlist_identity(allowlist: Any) -> str:
     """The allowlist's name for the row: never a machine-local absolute path.
 
     public_safety already reduces the tree's committed allowlist to its
-    repository-relative path; a path that would not root inside the tree arrives as a
-    posix path, of which only the basename may be printed. No row of the census carries
-    a host path.
+    repository-relative path; a path that would not root inside the tree arrives
+    as a posix path, of which only the basename may be printed. No census row
+    carries a host path.
     """
     source = str(getattr(allowlist, "source", "") or "")
     return source.rpartition("/")[2] or source
@@ -360,10 +369,10 @@ def _allowlist_identity(allowlist: Any) -> str:
 def _allowlist_state(allowlist: Any) -> str:
     """The word for why the allowlist gave no verdict.
 
-    public_safety owns the statuses and this only maps them: "malformed" is a file that
-    was read and refused to parse, "unreadable" one the read declined (not a regular
-    file, past the size bound, not UTF-8). A status public_safety adds later surfaces
-    under its own name here rather than being silently mislabelled.
+    public_safety owns the statuses and this only maps them: "malformed" is a file
+    that was read and refused to parse, "unreadable" one the read declined (not a
+    regular file, past the size bound, not UTF-8). A status public_safety adds
+    later surfaces under its own name rather than being silently mislabelled.
     """
     status = str(getattr(allowlist, "status", ""))
     return {"malformed": "refused as malformed", "unreadable": "unreadable"}.get(
@@ -373,12 +382,11 @@ def _allowlist_state(allowlist: Any) -> str:
 def _denylist_state(denylist: Any) -> str:
     """Render the deny-list's inactive state word from its result.
 
-    public_safety owns the statuses; this only maps them to a word. The mapping
-    is three lines of the census's own reporting — `status` for a file that is
-    absent or unreadable, and the comments-only case that loaded "ok" with no
-    entries. A status public_safety adds later surfaces under its own name here
-    rather than being silently mislabelled. The caller has already established
-    the class is inactive, so "ok" with entries cannot reach this function.
+    public_safety owns the statuses; this only maps them to a word: ``status``
+    for a file that is absent or unreadable, and the comments-only case that
+    loaded "ok" with no entries. A status public_safety adds later surfaces under
+    its own name, and ``absent`` also decides row or note. The class is already
+    known inactive, so "ok" with entries is unreachable.
     """
     status = getattr(denylist, "status", "absent")
     if status != "ok":
@@ -392,11 +400,10 @@ class _QuietScanStderr:
     ``public_safety`` announces an inactive deny-list on ``sys.stderr`` from two
     places (``scrub_tracked_files`` for absent/corrupt, ``load_denylist`` for an
     unreadable candidate, which also leaks a machine-local absolute path), and a
-    refused allowlist from a third (``load_allowlist``, whose message quotes the file
-    path it tried to use). The census already
-    reports each of those states as a row with its own fix hint, so repeating them on
-    stderr makes ``census --json`` a stream a machine consumer has to redirect to be
-    clean (issue #77, AC3).
+    refused allowlist from a third (``load_allowlist``, whose message quotes the
+    path it tried to use). The census already reports each of those states itself,
+    so repeating them on stderr makes ``census --json`` a stream a machine consumer
+    has to redirect to be clean (issue #77, AC3).
 
     It is redirected only around the one call, and only for the census, because
     ``public_safety`` is a gate file: its standalone CLI keeps its banner
@@ -408,22 +415,18 @@ class _QuietScanStderr:
     ``sys.stderr`` on the way out, at a point the interpreter has already chosen,
     rather than in a ``finally`` whose position relative to the caller's own
     handler is the interpreter's business. Nothing in the census depends on which
-    side of that handler the restore lands: every ``Exception`` the scan raises --
-    a hung or failing ``git ls-files``, an unreadable deny-list store, a malformed
-    pattern table -- is caught by ``check_hygiene``'s ``except Exception`` and
-    becomes the not-run row, and a ``BaseException`` (a Ctrl-C landing on the
-    scan's 30 s git call) travels on to the interpreter with its traceback intact.
-    "report, never crash" is that guard, not this manager; the manager's job ends
-    at putting the stream back, and it does so before anything else can observe
-    the swap.
+    side of that handler the restore lands: every ``Exception`` the scan raises is
+    caught by ``check_hygiene``'s ``except Exception`` and becomes the not-run row,
+    and a ``BaseException`` (a Ctrl-C on the scan's 30 s git call) travels on to
+    the interpreter with its traceback intact. "report, never crash" is that
+    guard, not this manager; the manager's job ends at putting the stream back.
 
     The buffer keeps the first few writes and nothing else: a banner is a plain
     line and is dropped, and the cap bounds the buffer against a scan that wrote
     without stopping. ``write``/``flush``/``isatty``/``writable`` are answered so
     a caller that inspects the stream during the scan gets a reply rather than an
-    ``AttributeError``; ``fileno`` is deliberately absent, because the census
-    never hands its stderr to a child and a stub for it would only let a caller
-    believe it had a descriptor.
+    ``AttributeError``; ``fileno`` is deliberately absent, because a stub for it
+    would only let a caller believe it had a descriptor.
     """
 
     # Enough of a stream for the calls the scan makes, so a caller that inspects

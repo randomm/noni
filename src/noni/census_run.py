@@ -378,8 +378,14 @@ def _run(argv: list[str] | None = None) -> int:
     # and the message bounder it hands the scanner are read off that module at the
     # call and a seam on either is the one the scanner uses.
     if "hygiene" in requested:
-        census._check_hygiene(top, args.strict, findings, row=census._row,
-                              bounded=census._bounded)
+        # Whatever the class returns is its note for the run (the deny-list is
+        # off: no row and no warning, one note), appended after the group so it
+        # reads as a filter applied to a group that ran -- the note belongs to a
+        # class this run evaluated, which ``--skip hygiene`` took away whole.
+        hygiene_note = census._check_hygiene(top, args.strict, findings,
+                                             row=census._row, bounded=census._bounded)
+        if hygiene_note:
+            notes.append(hygiene_note)
 
     # --- Aggregate -----------------------------------------------------------
     # Warnings never set the exit code on their own: clean means exit 0 even

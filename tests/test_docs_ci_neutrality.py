@@ -152,22 +152,25 @@ def test_the_ci_section_links_the_install_section_instead_of_reprinting_it() -> 
             f"linking the section that owns it")
 
 
-def test_the_ci_section_names_the_hygiene_row_as_the_expected_first_run() -> None:
-    """The row a first CI run prints, named as expected rather than as a failure.
+def test_the_ci_section_names_the_hygiene_note_as_the_expected_first_run() -> None:
+    """What a first CI run prints for the deny-list, named as expected output.
 
-    The hygiene class always reports, and on a CI checkout -- which has no
-    deny-list -- its lone row is the inactive notice. A reader who was not told that
-    reads exit 0 with a finding as a build that is about to break. The words are the
-    product's own rendering, so a rename of the row fails here.
+    On a CI checkout, which has no deny-list, the run carries no deny-list row and
+    one `note:` line saying the check is off (issue #194). A reader who was not
+    told that reads a report with no hygiene row as a scan that checked names and
+    hostnames. The words are the product's own rendering, so a rename of the note
+    fails here.
     """
     section = section_body(read(QUICKSTART), CI[0])
     lowered = section.lower()
-    assert "deny-list class inactive" in section, (
-        "the CI section no longer names the row a first run prints")
+    assert "deny-list check is off" in section, (
+        "the CI section no longer names what a first run says about the deny-list")
+    assert "`note:`" in section, (
+        "the CI section does not say the first run's answer is a note, not a row")
     assert "absent" in section, (
         "the CI section does not name the state the first run is in")
     assert "expected" in lowered, (
-        "the CI section shows the inactive row without saying it is expected")
+        "the CI section shows the note without saying it is expected")
     assert "deny-list" in lowered, (
         "the CI section does not route the reader to the deny-list prose")
 

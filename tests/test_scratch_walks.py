@@ -152,7 +152,7 @@ def test_materialise_clone_skips_scratch_and_keeps_the_rest(tmp_path) -> None:
     time) is what reddens on the old code: a copy that recursed left every scratch path
     in the destination.
     """
-    from harness_paths import in_scratch  # noqa: F401  (see the module note above)
+    from harness_paths import in_scratch  # noqa: F401  (imported here so a pre-fix baseline run can still import this module)
 
     _plant_repo(tmp_path / "repo")
     dest = tmp_path / "clone"
@@ -170,7 +170,7 @@ def test_readme_support_clone_skips_scratch_and_keeps_the_rest(tmp_path) -> None
     The two clones held byte-identical ignore literals and nothing compared them, so a
     fix landed in one left the other broken and green.
     """
-    from harness_paths import in_scratch  # noqa: F401  (see the module note above)
+    from harness_paths import in_scratch  # noqa: F401  (imported here so a pre-fix baseline run can still import this module)
 
     _plant_repo(tmp_path / "repo")
     dest = tmp_path / "clone"

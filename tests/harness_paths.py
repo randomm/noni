@@ -2,7 +2,8 @@
 
 Moved out of ``_harness.py`` for the file-size ratchet (issue #52) and
 re-exported from there, so every existing ``from _harness import`` keeps
-resolving. Pure data: nothing here imports the product.
+resolving. Pure data plus the shared scratch rule; nothing here imports the
+product.
 
 """
 
@@ -168,8 +169,8 @@ def in_scratch(root: Path, path: Path) -> bool:
         parts = path.relative_to(root).parts
     except ValueError:
         return SCRATCH_DIR_NAME in path.parts
-    return bool(parts) and (parts[0] == SCRATCH_ROOT_NAME
-                            or SCRATCH_DIR_NAME in parts)
+    return bool(parts and (parts[0] == SCRATCH_ROOT_NAME
+                           or SCRATCH_DIR_NAME in parts))
 
 
 def scratch_ignore(root: Path):

@@ -4,7 +4,6 @@ Each block words its own artifact's state, one unreadable file costs its own row
 nothing else, and the verdict line prints whatever the census said a moment later.
 """
 
-
 from __future__ import annotations
 
 import shutil
@@ -32,6 +31,12 @@ from brief_support import (
 )
 
 from noni import brief as brief_module
+
+# What the standing rules and the blank under them cost at the top of the page. The
+# budget measures the blocks alone, so a case that cuts a page by a debt read off the
+# blocks has to ask for that debt plus the rules: they are prepended after the budget
+# ran and no debt can reach them.
+RULES = len(brief_module.STANDING_RULES) + 1
 
 
 def test_brief_intent_absent_prints_not_readable(tmp_path: Path) -> None:
@@ -105,14 +110,17 @@ def test_brief_order_absent_prints_an_empty_top_block(tmp_path: Path) -> None:
     """An absent artifact is the empty order -- the state the first ``add`` extends.
 
     The order's own arbiter answers ``OrderOk`` with no entries for a file that is not there,
-    so the header prints alone and the other two blocks keep their content. The distinction
-    the spec asks for: nothing read is :data:`NOT_READ`, and nothing to list is an empty block.
+    so the header prints over the one fixed line this tool has for an empty queue, and the
+    other two blocks keep their content. The distinction
+    the spec asks for: nothing read is :data:`NOT_READ`, and nothing to list is an empty
+    block with its own sentence under it.
     """
     root = plant_brief_tree(tmp_path)
     order_path(root).unlink()
     code, out, _ = run_brief(root, "--now", NOW)
     assert code == 0
-    assert stripped(sections(out), brief_module.ORDER_HEADER) == []
+    assert stripped(sections(out), brief_module.ORDER_HEADER) == [
+        brief_module.EMPTY_ORDER]
     assert NOT_READ not in out
     assert len(stripped(sections(out), brief_module.PURPOSE_HEADER)) == \
         brief_module.PURPOSE_MAX_LINES + 2
@@ -156,7 +164,8 @@ def test_brief_three_reads_failed_at_once_still_prints_the_verdict(tmp_path: Pat
     assert err == ""
     blocks = sections(out)
     assert stripped(blocks, brief_module.PURPOSE_HEADER) == [NOT_READ]
-    assert stripped(blocks, brief_module.ORDER_HEADER) == []
+    assert stripped(blocks, brief_module.ORDER_HEADER) == [
+        brief_module.EMPTY_ORDER]
     assert summary_line(out) == census_summary(root, NOW)
 
 

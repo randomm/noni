@@ -38,6 +38,11 @@ from noni import orderschema
 PURPOSE_MAX = brief_module.PURPOSE_MAX_LINES
 TOP = brief_module.TOP_ENTRIES
 
+# What the standing rules and the blank under them cost at the top of the page. They print
+# ahead of the blocks and outside the budget, so every pinned page length is the blocks'
+# length plus this: three rule lines and their separator.
+RULES = len(brief_module.STANDING_RULES) + 1
+
 
 def test_brief_purpose_is_clipped_at_the_cap_with_an_ellipsis(tmp_path: Path) -> None:
     """The fixture's purpose body is 25 lines; the block shows 20 and says a line went missing."""
@@ -143,7 +148,7 @@ def test_brief_the_page_never_exceeds_the_cap(tmp_path: Path) -> None:
     # the fixture's one live record rather than from a number typed here.
     decisions_rows = len(rows(out, brief_module.RECENT_DECISIONS_HEADER))
     assert decisions_rows == 1
-    expected = (3 + brief_module.PURPOSE_MAX_LINES + 2 + brief_module.TOP_ENTRIES
+    expected = (RULES + 3 + brief_module.PURPOSE_MAX_LINES + 2 + brief_module.TOP_ENTRIES
                 + decisions_rows + 2 + 1)
     assert len(out.splitlines()) == expected <= brief_module.BRIEF_MAX_LINES
     assert DROPPED_PREFIX in out
@@ -205,7 +210,9 @@ def test_brief_the_budget_never_swallows_the_verdict(tmp_path: Path) -> None:
     # the shape where the tool is left printing three headers and its own count line.
     out = page_owed_lines(root, 30)
     lines = out.splitlines()
-    assert lines[0] == brief_module.PURPOSE_HEADER
+    # The rules and their blank sit above that: they are prepended after the budget has run,
+    # so no debt reaches them (their own case is in test_brief_rules.py).
+    assert lines[RULES] == brief_module.PURPOSE_HEADER
     assert dropped_line(out).startswith(DROPPED_PREFIX)
     assert lines[-1] == census_summary(root, NOW)
 

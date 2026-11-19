@@ -306,8 +306,34 @@ def _bounded_row(head: str, reason: str) -> str | None:
         return page_line(head, TEXT_LIMIT, frozenset())
     mark = REASON_SEPARATOR + reason
     room = TEXT_LIMIT - len(mark)
-    head_text = head if len(head) <= room else _clipped(head, room)
+    head_text = head if len(head) <= room else _head_clip(head, room)
     return page_line(head_text + mark, TEXT_LIMIT, frozenset())
+
+
+def _head_clip(head: str, room: int) -> str:
+    """The head of a row too long for its row, cut at a word where one can be found.
+
+    :func:`noni.census_text._clipped` keeps the page's bound and its clip mark, but it
+    cannot promise that the cut lands between words, and a head cut mid-word leaves the
+    reader to guess at the subject. So the boundary is asked here rather than of the
+    clipper the census shares (whose own rows must not move): the head is kept whole up
+    to the last space that leaves room for the mark, and the mark is the page's own
+    :data:`noni.brief.ELLIPSIS` -- the same character string the clipped purpose body
+    prints, spelled once in the tool and reached through the importer below so the page
+    has one spelling of it and no second clipper.
+
+    The row's bound is honoured as it always was: the kept head is at least three
+    characters inside the room, so head and mark together never pass it. Where the head
+    holds no space to cut at, or none far enough in to leave anything worth reading,
+    there is no boundary to find and the character clip is the honest answer: a row
+    still has to be printed, bounded and marked.
+    """
+    # Three of the room are the mark's own budget, and one more is the space the cut
+    # lands on, which the row drops rather than prints.
+    boundary = head.rfind(" ", 0, room - 4)
+    if boundary < _HEAD_MIN:
+        return _clipped(head, room)
+    return head[:boundary] + _clip_mark()
 
 
 def _question_segment(question: object) -> str:
@@ -443,6 +469,26 @@ def close_block(lines: list[str], withheld: int) -> list[str]:
     if withheld:
         return [*lines, f"{DROPPED_PREFIX}{withheld} line(s)"]
     return lines
+
+
+# The shortest head the word-boundary clip will keep. Below it a row would print a mark
+# over nothing readable, and the character clip -- which at least fills the room the
+# reason left -- is the better answer. Three characters is no rule of its own: it is the
+# length of the clip mark, the smallest thing the clipper prints beside a kept head.
+_HEAD_MIN = 3
+
+
+def _clip_mark() -> str:
+    """The page's clip mark, read from the one place the tool spells it.
+
+    A head cut at a word prints the same three dots the shared clipper prints, and they
+    are spelled once in the product, as :data:`noni.brief.ELLIPSIS`. It is read through
+    the module that owns it, at the call, rather than imported at the top of this file:
+    ``brief`` imports this module, so a top-level import of it back would be a cycle.
+    """
+    from . import brief as _brief
+
+    return _brief.ELLIPSIS
 
 
 # The bound the page asks of the foreign text it prints: the operator's purpose prose and the

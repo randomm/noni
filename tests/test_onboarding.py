@@ -2,12 +2,12 @@
 
 ``docs/ONBOARDING.md`` (issue #73) is the third page a newcomer meets: the README
 decides whether to attach noni, ``docs/QUICKSTART.md`` installs it and runs both
-state routes, and this page tells a team how to put noni's four core skills in
+state routes, and this page tells a team how to put noni's three core skills in
 front of their agents and what one of those agents does from session start to
 close. Three of its claims are the whole of its value, and each is checked here
 rather than trusted:
 
-- **The four skills are named by their page paths.** The page's promise is that a
+- **The three skills are named by their page paths.** The page's promise is that a
   team can find every core skill; the list of core skills is
   :data:`docs_promises.SKILL_PAGE_PATHS`, so a fifth skill or a renamed one fails
   here instead of leaving the page quietly incomplete.
@@ -59,6 +59,17 @@ PROTOCOL_REASONS: tuple[str, ...] = (
     "unrecorded steer",
 )
 
+# The page's own answer to "what does an agent read first", now the start-here skill is
+# gone (issue #196): the screen ``noni brief`` prints, injected by a hook a team wires
+# up itself, with the hooks held under ``integrations/``. Located by phrase rather than
+# by line, so a rewrap is a passing edit and a dropped claim is not.
+FIRST_PAGE_CLAIMS: tuple[str, ...] = (
+    "`noni brief`",
+    "at session start",
+    "after a compaction",
+    "integrations/",
+)
+
 # The page's length cap. It is a page a reader is meant to finish before starting
 # work, not a reference, so the cap is the quickstart's 400-line ceiling halved:
 # the quickstart carries runnable commands for two routes and this page prints
@@ -76,14 +87,14 @@ def _step_link_for(skill_name: str) -> str:
     return f"[`skills/{skill_name}/SKILL.md`](../skills/{skill_name}/SKILL.md)"
 
 
-# --- AC1/AC3: the four core skills, named by their page paths ---------------
+# --- AC1/AC3: the core skills, named by their page paths --------------------
 
 def test_the_page_names_every_core_skill_by_its_page_path() -> None:
-    """All four ``SKILL.md`` paths appear on the page, and nothing else's does.
+    """Every ``SKILL.md`` path of the core set appears on the page, and nothing else's does.
 
     The expected set is :data:`docs_promises.SKILL_PAGE_PATHS` -- the same list the
     scrub and purity readers build their skill directories from -- so a fifth core
-    skill is a failure here rather than a page that quietly names four of five. The
+    skill is a failure here rather than a page that quietly names three of four. The
     comparison is on the page path token, not the bare directory name: AC1's check
     shape is "named with its SKILL.md path", and a page that wrote "the census
     skill" in prose would name a skill while sending the reader nowhere.
@@ -107,7 +118,7 @@ def test_the_page_names_every_core_skill_by_its_page_path() -> None:
 
 
 def test_every_core_skill_page_the_page_links_resolves() -> None:
-    """Each of the four links the page prints points at a file in this repository.
+    """Each of the links the page prints points at a file in this repository.
 
     The page lives in ``docs/``, so every one of its relative links starts from
     there -- the check resolves the link the way a renderer would and then asks
@@ -173,6 +184,24 @@ def test_the_page_says_why_the_protocol_is_not_optional() -> None:
         assert reason in flowed, (
             f"the page no longer states {reason!r}, which is the reason the "
             "protocol's steps are worth following")
+
+
+def test_the_page_says_the_brief_screen_is_what_an_agent_reads_first() -> None:
+    """With no start-here skill, the page names the injected screen instead.
+
+    The claim issue #196 moved onto this page: a harness hook can inject `noni brief`
+    into the main agent at session start and after a compaction, and the hooks live
+    under ``integrations/``. The page may name neither the harness nor any tool outside
+    noni (the purity rule's), so what is pinned is the four pieces the claim is made of
+    rather than one sentence.
+    """
+    flowed = flowed_text(page_text())
+    for claim in FIRST_PAGE_CLAIMS:
+        assert claim in page_text() or claim in flowed, (
+            f"the page no longer states {claim!r} about the screen a hook injects")
+    # And the removed page stays gone: a page that linked it again would be sending the
+    # reader to a file the tree no longer ships.
+    assert "skills/noni/SKILL.md" not in page_text()
 
 
 def test_the_page_prints_no_command_in_any_fence() -> None:
@@ -251,7 +280,7 @@ def test_the_page_defers_commands_to_the_quickstart_and_its_skills() -> None:
 def test_the_page_carries_one_link_form_per_skill(name: str) -> None:
     """Each core skill is linked exactly once per row that needs it, in one form.
 
-    The check exists because the four paths are the page's contract with the
+    The check exists because these paths are the page's contract with the
     loader: a page that mixed ``skills/census/SKILL.md`` with
     ``../skills/census/SKILL.md`` inline and linked elsewhere would be correct to a
     renderer and wrong to a test that reads the path token. Every occurrence of the

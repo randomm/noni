@@ -193,7 +193,10 @@ def test_brief_is_a_sibling_module_of_the_tool_and_read_by_it(tmp_path: Path) ->
     assert brief_intent.purpose_block.__module__ == "noni.brief_intent"
     root = plant_brief_tree(tmp_path)
     assert brief_intent.purpose_body(intent_path(root)) is not None
-    assert run_brief(root, "--now", NOW)[1].splitlines()[1] == PURPOSE_LINES[0]
+    # The first line of the first block, which sits below the standing rules and their
+    # blank: three rule lines and the separator that keeps them off the header.
+    assert run_brief(root, "--now", NOW)[1].splitlines()[
+        len(brief_module.STANDING_RULES) + 2] == PURPOSE_LINES[0]
 
 
 def test_brief_source_stays_within_the_size_cap() -> None:

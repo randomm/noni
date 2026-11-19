@@ -26,7 +26,7 @@ README = REPO / "README.md"
 CONTRIBUTING = REPO / "CONTRIBUTING.md"
 QUICKSTART = REPO / "docs" / "QUICKSTART.md"
 # The agent-onboarding page (issue #73): the sole home of the instruction that
-# makes the four core skills available to a team's agents, and of the
+# makes the core skills available to a team's agents, and of the
 # per-session protocol. It prints no command, so joining ``DOC_PAGES`` costs it
 # nothing at the fence census and buys it every promise test over the page set.
 ONBOARDING = REPO / "docs" / "ONBOARDING.md"
@@ -57,7 +57,7 @@ DOC_PAGES: tuple[Path, ...] = (
 # here as data beside the page set rather than as strings inside one test: the
 # reader that builds a skill directory list and the test that pins the page then
 # agree on one list, and a further core skill is a failure in both places.
-SKILL_NAMES: tuple[str, ...] = ("steering-ledger", "direction", "census", "noni")
+SKILL_NAMES: tuple[str, ...] = ("steering-ledger", "direction", "census")
 SKILL_PAGE_PATHS: tuple[str, ...] = tuple(f"skills/{name}/SKILL.md"
                                           for name in SKILL_NAMES)
 SKILL_PAGES: tuple[Path, ...] = tuple(sorted((REPO / "skills").rglob("*.md")))

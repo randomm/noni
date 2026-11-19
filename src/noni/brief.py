@@ -87,8 +87,9 @@ EXIT_USAGE: int = 2
 # The cap on the lines the brief's own blocks print. Counted over both blocks
 # together -- each header, its rows, and the blank line that separates one block from the
 # next -- and not per block: a 200-entry order would otherwise crowd the other block off
-# the screen the brief exists to fit on. The dropped-count line and the census's
-# summary line are outside the count, so a truncated run still ends with its verdict.
+# the screen the brief exists to fit on. The dropped-count line, the census's summary
+# line and the standing rules above the first header are outside the count, so a
+# truncated run still opens with its rules and still ends with its verdict.
 BRIEF_MAX_LINES = 200
 
 # How many order entries the ``top 10`` block prints before the budget is consulted. It is a
@@ -110,11 +111,32 @@ ELLIPSIS = "..."
 # the order -- the question the screen is for -- off the page.
 RECENT_DECISIONS = 5
 
+# The three lines the page opens with, before its first header, in this order. The page
+# is the payload a session-start hook injects into an agent that has read nothing of this
+# project's, so it carries its own standing rules: where direction comes from, what to do
+# with it, and what to do when it is missing. They are the tool's own words and print
+# ahead of the budget (see :func:`_render`), because a page that lost its rules to a long
+# purpose body would no longer say what it is for. None names a harness, a tool outside
+# noni or a project. The one blank line under them is the renderer's, not a rule's.
+STANDING_RULES: tuple[str, ...] = (
+    "Product direction, the work order and the operator's decisions live in noni.",
+    "Work in this order and follow the recorded decisions; never invent direction.",
+    "When something is undecided, ask the operator and record the answer with "
+    "`noni decide`.",
+)
+
 # The three block headers, spelled once so the budget, the truncation order, the readers and the
 # tests all name one set of words.
 PURPOSE_HEADER = "Purpose"
 ORDER_HEADER = "top 10"
 RECENT_DECISIONS_HEADER = "recent decisions"
+
+# What the ``top 10`` block prints when the order holds nothing: the header's one line,
+# for the two states the artifact can be in and still hold no entry (absent, or present
+# with an empty list). The block is never omitted, so a reader always sees the queue's
+# name and one sentence under it rather than a heading over a hole. An artifact that is
+# there and cannot be read keeps :data:`noni.brief_page.NOT_READ` instead.
+EMPTY_ORDER = "the order is empty"
 
 # The prefix of the line the census's human report ends with, and the line the brief
 # prints when the census printed no verdict to echo. Both are the brief's vocabulary and
@@ -124,14 +146,16 @@ RECENT_DECISIONS_HEADER = "recent decisions"
 SUMMARY_PREFIX = "summary: "
 NOT_RUN_SUMMARY = "summary: not-run; 0 finding(s); verdict fail"
 
-# The headers plus the two lines this tool itself can print below them, as the set no body line
-# may be: the rule lives in :func:`noni.brief_page.page_line` and this is the vocabulary it is
-# handed. A reader splits the page on the headers, so a purpose line of exactly ``top 10`` would
-# make the reader count a block that is not there; the ellipsis and the verdict prefix are in the
-# set for the mirror reason -- a body line shaped like one of the tool's own lines could be read
-# as one of them.
+# The headers, the lines this tool itself can print below them and the empty-order line,
+# as the set no body line may be: the rule lives in :func:`noni.brief_page.page_line` and
+# this is the vocabulary it is handed. A reader splits the page on the headers, so a
+# purpose line of exactly ``top 10`` would make the reader count a block that is not there;
+# the ellipsis and the verdict prefix are in the set for the mirror reason -- a body line
+# shaped like one of the tool's own lines could be read as one of them. The empty-order
+# line joins them because it is the tool's own sentence under its own header: a foreign row
+# that rendered to the same words would put that verdict about the queue on the screen.
 PAGE_RESERVED = frozenset({PURPOSE_HEADER, ORDER_HEADER, RECENT_DECISIONS_HEADER,
-                           ELLIPSIS, SUMMARY_PREFIX.strip()})
+                           ELLIPSIS, SUMMARY_PREFIX.strip(), EMPTY_ORDER})
 
 def _refuse(headline: str, hint: str) -> int:
     """The exit-2 refusal: two lines on stderr, nothing on stdout, code 2.
@@ -213,9 +237,19 @@ def main(argv: list[str] | None = None) -> int:
                        f"(or will hold) {orderstate.DECISIONS_DIR}/")
 
     blocks = [_purpose_block(root), _order_block(root), _decisions_block(root)]
-    print(_render(blocks))
+    print(_rules() + _render(blocks))
     print(_summary_line(root, stamp))
     return 0
+
+
+def _rules() -> str:
+    """The standing rules and the blank that separates them from the first block.
+
+    Prepended after the budget has run, and counted by nothing: the rules are three lines
+    of the tool's own prose, not a block, so no debt, no truncation order and no
+    withheld-count line can reach them. The page a hook injects always opens with them.
+    """
+    return "\n".join(STANDING_RULES) + "\n\n"
 
 
 def _render(blocks: list[list[str]]) -> str:
@@ -340,12 +374,19 @@ def _order_block(root: Path) -> list[str]:
     what the entry is for. ``confirmed`` is not printed: this is a screen, and the order writer's
     own listing is the tool that shows the provenance of a position. A refusal or a fault of
     the read prints the header and :data:`NOT_READ` -- the artifact is the census's to
-    report on -- and an absent file is the empty order, which prints its header alone.
+    report on -- and an order that holds no entry prints its header over
+    :data:`EMPTY_ORDER`.
     """
     read = orderstate.read_order(root / orderschema.ORDER_REL)
     if not isinstance(read, orderstate.OrderOk):
         return [ORDER_HEADER, NOT_READ]
     entries = read.entries[:TOP_ENTRIES]
+    if not entries:
+        # Nothing to list, in one of the two states that hold nothing: the artifact
+        # absent, or present with an empty list. The header still prints, over the one
+        # fixed line, so the block is never omitted and the reader is never handed a
+        # heading above a hole.
+        return [ORDER_HEADER, EMPTY_ORDER]
     rows, withheld = block_rows(
         (_entry_row(position, entry)
          for position, entry in enumerate(entries, 1)), TOP_ENTRIES)

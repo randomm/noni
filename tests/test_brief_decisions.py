@@ -352,7 +352,9 @@ def test_brief_the_writers_bound_of_an_order_row_keeps_the_reason() -> None:
 
     One row at the bound every writer enforces (``WHY_MAX`` characters of ``why``), pinned by
     exact value: the reason survives to its last character, the record id it brackets is what the
-    bound takes, and the ellipsis the page leaves sits at the end of the finished line. This is
+    bound takes, and the ellipsis the page leaves sits at the end of the kept head. The head now
+    yields at a word, so the last thing the row keeps before the mark is the subject rather than
+    the opening of the record id it dropped. This is
     the longest row the writers can hand the builder, so it is the row that decides which half of
     a too-long row yields.
     """
@@ -360,9 +362,9 @@ def test_brief_the_writers_bound_of_an_order_row_keeps_the_reason() -> None:
     row = brief_page_rows.order_row(1, issue=123456, decision="2026-10-01-brief",
                                     why=reason)
     assert row is not None
-    assert row == ("1" + brief_page.ORDER_SUBJECT_SEPARATOR + "#123456 (20"
+    assert row == ("1" + brief_page.ORDER_SUBJECT_SEPARATOR + "#123456"
                    + brief_module.ELLIPSIS + brief_page.REASON_SEPARATOR + reason)
-    assert len(row) == brief_page.TEXT_LIMIT
+    assert len(row) == 296
 
 
 def test_brief_the_writers_bound_of_a_decision_row_keeps_the_reason(

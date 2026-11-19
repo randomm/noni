@@ -210,37 +210,38 @@ rather than a check. It opens with three standing rules, in the tool's own words
 above the page's line budget: they name `noni` as where direction, the work order and
 the operator's decisions live, tell the reader to work in the printed order and follow
 the recorded decisions rather than invent direction, and send an undecided question to
-the operator to be recorded with `noni decide`. They print first, they are the tool's
-own lines rather than a block, and no budget cut removes them. After them the command
-prints four parts and exits — the
-standing intent's `Purpose`, the head of the order, the five newest live decision
-records with their questions, answers and reasons, and the census's own `summary:`
-line, echoed and never recomposed. An order row names its subject, the record that set
-its position and the reason the operator gave for it: an entry that names an issue prints
-`#N`, then `(<decision id>)`, then the reason after a mark when it carries one. A decision
-row of a record that asked one question on purpose prints its statement and its reason,
-with no boilerplate question, and the reason is what the row's bound keeps when the two
-cannot both fit: the head is then clipped at a word boundary rather than mid-word, and the
-clip mark (the page's own `...` line) stays on the row. It writes nothing, so running it
-leaves `git status --porcelain`
-empty too, and
-it prints the same bytes twice over one tree at one `--now`. It has no verdict of
-its own about a file it cannot read: a part whose artifact is absent prints empty —
+the operator to be recorded with `noni decide`. They print first, they are the tool's own
+lines rather than a block, and no budget cut removes them. After them the command prints four
+parts and exits: the standing intent's `Purpose`, the head of the order, the five newest live
+decision records with their questions, answers and reasons, and the census's own `summary:`
+line, echoed and never recomposed. An order row names its subject, the record that set its
+position and the reason the operator gave for it: an entry that names an issue prints `#N`,
+then `(<decision id>)`, then the reason after a mark when it carries one. A decision row of a
+record that asked one question on purpose prints its statement and its reason, with no
+boilerplate question, and the reason is what the row's bound keeps when the two cannot both
+fit: the head is then clipped at a word boundary rather than mid-word, and the clip mark (the
+page's own `...` line) stays on the row. It writes nothing, so running it leaves
+`git status --porcelain` empty too, and it prints the same bytes twice over one tree at one
+`--now`. It has no verdict of its own about a file it cannot read: a part whose artifact is
+absent prints empty;
 an order that holds no entries prints its `top 10` heading followed by one line saying
-`the order is empty`, never that heading with nothing under it —
-one whose artifact is there and unreadable prints `not readable`, and the census —
-run a moment later in the same command — is what words the fault. Its exit codes
+`the order is empty`, never that heading with nothing under it;
+one whose artifact is there and unreadable prints `not readable`, and the census, run a
+moment later in the same command, is what words the fault. Its exit codes
 are the fail-closed pair: 0 whenever the page rendered, whatever it said about the
 tree, and 2 for a command line it will not act on (no `--repo`, a `--repo` that is
 not a directory, or an `--now` that is not a UTC instant), with the report on
-stdout and the refusal on stderr so a caller can tell the two apart by stream.
-Below the standing rules the page is bounded: at most 20 lines of purpose, ten order
-entries, five recent
-decisions and 200 lines in all, with the recent decisions the first thing the budget
-withholds and the order entries next, so the head of the order outlasts them. A record
-written with no `--date` carries the instant it was written at, so the one written last
-prints first; a `--date` run stamps midnight of its day, and records at one identical
-instant fall back to the record id.
+stdout and the refusal on stderr so a caller can tell the two apart by stream. Below the
+rules the page is bounded: the 200-line budget covers the three blocks, the Purpose body, the
+order entries and the recent decisions, with their headers and the blank lines between them
+charged to it, and it holds at most 20 lines of purpose, ten order entries and five recent
+decisions. The three standing rules, the blank line under them, any `dropped: N line(s)` line
+naming the lines a truncated run withheld, and the census's summary line all print outside
+that budget, so no cut reaches the rules and no cut costs the reader the verdict. The recent
+decisions are the first thing the budget withholds and the order entries next, so the head of
+the order outlasts them. A record written with no `--date` carries the instant it was written
+at, so the one written last prints first; a `--date` run stamps midnight of its day, and
+records at one identical instant fall back to the record id.
 
 Metrics are derived, never self-reported: the census reads git history and
 these files. An adapter may additionally join its own run analytics to noni

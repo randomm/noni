@@ -1,6 +1,6 @@
 ---
 name: noni
-description: The start-here page for a fresh agent in an attached project: one read-only screen, `noni brief`, that shows the standing purpose, the ordered backlog and the operator's recorded decisions, and the routes to every act that follows. Run it before reading state files by hand or asking the operator what they already answered. Do NOT use for writing the order or the intent (that is the direction skill), for recording a decision (steering-ledger), or for reading the state's health (the census skill is the arbiter).
+description: "The start-here page for a fresh agent in an attached project: one read-only screen, `noni brief`, that shows the standing purpose, the ordered backlog and the operator's recorded decisions, and the routes to every act that follows. Run it before reading state files by hand or asking the operator what they already answered. Do NOT use for writing the order or the intent (that is the direction skill), for recording a decision (steering-ledger), or for reading the state's health (the census skill is the arbiter)."
 ---
 
 # noni

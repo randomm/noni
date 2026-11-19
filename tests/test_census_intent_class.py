@@ -349,11 +349,13 @@ def test_a_resolve_that_raises_names_an_in_root_path_from_the_root(tmp_path, mon
     location out of the row when there is no root-relative spelling to give. That
     includes a path whose segments sit under the root but walk back out of it with
     ``..``: ``relative_to`` matches segments without evaluating them, so it answers
-    for that path too, and the answer would still carry the escape.
+    for that path too, and the answer would still carry the escape. The guard is
+    read off the caller's own spelling, so it is asserted on that function directly.
     """
     import noni.census as census
+    from noni import census_row
 
-    def refusing_resolve(self, *args, **kwargs):
+    def refusing_resolve(self, strict=False):
         raise RuntimeError("Symlink loop from %r" % str(self))
 
     monkeypatch.setattr(Path, "resolve", refusing_resolve)
@@ -363,7 +365,11 @@ def test_a_resolve_that_raises_names_an_in_root_path_from_the_root(tmp_path, mon
 
     assert census._rel_to_root(root, inside) == "noni/decisions/d.md"
     assert census._rel_to_root(root, outside) == str(outside)
+    assert census_row._lexical_rel_to_root(root, inside) == "noni/decisions/d.md"
 
     escaping = root.joinpath("noni", "..", "..", "outside", "d.md")
+    middle = root.joinpath("noni", "a", "..", "..", "..", "outside", "d.md")
+    assert census_row._lexical_rel_to_root(root, escaping) is None
+    assert census_row._lexical_rel_to_root(root, middle) is None
     assert census._rel_to_root(root, escaping) == str(escaping)
-    assert ".." not in census._rel_to_root(root, inside).split("/")
+    assert census._rel_to_root(root, middle) == str(middle)

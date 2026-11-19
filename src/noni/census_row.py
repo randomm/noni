@@ -75,13 +75,15 @@ def _lexical_rel_to_root(root: Path, path: Path) -> str | None:
     over the segments the caller was handed, and that is the only spelling that
     keeps a host location out of the row. ``relative_to`` matches segments without
     evaluating them, so a successful answer is not evidence the path stayed in the
-    tree: a ``..`` means it walked out, and no spelling of that is root-relative.
+    tree. A spelling carrying a walk-out segment gets no root-relative name and the
+    caller returns it verbatim, so the segment is read off the caller's own path
+    before ``relative_to`` is asked to match anything.
     """
+    if any(part == ".." for part in path.parts):
+        return None
     try:
         rel = path.relative_to(root)
     except ValueError:
-        return None
-    if any(part == ".." for part in rel.parts):
         return None
     return rel.as_posix()
 

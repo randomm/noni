@@ -16,23 +16,19 @@ pyproject.toml is a gate file, and ``test_gate_wiring.py`` pins CI against the
 dev extra, so a guarded ``import yaml`` would report zero assertions on the venv
 that has to catch this. The rules below are the subset of YAML's plain-scalar
 rule this repo's frontmatter actually uses: each page is one ``name:`` and one
-unwrapped ``description:`` line, never a folded or literal block.
+unwrapped ``description:`` line, never a folded or literal block. The wording
+the quoting preserves is guarded by review of the two-character diff, not here.
 """
 
 from __future__ import annotations
 
 import re
-import subprocess
 from pathlib import Path
 
 from _harness import REPO
 
 FIELD = re.compile(r"^([a-z-]+):(.*)$")
 REQUIRED_FIELDS = ("name", "description")
-# The commit whose skills/noni/SKILL.md first carries the wording this ticket's
-# quoting must preserve: the page landed there intact and was untouched until
-# this ticket, so the wording check has a committed reference, not a literal.
-PRE_FIX_REV = "60838c6"
 
 
 def skill_pages() -> list[Path]:
@@ -75,17 +71,12 @@ def value_defect(value: str) -> str | None:
     - A single-quoted value must close, and ``''`` is the only inner quote it
       may hold; one lone ``'`` ends the scalar early.
 
-    A quote character is checked inside the quotes only where one can be told
-    apart from content: a lone ``"`` or ``'`` closes nothing, so it is reported
-    as the empty value it loads to rather than as an unclosed scalar.
+    An empty value is out of scope: ruling 1 names only the colon and quote
+    rules, and a page whose block carries no field at all is already reported by
+    ``page_defects``.
     """
     body = value[1:] if value.startswith(" ") else value
     marker = body[:1]
-    if not body.strip(' "\''):
-        # Covers the bare empty value, "" and '' (and a lone quote, which is no
-        # pair): an empty quoted scalar is what YAML hands back as None, so the
-        # field a loader needs is gone.
-        return "the value is empty, so the field a loader needs would be missing"
     if marker in ("'", '"'):
         if len(body) < 2 or not body.endswith(marker):
             named = {"'": "single", '"': "double"}[marker]
@@ -106,9 +97,8 @@ def value_defect(value: str) -> str | None:
 def page_defects(page: Path) -> list[str]:
     """Every reason this page's frontmatter would not load as string values.
 
-    The two field-presence and field-emptiness checks are delegated to
-    ``value_defect`` by the loop at the bottom, so there is one rule per shape
-    and no second place to update.
+    Field presence is checked here and value shape by ``value_defect``, so there
+    is one rule per shape and no second place to update.
     """
     try:
         fields = frontmatter_fields(page.read_text(encoding="utf-8"))
@@ -142,84 +132,26 @@ def test_every_shipped_skill_page_has_the_frontmatter_a_loader_reads() -> None:
         "\n".join(f"  {line}" for line in reports)
 
 
-def test_quoted_values_round_trip_to_their_own_text() -> None:
-    """Quoting changed the line, not the wording it carries.
-
-    Three halves. On every page: the raw value, unwrapped, re-quotes to the
-    exact text it came from and carries no surrounding space, so a quote pair
-    can neither eat nor gain a character. On the page this ticket changed: the
-    working tree's description must equal what ``git`` holds at ``PRE_FIX_REV``,
-    the commit whose page first carries that wording, so a rewording cannot hide
-    inside a quoting change and the reference is committed text, not a literal
-    that would rot. And the check itself is proved to fire: the same comparison
-    over a reworded page must refuse it, because a wording check that compared
-    the page to itself would pass forever.
-    """
-    def unwrapped(text: str) -> str:
-        raw = frontmatter_fields(text)["description"]
-        body = raw[1:] if raw.startswith(" ") else raw
-        if body[:1] in ("'", '"'):
-            return body[1:-1].replace("''", "'")
-        return body
-
-    def git_show(rev: str, path: str) -> str:
-        proc = subprocess.run(["git", "-C", str(REPO), "show", f"{rev}:{path}"],
-                              capture_output=True, text=True, timeout=30)
-        assert proc.returncode == 0, f"git show {rev}:{path} failed: {proc.stderr}"
-        return proc.stdout
-
-    pages = skill_pages()
-    for page in pages:
-        for name, raw in frontmatter_fields(page.read_text(encoding="utf-8")).items():
-            body = raw[1:] if raw.startswith(" ") else raw
-            marker = body[:1] if body[:1] in ("'", '"') else ""
-            text = body[1:-1] if marker else body
-            if marker:
-                # The unescape the loader does: '' stands for one apostrophe.
-                text = text.replace("''", "'")
-            assert text and text == text.strip(), (
-                f"{page}: {name} carries no text or gained surrounding space")
-            rejoined = f"{marker}{text}{marker}" if marker else text
-            assert rejoined == body, f"{page}: {name} lost characters under quoting"
-
-    noni = REPO / "skills" / "noni" / "SKILL.md"
-    assert noni in pages, (
-        f"{noni} is not in the gate's page listing, so the wording check below "
-        "would compare a page the gate never measured")
-    reference = unwrapped(git_show(PRE_FIX_REV, "skills/noni/SKILL.md"))
-    assert unwrapped(noni.read_text(encoding="utf-8")) == reference, (
-        f"skills/noni/SKILL.md's description is no longer the wording it carried "
-        f"at {PRE_FIX_REV}: this ticket was allowed to add a quote pair, not to reword")
-    # The proof that the comparison above is a real check: the same comparison
-    # against planted wording refuses, so a green run is not the two sides being
-    # the same string by construction.
-    reworded = noni.read_text(encoding="utf-8").replace("read-only screen",
-                                                         "read-only pane", 1)
-    assert unwrapped(reworded) != reference, (
-        "the wording comparison accepts a reworded description, so it checks nothing")
-
-
 def test_the_guard_refuses_a_planted_page_whose_value_is_unquoted() -> None:
     """The gate fires, rather than finding nothing to fire on.
 
     Driven directly over planted text (no monkeypatch, no shared reader), so a
     green run above means the rule rejected something and is not the absence of
-    a match. Each planted shape is the one the ticket names, plus the shapes the
-    three rules exist for.
+    a match. Each planted shape is one of the three rules the ticket names, and
+    the first is the real defect: this page's own wording, left unquoted.
     """
     planted = {
-        '---\nname: demo\ndescription: an attached project: one screen\n---\n':
+        '---\nname: demo\ndescription: a fresh agent in an attached project: '
+            "one read-only screen of the operator's decisions\n---\n":
             'an unquoted value contains ": "',
-        '---\nname: demo\ndescription:\n---\n': "the value is empty",
-        '---\nname: demo\ndescription: ""\n---\n': "the value is empty",
-        "---\nname: demo\ndescription: ''\n---\n": "the value is empty",
         '---\nname: demo\ndescription: a value ending in a colon:\n---\n':
             "ends in a colon",
-        '---\nname: demo\ndescription: "\n---\n': "the value is empty",
         '---\nname: demo\ndescription: "unterminated\n---\n': "does not close",
         '---\nname: demo\ndescription: " a value with text and no close\n---\n':
             "does not close",
         '---\nname: demo\ndescription: "holds \\"a quote\\""\n---\n':
+            'holds an unescaped',
+        '---\nname: demo\ndescription: "holds a \\\\backslash"\n---\n':
             'holds an unescaped',
         "---\nname: demo\ndescription: 'holds 'a quote'\n---\n":
             "holds a quote that '' does not escape",

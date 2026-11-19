@@ -41,10 +41,10 @@ shape; the three `SKILL.md` paths above are the product surface it has to preser
 There is no start-here skill. The page a fresh agent reads first is the screen
 `noni brief` prints: the standing rules, the purpose, the head of the order and the
 five newest recorded decisions, in one read-only run. A harness hook can inject that
-screen into the main agent at session start and after a compaction, and the hook
-families live under `integrations/` (see that directory's own page). Nothing here
-detects a harness or installs a hook: what the hooks do is hand the agent the screen
-the command prints, and the command needs no harness to run on its own.
+screen into the main agent at session start and after a compaction; noni keeps any
+such hook under `integrations/`, outside the core. Nothing here detects a harness or
+installs a hook: what the hooks do is hand the agent the screen the command prints,
+and the command needs no harness to run on its own.
 
 ## The per-session protocol
 

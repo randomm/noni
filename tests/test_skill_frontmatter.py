@@ -1,23 +1,10 @@
 """Every shipped SKILL.md frontmatter value reads as one string, not a mapping.
 
-Pi's skill loader parses the block between the first two ``---`` fences with a
-strict YAML parser, and an unquoted value that carries ": " is read as a nested
-mapping. That is how skills/noni/SKILL.md broke on every start: its description
-holds "an attached project: one read-only screen", and the loader reported
-"Nested mappings are not allowed in compact mappings".
-
-No gate caught it because no gate looked. ``test_start_here_page_docs.py``
-matches the block with ``^([a-z-]+):(.*)$`` and hands the value back verbatim,
-which matches the broken line happily; ``test_skill_scrub.py`` walks the same
-pages for secrets and length only. This module is the check the bug needed.
-
-Parser-free by design (issue #200). No YAML parser is a dev dependency,
-pyproject.toml is a gate file, and ``test_gate_wiring.py`` pins CI against the
-dev extra, so a guarded ``import yaml`` would report zero assertions on the venv
-that has to catch this. The rules below are the subset of YAML's plain-scalar
-rule this repo's frontmatter actually uses: each page is one ``name:`` and one
-unwrapped ``description:`` line, never a folded or literal block. The wording
-the quoting preserves is guarded by review of the two-character diff, not here.
+Each value between the first two ``---`` fences is judged by three quoting
+rules: a bare value may not carry ": " or end in a colon, and a quoted value
+must close and hold no quote that ends the scalar early. No YAML parser is a
+dependency of this project and adding one is a gate-file change, so the rules
+are applied here without one.
 """
 
 from __future__ import annotations
@@ -71,11 +58,11 @@ def value_defect(value: str) -> str | None:
     - A single-quoted value must close, and ``''`` is the only inner quote it
       may hold; one lone ``'`` ends the scalar early.
 
-    An empty value is out of scope: ruling 1 names only the colon and quote
-    rules, and a page whose block carries no field at all is already reported by
-    ``page_defects``.
+    An empty value is out of scope: the rules above name only the colon and
+    quote shapes, and a page whose block carries no field at all is already
+    reported by ``page_defects``.
     """
-    body = value[1:] if value.startswith(" ") else value
+    body = value.lstrip(" \t")
     marker = body[:1]
     if marker in ("'", '"'):
         if len(body) < 2 or not body.endswith(marker):
@@ -126,8 +113,8 @@ def test_every_shipped_skill_page_has_the_frontmatter_a_loader_reads() -> None:
     """
     pages = skill_pages()
     assert pages, f"no SKILL.md found under {REPO / 'skills'}; the gate measures nothing"
-    reports = [f"{page}: {'; '.join(page_defects(page))}"
-               for page in pages if page_defects(page)]
+    findings = [(page, page_defects(page)) for page in pages]
+    reports = [f"{page}: {'; '.join(defects)}" for page, defects in findings if defects]
     assert not reports, "these skill pages would not load as string frontmatter:\n" + \
         "\n".join(f"  {line}" for line in reports)
 
@@ -148,6 +135,8 @@ def test_the_guard_refuses_a_planted_page_whose_value_is_unquoted() -> None:
             "ends in a colon",
         '---\nname: demo\ndescription: "unterminated\n---\n': "does not close",
         '---\nname: demo\ndescription: " a value with text and no close\n---\n':
+            "does not close",
+        '---\nname: demo\ndescription:\t"unterminated after a tab\n---\n':
             "does not close",
         '---\nname: demo\ndescription: "holds \\"a quote\\""\n---\n':
             'holds an unescaped',

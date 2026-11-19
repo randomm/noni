@@ -73,12 +73,17 @@ def _lexical_rel_to_root(root: Path, path: Path) -> str | None:
     The spelling a resolver cannot give is still available where the given path
     never left the root: neither side needs resolving for ``relative_to`` to answer
     over the segments the caller was handed, and that is the only spelling that
-    keeps a host location out of the row.
+    keeps a host location out of the row. ``relative_to`` matches segments without
+    evaluating them, so a successful answer is not evidence the path stayed in the
+    tree: a ``..`` means it walked out, and no spelling of that is root-relative.
     """
     try:
-        return path.relative_to(root).as_posix()
+        rel = path.relative_to(root)
     except ValueError:
         return None
+    if any(part == ".." for part in rel.parts):
+        return None
+    return rel.as_posix()
 
 
 def _row(check: str, strict: bool, subject: str, artifact: str, message: str,

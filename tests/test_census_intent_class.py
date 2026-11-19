@@ -346,7 +346,10 @@ def test_a_resolve_that_raises_names_an_in_root_path_from_the_root(tmp_path, mon
     so the arm is driven here by making ``resolve()`` refuse instead. A path the
     census was told to read and that sits lexically inside the root is spelled from
     the root; a path outside it comes back verbatim, which is what keeps a host
-    location out of the row when there is no root-relative spelling to give.
+    location out of the row when there is no root-relative spelling to give. That
+    includes a path whose segments sit under the root but walk back out of it with
+    ``..``: ``relative_to`` matches segments without evaluating them, so it answers
+    for that path too, and the answer would still carry the escape.
     """
     import noni.census as census
 
@@ -360,3 +363,7 @@ def test_a_resolve_that_raises_names_an_in_root_path_from_the_root(tmp_path, mon
 
     assert census._rel_to_root(root, inside) == "noni/decisions/d.md"
     assert census._rel_to_root(root, outside) == str(outside)
+
+    escaping = root.joinpath("noni", "..", "..", "outside", "d.md")
+    assert census._rel_to_root(root, escaping) == str(escaping)
+    assert ".." not in census._rel_to_root(root, inside).split("/")

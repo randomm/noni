@@ -22,10 +22,17 @@ Two halves:
    the adapter; they are the integration tests and are excluded here. They
    would be the ones that need integrations/ present.)
 
-test_pi_extension.py is in the set too: it is the static suite over the harness
-hook under ``integrations/pi/``, so it reads that directory and is excluded from
-the import scan the same way (it imports no adapter module, but its subject
-matter is integrations/). When a future pi suite is added, name it here as well.
+test_pi_extension.py is in the set too: it is the suite over the harness hook
+under ``integrations/pi/``, so it reads that directory and is excluded from the
+import scan the same way (it imports no adapter module, but its subject matter is
+integrations/). Its three helper modules are named here for the same reason --
+``pi_hook_checks.py`` (the text readers, which import nothing from the product),
+``pi_hook_driver.py`` (the JavaScript driver, inert), and ``pi_hook_launch.py``
+(which runs the hook and so belongs with the suite it serves). The suite's own
+line budget does not stretch to the driver as well:
+``tests/test_file_size_limit.py`` caps a ``.py`` at 500 lines. They are not
+``test_*.py``, so this set never sees them; they are named here so a reader
+can find the suite's other half. When a future pi helper is added, name it too.
 """
 
 from __future__ import annotations

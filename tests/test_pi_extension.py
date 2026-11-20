@@ -1,4 +1,4 @@
-"""Static checks over the pi harness hook under integrations/pi/.
+"""The pi harness hook under integrations/pi/, checked as text and driven.
 
 The hook is the one place in this repository that runs a coding agent's
 lifecycle: ``noni.ts`` adds a standing reminder to the prompt every turn and
@@ -7,19 +7,35 @@ toolchain runs in CI (``.github/workflows/ci.yml`` installs jq, coverage,
 pytest, ruff and build), so this module reads the source as text and asserts the
 shape the ticket ruled:
 
-- exactly three events are registered, and the brief is spawned from the two
-  start handlers only, never from the per-turn handler;
+- exactly three events are registered, and neither the spawn nor the fetch
+  call reaches the per-turn handler, lexically over that handler's body;
 - the reminder and the failure line are each within the 300-character bound,
   and the failure line replaces a path with the words "state root";
+- the per-turn behaviour is also driven for real: a node harness loads
+  ``noni.ts`` under ``node --experimental-strip-types`` and hands it a fake
+  ``ExtensionAPI``, which is where the once-per-turn reminder, the empty-output
+  arm and the no-shell option are checked (node and the flag are both optional,
+  so the suite skips that half rather than failing where node is absent);
 - the file is within its 80-line budget, which the size gate does not measure
   (``tests/test_file_size_limit.py`` caps ``.py``, ``.sh``, ``.jq``, workflow
   YAML, ``SKILL.md`` and shebang'd files, and a plain ``.ts`` is exempt);
 - no added prose carries an em dash, and the harness is named nowhere outside
   ``integrations/pi/``.
 
-Text assertions are the only form available: Python's stdlib has no TypeScript
-parser, so the ``ast``-based readers other suites use (``intent_class_ast.py``,
-``fifo_ast_support.py``) do not apply here.
+The file holds the assertions only. The readers they share are in
+``pi_hook_checks.py``, the node driver in ``pi_hook_driver.py`` and its launcher
+in ``pi_hook_launch.py``, because the size gate
+(``tests/test_file_size_limit.py``) caps a ``.py`` at 500 lines and this suite
+needs more than that of text to say what it rules out.
+
+Both forms of check are load-bearing, and neither is redundant:
+
+- the static assertions catch what a single run cannot see (a rename that drops
+  the ``--repo`` flag, an em dash, the harness word escaping ``integrations/``);
+- the driven assertions catch what no text scan can: a fetch reached only through
+  the fetcher's name inside the per-turn handler, or a reminder guard whose
+  deletion leaves the file's text looking correct. Each has been confirmed by
+  planting that regression and watching the suite fail.
 """
 
 from __future__ import annotations
@@ -27,11 +43,23 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from _harness import REPO
+import pytest
 
 # The scrub's own tables, so the hook is measured by the patterns CI's scrub step
 # runs rather than by a copy of them (the same source tests/test_skill_scrub.py
 # and tests/test_purity.py read). No noqa: the import sits where ruff expects it.
+from _harness import REPO
+from pi_hook_checks import (
+    EVENTS,
+    FAILURE_LINE,
+    SPAWN_CALL,
+    handler_body,
+    registrations,
+    source_text,
+    spawn_offsets,
+    string_literal,
+)
+from pi_hook_launch import node_available, run_hook
 from public_safety import (
     FIXTURE_HOME_PATH_PATTERNS,
     HOME_PATH_PATTERNS,
@@ -50,7 +78,6 @@ FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bBearer\s+[A-Za-z0-9._~+/-]{20,}"), "bearer token"),
 ]
 
-EVENTS = ("session_start", "session_compact", "before_agent_start")
 LINE_LIMIT = 300
 FILE_LINE_LIMIT = 80
 
@@ -68,63 +95,25 @@ HARNESS_WORD = re.compile(r"\bpi\b", re.IGNORECASE)
 CORE_DIRS: tuple[Path, ...] = (REPO / "skills", REPO / "docs")
 CORE_FILES: tuple[Path, ...] = (REPO / "README.md",)
 
-_REGISTERED = re.compile(r'pi\.on\(\s*"([a-z_]+)"')
-# The one spawn in the file, and where it sits: the per-turn handler is the last
-# registration, so a spawn after it is a brief billed to every prompt.
-_SPAWN = re.compile(r'pi\.exec\("noni", \["brief", "--repo", root\]')
-# The reminder is one quoted sentence per source line, joined by +. A quoted
-# string runs to the next quote, which is why the scan is character-shaped rather
-# than a line regex: the text carries an apostrophe.
-_QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"')
-_FAILURE_LINE = re.compile(r'(?:return|const \w+ =)\s*(`noni: could not read[^`]*`)')
-
-
 def _source() -> str:
-    assert EXTENSION.is_file(), f"{EXTENSION} is missing"
-    return EXTENSION.read_text(encoding="utf-8")
+    """The hook's source, with its absence reported as a missing file."""
+    return source_text(EXTENSION)
 
 
-def _handler_body(source: str, event: str) -> str:
-    """The registered handler for ``event``, sliced to the next registration.
+def _skip_without_node() -> None:
+    """The driven half is optional: the CI image installs no node toolchain.
 
-    Registration order in the file is the order of ``EVENTS``, so the next
-    ``pi.on("`` after this one is the handler's end. A check over a slice rather
-    than over the whole file is what makes "the brief is never fetched per turn"
-    a claim about the per-turn handler instead of a claim about the file.
+    The launcher needs a node binary to load a ``.ts`` hook at all, so the
+    behavioural checks skip where none exists rather than fail. The static
+    assertions over the same file run either way.
     """
-    starts = [match.start() for match in _REGISTERED.finditer(source)]
-    assert len(starts) == len(EVENTS), f"expected {len(EVENTS)} registrations"
-    index = [m.group(1) for m in _REGISTERED.finditer(source)].index(event)
-    end = starts[index + 1] if index + 1 < len(starts) else len(source)
-    return source[starts[index]:end]
-
-
-def _string_literal(source: str, name: str) -> str:
-    """The value of ``const NAME = "..." + "...";``, joined.
-
-    The reminder is written across a few lines for readability, so the bound is
-    measured on the joined string the model receives, not on one fragment of it.
-    The scan stops at the closing semicolon that ends the declaration (the
-    sentence itself contains semicolons, so it is the one at the end of a line
-    that ends it), and a quoted piece is read quote to quote so an apostrophe
-    inside the sentence cannot end it early.
-    """
-    head = f"const {name} ="
-    start = source.index(head)
-    rest = source[start + len(head):]
-    end = re.search(r";\s*$", rest[: rest.index("\n\n")], re.MULTILINE)
-    assert end, f"const {name} has no terminating semicolon"
-    pieces = _QUOTED.findall(rest[: end.end()])
-    assert pieces and "".join(pieces).strip(), f"const {name} is empty"
-    assert len(pieces) * 2 == rest[: end.end()].count('"'), f"const {name} is malformed"
-    joined = "".join(pieces)
-    assert joined == joined.strip(), f"const {name} lost its spacing"
-    return joined
+    if not node_available():
+        pytest.skip("node is not installed, so the hook cannot be driven")
 
 
 def test_the_extension_registers_exactly_the_three_events() -> None:
     """AC/ruled: two start events and the per-turn handler, and nothing else."""
-    assert _REGISTERED.findall(_source()) == list(EVENTS)
+    assert registrations(source_text(EXTENSION)) == list(EVENTS)
 
 
 def test_the_brief_is_spawned_from_the_start_handlers_only() -> None:
@@ -134,15 +123,24 @@ def test_the_brief_is_spawned_from_the_start_handlers_only() -> None:
     full brief is paid for twice per session. A fetch reachable from the per-turn
     handler would bill a census run to every prompt.
     """
-    source = _source()
-    spawns = [match.start() for match in _SPAWN.finditer(source)]
+    source = source_text(EXTENSION)
+    spawns = spawn_offsets(source)
     assert spawns, "the hook spawns no `noni brief`"
     for event in EVENTS[:2]:
-        assert "await fetchBrief(ctx.cwd);" in _handler_body(source, event), (
+        assert "await fetchBrief(ctx.cwd);" in handler_body(source, event), (
             f"{event} does not fetch the brief")
+    per_turn = handler_body(source, "before_agent_start")
+    # Lexical, over the body of the per-turn handler: a call to the fetcher
+    # there carries no `pi.exec` text at all, so a positional check over the
+    # spawn offsets alone lets it through.
+    assert "fetchBrief" not in per_turn, (
+        "the per-turn handler can reach the brief, which bills a census run "
+        "to every prompt")
+    assert "pi.exec" not in per_turn, (
+        "the brief is spawned from the per-turn handler, which bills it per turn")
     per_turn_at = source.index('pi.on("before_agent_start"')
     assert all(at < per_turn_at for at in spawns), (
-        "the brief is spawned from the per-turn handler, which bills it per turn")
+        "a spawn sits at or after the per-turn registration")
 
 
 def test_the_brief_argv_names_the_state_root_flag() -> None:
@@ -152,7 +150,7 @@ def test_the_brief_argv_names_the_state_root_flag() -> None:
     environment for a state root (``tests/test_brief_now.py`` pins that), so a
     hook that forgot the flag gets exit 2 and the session gets a failure line.
     """
-    assert '"--repo", root' in _source()
+    assert '"--repo", root' in source_text(EXTENSION)
 
 
 def test_the_brief_runs_under_a_timeout_and_without_a_shell() -> None:
@@ -162,12 +160,18 @@ def test_the_brief_runs_under_a_timeout_and_without_a_shell() -> None:
     session; and a shell would be a second way for a path or a name to reach the
     command line.
     """
-    source = _source()
+    source = source_text(EXTENSION)
     assert "pi.exec(" in source
     assert re.search(r"\{\s*timeout:\s*BRIEF_TIMEOUT_MS\s*\}", source), (
         "the spawn carries no timeout")
     assert "BRIEF_TIMEOUT_MS = 10_000" in source
-    assert "shell" not in source
+    # The rule is about the options object the command is actually given: a word
+    # ban over the file would pass `{ timeout, useShell: true }`.
+    options = SPAWN_CALL.findall(source)
+    assert options, "no spawn call to read options from"
+    for text in options:
+        assert "shell" not in text, f"the spawn options mention a shell: {text}"
+        assert re.search(r"\btimeout\b", text), f"the spawn options carry no timeout: {text}"
 
 
 def test_the_reminder_is_within_the_character_bound() -> None:
@@ -177,7 +181,7 @@ def test_the_reminder_is_within_the_character_bound() -> None:
     that it is a real sentence is what keeps a reader that found no text at all
     from passing an upper bound vacuously.
     """
-    reminder = _string_literal(_source(), "REMINDER")
+    reminder = string_literal(source_text(EXTENSION), "REMINDER")
     assert len(reminder) <= LINE_LIMIT, f"reminder is {len(reminder)} characters"
     assert len(reminder) >= 120, f"no reminder text was read: {reminder!r}"
     assert reminder.startswith("noni "), f"the reminder leads elsewhere: {reminder!r}"
@@ -199,8 +203,8 @@ def test_the_failure_line_is_within_the_bound_and_leaks_no_path() -> None:
     stderr: an assertion on the words alone stays green when the replacement is
     dropped and only its result is unused.
     """
-    source = _source()
-    match = _FAILURE_LINE.search(source)
+    source = source_text(EXTENSION)
+    match = FAILURE_LINE.search(source)
     assert match, "the failure line is missing from the hook"
     assert len(match.group(1)) - 2 <= LINE_LIMIT, (
         f"the failure line template is {len(match.group(1)) - 2} characters")
@@ -218,9 +222,15 @@ def test_the_reminder_is_added_as_a_prompt_guideline() -> None:
     cache miss on every turn that changed, which is the wasted-token cost the
     operator's decision rules out.
     """
-    source = _source()
-    body = _handler_body(source, "before_agent_start")
+    source = source_text(EXTENSION)
+    body = handler_body(source, "before_agent_start")
     assert "promptGuidelines" in body, "no prompt guideline is added per turn"
+    assert "guidelines.push(REMINDER)" in body, (
+        "nothing adds the reminder, so the standing bullet is never in the prompt")
+    # Without the guard the push runs on every turn, so the bullet is handed to
+    # pi once per turn for the same run.
+    assert re.search(r"if \(!guidelines\.includes\(REMINDER\)\)", body), (
+        "the reminder is pushed unconditionally, so it can be added twice in a turn")
     for forbidden in ("systemPrompt:", "forceSystemPrompt"):
         assert forbidden not in source, f"{forbidden} would miss the prompt cache"
     assert "sendMessage" not in source, (
@@ -228,20 +238,26 @@ def test_the_reminder_is_added_as_a_prompt_guideline() -> None:
 
 
 def test_the_brief_is_returned_once_for_a_user_run() -> None:
-    """The pending value is consumed by a run whose messageType is "user"."""
-    body = _handler_body(_source(), "before_agent_start")
+    """The pending value is consumed by a run whose messageType is "user".
+
+    The value is read into a local before it is cleared, so a run that returns
+    it cannot also leave it pending for the next one.
+    """
+    body = handler_body(source_text(EXTENSION), "before_agent_start")
     assert 'event.messageType !== "user"' in body, (
         "a run started by a custom message could re-inject the brief")
+    assert "const content = pendingBrief;" in body, (
+        "the pending brief is not read into the returned message")
     assert "pendingBrief = undefined" in body, "the pending brief is not cleared"
     assert "customType" in body and "message:" in body
 
 
 def test_the_fetch_needs_an_interactive_session() -> None:
     """Ruling 3: the brief is fetched only when ctx.hasUI, the reminder is not."""
-    source = _source()
+    source = source_text(EXTENSION)
     assert source.count("if (ctx.hasUI) await fetchBrief(ctx.cwd);") == 2, (
         "the brief is not gated on an interactive session in both start events")
-    assert "ctx.hasUI" not in _handler_body(source, "before_agent_start"), (
+    assert "ctx.hasUI" not in handler_body(source, "before_agent_start"), (
         "the reminder must apply in every mode, including a headless one")
 
 
@@ -252,7 +268,7 @@ def test_the_state_root_resolution_order_is_the_ruled_one() -> None:
     resolver that consulted the working directory first would still contain
     every name below, and the env var's precedence is the whole ruling.
     """
-    source = _source()
+    source = source_text(EXTENSION)
     body = source[: source.index("export default")]
     resolver = body[body.index("function stateRoot"):]
     env_at = resolver.index('env["NONI_STATE_ROOT"]')
@@ -268,6 +284,123 @@ def test_the_state_root_resolution_order_is_the_ruled_one() -> None:
         "the env var is not the first source")
 
 
+def test_the_hook_registers_two_start_events_and_one_per_turn_event(
+    tmp_path: Path,
+) -> None:
+    """Driven: the three registrations are exactly the three ruled events.
+
+    The static check reads the literal ``pi.on("`` calls; this observes what the
+    module actually registers when loaded, which is the only form that catches a
+    handler registered through a variable or an alias.
+    """
+    assert list(run_hook(tmp_path, EXTENSION)["registrations"]["registrations"]) == list(EVENTS)
+
+
+def test_the_driven_hook_spawns_twice_per_session_and_never_per_turn(
+    tmp_path: Path,
+) -> None:
+    """Driven: two spawns for the session, then zero across three runs.
+
+    This is the ticket's central token rule observed rather than inferred from
+    text: a per-turn fetch would show up here as spawns beyond ``afterStarts``,
+    which is exactly the regression the static assertion above cannot see when
+    the call is hidden behind the fetcher's name.
+    """
+    _skip_without_node()
+    run = run_hook(tmp_path, EXTENSION)["spawns"]
+    assert run["afterStarts"] == 2, f"{run['afterStarts']} spawns for the two start events"
+    assert run["turns"] == 0, f"{run['turns']} spawns across three runs"
+    assert run["spawn"]["command"] == "noni"
+    assert run["spawn"]["args"][:2] == ["brief", "--repo"]
+    assert run["spawn"]["args"][2].endswith("project")
+    # The options object itself, not the word "shell" somewhere in the file.
+    assert run["spawn"]["options"] == {"timeout": 10_000}
+
+
+def test_the_driven_hook_adds_one_reminder_for_the_whole_session(
+    tmp_path: Path,
+) -> None:
+    """Driven: three runs on one options object leave exactly one bullet.
+
+    pi copies the array once per run, so a push without the guard is a second
+    copy of the same bullet in the prompt for the run that pushed it. The static
+    check pins the guard's shape; this pins what the guard is for.
+    """
+    _skip_without_node()
+    run = run_hook(tmp_path, EXTENSION)["reminder"]
+    assert run["copies"] == [1, 1, 1], (
+        f"the reminder reached the prompt {run['copies']} times over three runs")
+    assert len(run["bullets"]) == 1, f"other bullets appeared: {run['bullets']}"
+
+
+def test_the_driven_hook_gives_a_headless_session_the_reminder_and_no_brief(
+    tmp_path: Path,
+) -> None:
+    """Driven: hasUI false means no spawn, and the standing bullet still lands."""
+    _skip_without_node()
+    run = run_hook(tmp_path, EXTENSION)["headless"]
+    assert run["spawns"] == 0, "a headless session spawned the brief"
+    assert run["once"] == 1, "the reminder is gated on an interactive session"
+
+
+def test_the_driven_hook_injects_the_brief_once_and_for_a_user_run_only(
+    tmp_path: Path,
+) -> None:
+    """Driven: the first user run gets the message, nothing after it does.
+
+    A run started by a custom message must not consume or re-inject it, which is
+    what ``again`` and ``custom`` are for: both are undefined only when the value
+    was cleared by the run that returned it.
+    """
+    _skip_without_node()
+    run = run_hook(tmp_path, EXTENSION)["brief"]
+    first = run["first"]
+    assert first and first["message"]["content"] == "order: 7 then 3"
+    assert first["message"]["customType"] == "noni-brief"
+    assert first["message"]["display"] is True
+    assert run["again"] is False, "the brief was injected on a second run"
+    assert run["custom"] is False, "a custom-message run received the brief"
+
+
+@pytest.mark.parametrize("name, content", [
+    ("failure", "brief: --repo state root is not a directory"),
+    ("empty", "(exit code 0)"),
+])
+def test_the_driven_hook_reports_a_failure_without_a_path(
+    tmp_path: Path, name: str, content: str,
+) -> None:
+    """Driven: the failure arm names the reason, capped, with the path scrubbed.
+
+    The exit-2 case carries a home path in stderr; the exit-0-with-no-output case
+    must still say something, or the model gets an empty message and no idea the
+    census run failed.
+    """
+    _skip_without_node()
+    run = run_hook(tmp_path, EXTENSION)[name]
+    message = run["message"]["message"]
+    assert message["customType"] == "noni-brief"
+    assert content in message["content"], message["content"]
+    assert "/" not in message["content"], f"a path reached the model: {message}"
+    assert len(message["content"]) <= LINE_LIMIT
+
+
+def test_the_driven_hook_stays_quiet_with_no_state_root(tmp_path: Path) -> None:
+    """Driven: with no root to read, no spawn and no message of any kind.
+
+    The scenario names its own working directory and its own ``NONI_STATE_ROOT``,
+    both reported back, so the case cannot pass by running in a tree that happens
+    to hold a ``noni/`` directory. The hook then has neither an env root nor a
+    candidate to spawn against, and the ticket's rule for that arm is silence:
+    the reminder stays, the brief does not appear.
+    """
+    _skip_without_node()
+    run = run_hook(tmp_path, EXTENSION)["no-state"]
+    assert run["cwd"] == str(tmp_path / "bare"), f"ran against {run['cwd']}"
+    assert run["env"] == "", "the scenario ran without its empty state root"
+    assert run["spawned"] == 0, "the hook spawned `noni brief` with no state root"
+    assert run["message"] is False, "the hook injected a message with no state root"
+
+
 def test_the_extension_file_stays_within_its_line_budget() -> None:
     """80 lines, asserted here because the size gate exempts a plain .ts.
 
@@ -275,7 +408,7 @@ def test_the_extension_file_stays_within_its_line_budget() -> None:
     workflow YAML, SKILL.md and anything with a shebang first line; a .ts with
     no shebang is invisible to it, so the ticket's budget needs its own check.
     """
-    lines = _source().splitlines()
+    lines = source_text(EXTENSION).splitlines()
     assert len(lines) <= FILE_LINE_LIMIT, f"noni.ts is {len(lines)} lines"
 
 

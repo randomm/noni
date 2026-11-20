@@ -21,6 +21,14 @@ Two halves:
    test_gh_adapter_labels.py — *do* import
    the adapter; they are the integration tests and are excluded here. They
    would be the ones that need integrations/ present.)
+
+test_pi_extension.py is in the set too: it is the suite over the harness hook
+under ``integrations/pi/``, so it reads that directory and is excluded from the
+import scan the same way (it imports no adapter module, but its subject matter is
+integrations/). It is self-contained: the hook is checked as text, so there is no
+helper module beside it to name here. The one exception is
+``pi_extension_source.py``, the readers that module imports for itself: same
+reason, no adapter module behind it, so it joins the exclusion set.
 """
 
 from __future__ import annotations
@@ -48,6 +56,16 @@ ADAPTER_TEST_MODULES = {
     "test_github_issues_adapter.py",
     "test_gh_adapter_allowlist.py",
     "test_gh_adapter_labels.py",
+    "test_pi_extension.py",
+    # The readers the hook suites use, imported by them and by nothing else: the
+    # span readers and the failure line's cap reader. Same reason, no adapter
+    # module behind either.
+    "pi_extension_source.py",
+    "pi_extension_failure_line.py",
+    # The two modules split out of test_pi_extension.py: same subject matter, the
+    # hook's text, read as text.
+    "test_pi_extension_failure_line.py",
+    "test_pi_extension_falsifiability.py",
 }
 CORE_TEST_MODULES = sorted(
     p for p in (REPO / "tests").glob("test_*.py") if p.name not in ADAPTER_TEST_MODULES

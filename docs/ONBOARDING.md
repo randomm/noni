@@ -36,6 +36,10 @@ skill for you, and no page here names the runtimes a team might use. Where your
 loader expects a layout other than `skills/<name>/SKILL.md`, the copy is yours to
 shape; the three `SKILL.md` paths above are the product surface it has to preserve.
 
+The one thing under [`integrations/`](../integrations/) that a harness can load is not
+an exception to that: it installs nothing, carries no skill, and is the only place in
+this repository allowed to name a harness.
+
 ## The page an agent reads first
 
 There is no start-here skill. The page a fresh agent reads first is the screen

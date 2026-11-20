@@ -26,7 +26,9 @@ test_pi_extension.py is in the set too: it is the suite over the harness hook
 under ``integrations/pi/``, so it reads that directory and is excluded from the
 import scan the same way (it imports no adapter module, but its subject matter is
 integrations/). It is self-contained: the hook is checked as text, so there is no
-helper module beside it to name here.
+helper module beside it to name here. The one exception is
+``pi_extension_source.py``, the readers that module imports for itself: same
+reason, no adapter module behind it, so it joins the exclusion set.
 """
 
 from __future__ import annotations
@@ -55,6 +57,8 @@ ADAPTER_TEST_MODULES = {
     "test_gh_adapter_allowlist.py",
     "test_gh_adapter_labels.py",
     "test_pi_extension.py",
+    # The readers suite over the hook use, imported by it and by nothing else.
+    "pi_extension_source.py",
 }
 CORE_TEST_MODULES = sorted(
     p for p in (REPO / "tests").glob("test_*.py") if p.name not in ADAPTER_TEST_MODULES

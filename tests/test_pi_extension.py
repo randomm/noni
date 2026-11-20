@@ -5,46 +5,47 @@ lifecycle: a standing reminder in the prompt every turn, and ``noni brief``
 injected at session start and after each compaction. CI installs no node
 toolchain (``.github/workflows/ci.yml`` installs jq, coverage, pytest, ruff and
 build), so this module reads the source as text and asserts the shape the
-ticket ruled: the spawn lives only inside ``fetchBrief`` and the start events
-start it without awaiting; the per-turn handler awaits the in-flight fetch and
-returns ``{message}`` only for a run whose ``messageType`` is "user"; the
-reminder is one deduplicated ``promptGuidelines`` push within 300 characters and
-never a returned or forced ``systemPrompt``; the fetch runs under a 30 000 ms
-timeout inside a ``try``/``catch`` and its failure line is capped and
-path-scrubbed; the file is within its 80-line budget, its prose carries no em
-dash, the harness is named nowhere in the core, and the page names the trust
-step, the state root, the install target and the PATH rule.
+ticket ruled: the spawn lives only inside ``fetchBrief``, which returns its text
+and never writes the shared slot, and the start events start it through the
+epoch-guarded ``startBrief`` without awaiting, so only the newest start can
+publish a brief; the per-turn handler awaits the in-flight fetch and returns
+``{message}`` only for a run whose ``messageType`` is "user"; the reminder is one
+deduplicated ``promptGuidelines`` push within 300 characters and never a returned
+or forced ``systemPrompt``; the fetch runs under a 30 000 ms timeout inside a
+``try``/``catch`` and its failure line is capped and path-scrubbed; the fetch is
+gated on the run mode ``"tui"``, the interactive terminal, where ``hasUI`` would
+also admit an RPC session; the file is within its 80-line budget, its prose
+carries no em dash, the harness is named nowhere in the core, and the page names
+the trust step, the state root, the install target, the PATH rule, the newest
+brief winning, and the terminal-only gate.
 
 The live check (the page's "Verifying it", run against a real session) carries
-the behaviour; these assertions carry the shape. The readers below are shared so
-"the body of the per-turn handler" has one definition every check agrees with.
+the behaviour; these assertions carry the shape. The readers live in
+``pi_extension_source.py`` so "the body of the per-turn handler" has one
+definition every check agrees with.
 """
 
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 from _harness import REPO, _git
-
-PI_DIR = REPO / "integrations" / "pi"
-EXTENSION = PI_DIR / "noni.ts"
-HOOK_README = PI_DIR / "README.md"
-HOOK_FILES: tuple[Path, ...] = (EXTENSION, HOOK_README)
-
-EVENTS = ("session_start", "session_compact", "before_agent_start")
-REGISTERED = re.compile(r'pi\.on\(\s*"([a-z_]+)"')
-QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"')
-FAILURE_LINE = re.compile(r"(?:return|const \w+ =)\s*(`noni: could not read[^`]*`)")
-# Every form of the spawn call, so the timeout rule reads the options object the
-# command actually carries rather than the word "timeout" somewhere in the file.
-SPAWN_CALL = re.compile(r"pi\.exec\((.*?)\)", re.DOTALL)
-
-LINE_LIMIT = 300
-FILE_LINE_LIMIT = 80
-
-# U+2014, written as an escape so this file does not carry the character it bans.
-EM_DASH = "\u2014"
+from pi_extension_source import (
+    EM_DASH,
+    EVENTS,
+    FAILURE_LINE,
+    FILE_LINE_LIMIT,
+    HOOK_FILES,
+    HOOK_README,
+    LINE_LIMIT,
+    SPAWN_CALL,
+    function_body,
+    handler_body,
+    registrations,
+    source,
+    start_gate,
+    string_literal,
+)
 
 # The harness's own name as a word. The purity rule confines it to
 # integrations/, and a core page has no reason to write it at all.
@@ -54,55 +55,32 @@ HARNESS_WORD = re.compile(r"\bpi\b", re.IGNORECASE)
 # are excluded because this module is the check over the hook and names it.
 CORE_GLOBS = ("skills/*", "docs/*", "README.md")
 
+# The fetcher's arms. The success arm hands the stdout back to the caller, which is
+# the only path allowed to write the pending slot; both failure arms go through
+# failureLine, the plain-run one via the reason that run gave.
+RETURNED_BRIEF = "return r.stdout.trim() || failureLine(failureReason(r));"
+RETURNED_THROW = 'return failureLine("could not run the brief");'
 
-def source() -> str:
-    """The hook's source, with its absence reported as a missing file."""
-    assert EXTENSION.is_file(), f"{EXTENSION} is missing"
-    return EXTENSION.read_text(encoding="utf-8")
+# The two candidate roots the resolver walks, in the ruled order: the pilot's state
+# directory, then the bare working directory (the empty name stands for the cwd).
+# The hook builds each path from this list, so the order below is the order it tries.
+CANDIDATE_ORDER = ('".noni-state"', '""')
 
-
-def registrations(text: str) -> list[str]:
-    """The event names registered, in registration order."""
-    return REGISTERED.findall(text)
-
-
-def handler_body(text: str, event: str) -> str:
-    """The registered handler for ``event``, sliced to the next registration.
-
-    Registration order is the order of ``EVENTS``, so the next ``pi.on("`` is the
-    handler's end. A check over a slice is what makes "the brief is never fetched
-    per turn" a claim about the per-turn handler, not about the file.
-    """
-    starts = [m.start() for m in REGISTERED.finditer(text)]
-    assert len(starts) == len(EVENTS), f"expected {len(EVENTS)} registrations"
-    index = registrations(text).index(event)
-    return text[starts[index]: starts[index + 1] if index + 1 < len(starts) else len(text)]
-
-
-def function_body(text: str, name: str) -> str:
-    """The body of ``function name(`` up to its closing brace at column 4."""
-    start = text.index(f"function {name}(")
-    return text[start:text.index("\n  }", start)]
-
-
-def string_literal(text: str, name: str) -> str:
-    """The value of ``const NAME = "..." + "...";``, joined.
-
-    The bound is measured on the joined string the model receives, so the scan
-    stops at the semicolon ending the declaration and reads quoted pieces quote
-    to quote, where an apostrophe in the sentence cannot end a piece early. Three
-    assertions keep a vacuous read out.
-    """
-    head = f"const {name} ="
-    rest = text[text.index(head) + len(head):]
-    end = re.search(r";\s*$", rest[: rest.index("\n\n")], re.MULTILINE)
-    assert end, f"const {name} has no terminating semicolon"
-    pieces = QUOTED.findall(rest[: end.end()])
-    assert pieces and "".join(pieces).strip(), f"const {name} is empty"
-    assert len(pieces) * 2 == rest[: end.end()].count('"'), f"const {name} is malformed"
-    joined = "".join(pieces)
-    assert joined == joined.strip(), f"const {name} lost its spacing"
-    return joined
+# What the page owes a reader, each with the reason its absence is a gap.
+PAGE_RULES = (
+    ("NONI_STATE_ROOT", "the page does not name the state root source"),
+    (".pi/extensions", "the page does not name the install target"),
+    ("trusted", "the page does not name the trust step"),
+    ("silently", "the page does not say an untrusted project is skipped"),
+    ("first on PATH", "the page does not say which `noni` the hook runs"),
+    ("session_compact", "the page does not say when the brief is fetched"),
+    ("docs/QUICKSTART.md#install-noni", "the page drops the quickstart's Install link"),
+    ("no reliable way to\ntell a child session", "the page must state the rule's limit"),
+    ("interactive terminal sessions", "the page must name the terminal as the only brief"),
+    ('"tui"', "the page does not name the run mode the gate reads"),
+    ("newest brief wins", "the page does not say the newest brief wins"),
+    ("## Verifying it", "the page states no way to verify the hook"),
+)
 
 
 def harness_lines(rels: list[str]) -> list[str]:
@@ -139,14 +117,21 @@ def test_the_brief_is_spawned_only_from_the_fetcher() -> None:
 def test_the_start_handlers_start_the_fetch_without_awaiting_it() -> None:
     """The start events store the in-flight promise; they do not await it.
     ``session_compact`` fires while pi counts as busy, so an awaited fetch there
-    delays the session for a result no handler needs yet.
+    delays the session for a result no handler needs yet. The gate is the run mode:
+    ``hasUI`` is true for an RPC session as well as the terminal, so it would not
+    keep the brief out of a session the page says gets none.
     """
     text = source()
+    gate = start_gate(text)
+    assert 'ctx.mode === "tui"' in gate, "a non-terminal session fetches the brief"
+    assert "hasUI" not in gate, "the gate is hasUI, which RPC sessions also report"
+    assert gate.count("inflight = startBrief(ctx.cwd);") == 1, (
+        "the two start events do not share one gate")
+    assert gate.count("pi.on(") == 2, "a start event is not wired to the gate"
     for event in EVENTS[:2]:
         body = handler_body(text, event)
-        assert "inflight = fetchBrief(ctx.cwd);" in body, f"{event} does not start the fetch"
+        assert "start(ctx)" in body, f"{event} does not start the fetch"
         assert "await" not in body, f"{event} awaits the fetch, so it blocks the session"
-        assert "ctx.hasUI" in body, f"{event} fetches in a headless session"
 
 
 def test_the_per_turn_handler_awaits_the_in_flight_fetch() -> None:
@@ -174,6 +159,25 @@ def test_the_brief_is_returned_once_for_a_user_run_only() -> None:
     assert "customType" in body
 
 
+def test_only_the_newest_start_may_publish_the_brief() -> None:
+    """The race the epoch closes. A start that follows another while the first fetch
+    is still running must win, so the writer compares its own number against the
+    counter before it stores: one regex over the start path pins the guard. The
+    fetcher hands back its text rather than writing the slot, or the older fetch
+    would land on top of the newer brief and a turn could inject a stale one.
+    """
+    text = source()
+    start = function_body(text, "startBrief")
+    assert re.search(r"const mine = \+\+epoch;", start), "the start takes no number of its own"
+    assert re.search(r"if \(mine === epoch\) pendingBrief = text;", start), (
+        "the pendingBrief write is not guarded by the epoch")
+    assert "fetchBrief(cwd).then" in start, "the guarded write does not follow the fetch"
+    fetch = function_body(text, "fetchBrief")
+    assert "pendingBrief" not in fetch, "the fetcher writes the pending brief itself"
+    assert RETURNED_BRIEF in fetch, "the fetcher does not return the brief text"
+    assert "return undefined;" in fetch, "a missing state root returns nothing to publish"
+
+
 def test_the_brief_argv_names_the_state_root_flag() -> None:
     """``noni brief --repo <root>``: ``src/noni/brief.py`` makes --repo required
     and no core module reads the environment for a root, so a hook that forgot
@@ -199,7 +203,7 @@ def test_the_fetcher_catches_every_failure() -> None:
     body = function_body(source(), "fetchBrief")
     assert "try {" in body, "the fetcher has no try block"
     assert "catch {" in body, "the fetcher has no catch block"
-    assert "failureLine(" in body, "the catch does not produce a failure line"
+    assert RETURNED_THROW in body, "the catch does not produce a failure line"
 
 
 def test_the_failure_arms_name_a_reason() -> None:
@@ -213,9 +217,10 @@ def test_the_failure_arms_name_a_reason() -> None:
     assert '"printed nothing"' in body, "an empty stdout has no reason of its own"
     assert "r.stderr.trim()" in body, "stderr is not the reason for a plain exit"
     assert "exit code" in body, "no reason for an exit code alone"
-    # The success arm is the fetched stdout itself, taken before any reason is read.
+    # The success arm hands the stdout back to the caller, the only writer of the
+    # pending slot, so the epoch guard sits over every brief that reaches a run.
     fetch = function_body(source(), "fetchBrief")
-    assert "pendingBrief = stdout || failureLine(failureReason(result));" in fetch, (
+    assert RETURNED_BRIEF in fetch, (
         "a run that printed the brief does not hand over its stdout")
 
 
@@ -247,7 +252,7 @@ def test_the_reminder_is_a_deduplicated_prompt_guideline() -> None:
     assert "guidelines.push(REMINDER)" in body, "nothing adds the reminder"
     assert re.search(r"if \(!guidelines\.includes\(REMINDER\)\)", body), (
         "the reminder is pushed unconditionally, so it can be added twice")
-    assert "ctx.hasUI" not in body, (
+    assert "ctx.hasUI" not in body and "ctx.mode" not in body, (
         "the reminder must apply in every mode, including a headless one")
     for forbidden in ("systemPrompt:", "forceSystemPrompt", "sendMessage"):
         assert forbidden not in text, f"{forbidden} would miss the prompt cache"
@@ -269,20 +274,26 @@ def test_the_reminder_is_within_the_character_bound() -> None:
 def test_the_state_root_resolution_order_is_the_ruled_one() -> None:
     """NONI_STATE_ROOT, then <cwd>/.noni-state holding noni/, then <cwd>, read
     from the code: a resolver that consulted the working directory first would
-    still hold every name below.
+    still hold every name below. The hook walks a list of candidate names, so the
+    ruled order is that list's order, and the join is what turns a name into a path
+    under the working directory.
     """
     body = source()[: source().index("export default")]
     resolver = body[body.index("function stateRoot"):]
-    loop = "for (const candidate of"
-    candidates = resolver[resolver.index(loop):]
+    declaration = source()[source().index("const CANDIDATES ="):]
+    declaration = declaration[: declaration.index(";")]
+    first, second = CANDIDATE_ORDER
+    assert declaration.index(first) < declaration.index(second), (
+        "the bare working directory is tried before the pilot's state directory")
+    assert "for (const name of CANDIDATES)" in resolver, (
+        "the resolver does not walk the ordered candidate list")
     assert 'if (fromEnv) return fromEnv;' in resolver, (
         "the env var is not taken whole, so a bad value cannot reach the failure arm")
-    assert 'join(cwd, ".noni-state")' in candidates, "the pilot layout is not consulted"
-    assert candidates.index(".noni-state") < candidates.index("), cwd]"), (
-        "the bare working directory is tried before the pilot's state directory")
+    assert "join(cwd, name)" in resolver, (
+        "a candidate name is not joined onto the working directory")
     assert 'join(candidate, "noni")' in resolver, "a root is taken without its noni/"
     assert "return undefined" in resolver, "with no state root the hook has no arm"
-    assert resolver.index('env["NONI_STATE_ROOT"]') < resolver.index(loop), (
+    assert resolver.index('env["NONI_STATE_ROOT"]') < resolver.index("CANDIDATES"), (
         "the env var is not the first source")
 
 
@@ -304,18 +315,9 @@ def test_no_em_dash_in_the_hook_or_its_page() -> None:
 
 def test_the_page_names_the_trust_step_the_state_root_and_the_path_rule() -> None:
     """What a reader needs from the page, and nothing the hook does not do."""
-    text = HOOK_README.read_text(encoding="utf-8")
-    assert "NONI_STATE_ROOT" in text, "the page does not name the state root source"
-    assert ".pi/extensions" in text, "the page does not name the install target"
-    assert "trusted" in text, "the page does not name the trust step"
-    assert "silently" in text, "the page does not say an untrusted project is skipped"
-    assert "first on PATH" in text, "the page does not say which `noni` the hook runs"
-    assert "session_compact" in text, "the page does not say when the brief is fetched"
-    assert "docs/QUICKSTART.md#install-noni" in text, (
-        "the page does not link the quickstart's Install section for the PATH step")
-    assert "no reliable way to tell a child session" in text, (
-        "the page must state the main-agent rule's limit, not invent a signal")
-    assert "## Verifying it" in text, "the page states no way to verify the hook"
+    page = HOOK_README.read_text(encoding="utf-8")
+    for wanted, why in PAGE_RULES:
+        assert wanted in page, why
 
 
 def test_the_hook_is_not_sold_as_a_tracker_adapter() -> None:

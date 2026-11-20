@@ -34,7 +34,10 @@ project, or the hook does nothing.
 The brief is fetched on every `session_start` (startup, resume, reload, new,
 fork) and again after each `session_compact`, and injected on the next user
 turn. The fetch does not block the session: the hook starts it and waits for it
-inside that turn.
+inside that turn. When a start follows another before the first fetch returned,
+the newest brief wins: the hook numbers each start, lets only the newest one
+publish what it fetched, and drops a fetch that finishes late. A brief is
+therefore handed over once, never twice.
 
 ## Install
 
@@ -56,11 +59,14 @@ applies as usual.
 
 ## Main agent only, and the limit of that rule
 
-The brief is fetched and injected only in an interactive session, so a child
-agent that runs headless gets the reminder and never a copy of the brief. pi
-gives no reliable way to tell a child session from the main one, because a
-child inherits the parent's environment, so the interactive check is the
-approximation and not a guarantee.
+The brief is fetched and injected only in interactive terminal sessions: the
+gate reads the session's run mode and fetches in `"tui"` alone, which is the
+interactive terminal. A session in RPC, JSON or print mode gets the reminder
+and never a copy of the brief, and so does a child agent that runs headless.
+The gate is the run mode and not the UI flag, because pi reports that flag true
+for RPC sessions as well as the terminal. Note that pi gives no reliable way to
+tell a child session from the main one, because a child inherits the parent's
+environment, so the terminal check is the approximation and not a guarantee.
 
 ## Verifying it
 

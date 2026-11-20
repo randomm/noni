@@ -8,9 +8,10 @@ thing that page's "Existing adapters" list is about.
 It does two things, and nothing else. Every turn it adds one standing reminder
 to the prompt guidelines: noni holds the project's direction and decisions, so
 work in the order it gives, follow the recorded decisions, invent none, and
-ask the operator and record the answer when something is undecided. Twice per
-session, at the start and after each compaction, it runs `noni brief` and hands
-the model what it printed. It registers no tool, no command and no renderer.
+ask the operator and record the answer when something is undecided. At session
+start and after each compaction it starts `noni brief` without blocking, and
+hands the model what it printed on the next user turn. It registers no tool, no
+command and no renderer.
 
 ## Which state root it reads
 
@@ -24,6 +25,17 @@ reads neither the environment nor the working directory for a state root.
 3. `<cwd>` itself, when it holds a `noni/` directory.
 4. Otherwise nothing: no reminder and no brief.
 
+## When it runs
+
+pi loads a project-local extension only after the project is trusted. An
+untrusted project skips it silently: no reminder and no brief. Trust the
+project, or the hook does nothing.
+
+The brief is fetched on every `session_start` (startup, resume, reload, new,
+fork) and again after each `session_compact`, and injected on the next user
+turn. The fetch does not block the session: the hook starts it and waits for it
+inside that turn.
+
 ## Install
 
 Copy or link the file into the project's own extension directory, where pi
@@ -34,7 +46,8 @@ mkdir -p .pi/extensions
 cp integrations/pi/noni.ts .pi/extensions/noni.ts
 ```
 
-The prerequisite is that `noni` is on your PATH. The quickstart's
+The prerequisite is that `noni` is on your PATH. The hook runs whichever `noni`
+is first on PATH, so put the install you mean first. The quickstart's
 [Install noni](../../docs/QUICKSTART.md#install-noni) section owns those
 commands; this page does not reprint them. Where the binary is missing the hook
 does not block the session: the model gets one short line naming the failure,

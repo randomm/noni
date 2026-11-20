@@ -80,6 +80,46 @@ def test_brief_a_record_of_a_slash_word_prints_it_as_committed(
     assert "<path>" not in row
 
 
+def test_brief_page_line_collapses_whitespace_before_it_renders() -> None:
+    """A tab between two words is a word boundary, so the row reads as two words.
+
+    Called directly on the row builder: the collapse is what keeps ``two\\tcandidates`` from
+    printing as one word once the renderer has taken the tab out.
+    """
+    from noni import brief_page
+
+    assert brief_page.page_line("two\tcandidates", brief_page.TEXT_LIMIT,
+                                frozenset()) == "two candidates"
+
+
+def test_brief_page_line_a_control_byte_at_the_edge_cannot_dodge_a_reserved_word() -> None:
+    """A BEL in front of a page's own word still reads as that word, so the row is dropped.
+
+    The renderer deletes the byte, and a row left behind with padding would not compare equal to
+    the reserved word, so the line the page is read by would reach stdout as a body line.
+    """
+    from noni import brief_page
+
+    assert brief_page.page_line("\x07 top 10", brief_page.TEXT_LIMIT,
+                                frozenset({"top 10"})) is None
+
+
+def test_brief_page_line_a_control_byte_between_words_leaves_no_padding() -> None:
+    """The gap a deleted control byte leaves closes, so a row stays one row."""
+    from noni import brief_page
+
+    assert brief_page.page_line("a \x07 b", brief_page.TEXT_LIMIT,
+                                frozenset()) == "a b"
+
+
+def test_brief_page_line_no_escape_byte_survives_the_renderer() -> None:
+    """An ANSI sequence in foreign text never reaches the screen, whatever order the rules run in."""
+    from noni import brief_page
+
+    rendered = brief_page.page_line("\x1b[2Jok", brief_page.TEXT_LIMIT, frozenset())
+    assert rendered is not None and "\x1b" not in rendered
+
+
 def test_brief_the_decisions_reader_answers_its_own_three_questions(
         tmp_path: Path) -> None:
     """The reader's live filter, its cap and its order, called directly.

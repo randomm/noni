@@ -395,12 +395,13 @@ def page_line(text: str, limit: int, reserved: frozenset[str]) -> str | None:
     Two rules, answering two different questions. A run of whitespace becomes one space, which is
     what makes a row one row. Then :func:`noni._safe_text.safe_text` drops every Unicode category-C
     character, which is what stops an ANSI or OSC sequence in foreign text reaching the terminal.
-    Neither rule rewrites a word the operator committed: the census's path arms belong to
+    The collapse runs both before and after the renderer, so neither a tab nor a byte the renderer
+    deleted leaves a gap or padding behind: a tab is itself a control character, so a renderer run
+    over the text first would delete it and leave ``two\tcandidates`` as one word, and a byte at a
+    field's edge or between spaces would leave padding that made a reserved word read as something
+    else. Neither rule rewrites a word the operator committed: the census's path arms belong to
     a row built from an ``OSError`` and have no business in the page, where they took a slash
-    command out of the operator's own text. The collapse comes first only because a tab is itself a
-    control character, so a renderer run over the text first would delete the tab and the collapse
-    would find no boundary left to stand on -- ``two\tcandidates`` would print as one word. The
-    collapse is not what removes control bytes: the renderer is.
+    command out of the operator's own text.
 
     Then the two shape tests a foreign line has to pass to reach stdout: it must survive both
     rules as something with content in it, and it must not be one of the words the page is read
@@ -412,7 +413,7 @@ def page_line(text: str, limit: int, reserved: frozenset[str]) -> str | None:
     vocabulary and belong with the tool while the rule here is about a set of words, whatever
     spells them.
     """
-    line = safe_text(" ".join(text.split()), limit)
+    line = " ".join(safe_text(" ".join(text.split()), limit).split())
     return None if not line.strip() or line in reserved else line
 
 

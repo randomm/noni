@@ -16,19 +16,23 @@ from __future__ import annotations
 from pathlib import Path
 
 from brief_fixtures import (
+    CONFIRMED,
     NOW,
+    PURPOSE_LINES,
     RECORD_ID,
     host_shaped_path,
+    intent_path,
     ledger_dir,
     plant_brief_tree,
     record_document,
     run_brief,
+    write_order_entries,
     write_record,
 )
-from brief_support import rows
+from brief_support import rows, sections, stripped
 
 from noni import brief as brief_module
-from noni import ledger_schema
+from noni import ledger_schema, orderschema
 
 
 def test_brief_a_record_of_control_bytes_is_scrubbed_before_it_prints(
@@ -120,6 +124,70 @@ def test_brief_page_line_no_escape_byte_survives_the_renderer() -> None:
     assert rendered is not None and "\x1b" not in rendered
 
 
+def test_brief_page_line_bounds_the_printed_line_with_the_page_clip() -> None:
+    """A line longer than the page's bound comes back at the bound, marked by the page's own clip.
+
+    Called directly on the row builder. The bound is the page's, so the tail that goes is cut by
+    :func:`noni.census_text._clipped`: the line ends on the page's ellipsis and never on the
+    refusal renderer's own ``[truncated]`` tail, which is longer than the bound it is supposed to
+    honour and belongs to a two-line stderr refusal rather than to a block of the page.
+    """
+    from noni import brief_page
+    from noni.census_text import _clipped
+
+    text = "x" * 400
+    rendered = brief_page.page_line(text, brief_page.TEXT_LIMIT, frozenset())
+    assert rendered is not None
+    assert len(rendered) == brief_page.TEXT_LIMIT
+    # The page's own mark, and nothing else: the clipper the census shares is the owner of the
+    # spelling, so the assertion asks it what a cut of this text looks like.
+    assert rendered == _clipped(text, brief_page.TEXT_LIMIT)
+    assert rendered.endswith(brief_module.ELLIPSIS)
+    assert "[truncated]" not in rendered
+
+
+def test_brief_a_purpose_line_past_the_bound_prints_at_the_bound(tmp_path: Path) -> None:
+    """A 400-character Purpose line reaches the screen at most ``TEXT_LIMIT`` characters long.
+
+    The launched route, because the line the operator sees is the page's byte string: the intent
+    file is rewritten from the fixture's own tuple with one long statement planted in place of a
+    committed one, so the measurement is of a real run and not of the row builder alone.
+    """
+    from noni import brief_page
+
+    long_line = "ship " + "candidate " * 40
+    assert len(long_line) > brief_page.TEXT_LIMIT
+    root = plant_brief_tree(tmp_path)
+    path = intent_path(root)
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text.replace(PURPOSE_LINES[2], long_line), encoding="utf-8")
+    out = run_brief(root, "--now", NOW)[1]
+    body = stripped(sections(out), brief_module.PURPOSE_HEADER)
+    printed = [line for line in body if line.startswith("ship ")]
+    assert printed, body
+    for line in printed:
+        assert len(line) <= brief_page.TEXT_LIMIT
+        assert "[truncated]" not in line
+
+
+def test_brief_an_order_row_past_the_bound_prints_at_the_bound(tmp_path: Path) -> None:
+    """An entry whose reason runs past the page's bound still prints one bounded row.
+
+    The other planter the suite shares, so the bound is measured on both families of foreign text
+    the page prints: the reason keeps its place at the end of the row and the finished line is
+    what the bound is asked of.
+    """
+    from noni import brief_page
+
+    root = plant_brief_tree(tmp_path)
+    write_order_entries(root, [
+        orderschema.entry(issue=7, decision=RECORD_ID, confirmed=CONFIRMED,
+                          why="ship it " + "now " * 200)])
+    row = rows(run_brief(root, "--now", NOW)[1], brief_module.ORDER_HEADER)[0]
+    assert len(row) <= brief_page.TEXT_LIMIT
+    assert "[truncated]" not in row
+
+
 def test_brief_the_decisions_reader_answers_its_own_three_questions(
         tmp_path: Path) -> None:
     """The reader's live filter, its cap and its order, called directly.
@@ -129,7 +197,7 @@ def test_brief_the_decisions_reader_answers_its_own_three_questions(
     statuses it prints, how many rows it keeps, what order it keeps them in -- are pinned where
     they are decided rather than inferred from a screen.
     """
-    from noni import brief_page
+    from noni import brief_rows
 
     # The writer-shaped tree the page reads: ``write_record`` plants under ``<root>/noni/decisions``
     # because that is the path the block reaches through ``--repo``, and the reader is handed the
@@ -140,7 +208,7 @@ def test_brief_the_decisions_reader_answers_its_own_three_questions(
             "c": ("2026-10-03T00:00:00Z", ledger_schema.STATUS_OPEN),
             "d": ("2026-10-04T00:00:00Z", ledger_schema.STATUS_DECIDED)}.items():
         write_record(tmp_path / "seed", record_document(record_id, date, status=status))
-    rows, withheld = brief_page.decision_rows(ledger_dir(tmp_path / "seed"), cap=1)
+    rows, withheld = brief_rows.decision_rows(ledger_dir(tmp_path / "seed"), cap=1)
     assert rows == ["d: Ship the candidate?: yes"]
     # One live record fitted the cap and the other cost the block its count line; the superseded
     # and open records were never live, so they cost nothing at all.

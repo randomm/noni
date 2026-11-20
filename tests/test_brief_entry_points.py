@@ -201,7 +201,7 @@ def test_brief_is_a_sibling_module_of_the_tool_and_read_by_it(tmp_path: Path) ->
 
 def test_brief_source_stays_within_the_size_cap() -> None:
     """The split was made for ``tests/test_file_size_limit.py``; it has to have worked."""
-    for name in ("brief.py", "brief_intent.py", "brief_page.py"):
+    for name in ("brief.py", "brief_intent.py", "brief_page.py", "brief_rows.py"):
         source = (REPO / "src" / "noni" / name).read_text(encoding="utf-8")
         assert len(source.splitlines()) < 500, name
 
@@ -215,11 +215,18 @@ def test_brief_page_borrows_no_path_scrub_from_the_census() -> None:
     about paths. Everything else the census's text module exports -- ``_bounded`` and ``_stripped``
     above all, whose path arms substitute a marker for any single slash word -- may not be imported
     or called here, because those arms are right for an ``OSError`` and wrong for an operator's
-    committed record.
+    committed record. Both page modules are read: the line rule and the row builders were split
+    apart for the size cap, and the rule is about both of them.
     """
+    for name in ("brief_page.py", "brief_rows.py"):
+        _assert_no_census_path_scrub((REPO / "src" / "noni" / name).read_text(encoding="utf-8"))
+
+
+def _assert_no_census_path_scrub(source: str) -> None:
+    """One page module's imports and calls, read for a census path arm."""
     import ast
 
-    tree = ast.parse((REPO / "src" / "noni" / "brief_page.py").read_text(encoding="utf-8"))
+    tree = ast.parse(source)
     imported: set[str] = set()
     called: set[str] = set()
     for node in ast.walk(tree):

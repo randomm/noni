@@ -37,7 +37,7 @@ from brief_support import HEADERS, page_owed_lines, rows, sections, stripped
 from quickstart_page import product_section_7
 
 from noni import brief as brief_module
-from noni import brief_page, orderschema
+from noni import brief_page, brief_rows, orderschema
 
 # --- the standing rules ------------------------------------------------------
 
@@ -205,7 +205,7 @@ def test_brief_a_clipped_row_head_ends_on_a_word(tmp_path: Path) -> None:
             + "the census stays the one arbiter " * 40)
     assert len(head) > brief_page.TEXT_LIMIT - len(
         brief_page.REASON_SEPARATOR + reason)
-    row = brief_page._bounded_row(head, reason)
+    row = brief_rows._bounded_row(head, reason)
     assert row is not None
     assert brief_module.ELLIPSIS in row
     assert row.endswith(brief_page.REASON_SEPARATOR + reason)
@@ -227,7 +227,7 @@ def test_brief_a_clipped_head_of_one_long_word_falls_back_to_the_character_clip(
     and carrying the mark, rather than nothing at all.
     """
     head = "x" * (brief_page.TEXT_LIMIT + 100)
-    row = brief_page._bounded_row(head, "the operator's reason")
+    row = brief_rows._bounded_row(head, "the operator's reason")
     assert row is not None
     assert row.endswith(brief_page.REASON_SEPARATOR + "the operator's reason")
     assert len(row) <= brief_page.TEXT_LIMIT

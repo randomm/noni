@@ -389,9 +389,10 @@ def page_line(text: str, limit: int, reserved: frozenset[str]) -> str | None:
 
     The line is bounded last, by the page's own clip: :func:`noni.census_text._clipped` cuts the
     finished line to ``limit`` and marks the cut, so a line can never leave this function longer
-    than the bound. The renderer is asked for roomier than the bound on purpose: its own truncation
-    tail is longer than the page's mark, so a line the renderer cut would print past ``limit`` and
-    carry the refusal renderer's word where the page's mark belongs.
+    than the bound. The renderer is given room for the whole line, so the page's clip is the only
+    cut: :func:`noni._safe_text.safe_text` only ever removes characters, so asked for the length of
+    its own input it cannot truncate, and no tail of its spelling can reach the screen where the
+    page's mark belongs.
 
     The two shape tests: the line must survive all three rules as something with content in it, and
     must not be one of the words the page is read by. ``None`` is the caller's signal to drop the
@@ -401,7 +402,7 @@ def page_line(text: str, limit: int, reserved: frozenset[str]) -> str | None:
     rule here is about a set of words, whatever spells them.
     """
     collapsed = " ".join(text.split())
-    line = _clipped(" ".join(safe_text(collapsed, limit + _RENDER_SLACK).split()), limit)
+    line = _clipped(" ".join(safe_text(collapsed, len(collapsed)).split()), limit)
     return None if not line.strip() or line in reserved else line
 
 
@@ -465,10 +466,6 @@ def close_block(lines: list[str], withheld: int) -> list[str]:
 # citation an order entry carries. The tool's ceiling for foreign text, asked of the artifact's
 # own characters rather than of anything it parsed, so one number covers every row of the page.
 TEXT_LIMIT = 300
-
-# How much roomier than the bound :func:`page_line` asks its renderer for: it exceeds the renderer's
-# own truncation tail, so the page's clip is the only cut a page line answers to.
-_RENDER_SLACK = len("... [truncated]")
 
 # The shortest head the word-boundary clip keeps. Below it a row would print a mark over nothing
 # readable, and the character clip, which at least fills the room the reason left, is the better

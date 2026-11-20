@@ -146,6 +146,30 @@ def test_brief_page_line_bounds_the_printed_line_with_the_page_clip() -> None:
     assert "[truncated]" not in rendered
 
 
+def test_brief_page_line_at_the_bound_boundary_only_the_page_ever_cuts() -> None:
+    """Right at, below and above the bound, the page's clip is the only cut there is.
+
+    Called directly on the row builder for the widths a line can land on (one below the bound, one
+    above it, and the width where a renderer tail would have overshot it). The renderer is given room
+    for the whole line, so the finished line is ``min(n, TEXT_LIMIT)`` characters long, carries no
+    word of the refusal renderer, and ends -- when it was cut -- on the very mark
+    :func:`noni.census_text._clipped` prints.
+    """
+    from noni import brief_page
+    from noni.census_text import _clipped
+
+    limit = brief_page.TEXT_LIMIT
+    # The mark the shared clipper appends, read off a cut it actually made.
+    mark = _clipped("x" * (limit + 1), limit)[limit - 3:]
+    for n in (limit - 1, limit, limit + 1, limit + 15, limit + 16, 1000):
+        rendered = brief_page.page_line("x" * n, limit, frozenset())
+        assert rendered is not None
+        assert len(rendered) == min(n, limit)
+        assert "[truncated]" not in rendered
+        if n > limit:
+            assert rendered.endswith(mark)
+
+
 def test_brief_a_purpose_line_past_the_bound_prints_at_the_bound(tmp_path: Path) -> None:
     """A 400-character Purpose line reaches the screen at most ``TEXT_LIMIT`` characters long.
 

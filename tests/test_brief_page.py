@@ -40,6 +40,11 @@ from brief_support import (
 from noni import brief as brief_module
 from noni import brief_page, orderschema
 
+# What the standing rules and the blank under them cost at the top of the page. Every
+# pinned line position in this file is measured from the blocks alone and sits this many
+# lines further down: three rule lines and the separator that keeps them off the header.
+_RULES = len(brief_module.STANDING_RULES) + 1
+
 
 def test_brief_renders_the_three_blocks_and_nothing_else(tmp_path: Path) -> None:
     """The screen is three blocks, a dropped-count line and the verdict, and nothing else.
@@ -47,11 +52,16 @@ def test_brief_renders_the_three_blocks_and_nothing_else(tmp_path: Path) -> None
     The headers are read from the tool rather than typed, and so is their order: the fourth
     block this screen gained is the recent decisions, and a page that printed a fourth header no
     constant names (or repeated one) fails here before any block's content is looked at.
+    What sits above the first header is the standing rules, and the line that separates them
+    from the page: the only other thing the tool prints ahead of the blocks.
     """
     code, out, err = run_brief(plant_brief_tree(tmp_path), "--now", NOW)
     assert code == 0
     assert err == ""
-    assert out.startswith(brief_module.PURPOSE_HEADER + "\n")
+    head = out.splitlines()[:len(brief_module.STANDING_RULES)]
+    assert head == list(brief_module.STANDING_RULES)
+    assert out.splitlines()[len(head)] == ""
+    assert out.splitlines()[len(head) + 1] == brief_module.PURPOSE_HEADER
     assert list(sections(out)) == HEADERS
     assert summary_line(out).startswith(brief_module.SUMMARY_PREFIX)
 
@@ -184,7 +194,9 @@ def test_brief_an_order_row_stays_within_the_pages_bound(tmp_path: Path) -> None
                                     why="w" * 280)
     assert row is not None
     assert len(row) <= brief_page.TEXT_LIMIT
-    assert row.startswith("1. #123456 ")
+    # The head is what the bound clips, so it ends on the page's clip mark: the subject
+    # opens the row and the reason keeps its whole end.
+    assert row.startswith("1. #123456" + brief_module.ELLIPSIS)
 
 
 def test_brief_an_order_row_keeps_a_reason_that_fills_the_row(tmp_path: Path) -> None:
@@ -219,18 +231,24 @@ def test_brief_one_block_per_header_separated_by_one_blank_line(tmp_path: Path) 
     """The page's shape is part of the contract: one blank line, and only one, between blocks.
 
     A blank line inside a body (a purpose file with a paragraph break, say) is content; the
-    separators are what a reader of the page counts. The fixture's body has no blank line of
-    its own, so the blank lines of the page are the two separators and nothing else -- one below
-    the purpose block and one below the order block, which is the position each block's header
-    sits at plus the lines above it.
+    separators are what a reader of the page counts -- and the standing rules' own blank is
+    the first of them, since the rules are the tool's lines and not a body's. The fixture's
+    body has no blank line of
+    its own, so the blank lines of the page are that one and the two separators and nothing
+    else: one below the rules, one below
+    the purpose block and one below the order block, each the position of the block above it
+    plus the lines above that.
     """
     code, out, _ = run_brief(plant_brief_tree(tmp_path), "--now", NOW)
     assert code == 0
-    # Two separators and nothing else: after the 22-line purpose block and after the ten order
-    # rows. A blank line inside a body would add a third index, which is how this case tells a
-    # separator from content that happens to be empty.
+    # The rules' blank, then the two separators: after the 22-line purpose block and after
+    # the ten order rows. A blank line inside a body would add a fourth index, which is how
+    # this case tells a separator from content that happens to be empty. The page opens with
+    # the standing rules and one blank below them, so all three indices sit four lines
+    # further down than the blocks alone would put them: 3 rule lines and their separator
+    # ahead of line 0.
     assert [index for index, line in enumerate(out.splitlines())
-            if not line.strip()] == [23, 35]
+            if not line.strip()] == [_RULES - 1, _RULES + 23, _RULES + 35]
     assert out.endswith("\n")
     assert not out.endswith("\n\n")
 

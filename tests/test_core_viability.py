@@ -21,6 +21,11 @@ Two halves:
    test_gh_adapter_labels.py — *do* import
    the adapter; they are the integration tests and are excluded here. They
    would be the ones that need integrations/ present.)
+
+test_pi_extension.py is in the set too: it is the static suite over the harness
+hook under ``integrations/pi/``, so it reads that directory and is excluded from
+the import scan the same way (it imports no adapter module, but its subject
+matter is integrations/). When a future pi suite is added, name it here as well.
 """
 
 from __future__ import annotations
@@ -48,6 +53,7 @@ ADAPTER_TEST_MODULES = {
     "test_github_issues_adapter.py",
     "test_gh_adapter_allowlist.py",
     "test_gh_adapter_labels.py",
+    "test_pi_extension.py",
 }
 CORE_TEST_MODULES = sorted(
     p for p in (REPO / "tests").glob("test_*.py") if p.name not in ADAPTER_TEST_MODULES

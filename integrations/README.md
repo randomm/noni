@@ -71,11 +71,16 @@ allow-list authorizes no account) and reports that clearly. The allow-list
 file is git-ignored, like the scrub's deny-list: it is local operator
 configuration and can never be committed.
 
-## Existing adapters
+## Existing directories
 
 - [`github-issues/`](github-issues/) — the GitHub-issues adapter:
   steering question as an issue comment with checkbox options; label
   authorization from the issue's label timeline. Fixture-driven, offline.
+- [`pi/`](pi/) — a harness hook, not a tracker adapter. It injects
+  `noni brief` into a coding agent's main session and keeps one standing
+  reminder in that agent's prompt. It implements neither seam above, so
+  `test_adapter_interface.py` does not speak for it.
 
-Adapters for any other tool live outside this repository and implement the
-same two seams.
+Tracker adapters for any other tool live outside this repository and
+implement the same two seams. A directory such as `pi/` is not one of them:
+it is a hook on a harness, and it owes those seams nothing.

@@ -48,6 +48,7 @@ from quickstart_golden import GOLDEN, INSTALL
 from quickstart_page_steps import (
     append_ignore_rule,
     denylist_file,
+    is_read_only_command,
     plant_denylist,
     state_clone,
     write_intent_draft,
@@ -393,6 +394,10 @@ def launch(world: World, argv: list[str],
         return subprocess.CompletedProcess(argv, 0, "", "")
     if argv[:2] == ["noni", "intent"]:
         return write_intent_draft(world, argv)
+    if is_read_only_command(argv):
+        # The wire section's ``noni brief`` line: the product's own read-only screen,
+        # launched as printed (see ``quickstart_page_steps.is_read_only_command``).
+        pass
     if argv[0] == "echo" or argv[0] == "printf":
         return append_ignore_rule(world, argv)
     if argv[0] == "git" and argv[1] == "clone":

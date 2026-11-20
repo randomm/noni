@@ -150,6 +150,18 @@ the question's `answer` `null` — never as an answer. A decline or cancel that
 is recorded at all persists as `status: open` with every `answer` `null`, as an
 open chain-root record; that is the only state "records nothing" can mean.
 
+## Recording guidance
+
+Record the decisions that change direction, not the requirements: a requirement is
+something work has to satisfy, and the ledger is where the operator's calls are kept.
+An agent's own proposal is a question for the operator, never a ruling — an agent may
+ask, and the operator's answer is what becomes a record.
+
+Draft first: write with `--no-commit`, read the file the line printed, then commit it
+when its bytes are right. A mistake already committed is fixed with `--supersedes`,
+which writes a new record and flips the old one's `status` in one commit; nothing is
+edited in place.
+
 ## Attribution
 
 `by` is the **git author of the record's commit**, read with
@@ -175,6 +187,13 @@ The same one-line rule and the same 280-character bound hold for an order entry'
 reason. The writer refuses a blank, a multi-line or an over-long value at the flag
 (exit 2) and the census reports a hand-edited one at exit 10 naming `why`; a record
 with no `why` is not incomplete, it simply records no reason.
+
+**The two flag sets.** An operator ruling that an agent records is written
+`--asked-by <agent> --decided-by <operator>`: the agent asked, the operator decided.
+A decision an agent made on the operator's behalf is written
+`--decided-by <agent> --on-behalf-of <operator>`: the agent decided, for the
+operator. A ruling that was put with one option carries `--single-option`, which says
+the single option was deliberate and nothing had to be invented.
 
 ## Supersede
 

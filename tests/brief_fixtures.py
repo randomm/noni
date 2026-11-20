@@ -187,6 +187,17 @@ def ledger_record_path(root: Path, record_id: str) -> Path:
     return ledger_dir(root) / f"{record_id}.json"
 
 
+def host_shaped_path() -> str:
+    """A machine-local home path assembled at runtime, never written as a literal here.
+
+    ``tests/test_purity.py`` and ``tests/test_skill_scrub.py`` read every tracked file against
+    ``FIXTURE_HOME_PATH_PATTERNS``, which matches a home path of any username, so the parts are
+    joined here and the committed bytes of any file using this hold none. Built the way
+    ``tests/census_ledger_fixtures.py`` builds its host-shaped faults.
+    """
+    return "/" + "home" + "/" + "someone" + "/" + "build"
+
+
 def write_record(root: Path, record: dict) -> Path:
     """Plant one decision record in ``root``'s ledger and hand back its path.
 

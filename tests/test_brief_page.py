@@ -23,6 +23,7 @@ from brief_fixtures import (
     ORDER_WHY,
     PURPOSE_LINES,
     RECORD_ID,
+    host_shaped_path,
     intent_path,
     plant_brief_tree,
     run_brief,
@@ -160,16 +161,6 @@ def test_brief_an_order_why_of_nothing_prints_no_mark(tmp_path: Path) -> None:
         f"1. #5 ({RECORD_ID}) \u2014 the release train leaves Friday"]
 
 
-def _host_shaped_path() -> str:
-    """A machine-local home path assembled at runtime, never written as a literal here.
-
-    ``tests/test_purity.py`` and ``tests/test_skill_scrub.py`` read every tracked file against
-    ``FIXTURE_HOME_PATH_PATTERNS``, which matches a home path of any username, so the parts are
-    joined at runtime the way ``tests/census_ledger_fixtures.py`` builds its host-shaped faults.
-    """
-    return "/" + "home" + "/" + "someone" + "/" + "build"
-
-
 def test_brief_an_order_row_is_scrubbed_and_bounded(tmp_path: Path) -> None:
     """A hostile ``why`` loses its control bytes, keeps its committed text, and stays one line.
 
@@ -181,7 +172,7 @@ def test_brief_an_order_row_is_scrubbed_and_bounded(tmp_path: Path) -> None:
     promise is about what it prints, not about what a file holds.
     """
     root = plant_brief_tree(tmp_path)
-    path = _host_shaped_path()
+    path = host_shaped_path()
     write_order_entries(root, [
         orderschema.entry(issue=11, decision=RECORD_ID, confirmed=CONFIRMED,
                           why=f"ship \x1b[2J from {path} \x07 now")])

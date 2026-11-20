@@ -18,6 +18,7 @@ from pathlib import Path
 from brief_fixtures import (
     NOW,
     RECORD_ID,
+    host_shaped_path,
     ledger_dir,
     plant_brief_tree,
     record_document,
@@ -28,16 +29,6 @@ from brief_support import rows
 
 from noni import brief as brief_module
 from noni import ledger_schema
-
-
-def _host_shaped_path() -> str:
-    """A machine-local home path, assembled at runtime from the hygiene scan's own table.
-
-    Never a literal: ``tests/test_purity.py`` and ``tests/test_skill_scrub.py`` read every tracked
-    test file against ``FIXTURE_HOME_PATH_PATTERNS``, which matches a home path of any username.
-    The parts are joined here so the committed bytes of this file hold none.
-    """
-    return "/" + "home" + "/" + "someone" + "/" + "build"
 
 
 def test_brief_a_record_of_control_bytes_is_scrubbed_before_it_prints(
@@ -52,7 +43,7 @@ def test_brief_a_record_of_control_bytes_is_scrubbed_before_it_prints(
     """
     root = plant_brief_tree(tmp_path)
     ledger_dir(root).joinpath(f"{RECORD_ID}.json").unlink()
-    path = _host_shaped_path()
+    path = host_shaped_path()
     write_record(root, record_document(
         "2026-10-25-hostile", "2026-10-25T00:00:00Z",
         question=f"Ship\x1b[2J from {path}?", answer="yes",

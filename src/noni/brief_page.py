@@ -243,8 +243,8 @@ def _decision_row(record: dict) -> str | None:
     record file and the reason is what the row exists to put on the screen. Every field reaches
     the line through :func:`page_line`, so a control byte in a question cannot reach the terminal
     while the operator's own words -- a slash command or a path they committed alike -- print as
-    the record wrote them. A
-    row whose rendered form is blank or one of the page's own words costs the block its row.
+    the record wrote them. A row whose rendered form is blank or one of the page's own words costs
+    the block its row.
     """
     body = _decision_body(record)
     if body is None:
@@ -393,13 +393,14 @@ def page_line(text: str, limit: int, reserved: frozenset[str]) -> str | None:
     """One body line of the page, or None when the text would not be a body line.
 
     Two rules, answering two different questions. A run of whitespace becomes one space, which is
-    what makes a row one row; :func:`noni._safe_text.safe_text` then drops every Unicode
-    category-C character, which is what stops an ANSI or OSC sequence in foreign text reaching the
-    terminal. Neither rule rewrites a word the operator committed: the census's path arms belong to
+    what makes a row one row. Then :func:`noni._safe_text.safe_text` drops every Unicode category-C
+    character, which is what stops an ANSI or OSC sequence in foreign text reaching the terminal.
+    Neither rule rewrites a word the operator committed: the census's path arms belong to
     a row built from an ``OSError`` and have no business in the page, where they took a slash
-    command out of the operator's own text. The collapse goes first, before the renderer: tab is
-    itself a control byte, so a renderer run over the text first would delete it and the collapse
-    would find no boundary left to stand on -- ``two\tcandidates`` would print as one word.
+    command out of the operator's own text. The collapse comes first only because a tab is itself a
+    control character, so a renderer run over the text first would delete the tab and the collapse
+    would find no boundary left to stand on -- ``two\tcandidates`` would print as one word. The
+    collapse is not what removes control bytes: the renderer is.
 
     Then the two shape tests a foreign line has to pass to reach stdout: it must survive both
     rules as something with content in it, and it must not be one of the words the page is read

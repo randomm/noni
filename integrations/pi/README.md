@@ -33,11 +33,16 @@ project, or the hook does nothing.
 
 The brief is fetched on every `session_start` (startup, resume, reload, new,
 fork) and again after each `session_compact`, and injected on the next user
-turn. The fetch does not block the session: the hook starts it and waits for it
-inside that turn. When a start follows another before the first fetch returned,
-the newest brief wins: the hook numbers each start, lets only the newest one
-publish what it fetched, and drops a fetch that finishes late. A brief is
-therefore handed over once, never twice.
+turn. The fetch does not block the session: the hook starts it without waiting.
+A user turn that arrives while a fetch is still running waits for it, for at
+most the 30 second timeout, and that first user turn is where the brief lands.
+When a start follows another before the first fetch returned, the newest brief
+wins: the hook numbers each start, lets only the newest one publish what it
+fetched, and drops a fetch that finished late. What reaches the model is the
+newest fetched brief, handed to the next user turn once: the slot is emptied as
+it is handed over, and one fetch hands its brief over once. That is what
+newest brief wins means in the code, and it is not a promise that no brief is
+ever shown twice.
 
 ## Install
 

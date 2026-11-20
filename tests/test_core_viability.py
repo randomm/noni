@@ -57,8 +57,15 @@ ADAPTER_TEST_MODULES = {
     "test_gh_adapter_allowlist.py",
     "test_gh_adapter_labels.py",
     "test_pi_extension.py",
-    # The readers suite over the hook use, imported by it and by nothing else.
+    # The readers the hook suites use, imported by them and by nothing else: the
+    # span readers and the failure line's cap reader. Same reason, no adapter
+    # module behind either.
     "pi_extension_source.py",
+    "pi_extension_failure_line.py",
+    # The two modules split out of test_pi_extension.py: same subject matter, the
+    # hook's text, read as text.
+    "test_pi_extension_failure_line.py",
+    "test_pi_extension_falsifiability.py",
 }
 CORE_TEST_MODULES = sorted(
     p for p in (REPO / "tests").glob("test_*.py") if p.name not in ADAPTER_TEST_MODULES

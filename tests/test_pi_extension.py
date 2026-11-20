@@ -23,6 +23,13 @@ The live check (the page's "Verifying it", run against a real session) carries
 the behaviour; these assertions carry the shape. The readers live in
 ``pi_extension_source.py`` so "the body of the per-turn handler" has one
 definition every check agrees with.
+
+Two further modules carry the checks too large to sit beside these: the
+failure line's cap, rebuilt from the hook's own parts, in
+``test_pi_extension_failure_line.py`` with its reader in
+``pi_extension_failure_line.py``; and the span checks over the readers
+themselves, with the four source mutations that make the suite falsifiable, in
+``test_pi_extension_falsifiability.py``.
 """
 
 from __future__ import annotations
@@ -33,7 +40,6 @@ from _harness import REPO, _git
 from pi_extension_source import (
     EM_DASH,
     EVENTS,
-    FAILURE_LINE,
     FILE_LINE_LIMIT,
     HOOK_FILES,
     HOOK_README,
@@ -125,6 +131,10 @@ def test_the_start_handlers_start_the_fetch_without_awaiting_it() -> None:
     gate = start_gate(text)
     assert 'ctx.mode === "tui"' in gate, "a non-terminal session fetches the brief"
     assert "hasUI" not in gate, "the gate is hasUI, which RPC sessions also report"
+    # The UI flag names the flag the gate does not read, and the comment above the
+    # gate is where that naming belongs. The comment is pinned here so the check over
+    # the gate's own text cannot be satisfied by a line of prose elsewhere.
+    assert "hasUI" in source(), "nothing says which flag the gate is not"
     assert gate.count("inflight = startBrief(ctx.cwd);") == 1, (
         "the two start events do not share one gate")
     assert gate.count("pi.on(") == 2, "a start event is not wired to the gate"
@@ -222,22 +232,6 @@ def test_the_failure_arms_name_a_reason() -> None:
     fetch = function_body(source(), "fetchBrief")
     assert RETURNED_BRIEF in fetch, (
         "a run that printed the brief does not hand over its stdout")
-
-
-def test_the_failure_line_is_capped_and_leaks_no_path() -> None:
-    """One short failure line, with every path token replaced by "state root".
-    ``brief.py`` prints ``--repo <path> is not a directory`` on stderr, so that line
-    can carry the state root's absolute path. Both halves are load-bearing: the
-    template's length, and the ``.replace`` output rather than raw stderr.
-    """
-    text = source()
-    match = FAILURE_LINE.search(text)
-    assert match, "the failure line is missing from the hook"
-    assert len(match.group(1)) - 2 <= LINE_LIMIT, (
-        f"the failure line template is {len(match.group(1)) - 2} characters")
-    assert re.search(r"first\.replace\(PATH_TOKEN, \"state root\"\)", text), (
-        "the reason reaches the failure line unredacted")
-    assert re.search(r"\.slice\(0, LINE_LIMIT", text), "the cap is not applied"
 
 
 def test_the_reminder_is_a_deduplicated_prompt_guideline() -> None:

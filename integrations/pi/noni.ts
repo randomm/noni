@@ -58,7 +58,7 @@ export default function noniHook(pi: ExtensionAPI) {
       return text;
     });
   }
-  // The gate is the run mode: hasUI is true for RPC too, so only "tui" fetches.
+  // The gate is the run mode: hasUI is true for RPC too, so only a "tui" run fetches.
   const start = (ctx: { cwd: string; mode: string }) => {
     if (ctx.mode === "tui") inflight = startBrief(ctx.cwd);
   };

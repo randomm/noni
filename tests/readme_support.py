@@ -25,6 +25,7 @@ import pytest
 from _harness import REPO, _git, subprocess_env
 from conftest import NONI_ENV_VARS
 from docs_commands import block_commands, fenced_pairs
+from harness_paths import scratch_ignore
 
 README = REPO / "README.md"
 CONTRIBUTING = REPO / "CONTRIBUTING.md"
@@ -359,12 +360,12 @@ def _materialise_clone(clone: Path) -> None:
     the clone holds the release content a reader gets in the layout a clone
     checks out: ``skills/`` and ``scripts/`` as siblings under one root, which is
     what lets the census find its hygiene checker beside the scripts it runs.
+
+    The scratch rule is the shared one, :func:`harness_paths.scratch_ignore`: the
+    clone is copied into the scratch root, so a copy that took ``tmp/`` would walk
+    into its own output and never return (issue #205).
     """
-    shutil.copytree(REPO, clone, symlinks=True,
-                    ignore=shutil.ignore_patterns(".git", "__pycache__", ".venv",
-                                                  "*.pyc", ".pytest_cache",
-                                                  ".coverage", ".coverage.*",
-                                                  "noni.egg-info", "noni_noni.egg-info", ".worktrees"))
+    shutil.copytree(REPO, clone, symlinks=True, ignore=scratch_ignore(REPO))
 
 
 def _reader_repository(tmp_path: Path) -> Path:

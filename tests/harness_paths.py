@@ -2,13 +2,15 @@
 
 Moved out of ``_harness.py`` for the file-size ratchet (issue #52) and
 re-exported from there, so every existing ``from _harness import`` keeps
-resolving. Pure data: nothing here imports the product.
+resolving. Pure data plus the shared scratch rule; nothing here imports the
+product.
 
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from shutil import ignore_patterns as _ignore_patterns
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -126,3 +128,68 @@ TOOL_WRAPPERS: tuple[tuple[str, Path], ...] = (
     ("order", ORDER),
     ("intent", INTENT),
 )
+
+
+# --- the one scratch rule for the repo-rooted walks -----------------------------
+#
+# Three harness walks start at ``REPO``: the two clones (``quickstart_topology
+# .materialise_clone`` and ``readme_support._materialise_clone``) and the decide-skill
+# page scan. AGENTS.md sends per-issue scratch to ``tmp/issue-N/``, so a dev run keeps
+# venvs, basetemp trees and whole worktrees exactly where those walks recurse: the
+# copies walked into their own output and never finished, and the page scan read every
+# Markdown file the scratch held (issue #205). ``.gitignore`` already ignores ``/tmp/``
+# and ``.worktrees`` is kept out by ``.git/info/exclude``; these are the same two
+# names seen from the walk side.
+#
+# ``tmp`` is skipped only directly under the root the walk started from, which is what
+# the leading slash of ``.gitignore``'s ``/tmp/`` means: a tracked page nested below a
+# directory that happens to be named ``tmp`` is content, and a basename glob at any
+# depth would have hidden it. ``.worktrees`` is skipped by name wherever it appears,
+# exactly as both clone lists already did.
+SCRATCH_ROOT_NAME = "tmp"
+SCRATCH_DIR_NAME = ".worktrees"
+
+# The build droppings the two clones drop on top of the scratch rule. Both copies held
+# byte-identical literals and nothing compared them; they are one tuple now.
+CLONE_IGNORE_NAMES = (".git", "__pycache__", ".venv", "*.pyc", ".pytest_cache",
+                      ".coverage", ".coverage.*", "noni.egg-info",
+                      "noni_noni.egg-info")
+
+
+def in_scratch(root: Path, path: Path) -> bool:
+    """Whether ``path`` lies in scratch below ``root``: the rule for a walk.
+
+    ``root`` is the directory the walk started from, so "at the root" is decided
+    against the caller's root and not against ``REPO``: the same predicate answers for
+    a planted tree under ``tmp_path`` and for the real checkout, whatever path pytest
+    resolved that to. An ancestor that is not under ``root`` carries no root-relative
+    claim, so only the ``.worktrees`` name half can apply to it.
+    """
+    try:
+        parts = path.relative_to(root).parts
+    except ValueError:
+        return SCRATCH_DIR_NAME in path.parts
+    return bool(parts and (parts[0] == SCRATCH_ROOT_NAME
+                           or SCRATCH_DIR_NAME in parts))
+
+
+def scratch_ignore(root: Path):
+    """The ``shutil.copytree`` ignore callable for the same rule, over ``root``.
+
+    ``copytree`` hands this the directory it is listing and that directory's
+    basenames, so the root is recovered from the directory and asked of
+    :func:`in_scratch`: one rule in two shapes, pinned against itself by
+    ``tests/test_scratch_walks.py``.
+    """
+    by_name = _ignore_patterns(*CLONE_IGNORE_NAMES, SCRATCH_DIR_NAME)
+
+    def ignore(directory: str, names: list[str]) -> set[str]:
+        skipped = set(by_name(directory, names))
+        listed = Path(directory)
+        if listed == root:
+            skipped.add(SCRATCH_ROOT_NAME)
+        elif SCRATCH_DIR_NAME in names:
+            skipped.add(SCRATCH_DIR_NAME)
+        return skipped
+
+    return ignore

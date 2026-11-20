@@ -5,14 +5,14 @@ for the same reason: ``brief.py`` owns the command line, the budget and
 what each block prints, and this module owns the decision every printed line of foreign text
 passes through on its way to the screen.
 
-The rules are the brief's and not the census's, and two modules hold a piece of each:
-:func:`noni.census_text._bounded` is the scrub the census renders its rows with (whitespace
-collapsed, machine-local paths replaced, tail bounded), and :func:`noni._safe_text.safe_text` is
-the renderer every noni refusal prints its caller-supplied text through (no control bytes,
-bounded). Neither is enough on its own for a line of the page: the census scrub is a whitespace
-and path rule and leaves an escape byte standing, and the refusal renderer keeps runs of
-whitespace and knows nothing about paths. A screen that prints an operator's prose takes
-both, in the order that makes the bound mean what it says.
+The rules are the brief's and not the census's. :func:`noni.census_text._clipped` is the length
+half of the census's row rule (a tail bounded to a count, with a mark when it was cut) and
+:func:`noni._safe_text.safe_text` the renderer every noni refusal prints caller-supplied text
+through (no control bytes, bounded). The census's other half -- whitespace collapsed, a
+machine-local path replaced -- answers a row built from an ``OSError``, which quotes the filename it
+failed on. A page line is the opposite kind of text: the operator committed every word of it, so it
+prints as written, and the page's own third rule (a run of whitespace is one space, so a row stays
+a row) is written here rather than borrowed.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from pathlib import Path
 
 from . import ledger_schema, orderschema, orderstate
 from ._safe_text import safe_text
-from .census_text import _bounded, _clipped
+from .census_text import _clipped
 
 # The text of the one question the decisions block asks of every record it reads. Like
 # :data:`NOT_READ` it is the tool's own sentence and never a word from a record, so no byte
@@ -29,24 +29,19 @@ from .census_text import _bounded, _clipped
 OPEN_ANSWER = "(open)"
 
 # The shape tests :func:`_decision_row` applies to the row it composed: the page's bound, and
-# no reserved word at all. The header is excluded on purpose. A page that refused a decision
-# whose first question happened to be titled exactly like the block would hide a decision for
-# the reason a body line shaped like the *order's* header is refused -- that one splits the
-# page for a reader -- whereas this one would silently lose the newest answer the block exists
-# to print. A row always opens with a record id, so nothing printable can collide with a header
-# anyway.
+# no reserved word at all. The header is excluded on purpose: a row always opens with a record id,
+# so nothing printable can collide with a header anyway, and refusing one would silently lose the
+# newest answer the block exists to print.
 
-# The separators of one row. The rows are built here and printed by the caller, so the three
-# shapes the reader renders -- the join between two questions, the mark that opens the reason,
-# and the brackets that hold the record an order position was set by -- are named once beside
-# the reader rather than spelled at each end of the join.
+# The separators of one row, named once beside the builders rather than spelled at each end of the
+# join: the join between two questions, the mark that opens the reason, and the brackets holding the
+# record an order position was set by.
 QUESTION_SEPARATOR = "; "
 REASON_SEPARATOR = " — "
 DECISION_BRACKETS = ("(", ")")
 
 # The two separators a row is assembled with before its reason is joined on: ``{position}. `` for
-# an order row and ``{id}: `` for a decision row. Named beside the builders so neither a bound
-# nor a caller can be the place the shape of a row is spelled twice.
+# an order row and ``{id}: `` for a decision row, so the shape of a row is not spelled twice.
 ORDER_SUBJECT_SEPARATOR = ". "
 RECORD_SEPARATOR = ": "
 
@@ -63,8 +58,8 @@ def order_row(position: int, *, issue: object, decision: object,
     the reason is what a cold start cannot recover anywhere else on the screen.
 
     Every part reaches the line through :func:`page_line`, so a control byte in a reason cannot
-    reach the terminal and a host path in one prints as ``<path>`` here exactly as it would in a
-    census row. A reason that renders to nothing costs its mark and not the row: an entry written
+    reach the terminal while the reason's own words print as the artifact committed them. A reason
+    that renders to nothing costs its mark and not the row: an entry written
     before the field existed holds no reason, and a mark standing over nothing is the page
     promising a line it did not print.
     """
@@ -92,11 +87,11 @@ def _rendered(value: object) -> str:
     """A foreign field as it may be printed, or ``""`` for a field that renders to nothing.
 
     Two questions rather than one test of the field: it must be a string with something in it, and
-    it must survive the page's own scrub with something in it. A field of spaces passes the first
-    and fails the second, and so does a field made only of what the scrub deletes (a category-C
+    it must survive the page's own rules with something in it. A field of spaces passes the first
+    and fails the second, and so does a field made only of what the renderer deletes (a category-C
     character, say), which is the shape a hand-edited artifact reaches when a reason is deleted
-    and its quotes left behind. Asking the page's scrub is what makes a mark stand or fall on the
-    same answer the row itself gets.
+    and its quotes left behind. Asking the page's renderer is what makes a mark stand or fall on
+    the same answer the row gets.
     """
     if not isinstance(value, str) or not value.strip():
         return ""
@@ -225,24 +220,22 @@ def _record_id(record: dict) -> str:
 def _decision_row(record: dict) -> str | None:
     """One decision as one line: its id, what it settled, and the operator's reason.
 
-    The record's own order is the order printed, all of its questions on the one line, because
-    a record is one decision and a block that showed one question of a three-question record
-    would report an answer to a question the record did not lead with. A question whose
-    ``answer`` is ``null`` prints :data:`OPEN_ANSWER`, which is the tool's word and not the
-    record's: the writer leaves an answer ``null`` on a record whose operator never answered,
-    and a row that printed nothing there would read as a question the page dropped.
+    The record's own order is the order printed, all of its questions on the one line, because a
+    record is one decision and showing one question of a three-question record would report an answer
+    to a question the record did not lead with. A question whose ``answer`` is ``null`` prints
+    :data:`OPEN_ANSWER`, the tool's word and not the record's: the writer leaves an answer ``null``
+    when the operator never answered, and a row that printed nothing there would read as a question
+    the page dropped.
 
-    A record that asked its one question on purpose (the writer's ``single_option`` marker) is
-    the exception, and prints ``{id}: {statement}`` plus the reason: the question of such a
-    record is the statement asked back as a question, so printing both halves spent the row's
-    width on boilerplate and cut the operator's reason mid-word to pay for it.
+    A record that asked its one question on purpose (the writer's ``single_option`` marker) is the
+    exception, and prints ``{id}: {statement}`` plus the reason: the question of such a record is the
+    statement asked back as a question, so printing both halves spent the row's width on boilerplate
+    and cut the operator's reason mid-word to pay for it.
 
-    The reason rides at the end after its own mark when the record carries one, and it is the
-    part the bound does not fall on: :func:`_bounded_row` clips the statement around the reason
-    rather than the tail of the finished line, because a settled statement is readable in the
-    record file and the reason is what the row exists to put on the screen. Every field reaches
-    the line through :func:`page_line`, so a control byte in a question cannot reach the terminal
-    and a host path in a reason prints as ``<path>`` here exactly as it would in a census row. A
+    The reason rides at the end after its own mark when the record carries one, and it is the part the
+    bound does not fall on (see :func:`_bounded_row`). Every field reaches the line through
+    :func:`page_line`, so a control byte in a question cannot reach the terminal while the operator's
+    own words -- a slash command or a path they committed alike -- print as the record wrote them. A
     row whose rendered form is blank or one of the page's own words costs the block its row.
     """
     body = _decision_body(record)
@@ -255,12 +248,11 @@ def _decision_row(record: dict) -> str | None:
 def _decision_body(record: dict) -> str | None:
     """What a row states after the record's id, or ``None`` when it states nothing printable.
 
-    The single-option form is the record's own word and not this reader's reading of its option
-    counts: :data:`noni.ledger_schema.SINGLE_OPTION_MARKER` is what the writer sets when a
-    one-option question was asked on purpose, and a record whose question holds one option
-    without it is malformed and the census's to report. So this reads the marker and asks nothing
-    of the options: the reader that refused a malformed record is the arbiter, and a page that
-    guessed at the marker from the option count would be a second one.
+    The single-option form is the record's own word, not this reader's reading of its option counts:
+    :data:`noni.ledger_schema.SINGLE_OPTION_MARKER` is what the writer sets when a one-option question
+    was asked on purpose, and a record whose question holds one option without it is malformed and the
+    census's to report. So this reads the marker and asks nothing of the options: guessing at the
+    marker from the option count would make the page a second arbiter beside the census.
     """
     questions = record.get("questions")
     if not isinstance(questions, list) or not questions:
@@ -276,11 +268,10 @@ def _decision_body(record: dict) -> str | None:
 def _statement_segment(question: object) -> str | None:
     """The statement a single-option record states: its question's answer, or nothing printable.
 
-    The answer and not the question text, because the answer is what the operator wrote down and
-    the question of such a record is that same statement dressed as a question. A record whose one
-    question carries no answer is an ``open`` record that :func:`_live_records` stopped at the
-    ledger, so an empty answer reaching here is the hand-edited shape, and it costs the record its
-    row for the reason a malformed entry does.
+    The answer and not the question text, because the answer is what the operator wrote down and the
+    question of such a record is that same statement dressed as a question. An empty answer reaching
+    here is the hand-edited shape (an ``open`` record stops at :func:`_live_records`), and it costs
+    the record its row for the reason a malformed entry does.
     """
     if not isinstance(question, dict):
         return None
@@ -290,7 +281,7 @@ def _statement_segment(question: object) -> str | None:
 def _bounded_row(head: str, reason: str) -> str | None:
     """One row of a head and a reason, bounded with the reason kept whole.
 
-    The reason is scrubbed here and not by the callers, so the two rules a reason answers to --
+    The reason is rendered here and not by the callers, so the two rules a reason answers to --
     no reason at all, and a reason too long to share the row -- are held by one function. The row
     is composed reason-last and bounded reason-last, and that order is what decides what a
     too-long row loses. The head yields: it is a settled statement (or, on an order row, the
@@ -313,20 +304,15 @@ def _bounded_row(head: str, reason: str) -> str | None:
 def _head_clip(head: str, room: int) -> str:
     """The head of a row too long for its row, cut at a word where one can be found.
 
-    :func:`noni.census_text._clipped` keeps the page's bound and its clip mark, but it
-    cannot promise that the cut lands between words, and a head cut mid-word leaves the
-    reader to guess at the subject. So the boundary is asked here rather than of the
-    clipper the census shares (whose own rows must not move): the head is kept whole up
-    to the last space that leaves room for the mark, and the mark is the page's own
-    :data:`noni.brief.ELLIPSIS` -- the same character string the clipped purpose body
-    prints, spelled once in the tool and reached through the importer below so the page
-    has one spelling of it and no second clipper.
+    :func:`noni.census_text._clipped` keeps the page's bound and its clip mark, but it cannot promise
+    the cut lands between words, and a head cut mid-word leaves the reader to guess at the subject. So
+    the boundary is asked here: the head is kept whole up to the last space that leaves room for the
+    mark, and the mark is the page's own :data:`noni.brief.ELLIPSIS`.
 
-    The row's bound is honoured as it always was: the kept head is at least three
-    characters inside the room, so head and mark together never pass it. Where the head
-    holds no space to cut at, or none far enough in to leave anything worth reading,
-    there is no boundary to find and the character clip is the honest answer: a row
-    still has to be printed, bounded and marked.
+    The row's bound is honoured: the kept head is at least ``_HEAD_MIN`` characters inside the room,
+    so head and mark together never pass it. Where the head holds no space far enough in to leave
+    anything worth reading, the character clip is the honest answer: a row still has to print,
+    bounded and marked.
     """
     # Three of the room are the mark's own budget, and one more is the space the cut
     # lands on, which the row drops rather than prints.
@@ -391,28 +377,33 @@ DROPPED_PREFIX = "dropped: "
 def page_line(text: str, limit: int, reserved: frozenset[str]) -> str | None:
     """One body line of the page, or None when the text would not be a body line.
 
-    Two scrubs, because they answer two different questions and neither is a superset of the
-    other. :func:`noni._safe_text.safe_text` drops every Unicode category-C character, which is
-    what stops an ANSI or OSC sequence in foreign text reaching the terminal; :func:`noni.census_text
-    ._bounded` collapses whitespace and replaces a machine-local path, which is what makes a brief
-    row read like a census row. The order of the two matters: the control bytes have to go before
-    the bound is applied, so the characters a line loses to the escape being deleted cannot push
-    a visible word past the limit and have it replaced by an ellipsis.
+    Three rules, answering three different questions. A run of whitespace becomes one space, which
+    is what makes a row one row. Then :func:`noni._safe_text.safe_text` drops every Unicode
+    category-C character, which is what stops an ANSI or OSC sequence reaching the terminal. The
+    collapse runs both before and after the renderer, so neither a tab nor a byte the renderer
+    deleted leaves a gap or padding behind: a tab is itself a control character, so a renderer run
+    over the text first would delete it and leave ``two\tcandidates`` as one word, and a byte at a
+    field's edge or between spaces would leave padding that made a reserved word read as something
+    else. Neither rule rewrites a word the operator committed: the census's path arms belong to a
+    row built from an ``OSError``, not to a page line.
 
-    Then the two shape tests a foreign line has to pass to reach stdout: it must survive both
-    scrubs as something with content in it, and it must not be one of the words the page is read
-    by. ``None`` is the caller's signal to drop the row, and the callers are the places that print
-    foreign text -- a purpose line, an order row's subject.
+    The line is bounded last, by the page's own clip: :func:`noni.census_text._clipped` cuts the
+    finished line to ``limit`` and marks the cut, so a line can never leave this function longer
+    than the bound. The renderer is given room for the whole line, so the page's clip is the only
+    cut: :func:`noni._safe_text.safe_text` only ever removes characters, so asked for the length of
+    its own input it cannot truncate, and no tail of its spelling can reach the screen where the
+    page's mark belongs.
 
-    ``reserved`` is the set the caller names as the words the page is read by; it is named by the
-    caller rather than built here from ``brief``'s headers, because the headers are the tool's
-    vocabulary and belong with the tool while the rule here is about a set of words, whatever
-    spells them.
+    The two shape tests: the line must survive all three rules as something with content in it, and
+    must not be one of the words the page is read by. ``None`` is the caller's signal to drop the
+    row, and the callers are the places that print foreign text -- a purpose line, an order row's
+    subject. ``reserved`` is the set those words are, named by the caller rather than built here from
+    ``brief``'s headers: the headers are the tool's vocabulary and belong with the tool, while the
+    rule here is about a set of words, whatever spells them.
     """
-    line = _bounded(safe_text(text, limit), limit)
-    if not line.strip() or line in reserved:
-        return None
-    return line
+    collapsed = " ".join(text.split())
+    line = _clipped(" ".join(safe_text(collapsed, len(collapsed)).split()), limit)
+    return None if not line.strip() or line in reserved else line
 
 
 def block_rows(lines: object, cap: int) -> tuple[list[str], int]:
@@ -471,27 +462,24 @@ def close_block(lines: list[str], withheld: int) -> list[str]:
     return lines
 
 
-# The shortest head the word-boundary clip will keep. Below it a row would print a mark
-# over nothing readable, and the character clip -- which at least fills the room the
-# reason left -- is the better answer. Three characters is no rule of its own: it is the
-# length of the clip mark, the smallest thing the clipper prints beside a kept head.
+# The bound the page asks of the foreign text it prints: the operator's purpose prose and the
+# citation an order entry carries. The tool's ceiling for foreign text, asked of the artifact's
+# own characters rather than of anything it parsed, so one number covers every row of the page.
+TEXT_LIMIT = 300
+
+# The shortest head the word-boundary clip keeps. Below it a row would print a mark over nothing
+# readable, and the character clip, which at least fills the room the reason left, is the better
+# answer. Three is the length of the clip mark.
 _HEAD_MIN = 3
 
 
 def _clip_mark() -> str:
     """The page's clip mark, read from the one place the tool spells it.
 
-    A head cut at a word prints the same three dots the shared clipper prints, and they
-    are spelled once in the product, as :data:`noni.brief.ELLIPSIS`. It is read through
-    the module that owns it, at the call, rather than imported at the top of this file:
-    ``brief`` imports this module, so a top-level import of it back would be a cycle.
+    A head cut at a word prints the same three dots the shared clipper prints, and they are spelled
+    once in the product, as :data:`noni.brief.ELLIPSIS`. Read at the call rather than imported at
+    the top: ``brief`` imports this module, so a top-level import back would be a cycle.
     """
     from . import brief as _brief
 
     return _brief.ELLIPSIS
-
-
-# The bound the page asks of the foreign text it prints: the operator's purpose prose and the
-# citation an order entry carries. The tool's ceiling for foreign text, asked of the artifact's
-# own characters rather than of anything it parsed, so one number covers every row of the page.
-TEXT_LIMIT = 300

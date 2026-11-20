@@ -1,5 +1,6 @@
-// noni hook: a standing prompt reminder every turn, plus `noni brief` at session start
-// and after each compaction. See README.md for the install, limits, race and gate.import { existsSync } from "node:fs";
+// noni hook: a standing prompt reminder every turn, plus `noni brief` at session
+// start and after each compaction. See README.md for install, limits, race and gate.
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const BRIEF_TIMEOUT_MS = 30_000;
@@ -10,8 +11,8 @@ const REMINDER =
   "order it gives and follow its recorded decisions; do not invent direction. " +
   "When something is undecided, ask the operator and record the answer with " +
   "the noni decide command.";
-const CANDIDATES = [".noni-state", ""];
-// State root: the env var, else the first candidate holding a noni/ directory.
+const CANDIDATES = [".noni-state", ""]; // pilot's dir first, then the bare cwd
+// The state root: the env var, else the first candidate holding a noni/ directory.
 function stateRoot(env: Record<string, string | undefined>, cwd: string) {
   const fromEnv = env["NONI_STATE_ROOT"];
   if (fromEnv) return fromEnv;
@@ -37,8 +38,7 @@ function failureReason(r: { code: number; stderr: string; killed: boolean }) {
 export default function noniHook(pi: ExtensionAPI) {
   let pendingBrief: string | undefined;
   let epoch = 0;
-  let inflight: Promise<string | undefined> | undefined;
-  // Its text, a failure line, or undefined with no root; never the slot.
+  let inflight: Promise<string | undefined> | undefined;  // Returns its text, a failure line, or undefined with no root; never the slot.
   async function fetchBrief(cwd: string) {
     try {
       const root = stateRoot(process.env, cwd);
@@ -49,8 +49,8 @@ export default function noniHook(pi: ExtensionAPI) {
       return failureLine("could not run the brief");
     }
   }
-  // The one writer of pendingBrief: only the newest number wins, so a late older
-  // fetch is dropped, a later start takes the slot, and one brief goes, not twice.
+  // The one writer of pendingBrief: epoch numbers each start and only the newest
+  // number wins, so a late older fetch is dropped and one brief reaches the model.
   function startBrief(cwd: string) {
     const mine = ++epoch;
     return fetchBrief(cwd).then((text) => {

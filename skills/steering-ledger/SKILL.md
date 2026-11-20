@@ -16,8 +16,7 @@ agent never answers for the operator: a decline or cancel leaves the question
 open, records nothing, and commits nothing.
 
 The record is the commit. A ping, a comment, or a chat message is a hint; the
-committed file is the truth. `noni census` (the unified census,
-`skills/census/scripts/census.py`) is the enforcement mechanism for what git and
+committed file is the truth. `noni census` is the enforcement mechanism for what git and
 the files can prove; `scripts/census.sh` beside it is the ledger shim — a thin
 wrapper that runs that same census over the ledger group and returns its exit
 code, kept so the path older pages print still runs. Every invariant it enforces is
@@ -192,8 +191,12 @@ with no `why` is not incomplete, it simply records no reason.
 `--asked-by <agent> --decided-by <operator>`: the agent asked, the operator decided.
 A decision an agent made on the operator's behalf is written
 `--decided-by <agent> --on-behalf-of <operator>`: the agent decided, for the
-operator. A ruling that was put with one option carries `--single-option`, which says
-the single option was deliberate and nothing had to be invented.
+operator. A ruling that was put with one option carries `--single-option` beside an
+explicit `--option` for that question and its `--answer`, which says the single
+option was deliberate and nothing had to be invented, for example
+`--single-option --option q1="<the one option>" --answer q1="<the one option>"`.
+The writer refuses `--single-option` unless some question carries exactly one
+`--option`.
 
 ## Supersede
 
@@ -212,11 +215,13 @@ the anti-fabrication rule (the agent never answers for the operator) are in
 
 ## Census
 
+Run `noni census --repo <state-root>` for the state's whole picture; it works
+wherever this skill is installed, since an installed skill folder can carry any name.
 `scripts/census.sh <state-root>/noni/decisions` is read-only and exits with an
 honest code. It is the ledger shim, not the enforcer and not a second arbiter:
-it is a thin wrapper that runs `noni census` (the unified census,
-`skills/census/scripts/census.py`) over the ledger group — `ledger-record`,
-`ledger-edited` and `ledger-chain` — and returns the census's own exit code. It
+it is a thin wrapper that runs `noni census` (the unified census) over the ledger
+group — `ledger-record`, `ledger-edited` and `ledger-chain` — and returns the
+census's own exit code. It
 has no schema, no jq and no exit-code table of its own; the census is the single
 arbiter of every rule and `skills/census/SKILL.md` is the single exit-code
 reference for it. It runs the ledger group and nothing else, so it reports no

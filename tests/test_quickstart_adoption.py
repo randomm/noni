@@ -318,3 +318,42 @@ def test_the_ledger_page_documents_both_attribution_flag_sets() -> None:
             f"the steering-ledger page does not document the flag set {flags!r}")
     assert "--single-option" in flowed, (
         "the steering-ledger page does not say what --single-option marks")
+
+
+def test_the_ledger_page_shows_the_single_option_flag_set_in_full() -> None:
+    """The flag-set paragraph shows --single-option beside an --option and an --answer.
+
+    The writer refuses --single-option unless a question carries exactly one explicit
+    --option, so a page that printed the marker alone handed the agent a refusal. The
+    three flags are pinned in one line of the paragraph, so a reword that dropped the
+    --option half reddens rather than reading plausibly.
+    """
+    flowed = " ".join(ledger_page().split())
+    line = next((line for line in ledger_page().splitlines()
+                 if "--single-option" in line and "--option " in line
+                 and "--answer" in line), "")
+    assert line, (
+        "the steering-ledger page never shows --single-option together with an "
+        "explicit --option and --answer")
+    assert "--single-option" in flowed
+
+
+def test_the_ledger_census_section_names_the_console_command_first() -> None:
+    """The Census section leads with `noni census --repo`, not with an installed path.
+
+    Agents install skills under folder names of their own, so a page that sent them to
+    skills/census/scripts/census.py handed them a path that does not resolve. The
+    console command is the one form that works wherever the skill landed, and the shim
+    keeps its place after it as the thin wrapper it is.
+    """
+    from docs_promises import section_body
+
+    census = " ".join(section_body(ledger_page(), "Census").split())
+    command = census.find("noni census --repo")
+    shim = census.find("scripts/census.sh")
+    assert command >= 0, "the Census section does not name `noni census --repo`"
+    assert shim >= 0, "the Census section no longer describes the ledger shim"
+    assert command < shim, (
+        "the Census section must name `noni census --repo` before the shim")
+    assert "skills/census/scripts/census.py" not in census, (
+        "the Census section still sends the agent to an installed skill path")

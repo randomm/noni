@@ -50,8 +50,8 @@ Three rules the tool is built around:
 Nothing here re-derives a shape another module owns: the order is read through
 :func:`noni.orderstate.read_order`, the intent file through the reader module beside this
 file, the ledger through :func:`noni.brief_page.decision_rows`, every row through
-:mod:`noni.brief_page` (control bytes out, host paths scrubbed, the field bounded), and the
-verdict through the census itself.
+:mod:`noni.brief_page` (control bytes out, whitespace collapsed, the field bounded; committed
+words printed as written), and the verdict through the census itself.
 
 Exit codes: 0 whenever the brief rendered, whatever the census's verdict was; 2 for a bad
 ``--now``, a ``--repo`` that is not a directory, or anything besides those two flags, with
@@ -343,10 +343,10 @@ def _purpose_block(root: Path) -> list[str]:
 
     One header and the body, plus the ellipsis line and the count line when the body ran past the
     cap. An absent intent file, one whose sections do not validate and one this run cannot read all
-    print the header and :data:`NOT_READ`. Each printed line is the census's scrub of the
+    print the header and :data:`NOT_READ`. Each printed line is the page's rendering of the
     operator's prose: a control byte cannot reach the terminal out of a file the brief did not
-    write, and a host path in a purpose statement prints as ``<path>`` here exactly as it would in
-    a census row.
+    write and a run of whitespace becomes one space, while every word the operator committed -- a
+    slash command or a path alike -- prints as the intent file wrote it.
     """
     body = brief_intent.purpose_block(root / intentschema.INTENT_REL,
                                       PURPOSE_MAX_LINES)

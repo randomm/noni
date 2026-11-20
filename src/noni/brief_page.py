@@ -5,14 +5,14 @@ for the same reason: ``brief.py`` owns the command line, the budget and
 what each block prints, and this module owns the decision every printed line of foreign text
 passes through on its way to the screen.
 
-The rules are the brief's and not the census's, and two modules hold a piece of each:
-:func:`noni.census_text._bounded` is the scrub the census renders its rows with (whitespace
-collapsed, machine-local paths replaced, tail bounded), and :func:`noni._safe_text.safe_text` is
-the renderer every noni refusal prints its caller-supplied text through (no control bytes,
-bounded). Neither is enough on its own for a line of the page: the census scrub is a whitespace
-and path rule and leaves an escape byte standing, and the refusal renderer keeps runs of
-whitespace and knows nothing about paths. A screen that prints an operator's prose takes
-both, in the order that makes the bound mean what it says.
+The rules are the brief's and not the census's. :func:`noni.census_text._clipped` is the length
+half of the census's row rule (a tail bounded to a count, with a mark when it was cut) and
+:func:`noni._safe_text.safe_text` the renderer every noni refusal prints caller-supplied text
+through (no control bytes, bounded). The census's other half -- whitespace collapsed, a
+machine-local path replaced -- answers a row built from an ``OSError``, which quotes the filename it
+failed on. A page line is the opposite kind of text: the operator committed every word of it, so it
+prints as written, and the page's own third rule (a run of whitespace is one space, so a row stays
+a row) is written here rather than borrowed.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from pathlib import Path
 
 from . import ledger_schema, orderschema, orderstate
 from ._safe_text import safe_text
-from .census_text import _bounded, _clipped
+from .census_text import _clipped
 
 # The text of the one question the decisions block asks of every record it reads. Like
 # :data:`NOT_READ` it is the tool's own sentence and never a word from a record, so no byte
@@ -63,8 +63,8 @@ def order_row(position: int, *, issue: object, decision: object,
     the reason is what a cold start cannot recover anywhere else on the screen.
 
     Every part reaches the line through :func:`page_line`, so a control byte in a reason cannot
-    reach the terminal and a host path in one prints as ``<path>`` here exactly as it would in a
-    census row. A reason that renders to nothing costs its mark and not the row: an entry written
+    reach the terminal while the reason's own words print as the artifact committed them. A reason
+    that renders to nothing costs its mark and not the row: an entry written
     before the field existed holds no reason, and a mark standing over nothing is the page
     promising a line it did not print.
     """
@@ -92,11 +92,11 @@ def _rendered(value: object) -> str:
     """A foreign field as it may be printed, or ``""`` for a field that renders to nothing.
 
     Two questions rather than one test of the field: it must be a string with something in it, and
-    it must survive the page's own scrub with something in it. A field of spaces passes the first
-    and fails the second, and so does a field made only of what the scrub deletes (a category-C
+    it must survive the page's own rules with something in it. A field of spaces passes the first
+    and fails the second, and so does a field made only of what the renderer deletes (a category-C
     character, say), which is the shape a hand-edited artifact reaches when a reason is deleted
-    and its quotes left behind. Asking the page's scrub is what makes a mark stand or fall on the
-    same answer the row itself gets.
+    and its quotes left behind. Asking the page's renderer is what makes a mark stand or fall on
+    the same answer the row gets.
     """
     if not isinstance(value, str) or not value.strip():
         return ""
@@ -242,7 +242,8 @@ def _decision_row(record: dict) -> str | None:
     rather than the tail of the finished line, because a settled statement is readable in the
     record file and the reason is what the row exists to put on the screen. Every field reaches
     the line through :func:`page_line`, so a control byte in a question cannot reach the terminal
-    and a host path in a reason prints as ``<path>`` here exactly as it would in a census row. A
+    while the operator's own words -- a slash command or a path they committed alike -- print as
+    the record wrote them. A
     row whose rendered form is blank or one of the page's own words costs the block its row.
     """
     body = _decision_body(record)
@@ -290,7 +291,7 @@ def _statement_segment(question: object) -> str | None:
 def _bounded_row(head: str, reason: str) -> str | None:
     """One row of a head and a reason, bounded with the reason kept whole.
 
-    The reason is scrubbed here and not by the callers, so the two rules a reason answers to --
+    The reason is rendered here and not by the callers, so the two rules a reason answers to --
     no reason at all, and a reason too long to share the row -- are held by one function. The row
     is composed reason-last and bounded reason-last, and that order is what decides what a
     too-long row loses. The head yields: it is a settled statement (or, on an order row, the
@@ -391,16 +392,17 @@ DROPPED_PREFIX = "dropped: "
 def page_line(text: str, limit: int, reserved: frozenset[str]) -> str | None:
     """One body line of the page, or None when the text would not be a body line.
 
-    Two scrubs, because they answer two different questions and neither is a superset of the
-    other. :func:`noni._safe_text.safe_text` drops every Unicode category-C character, which is
-    what stops an ANSI or OSC sequence in foreign text reaching the terminal; :func:`noni.census_text
-    ._bounded` collapses whitespace and replaces a machine-local path, which is what makes a brief
-    row read like a census row. The order of the two matters: the control bytes have to go before
-    the bound is applied, so the characters a line loses to the escape being deleted cannot push
-    a visible word past the limit and have it replaced by an ellipsis.
+    Two rules, answering two different questions. A run of whitespace becomes one space, which is
+    what makes a row one row; :func:`noni._safe_text.safe_text` then drops every Unicode
+    category-C character, which is what stops an ANSI or OSC sequence in foreign text reaching the
+    terminal. Neither rule rewrites a word the operator committed: the census's path arms belong to
+    a row built from an ``OSError`` and have no business in the page, where they took a slash
+    command out of the operator's own text. The collapse goes first, before the renderer: tab is
+    itself a control byte, so a renderer run over the text first would delete it and the collapse
+    would find no boundary left to stand on -- ``two\tcandidates`` would print as one word.
 
     Then the two shape tests a foreign line has to pass to reach stdout: it must survive both
-    scrubs as something with content in it, and it must not be one of the words the page is read
+    rules as something with content in it, and it must not be one of the words the page is read
     by. ``None`` is the caller's signal to drop the row, and the callers are the places that print
     foreign text -- a purpose line, an order row's subject.
 
@@ -409,10 +411,8 @@ def page_line(text: str, limit: int, reserved: frozenset[str]) -> str | None:
     vocabulary and belong with the tool while the rule here is about a set of words, whatever
     spells them.
     """
-    line = _bounded(safe_text(text, limit), limit)
-    if not line.strip() or line in reserved:
-        return None
-    return line
+    line = safe_text(" ".join(text.split()), limit)
+    return None if not line.strip() or line in reserved else line
 
 
 def block_rows(lines: object, cap: int) -> tuple[list[str], int]:

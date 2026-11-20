@@ -30,27 +30,63 @@ from noni import brief as brief_module
 from noni import ledger_schema
 
 
+def _host_shaped_path() -> str:
+    """A machine-local home path, assembled at runtime from the hygiene scan's own table.
+
+    Never a literal: ``tests/test_purity.py`` and ``tests/test_skill_scrub.py`` read every tracked
+    test file against ``FIXTURE_HOME_PATH_PATTERNS``, which matches a home path of any username.
+    The parts are joined here so the committed bytes of this file hold none.
+    """
+    return "/" + "home" + "/" + "someone" + "/" + "build"
+
+
 def test_brief_a_record_of_control_bytes_is_scrubbed_before_it_prints(
         tmp_path: Path) -> None:
-    """A hostile question and reason reach the screen scrubbed, not raw.
+    """A record's control bytes never reach the screen; its committed text does.
 
-    The page's own scrub is what stands between a record's bytes and a terminal, so the case
-    plants the two shapes that matter: an escape sequence that would move the cursor or clear the
-    screen, and a machine-local absolute path that the page promises never to print. Neither
-    survives, and the row still carries the words around them.
+    The page's own renderer is what stands between a record's bytes and a terminal, so the case
+    plants both shapes a record's bytes can hold: an escape sequence that would move the cursor or
+    clear the screen, which must not survive, and a machine-local absolute path the operator
+    committed themselves, which prints exactly as the record wrote it. The row still carries the
+    words around them.
+    """
+    root = plant_brief_tree(tmp_path)
+    ledger_dir(root).joinpath(f"{RECORD_ID}.json").unlink()
+    path = _host_shaped_path()
+    write_record(root, record_document(
+        "2026-10-25-hostile", "2026-10-25T00:00:00Z",
+        question=f"Ship\x1b[2J from {path}?", answer="yes",
+        why=f"\x07because of {path}"))
+    out = run_brief(root, "--now", NOW)[1]
+    assert "\x1b" not in out and "\x07" not in out
+    row = rows(out, brief_module.RECENT_DECISIONS_HEADER)[0]
+    # Retargeted for #202: the committed path prints as written rather than as a scrub marker.
+    assert path in row
+    assert "<path>" not in row
+    assert "Ship" in row and "from" in row and "yes" in row
+
+
+def test_brief_a_record_of_a_slash_word_prints_it_as_committed(
+        tmp_path: Path) -> None:
+    """A slash command in committed record text reaches the screen whole.
+
+    The census's path arm answers "an ``OSError`` quoted a host path", and it has no floor on the
+    number of components, so it took ``/deploy`` out of the operator's own question, answer and
+    reason. A launched run is the route the operator and a hook have, so the row is read off the
+    printed page.
     """
     root = plant_brief_tree(tmp_path)
     ledger_dir(root).joinpath(f"{RECORD_ID}.json").unlink()
     write_record(root, record_document(
-        "2026-10-25-hostile", "2026-10-25T00:00:00Z",
-        question="Ship\x1b[2J from /home/someone/build?", answer="yes",
-        why="\x07because of /home/someone/secret"))
+        "2026-10-25-slash", "2026-10-25T00:00:00Z",
+        question="Run /deploy first?", answer="yes, /deploy first",
+        why="the /deploy job is the gate"))
     out = run_brief(root, "--now", NOW)[1]
-    assert "\x1b" not in out and "\x07" not in out
-    assert "/home/someone" not in out
+    assert out.count("/deploy") == 3
     row = rows(out, brief_module.RECENT_DECISIONS_HEADER)[0]
-    assert "<path>" in row
-    assert "Ship" in row and "from" in row and "yes" in row
+    assert row == ("2026-10-25-slash: Run /deploy first?: yes, /deploy first"
+                   " \u2014 the /deploy job is the gate")
+    assert "<path>" not in row
 
 
 def test_brief_the_decisions_reader_answers_its_own_three_questions(

@@ -31,6 +31,7 @@ from brief_fixtures import (
 from brief_support import (
     DROPPED_PREFIX,
     HEADERS,
+    dropped_of,
     rows,
     sections,
     stripped,
@@ -159,26 +160,40 @@ def test_brief_an_order_why_of_nothing_prints_no_mark(tmp_path: Path) -> None:
         f"1. #5 ({RECORD_ID}) \u2014 the release train leaves Friday"]
 
 
+def _host_shaped_path() -> str:
+    """A machine-local home path assembled at runtime, never written as a literal here.
+
+    ``tests/test_purity.py`` and ``tests/test_skill_scrub.py`` read every tracked file against
+    ``FIXTURE_HOME_PATH_PATTERNS``, which matches a home path of any username, so the parts are
+    joined at runtime the way ``tests/census_ledger_fixtures.py`` builds its host-shaped faults.
+    """
+    return "/" + "home" + "/" + "someone" + "/" + "build"
+
+
 def test_brief_an_order_row_is_scrubbed_and_bounded(tmp_path: Path) -> None:
-    """A hostile ``why`` reaches the screen scrubbed, and every row stays one line.
+    """A hostile ``why`` loses its control bytes, keeps its committed text, and stays one line.
 
     The two fields the row gained are foreign text from a file the brief did not write, so they
-    answer to the same scrub every other line of the page does: no control byte out, no host
-    path printed, and the row bounded as one line rather than the field alone. The escape and the
-    bell are written as json escapes and the path in plain text, which is how the record's own
-    bytes carry them: the page's promise is about what it prints, not about what a file holds.
+    answer to the page's renderer: no control byte out, and the row bounded as one line rather than
+    the field alone. What the operator committed does not move, so the host path the entry's
+    ``why`` names prints as the artifact wrote it. The escape and the bell are written as json
+    escapes and the path in plain text, which is how the record's own bytes carry them: the page's
+    promise is about what it prints, not about what a file holds.
     """
     root = plant_brief_tree(tmp_path)
+    path = _host_shaped_path()
     write_order_entries(root, [
         orderschema.entry(issue=11, decision=RECORD_ID, confirmed=CONFIRMED,
-                          why="ship \x1b[2J from /home/someone/build \x07 now")])
+                          why=f"ship \x1b[2J from {path} \x07 now")])
     out = run_brief(root, "--now", NOW)[1]
-    assert "\x1b" not in out and "\x07" not in out and "/home/someone" not in out
+    assert "\x1b" not in out and "\x07" not in out
     row = rows(out, brief_module.ORDER_HEADER)[0]
-    assert "<path>" in row
+    # Retargeted for #202: the committed path prints as written rather than as a scrub marker.
+    assert path in row
+    assert "<path>" not in row
     assert len(row.splitlines()) == 1
     assert len(row) <= brief_page.TEXT_LIMIT
-    # The words around the scrubbed bytes survive: the scrub removes, it does not replace.
+    # The words around the dropped bytes survive: the renderer removes, it does not replace.
     assert "ship" in row and "from" in row and "now" in row
 
 
@@ -221,11 +236,59 @@ def test_brief_an_order_row_keeps_a_reason_that_fills_the_row(tmp_path: Path) ->
     assert row.endswith(reason[-(brief_page.TEXT_LIMIT - 3):])
 
 
+def test_brief_an_order_why_with_a_slash_word_prints_it_as_committed(
+        tmp_path: Path) -> None:
+    """A slash command in an entry's committed ``why`` reaches the screen whole.
+
+    The same census arm that took ``/deploy`` out of a record's text took it out of an order
+    entry's, because the mangling sat in the one function every printed line passes through. The
+    entry cites an ordinary record id: an id is ``<date>-<slug>`` over ``[a-z0-9-]``, so a slash
+    cannot reach the row through the citation.
+    """
+    root = plant_brief_tree(tmp_path)
+    write_order_entries(root, [
+        orderschema.entry(issue=31, decision=RECORD_ID, confirmed=CONFIRMED,
+                          why="ship the /deploy job before the freeze")])
+    row = rows(run_brief(root, "--now", NOW)[1], brief_module.ORDER_HEADER)[0]
+    assert row == (f"1. #31 ({RECORD_ID}) \u2014 ship the /deploy job before the freeze")
+    assert "<path>" not in row
 
 
+def test_brief_an_order_why_of_tabs_and_spaces_collapses_to_one_line(
+        tmp_path: Path) -> None:
+    """The page still folds a committed ``why`` to one line: a tab and a run of spaces go.
+
+    The row's one-line rule belongs to the page and not to the census, so the whitespace collapse
+    stays where the row is built even now the path arms have left. The artifact's own rationale
+    rule refuses a line break and admits a tab, so those are the two shapes this case plants.
+    """
+    root = plant_brief_tree(tmp_path)
+    write_order_entries(root, [
+        orderschema.entry(issue=32, decision=RECORD_ID, confirmed=CONFIRMED,
+                          why="ship   two\tcandidates   now")])
+    row = rows(run_brief(root, "--now", NOW)[1], brief_module.ORDER_HEADER)[0]
+    assert row == f"1. #32 ({RECORD_ID}) \u2014 ship two candidates now"
 
 
+def test_brief_a_purpose_line_with_a_slash_word_prints_it_and_owes_nothing(
+        tmp_path: Path) -> None:
+    """A slash command in a Purpose line prints intact and costs the block no extra line.
 
+    The Purpose body is the third family of committed text on the page, and it reaches the screen
+    through the same renderer as the two row builders. The block's own withheld count is compared
+    with the same tree unplanted, so the word surviving cannot be paid for by a silent drop.
+    """
+    root = plant_brief_tree(tmp_path)
+    baseline = dropped_of(run_brief(root, "--now", NOW)[1])
+    path = intent_path(root)
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text.replace(PURPOSE_LINES[2], "Run /deploy before the release."),
+                    encoding="utf-8")
+    out = run_brief(root, "--now", NOW)[1]
+    body = stripped(sections(out), brief_module.PURPOSE_HEADER)
+    assert "Run /deploy before the release." in body
+    assert "<path>" not in out
+    assert dropped_of(out) == baseline
 
 def test_brief_one_block_per_header_separated_by_one_blank_line(tmp_path: Path) -> None:
     """The page's shape is part of the contract: one blank line, and only one, between blocks.

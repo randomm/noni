@@ -204,3 +204,32 @@ def test_brief_source_stays_within_the_size_cap() -> None:
     for name in ("brief.py", "brief_intent.py", "brief_page.py"):
         source = (REPO / "src" / "noni" / name).read_text(encoding="utf-8")
         assert len(source.splitlines()) < 500, name
+
+
+def test_brief_page_borrows_no_path_scrub_from_the_census() -> None:
+    """The page prints committed text as written, and the import line is where that is decided.
+
+    Read off the syntax tree rather than as text, the way ``tests/test_ledger_listing_ownership.py``
+    reads imports, so a docstring that mentions the census scrub cannot satisfy or break the check.
+    One name is allowed: ``_clipped``, the length half, which clips a row head with no opinion
+    about paths. Everything else the census's text module exports -- ``_bounded`` and ``_stripped``
+    above all, whose path arms substitute a marker for any single slash word -- may not be imported
+    or called here, because those arms are right for an ``OSError`` and wrong for an operator's
+    committed record.
+    """
+    import ast
+
+    tree = ast.parse((REPO / "src" / "noni" / "brief_page.py").read_text(encoding="utf-8"))
+    imported: set[str] = set()
+    called: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "census_text":
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names
+                            if alias.name == "census_text")
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            called.add(node.func.id)
+    assert imported <= {"_clipped"}, f"the page borrows the census scrub: {imported}"
+    assert called & {"_bounded", "_stripped", "_scrub_inner", "_outer_scrub"} == set(), \
+        "the page calls a census path arm"

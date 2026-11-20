@@ -49,7 +49,7 @@ Three rules the tool is built around:
 
 Nothing here re-derives a shape another module owns: the order is read through
 :func:`noni.orderstate.read_order`, the intent file through the reader module beside this
-file, the ledger through :func:`noni.brief_rows.decision_rows`, every row through
+file, the ledger through :func:`noni.brief_page.decision_rows`, every row through
 :mod:`noni.brief_page` (control bytes out, whitespace collapsed, the field bounded; committed
 words printed as written), and the verdict through the census itself.
 
@@ -68,7 +68,7 @@ from pathlib import Path
 
 from . import (
     brief_intent,
-    brief_rows,
+    brief_page,
     census_run,
     intentschema,
     labels,
@@ -80,7 +80,9 @@ from .brief_page import (
     DROPPED_PREFIX,
     NOT_READ,
     TEXT_LIMIT,
+    block_rows,
     close_block,
+    decision_rows,
     page_lines,
 )
 
@@ -368,7 +370,7 @@ def _order_block(root: Path) -> list[str]:
     The read is :func:`noni.orderstate.read_order` and each entry prints
     ``{position}. #{issue} ({decision})``, plus ``{why}`` after
     :data:`noni.brief_page.REASON_SEPARATOR` when the entry carries a reason (see
-    :func:`noni.brief_rows.order_row` for the row and the reason the reason is kept whole). The
+    :func:`noni.brief_page.order_row` for the row and the reason the reason is kept whole). The
     record id is on the row because the page reads no tracker: an issue number is a number, and
     the decision that set the position is the only thing the tree holds that says what the entry is
     for. ``confirmed`` is not printed: this is a screen, and the order writer's own listing is the
@@ -386,7 +388,7 @@ def _order_block(root: Path) -> list[str]:
         # fixed line, so the block is never omitted and the reader is never handed a
         # heading above a hole.
         return [ORDER_HEADER, EMPTY_ORDER]
-    rows, withheld = brief_rows.block_rows(
+    rows, withheld = block_rows(
         (_entry_row(position, entry)
          for position, entry in enumerate(entries, 1)), TOP_ENTRIES)
     return close_block([ORDER_HEADER, *rows], withheld)
@@ -396,7 +398,7 @@ def _decisions_block(root: Path) -> list[str]:
     """The ``recent decisions`` block: the five newest live records, newest first.
 
     The reader lives beside the page's other foreign-text rules
-    (:func:`noni.brief_rows.decision_rows`) and this block only says what it prints: one row per
+    (:func:`noni.brief_page.decision_rows`) and this block only says what it prints: one row per
     record, holding its id, then one ``text: answer`` segment per question (or, for a record that
     asked one question on purpose, its statement), then the record's ``{why}`` after
     :data:`noni.brief_page.REASON_SEPARATOR` when it carries one. Live is that reader's single
@@ -410,7 +412,7 @@ def _decisions_block(root: Path) -> list[str]:
     this one has no :data:`NOT_READ` arm: there is no half-read ledger this page can show rows
     from, and one answer for every unreadable state is the honest one here.
     """
-    rows, withheld = brief_rows.decision_rows(root / orderstate.DECISIONS_DIR, RECENT_DECISIONS)
+    rows, withheld = decision_rows(root / orderstate.DECISIONS_DIR, RECENT_DECISIONS)
     return close_block([RECENT_DECISIONS_HEADER, *rows], withheld)
 
 
@@ -420,10 +422,10 @@ def _entry_row(position: int, entry: dict) -> str | None:
     The three fields an entry contributes to the line are asked through their owners: the issue
     through :func:`noni.orderschema.entry_issue` (so "names no issue" is a value to branch on and
     not a ``KeyError``), and the record and the reason as the artifact's own fields. The row itself
-    is built by :func:`noni.brief_rows.order_row`, beside the page's other rules for a line of
+    is built by :func:`noni.brief_page.order_row`, beside the page's other rules for a line of
     foreign text.
     """
-    return brief_rows.order_row(position,
+    return brief_page.order_row(position,
                                 issue=orderschema.entry_issue(entry),
                                 decision=entry.get(orderschema.DECISION_FIELD),
                                 why=entry.get(orderschema.WHY_FIELD))

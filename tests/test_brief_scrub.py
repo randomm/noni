@@ -197,7 +197,7 @@ def test_brief_the_decisions_reader_answers_its_own_three_questions(
     statuses it prints, how many rows it keeps, what order it keeps them in -- are pinned where
     they are decided rather than inferred from a screen.
     """
-    from noni import brief_rows
+    from noni import brief_page
 
     # The writer-shaped tree the page reads: ``write_record`` plants under ``<root>/noni/decisions``
     # because that is the path the block reaches through ``--repo``, and the reader is handed the
@@ -208,7 +208,7 @@ def test_brief_the_decisions_reader_answers_its_own_three_questions(
             "c": ("2026-10-03T00:00:00Z", ledger_schema.STATUS_OPEN),
             "d": ("2026-10-04T00:00:00Z", ledger_schema.STATUS_DECIDED)}.items():
         write_record(tmp_path / "seed", record_document(record_id, date, status=status))
-    rows, withheld = brief_rows.decision_rows(ledger_dir(tmp_path / "seed"), cap=1)
+    rows, withheld = brief_page.decision_rows(ledger_dir(tmp_path / "seed"), cap=1)
     assert rows == ["d: Ship the candidate?: yes"]
     # One live record fitted the cap and the other cost the block its count line; the superseded
     # and open records were never live, so they cost nothing at all.

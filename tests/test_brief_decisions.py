@@ -31,7 +31,7 @@ from brief_fixtures import (
 from brief_support import dropped_of, rows
 
 from noni import brief as brief_module
-from noni import brief_page, brief_rows, ledger_schema
+from noni import brief_page, ledger_schema
 
 # --- the recent decisions block ---------------------------------------------
 
@@ -173,7 +173,7 @@ def test_brief_an_unanswered_question_prints_the_tools_own_word(
     that printed nothing there would read as a question this page dropped. The word is the
     tool's, read from the reader rather than typed, so a rename moves the assertion with it.
     """
-    from noni import brief_rows
+    from noni import brief_page
 
     root = plant_brief_tree(tmp_path)
     ledger_dir(root).joinpath(f"{RECORD_ID}.json").unlink()
@@ -185,7 +185,7 @@ def test_brief_an_unanswered_question_prints_the_tools_own_word(
     body = rows(run_brief(root, "--now", NOW)[1],
                 brief_module.RECENT_DECISIONS_HEADER)
     assert body == [f"2026-10-25-half-answered: Ship the beta?: yes; "
-                    f"Name the release?: {brief_rows.OPEN_ANSWER}"]
+                    f"Name the release?: {brief_page.OPEN_ANSWER}"]
 
 
 def test_brief_a_single_option_record_prints_its_statement(tmp_path: Path) -> None:
@@ -338,7 +338,7 @@ def test_brief_a_reason_that_scrubs_to_nothing_prints_no_mark() -> None:
     """
     head = "1. #1 (" + "d" * 250 + ")"
     for scrubbed_to_nothing in ("\u200b" * 280, " " * 280):
-        row = brief_rows._bounded_row(head, scrubbed_to_nothing)
+        row = brief_page._bounded_row(head, scrubbed_to_nothing)
         assert row is not None
         assert not row.rstrip().endswith("\u2014")
         assert brief_page.REASON_SEPARATOR not in row
@@ -362,7 +362,7 @@ def test_brief_the_writers_bound_of_an_order_row_keeps_the_reason() -> None:
     row = brief_page_rows.order_row(1, issue=123456, decision="2026-10-01-brief",
                                     why=reason)
     assert row is not None
-    assert row == ("1" + brief_rows.ORDER_SUBJECT_SEPARATOR + "#123456"
+    assert row == ("1" + brief_page.ORDER_SUBJECT_SEPARATOR + "#123456"
                    + brief_module.ELLIPSIS + brief_page.REASON_SEPARATOR + reason)
     assert len(row) == 296
 

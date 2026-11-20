@@ -16,7 +16,7 @@ builder does with a row whose parts are already at their bounds.
 
 from __future__ import annotations
 
-from noni import brief_rows
+from noni import brief_page
 
 
 def order_row(position: int, *, issue: int | None, decision: str | None,
@@ -27,7 +27,7 @@ def order_row(position: int, *, issue: int | None, decision: str | None,
     document: the caller is asking about the composition, and a caller that had to build a
     well-formed artifact to reach the builder would be testing the artifact's schema as well.
     """
-    return brief_rows.order_row(position, issue=issue, decision=decision,
+    return brief_page.order_row(position, issue=issue, decision=decision,
                                 why=why)
 
 
@@ -42,17 +42,7 @@ def decision_row(*, record_id: str, statement: str | None = None,
     the row does when the head and the reason cannot both fit.
     """
     text = statement if statement is not None else ""
-    return brief_rows._decision_row({
+    return brief_page._decision_row({
         "id": record_id, "status": "decided",
         "questions": [{"id": "q1", "text": text, "options": [text], "answer": text}],
         "single_option": True, **({"why": why} if why is not None else {})})
-
-
-def bounded_row(head: str, reason: str) -> str | None:
-    """One row of a head and a reason, built directly through the page's row rule.
-
-    The two arguments are already-composed strings rather than an artifact, which is what lets a
-    case hand the builder a head and a reason at the same instant: the launched route cannot plant
-    that pair, because the artifacts bound each field on its own.
-    """
-    return brief_rows._bounded_row(head, reason)

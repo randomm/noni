@@ -40,7 +40,6 @@ PRODUCT_MODULES = (
     "src/noni/brief.py",
     "src/noni/brief_intent.py",
     "src/noni/brief_page.py",
-    "src/noni/brief_rows.py",
     "src/noni/census.py",
     "src/noni/census_git.py",
     "src/noni/census_group_gate.py",

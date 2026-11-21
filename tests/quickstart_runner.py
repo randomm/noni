@@ -31,7 +31,8 @@ literal lists in :mod:`quickstart_golden`.
 Two page steps are not commands a reader's shell ran, so the launcher dispatches them
 in :mod:`quickstart_page_steps` instead of exec'ing them: the ``cd`` into a directory
 the page cannot name (every launched command already carries the cwd the harness
-chose), the page's two ignore-rule lines, and the two clones. The install section's
+chose), the page's two ignore-rule lines, and the two clones. Every other golden
+command, the wire section's read-only ``noni brief`` line included, reaches an exec. The install section's
 ``git clone`` and its three install lines are the fixture's materialised clone and its
 venv install (see :mod:`quickstart_topology`); the ``gh`` recipe is run through
 ``jq`` by the issue-state test.
@@ -48,7 +49,6 @@ from quickstart_golden import GOLDEN, INSTALL
 from quickstart_page_steps import (
     append_ignore_rule,
     denylist_file,
-    is_read_only_command,
     plant_denylist,
     state_clone,
     write_intent_draft,
@@ -394,10 +394,6 @@ def launch(world: World, argv: list[str],
         return subprocess.CompletedProcess(argv, 0, "", "")
     if argv[:2] == ["noni", "intent"]:
         return write_intent_draft(world, argv)
-    if is_read_only_command(argv):
-        # The wire section's ``noni brief`` line: the product's own read-only screen,
-        # launched as printed (see ``quickstart_page_steps.is_read_only_command``).
-        pass
     if argv[0] == "echo" or argv[0] == "printf":
         return append_ignore_rule(world, argv)
     if argv[0] == "git" and argv[1] == "clone":

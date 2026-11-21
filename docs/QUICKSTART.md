@@ -239,7 +239,8 @@ noni brief --repo .noni-state
 
 Where [`integrations/`](../integrations/) holds a hook for your harness, install it in
 this project as its README says; where the state lives inside the project, run the line
-with `--repo .`.
+with `--repo .`. With the state inside the project, that paragraph and this line both
+use `.` where they print `.noni-state`.
 
 ## Run the census in CI
 

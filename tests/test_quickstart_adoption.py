@@ -33,6 +33,7 @@ from quickstart_adoption import (
     wire_section_flowed,
 )
 from quickstart_golden import COVERED_SECTIONS, GOLDEN, WIRE
+from quickstart_runner import World, checked, launch, route_commands, run_route_b
 
 # The steps the adoption paragraph owes, in order, each as the link target its own
 # section carries. The order is the rule: an agent follows the list top to bottom.
@@ -141,6 +142,39 @@ def test_the_wire_section_is_a_covered_golden_section() -> None:
     """
     assert WIRE in COVERED_SECTIONS, "the wire section is not a covered golden section"
     assert GOLDEN[WIRE] == [["noni", "brief", "--repo", STATE_DIR]], GOLDEN[WIRE]
+
+
+def test_the_walk_launches_the_wire_line_and_the_brief_ends_verdict_ok(
+    world: World,
+) -> None:
+    """The wire section's own line runs, on the tree Route B's steps just built.
+
+    Every other command section of the page has a walk that launches its fences and
+    reads the program's output: the route walks in ``test_quickstart.py`` and the CI
+    walks in ``test_quickstart_ci.py``. This is that walk for ``## Wire the
+    project``, and it is what the page's wire promise is actually made of: the brief
+    the standing paragraph tells a session to run at start works on the state root
+    the walk built, exits 0, and its last line is the census's verdict line.
+
+    The commands come from :func:`quickstart_runner.route_commands`, which compares
+    the page's fences against the golden list before returning them, so the line
+    launched here is the line a reader copies, retargeted at the real clone by the
+    launcher's own re-rooting. Nothing in this module types a brief command.
+    """
+    run_route_b(world)
+    commands = route_commands(WIRE)
+    assert commands == GOLDEN[WIRE], (
+        f"the wire section prints {commands}, not the line the golden list runs: "
+        f"{GOLDEN[WIRE]}")
+    for argv in commands:
+        proc = launch(world, argv, world.project)
+        checked(proc, f"Wire command {argv}")
+        lines = proc.stdout.splitlines()
+        assert lines and lines[-1].startswith("summary: "), (
+            f"the brief printed no census summary line as its last line: {lines[-1:]!r}")
+        assert lines[-1].endswith("verdict ok"), (
+            f"the wire line the page prints does not end verdict ok on the tree "
+            f"Route B built: {lines[-1]!r}")
 
 
 def test_the_standing_paragraph_is_shipped_verbatim() -> None:
@@ -335,7 +369,13 @@ def test_the_ledger_page_shows_the_single_option_flag_set_in_full() -> None:
     assert line, (
         "the steering-ledger page never shows --single-option together with an "
         "explicit --option and --answer")
-    assert "--single-option" in flowed
+    assert "--single-option" in line and "--option " in line \
+        and "--answer" in line, (
+        f"the line that carries the marker no longer carries the other two flags: "
+        f"{line!r}")
+    assert line in flowed, (
+        f"the line that carries the three flags is not part of the page's prose: "
+        f"{line!r}")
 
 
 def test_the_ledger_census_section_names_the_console_command_first() -> None:

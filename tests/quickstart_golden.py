@@ -119,8 +119,9 @@ GOLDEN: dict[tuple[str, ...], list[list[str]]] = {
         ["git", "-C", ".noni-state", "push", "-u", "origin", "HEAD"],
     ],
     # The wire section ships the standing paragraph as prose and prints one read-only
-    # line: the brief a later session runs. Nothing here writes, so the walk launches
-    # it as printed (see ``quickstart_page_steps.is_read_only_command``).
+    # line: the brief a later session runs. Nothing here writes, and the walk
+    # (``test_quickstart_adoption``) launches it as printed, so a page that reworded
+    # the line or retargeted its ``--repo`` is seen in the brief's own output.
     WIRE: [
         ["noni", "brief", "--repo", ".noni-state"],
     ],

@@ -107,18 +107,6 @@ IGNORE_RULES: dict[str, str] = {
 IGNORE_TARGETS: frozenset[str] = frozenset(IGNORE_RULES)
 
 
-def is_read_only_command(argv: list[str]) -> bool:
-    """Whether one golden command is the product's own read-only screen.
-
-    The wire section's single line is ``noni brief``, which writes nothing: the page
-    prints it as the read every later session makes, so the launcher runs it exactly as
-    printed and checks only its exit code. The dispatch lives here rather than in the
-    launcher's body, so the launcher stays the single reading of what a golden command
-    means (:mod:`quickstart_runner`'s module docstring states that rule).
-    """
-    return argv[:2] == ["noni", "brief"]
-
-
 def append_ignore_rule(world: World,
                        argv: list[str]) -> subprocess.CompletedProcess[str]:
     """One of the page's write-a-line-into-a-file steps, applied to the scratch tree.

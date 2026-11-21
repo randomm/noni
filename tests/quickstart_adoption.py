@@ -17,6 +17,7 @@ from __future__ import annotations
 from docs_commands import read
 from docs_promises import QUICKSTART, README, REPO, section_body
 from quickstart_golden import WIRE
+from readme_support import README_LINE_LIMIT as _README_LINE_LIMIT
 
 # The paragraph, exactly as the page ships it, and exactly as a project is meant to
 # hold it. The page wraps it for its own column budget; the constant is the words a
@@ -44,10 +45,14 @@ STANDING_PARAGRAPH_PAGE = [
 # file, not a document.
 STANDING_PARAGRAPH_MAX = 400
 
-# The page's two caps, restated from the gates that own them so the adoption module
-# can assert the page grew within them rather than past them.
+# The quickstart's line cap. The gate that owns it is
+# ``test_quickstart.test_the_quickstart_page_is_linked_and_within_its_size``, which
+# holds 400 as an inline literal rather than a module-level constant, so there is
+# nothing here to import it from and the literal stays. README's cap, by contrast,
+# comes from its owner above: ``readme_support.README_LINE_LIMIT``, re-exported under
+# the name the adoption test reads.
 QUICKSTART_LINE_LIMIT = 400
-README_LINE_LIMIT = 150
+README_LINE_LIMIT = _README_LINE_LIMIT
 
 # The heading of the wire section, and the two pages that must name the release tag.
 WIRE_HEADING = WIRE[0]

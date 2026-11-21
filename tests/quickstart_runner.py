@@ -31,7 +31,8 @@ literal lists in :mod:`quickstart_golden`.
 Two page steps are not commands a reader's shell ran, so the launcher dispatches them
 in :mod:`quickstart_page_steps` instead of exec'ing them: the ``cd`` into a directory
 the page cannot name (every launched command already carries the cwd the harness
-chose), the page's two ignore-rule lines, and the two clones. The install section's
+chose), the page's two ignore-rule lines, and the two clones. Every other golden
+command, the wire section's read-only ``noni brief`` line included, reaches an exec. The install section's
 ``git clone`` and its three install lines are the fixture's materialised clone and its
 venv install (see :mod:`quickstart_topology`); the ``gh`` recipe is run through
 ``jq`` by the issue-state test.

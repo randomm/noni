@@ -1,0 +1,1 @@
+uv run --extra dev --with setuptools ruff check . && uv run --extra dev --with setuptools pytest -q

@@ -16,8 +16,7 @@ agent never answers for the operator: a decline or cancel leaves the question
 open, records nothing, and commits nothing.
 
 The record is the commit. A ping, a comment, or a chat message is a hint; the
-committed file is the truth. `noni census` (the unified census,
-`skills/census/scripts/census.py`) is the enforcement mechanism for what git and
+committed file is the truth. `noni census` is the enforcement mechanism for what git and
 the files can prove; `scripts/census.sh` beside it is the ledger shim — a thin
 wrapper that runs that same census over the ledger group and returns its exit
 code, kept so the path older pages print still runs. Every invariant it enforces is
@@ -150,6 +149,18 @@ the question's `answer` `null` — never as an answer. A decline or cancel that
 is recorded at all persists as `status: open` with every `answer` `null`, as an
 open chain-root record; that is the only state "records nothing" can mean.
 
+## Recording guidance
+
+Record the decisions that change direction, not the requirements: a requirement is
+something work has to satisfy, and the ledger is where the operator's calls are kept.
+An agent's own proposal is a question for the operator, never a ruling — an agent may
+ask, and the operator's answer is what becomes a record.
+
+Draft first: write with `--no-commit`, read the file the line printed, then commit it
+when its bytes are right. A mistake already committed is fixed with `--supersedes`,
+which writes a new record and flips the old one's `status` in one commit; nothing is
+edited in place.
+
 ## Attribution
 
 `by` is the **git author of the record's commit**, read with
@@ -176,6 +187,17 @@ reason. The writer refuses a blank, a multi-line or an over-long value at the fl
 (exit 2) and the census reports a hand-edited one at exit 10 naming `why`; a record
 with no `why` is not incomplete, it simply records no reason.
 
+**The two flag sets.** An operator ruling that an agent records is written
+`--asked-by <agent> --decided-by <operator>`: the agent asked, the operator decided.
+A decision an agent made on the operator's behalf is written
+`--decided-by <agent> --on-behalf-of <operator>`: the agent decided, for the
+operator. A ruling that was put with one option carries `--single-option` beside an
+explicit `--option` for that question and its `--answer`, which says the single
+option was deliberate and nothing had to be invented, for example
+`--single-option --option q1="<the one option>" --answer q1="<the one option>"`.
+The writer refuses `--single-option` unless some question carries exactly one
+`--option`.
+
 ## Supersede
 
 A correction writes a **new** file with `scripts/decide.py --supersedes ID`;
@@ -193,11 +215,13 @@ the anti-fabrication rule (the agent never answers for the operator) are in
 
 ## Census
 
+Run `noni census --repo <state-root>` for the state's whole picture; it works
+wherever this skill is installed, since an installed skill folder can carry any name.
 `scripts/census.sh <state-root>/noni/decisions` is read-only and exits with an
 honest code. It is the ledger shim, not the enforcer and not a second arbiter:
-it is a thin wrapper that runs `noni census` (the unified census,
-`skills/census/scripts/census.py`) over the ledger group — `ledger-record`,
-`ledger-edited` and `ledger-chain` — and returns the census's own exit code. It
+it is a thin wrapper that runs `noni census` (the unified census) over the ledger
+group — `ledger-record`, `ledger-edited` and `ledger-chain` — and returns the
+census's own exit code. It
 has no schema, no jq and no exit-code table of its own; the census is the single
 arbiter of every rule and `skills/census/SKILL.md` is the single exit-code
 reference for it. It runs the ledger group and nothing else, so it reports no

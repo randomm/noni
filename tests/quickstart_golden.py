@@ -49,6 +49,10 @@ INSTALL: tuple[str, ...] = ("Install",)
 ROUTE_A: tuple[str, ...] = ("Route A",)
 ROUTE_B: tuple[str, ...] = ("Route B",)
 CI: tuple[str, ...] = ("Run the census in CI",)
+# The section that hands the project its standing paragraph, and the one read-only
+# command it prints. It comes between Route B and the CI section, which is the order
+# the page prints them in and the order the walk launches them.
+WIRE: tuple[str, ...] = ("Wire the project",)
 DENYLIST: tuple[str, ...] = ("The deny-list",)
 ISSUE_STATE: tuple[str, ...] = ("The --issue-state",)
 
@@ -114,6 +118,13 @@ GOLDEN: dict[tuple[str, ...], list[list[str]]] = {
          "chore: keep the scrub deny-list untracked"],
         ["git", "-C", ".noni-state", "push", "-u", "origin", "HEAD"],
     ],
+    # The wire section ships the standing paragraph as prose and prints one read-only
+    # line: the brief a later session runs. Nothing here writes, and the walk
+    # (``test_quickstart_adoption``) launches it as printed, so a page that reworded
+    # the line or retargeted its ``--repo`` is seen in the brief's own output.
+    WIRE: [
+        ["noni", "brief", "--repo", ".noni-state"],
+    ],
     # The CI section prints one census line per route and nothing else: the
     # install lines are linked, not reprinted, so the page carries one copy of
     # them and the review of a step that gates a build stays this pair of lines.
@@ -138,5 +149,5 @@ GOLDEN: dict[tuple[str, ...], list[list[str]]] = {
 # ``test_quickstart.py`` compares this tuple against the page rather than trusting
 # the walk to have chosen well.
 COVERED_SECTIONS: tuple[tuple[str, ...], ...] = (
-    INSTALL, ROUTE_B, ROUTE_A, CI, DENYLIST, ISSUE_STATE,
+    INSTALL, ROUTE_A, ROUTE_B, WIRE, CI, DENYLIST, ISSUE_STATE,
 )

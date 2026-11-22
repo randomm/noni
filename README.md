@@ -1,10 +1,11 @@
 # noni
 
-noni makes sure a decision outlives the session that made it, and that the order
-of work stays what the operator said it was. It is an attachable direction layer
-for a Git project: standing intent, decisions and the agreed order of work are
-plain files committed to the repo, and one read-only script
-reports where the work has drifted. No service, no database.
+noni makes sure a decision outlives the session that made it, and that the order of work
+stays what the operator said it was. It is an attachable direction layer for a Git project:
+standing intent, decisions and the agreed order of work are plain files committed to the repo,
+and one read-only script reports where the work has drifted. No service, no database. An
+agent told to install noni and take it into use follows one path:
+[docs/QUICKSTART.md](docs/QUICKSTART.md).
 
 ## The problem
 
@@ -32,11 +33,11 @@ decide, and the census is what flags one that has drifted from its shape or its
 citation. The order says what to work on next, and the census is what flags an
 entry nobody has confirmed in a while, or one whose issue the tracker has closed.
 
-Every path above resolves from `--repo`, the one flag that names the state root:
-by default the repository you run in, so the state sits at `<project>/noni/`, or
-a separate directory holding the same `noni/` layout to keep the direction in a
-private state repository, which holds the `noni/` layout and nothing else; a
-missing or non-directory `--repo` stops the command with a clear message.
+Every path above resolves from `--repo`, the one flag that names the state root: by default
+the repository you run in, so the state sits at `<project>/noni/`, or a separate directory
+holding the same `noni/` layout to keep the direction in a private state repository, which holds
+the `noni/` layout and nothing else; a missing or non-directory `--repo` stops the command with a
+clear message.
 
 ## Try it in five minutes
 
@@ -67,7 +68,7 @@ python3 ../noni/skills/census/scripts/census.py --repo .
 named by mistake. A tree that already holds a `noni/` is a state root and needs no
 flag, so omit it there.
 
-Run these from a release of noni you trust: the tagged release v0.2.0 is the
+Run these from a release of noni you trust: the tagged release v0.2.1 is the
 thing to pin, and remember they run noni's scripts.
 
 Installing is the other route, and the same code either way. Those scripts import
@@ -104,19 +105,18 @@ Everything noni keeps in your repository lives in one directory:
                order.json: the ordered list of issues to work next
 ```
 
-Nothing else is state. The writers above are the only things that create those
-files, and each commits what it writes in one atomic step. The try-it run above
-creates the ledger record only: `intent.md` appears when you first run `intent.py`
-and `order.json` when you first run `order.py`. Both are optional, and only a run that counted
-no row and skipped no check reads all-clear (`census: no findings; all checks
-passed`, `summary: clean; 0 finding(s); verdict ok`); the try-it run above does
-not: a first tree has a ledger with nothing to arbitrate, its one warn row. A
-deny-list the scan cannot read is a warn row; one never configured is a `note:`
-line. The census also reads input it does not own: the `--issue-state` map an
-adapter or the operator supplies, whose absence it reports as an unevaluated
-check. It recomputes everything from git history plus those files, so metrics are
-derived, never self-reported. Each `skills/<skill>/SKILL.md` names its script,
-flags and exit codes; [docs/ONBOARDING.md](docs/ONBOARDING.md) covers the skills.
+Nothing else is state. The writers above are the only things that create those files, and each
+commits what it writes in one atomic step. The try-it run above creates the ledger record only:
+`intent.md` appears when you first run `intent.py` and `order.json` when you first run
+`order.py`. Both are optional, and only a run that counted no row and skipped no check reads
+all-clear (`census: no findings; all checks passed`, `summary: clean; 0 finding(s); verdict ok`);
+the try-it run above does not: a first tree has a ledger with nothing to arbitrate, its one warn
+row. A deny-list the scan cannot read is a warn row; one never configured is a `note:` line. The
+census also reads input it does not own: the `--issue-state` map an adapter or the operator
+supplies, whose absence it reports as an unevaluated check. It recomputes everything from git
+history plus those files, so metrics are derived, never self-reported. Each
+`skills/<skill>/SKILL.md` names its script, flags and exit codes;
+[docs/ONBOARDING.md](docs/ONBOARDING.md) covers the skills.
 
 ## Status
 

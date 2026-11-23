@@ -14,9 +14,12 @@ from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
+from harness_git_containment import assert_own_repo_top, require_own_repo_top
+
 
 def _git_e2(
-    repo: Path, *args: str, env: Mapping[str, str] | None = None
+    repo: Path, *args: str, env: Mapping[str, str] | None = None,
+    bare: bool = False, creating: bool | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run git in a repo with a deterministic identity and no GPG signing.
 
@@ -24,7 +27,54 @@ def _git_e2(
     supplied mapping *replaces* the process environment rather than augmenting
     it, so callers merge it into ``os.environ`` themselves (see
     a launcher that set only one key): a partial dict would drop PATH or HOME and
-    fail as a confusing git-not-found or dubious-ownership error."""
+    fail as a confusing git-not-found or dubious-ownership error.
+
+    The target is first checked by :func:`assert_own_repo_top`: ``env`` can
+    replace ``HOME`` (and so the global config), so this runner cannot rely on a
+    later git call to notice it was pointed at somebody else's tree.
+
+    ``init`` is the one argument set the check does not gate: an uninitialised
+    directory is what an init is *for*, so the precondition there is asserted by the
+    initialiser after its init ran (see :func:`_init_repo`), not here. Every other
+    verb -- above all ``config``, which is the one that leaked -- is refused first.
+
+    ``bare`` says the target is a repository with no working tree, and is taken only
+    by the two fixture builders that create one.
+
+    ``creating`` covers a call that *makes* the target a repository without naming
+    itself ``init`` -- ``clone`` is the one the fixtures use. The precondition then
+    runs on the answer, not before it: a successful clone leaves a repository of its
+    own at the path, and a failed one leaves nothing, so the call still cannot end up
+    writing into whatever encloses the destination.
+    """
+    if creating is None:
+        # A ``clone`` whose target is not yet a repository is the one shape this runner
+        # is asked to create: the target is the destination, and the after-the-fact
+        # check is what proves the clone left a repository there rather than nothing
+        # for the next call to answer for an enclosing tree.
+        creating = bool(args and args[0] == "clone"
+                        and not _target_is_repo(repo, env))
+    require_own_repo_top(repo, args, env, bare, creating=creating)
+    proc = _run_git_e2(repo, args, env)
+    if creating:
+        _check_created(repo, proc, args)
+    return proc
+
+
+def _target_is_repo(repo: Path, env: Mapping[str, str] | None) -> bool:
+    """Whether the runner's target is already a repository, asked without raising.
+
+    The question the pre-check would have asked, asked as a predicate so the answer can
+    choose *when* to insist: a target that is not yet a repository is a creation in
+    progress, and its verdict comes after the call.
+    """
+    shown = subprocess.run(["git", "-C", str(repo), "rev-parse", "--is-inside-work-tree"],
+                           capture_output=True, text=True, env=env, timeout=60)
+    return shown.returncode == 0 and shown.stdout.strip() == "true"
+
+
+def _run_git_e2(repo: Path, args: tuple[str, ...],
+                env: Mapping[str, str] | None) -> subprocess.CompletedProcess[str]:
     cmd = [
         "git", "-C", str(repo),
         "-c", "user.name=Replay",
@@ -35,6 +85,24 @@ def _git_e2(
     return subprocess.run(cmd, capture_output=True, text=True, env=env)
 
 
+def _check_created(repo: Path, proc: subprocess.CompletedProcess[str],
+                   args: tuple[str, ...]) -> None:
+    """A create call that succeeded must have produced a repository of its own.
+
+    Asserted only on the successful path: a failed create is its caller's business (the
+    ``_git_ok`` wrapper above turns it into a message), and the half that matters here
+    is that nothing was left behind for the next call to answer for an enclosing tree.
+    """
+    if proc.returncode != 0:
+        return
+    # ``--bare`` in the argument list is git's own declaration of what was built, and
+    # the only form that produces such a tree. Asked the work-tree question, a bare
+    # repository answers "must be run in a work tree", which the probe reports as not
+    # a repository at all -- so the guard would refuse a fixture it had just created
+    # correctly, and every bare origin in the suite would die on its own init.
+    assert_own_repo_top(repo, bare="--bare" in args)
+
+
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     """Run git with the deterministic harness identity (Replay), checking.
 
@@ -42,7 +110,14 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     ``-c user.name/user.email/commit.gpgsign=false`` and ``check=True``.
     Returns the CompletedProcess so callers can read stdout (e.g. a
     ``git status --porcelain`` round-trip). ``_git_e2`` (no identity pin, no
-    check) stays for the push-retry path, which drives its own git config."""
+    check) stays for the push-retry path, which drives its own git config.
+
+    The target is first checked by :func:`assert_own_repo_top` (``init`` excepted,
+    as in :func:`_git_e2`), which is the guard issue #220 exists for: the ``-c``
+    identity pins used to mask the leak, because a config write that landed in an
+    enclosing repository still exited 0 and printed nothing.
+    """
+    require_own_repo_top(repo, args)
     cmd = [
         "git", "-C", str(repo),
         "-c", "user.name=Replay",
@@ -54,9 +129,14 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 def _init_repo(path: Path) -> Path:
-    """Create and initialise a throwaway git repo at ``path``."""
+    """Create and initialise a throwaway git repo at ``path``.
+
+    The precondition runs *after* ``init`` rather than before it: an uninitialised
+    directory is the normal state here, and a call made while ``init`` failed must
+    still not be able to answer for an enclosing repository."""
     path.mkdir(parents=True, exist_ok=True)
     _git(path, "init", "-q")
+    assert_own_repo_top(path)
     _git(path, "commit", "-q", "--allow-empty", "-m", "initial")
     return path
 
@@ -204,9 +284,10 @@ def _commit_file(repo: Path, rel: str, content: str) -> None:
 
 
 def _git_ok(
-    repo: Path, *args: str, env: Mapping[str, str] | None = None
+    repo: Path, *args: str, env: Mapping[str, str] | None = None,
+    bare: bool = False, creating: bool | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    proc = _git_e2(repo, *args, env=env)
+    proc = _git_e2(repo, *args, env=env, bare=bare, creating=creating)
     if proc.returncode != 0:
         raise RuntimeError(f"git {args} failed: {proc.stderr.strip()}")
     return proc
@@ -233,13 +314,25 @@ def git_pin_date(repo: Path, iso_utc: str, *args: str) -> subprocess.CompletedPr
     """Run a git command with identity and commit dates pinned.
 
     ``iso_utc`` is the fixed timestamp; GIT_CONFIG_GLOBAL/SYSTEM point at
-    /dev/null to block host gitconfig."""
+    /dev/null to block host gitconfig.
+
+    The environment is built before the target is checked, and the same mapping
+    is handed to :func:`assert_own_repo_top`, because the suite's discovery
+    ceiling (AC2 of issue #220) reaches git through the environment: a probe that
+    read the harness's own env would ask the question under a different ceiling
+    than the commit runs under.
+
+    ``init`` is the exception here, as everywhere: this helper has committed by the
+    time the check is worth asking, so the tree it names is already a repository.
+    """
     dt = datetime.fromisoformat(iso_utc.replace("Z", "+00:00"))
     env = dict(os.environ)
     env.update(_git_env_with_identity())
     env["GIT_CONFIG_SYSTEM"] = "/dev/null"
     env["GIT_AUTHOR_DATE"] = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     env["GIT_COMMITTER_DATE"] = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    if args and args[0] != "init":
+        assert_own_repo_top(repo, env)
     # core.hooksPath at the null device, like every writer's own git call: a
     # fixture that commits (or amends) must not run the repository's hooks any
     # more than the product does, and this helper runs a bare 'git' where the
@@ -275,7 +368,7 @@ def build_bare_origin(origin: Path, worktrees: list[Path]) -> None:
     master, and the push of ``main`` then has nothing to push.
     """
     origin.mkdir(parents=True, exist_ok=True)
-    _git_ok(origin, "init", "-q", "--bare")
+    _git_ok(origin, "init", "-q", "--bare", bare=True)
     first = worktrees[0]
     first.mkdir(parents=True, exist_ok=True)
     _git_ok(first, "init", "-q", "-b", "main")
@@ -286,7 +379,8 @@ def build_bare_origin(origin: Path, worktrees: list[Path]) -> None:
     _git_ok(first, "push", "-q", "-u", "origin", "main")
     for wt in worktrees[1:]:
         wt.mkdir(parents=True, exist_ok=True)
-        _git_ok(wt.parent, "clone", "-q", "-b", "main", str(origin), str(wt))
+        _git_ok(wt.parent, "clone", "-q", "-b", "main", str(origin), str(wt),
+              creating=True)
 
 
 def build_gone_upstream(origin: Path, worktrees: list[Path]) -> None:
@@ -308,7 +402,7 @@ def build_gone_upstream(origin: Path, worktrees: list[Path]) -> None:
     """
     build_bare_origin(origin, worktrees)
     env = {**os.environ, **_git_env_with_identity()}
-    _git_ok(origin, "update-ref", "-d", "refs/heads/main", env=env)
+    _git_ok(origin, "update-ref", "-d", "refs/heads/main", env=env, bare=True)
     for worktree in worktrees:
         _git_ok(worktree, "fetch", "--prune", "origin", env=env)
         shown = _git_e2(worktree, "status", "-sb", env=env).stdout

@@ -45,15 +45,20 @@ from _harness import (
     run_decide,
     subprocess_env,
 )
+from harness_git_containment import assert_own_repo_top
 
 __all__ = [
     "DECIDE",
     "REPO",
     "_git_ok",
     "build_bare_origin",
+    "checkout_config_unchanged",
+    "config_changed",
     "git_pin_date",
     "push_with_retry",
     "run_decide",
+    "shared_git_config_bytes",
+    "shared_git_config_path",
     "subprocess_env",
 ]
 
@@ -137,9 +142,112 @@ def _git(repo: Path, *args: str, env: dict | None = None) -> subprocess.Complete
     Mirrors the _git helper of the driver-side suite it was taken from: passes
     -c user.name / -c user.email / -c commit.gpgsign=false so a throwaway
     repo never inherits the host's git identity or a GPG requirement.
+
+    The target is first checked by :func:`harness_git_containment.assert_own_repo_top`,
+    the one choke point issue #220 put in front of every harness ``git -C`` runner: a
+    config write against a directory that is not its own repository lands in whatever
+    repository encloses it, which is how a fixture's identity came to sit in this
+    checkout's shared config.
+
+    ``init`` is the one verb excepted, exactly as in ``harness_git._git``: an
+    uninitialised directory is what an init is for, and the callers that init here
+    (this module's ``git_repo`` fixture among them) go on to commit, which the guard
+    does gate. Leaving ``init`` gated would refuse every legitimate fixture.
     """
+    if not (args and args[0] == "init"):
+        assert_own_repo_top(repo, env)
     cmd = ["git", "-C", str(repo), "-c", "user.name=Replay", "-c", "user.email=replay@fixture.invalid", "-c", "commit.gpgsign=false", *args]
     return subprocess.run(cmd, capture_output=True, text=True, check=True, env=env)
+
+
+# --- the session guard over this checkout's own git config -----------------------
+#
+# ``git -C <dir> config`` walks up when ``<dir>`` is not a repository, so a fixture
+# that ran against a plain directory under the checkout wrote its identity into the
+# real repository's shared config and every commit made in the checkout and its
+# worktrees afterwards was authored by the fixture (issue #220). The runners refuse
+# that now; this fixture is what makes the refusal observable rather than trusted.
+# It takes the bytes of the checkout's shared ``.git/config`` at session start and
+# fails the session if they are not those bytes at teardown -- so a leak that some
+# future helper routes around the runners still reddens the run, on the run that
+# caused it.
+#
+# The file is read through ``git rev-parse --git-common-dir`` rather than by joining
+# ``<repo>/.git/config``: under a worktree -- which is where the suite really runs,
+# in a driver's tree -- ``.git`` is a pointer file and the shared config is the
+# checkout's. That is the file the bug wrote into, so that is the file the guard
+# digests.
+#
+# The guard is session-scoped and autouse, so no module opts out and none can forget
+# to ask for it. It writes nothing: it reads this repository and compares.
+
+
+def shared_git_config_path(root: Path = REPO) -> Path:
+    """The shared ``.git/config`` of the repository that contains ``root``.
+
+    Resolved, so the comparison is against one file however the path was spelled.
+    A repository whose git directory does not exist yet (a tree with no config at
+    all) has no bytes, which :func:`shared_git_config_bytes` reports as ``b''``
+    rather than raising: the guard still fires when such a tree gains a config.
+    """
+    shown = subprocess.run(["git", "-C", str(root), "rev-parse", "--git-common-dir"],
+                          capture_output=True, text=True, timeout=60)
+    assert shown.returncode == 0, (
+        f"git could not name the common git directory of {root}: {shown.stderr.strip()}")
+    common = Path(shown.stdout.strip())
+    if not common.is_absolute():
+        common = root / common
+    return common.resolve() / "config"
+
+
+def shared_git_config_bytes(root: Path = REPO) -> bytes:
+    """The bytes of that config, or ``b''`` when there is no such file."""
+    config = shared_git_config_path(root)
+    return b"" if not config.is_file() else config.read_bytes()
+
+
+def config_changed(before: bytes, after: bytes, config: Path) -> str | None:
+    """The one comparison the session guard makes: ``None`` for unchanged.
+
+    Kept apart from the fixture so the pairing test can hand it bytes of its own: a
+    guard whose comparison is only ever seen agreeing would pass while blind, and the
+    only way to know it is not is to show it reporting a change.
+    """
+    if before == after:
+        return None
+    return (f"the suite changed {config} ({len(before)} bytes at session start, "
+            f"{len(after)} at teardown). No test may write this repository's git "
+            f"config (AGENTS.md: tests that need git settings use a throwaway repo "
+            f"under tmp_path). The bytes that differ: "
+            f"{_first_diff_line(before, after)}")
+
+
+def _first_diff_line(before: bytes, after: bytes) -> str:
+    """The first line that differs, decoded loosely so the report cannot raise."""
+    lines = before.splitlines()
+    added = after.splitlines()
+    for index in range(max(len(lines), len(added))):
+        left = lines[index].decode("utf-8", "replace") if index < len(lines) else "<absent>"
+        right = added[index].decode("utf-8", "replace") if index < len(added) else "<absent>"
+        if left != right:
+            return f"line {index + 1}: {left!r} -> {right!r}"
+    return "<no line differs: only the byte encoding does>"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def checkout_config_unchanged():
+    """Fail the session if this run wrote the real checkout's ``.git/config``.
+
+    The digest is taken before any test runs and compared after the last one, so a
+    leak is reported by the run that made it rather than by whoever notices the
+    author of their commits eight hundred commits later. It reads the checkout and
+    writes nothing; the file it names is the operator's to repair, not the suite's.
+    """
+    config = shared_git_config_path()
+    before = shared_git_config_bytes()
+    yield
+    problem = config_changed(before, shared_git_config_bytes(), config)
+    assert problem is None, problem
 
 
 @pytest.fixture(autouse=True)

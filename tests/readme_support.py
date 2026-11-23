@@ -432,16 +432,38 @@ def _run_documented(cmd: list[str], repo: Path,
     ``subprocess.run`` raises ``TimeoutExpired`` out of the call, so without this
     wrapper a wedged documented command surfaces as a harness traceback naming no
     argv, no stdout and no stderr.
+
+    The discovery ceiling the launcher pins (issue #220, AC2) names one directory,
+    and the try-it block's commands run from the reader's tree -- a clone of a clone
+    under the session root -- so the ceiling is extended to this command's own cwd.
+    Without it a ``git config`` line out of the block, resolving from its working
+    directory, could reach a repository above the reader's tree; the ceiling stops
+    the walk at the tree the block is acting in and leaves everything below it
+    reachable.
     """
     try:
         return subprocess.run(cmd, cwd=repo, capture_output=True, text=True,
-                              env=env, timeout=120)
+                              env=_with_ceiling(env, repo), timeout=120)
     except subprocess.TimeoutExpired as exc:
         partial = _partial_text(exc.stdout)
         stderr = _partial_text(exc.stderr)
         pytest.fail(
             f"documented command hung for 120s: {cmd}\nstdout: {partial}\nstderr: {stderr}"
         )
+
+
+def _with_ceiling(env: dict[str, str], cwd: Path) -> dict[str, str]:
+    """``env`` with ``GIT_CEILING_DIRECTORIES`` extended to cover ``cwd``.
+
+    The existing value is kept and the new one put first, so a ceiling the harness
+    set upstream still applies and this command's own tree bounds the walk. The
+    separator is the platform's, because that is what git splits on.
+    """
+    ceiling = str(Path(cwd).resolve())
+    previous = env.get("GIT_CEILING_DIRECTORIES")
+    if previous and previous not in ceiling.split(os.pathsep):
+        ceiling = ceiling + os.pathsep + previous
+    return {**env, "GIT_CEILING_DIRECTORIES": ceiling}
 
 
 def _partial_text(stream: str | bytes | None) -> str:

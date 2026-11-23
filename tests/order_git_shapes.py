@@ -12,6 +12,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from harness_git import assert_own_repo_top
+
 
 def git_output(repo: Path, *args: str) -> str:
     """One git call whose ANSWER is stdout, with the harness identity and no stdin.
@@ -42,7 +44,12 @@ def _run(repo: Path, args: tuple[str, ...], text: str | None) -> str:
     ``text`` is what goes to stdin, or None for a call that must not wait on a
     terminal. Both shapes want the same four ``-c`` overrides, so they are spelled
     once here: the identity the suite pins, and no hooks path to run.
+
+    The target is checked for its own repository first (issue #220): these are the
+    stdin-less shapes the order fixtures use to read an object id out of git, and
+    every fixture that calls one also writes its identity into the same tree.
     """
+    assert_own_repo_top(repo)
     cmd = ["git", "-C", str(repo),
            "-c", "user.name=Replay",
            "-c", "user.email=replay@fixture.invalid",

@@ -22,6 +22,7 @@ from harness_paths import (
     ORDER,
     REPO,
     SRC,
+    TEST_TMP_CEILING,
 )
 
 
@@ -48,10 +49,28 @@ def subprocess_env(base: dict | None = None) -> dict:
     the console route would differ whenever the harness runs under a different
     width than the caller's shell (or no width at all, which is what a piped
     test run gives).
+
+    ``GIT_CEILING_DIRECTORIES`` is forced to this harness's own tree (see
+    :data:`harness_paths.TEST_TMP_CEILING`): no child of the suite may discover a
+    repository above its own test tree by walking up from its working directory.
+    The value is the tree, not the temporary root, because the tree is the one
+    ancestor every directory the suite builds sits under -- a basetemp under the
+    checkout, a driver's worktree or the platform default all lie inside it, while a
+    ceiling at an ancestor of the checkout would stop the walk reaching nothing. It is
+    set here, in the one env builder every launcher goes through, and it is
+    deliberately **not** a member of ``conftest.NONI_ENV_VARS`` or
+    ``quickstart_topology.AMBIENT_LAUNCH_VARS`` -- those two lists are what the
+    page-launch builders *drop*, and a name in either would take the ceiling back
+    out of the quickstart's and the README's launches, which is the half of AC2
+    (issue #220) that runs a bare ``git config`` out of a page fence. It is the
+    environment half of the containment and not the whole of it: a ceiling stops
+    discovery from the current directory only, and does nothing for
+    ``git -C <path>``. That half is :func:`harness_git.assert_own_repo_top`.
     """
     env = dict(os.environ if base is None else base)
     env["COVERAGE_PROCESS_START"] = COVERAGE_PROCESS_START
     env["COLUMNS"] = HELP_COLUMNS
+    env["GIT_CEILING_DIRECTORIES"] = str(TEST_TMP_CEILING)
     inherited = env.get("PYTHONPATH")
     env["PYTHONPATH"] = (str(SRC) + os.pathsep + inherited
                          if inherited else str(SRC))

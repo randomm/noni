@@ -26,8 +26,17 @@ fi
 REPO="$OUT/replay-repo"
 rm -rf "$REPO"
 mkdir -p "$REPO"
+# The init comes before the cd, and nothing but ``git init`` runs between them.
+# ``git config`` on a directory that is not a repository does not fail: it walks up
+# and writes into the nearest enclosing one. While these lines ran with the cwd at
+# the caller's ``$OUT`` -- a scratch directory under a checkout, or under a basetemp
+# that sits there -- the fixture identity landed in that repository's shared config
+# instead of the fixture's own (issue #220). The ceiling is belt and braces for the
+# same reason: it stops the walk at the caller's output directory whatever the cwd
+# happens to be while a line runs.
+export GIT_CEILING_DIRECTORIES="$OUT"
+git init -q "$REPO"
 cd "$REPO"
-git init -q
 git config user.name "Replay Fixture"
 git config user.email "replay@fixture.invalid"
 git config commit.gpgsign false

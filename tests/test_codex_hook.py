@@ -167,6 +167,28 @@ def test_the_brief_command_is_the_ruled_git_rooted_form() -> None:
     assert block_commands([handler["command"]]) == [argv], "the command does not lex"
 
 
+def _brief_context_limit_error(text: str) -> str:
+    """Why one page's brief handler is not bounded by the shipped number, or "".
+
+    The three assertions of the check below as one callable, so that check can run
+    them over a page it did not read from disk. It goes through the same reader as
+    the live check: the falsification has to reach the bytes the pin actually
+    compares, and a second reader of its own would prove nothing about the first.
+    """
+    handler = snippet(text)["hooks"]["SessionStart"][0]["hooks"][0]
+    limit = handler.get("additionalContextLimit")
+    if not isinstance(limit, int) or isinstance(limit, bool):
+        return f"no additionalContextLimit: {limit!r}"
+    if limit <= 0:
+        return f"additionalContextLimit {limit} asks Codex to pass all of it"
+    if limit != BRIEF_CONTEXT_LIMIT_TOKENS:
+        return (f"additionalContextLimit is {limit}, not "
+                f"{BRIEF_CONTEXT_LIMIT_TOKENS}")
+    if f'"additionalContextLimit": {limit}' not in text:
+        return "the snippet's bound is not the number the page prints"
+    return ""
+
+
 def test_the_brief_handler_caps_the_context_it_hands_the_model() -> None:
     """``additionalContextLimit`` is the page's one bound on the injected payload.
 
@@ -176,6 +198,12 @@ def test_the_brief_handler_caps_the_context_it_hands_the_model() -> None:
     page's bounded-payload clause rests on. It is pinned the way the timeout is: a
     handler that dropped it or raised it past the constant is a page whose reader
     pastes an unbounded brief and stays green no other way.
+
+    The tail of this check proves the pin can fail. It edits the page's bytes in
+    memory only -- the shipped file is never written -- and runs the same three
+    assertions over the tampered text, requiring the value clause to report the
+    tampered number. A pin that stayed green whatever the snippet said would be worse
+    than no pin, because it would read as coverage of the page's one bound.
     """
     handler = _handlers()["SessionStart"]
     limit = handler.get("additionalContextLimit")
@@ -186,6 +214,18 @@ def test_the_brief_handler_caps_the_context_it_hands_the_model() -> None:
         f"additionalContextLimit is {limit}, not {BRIEF_CONTEXT_LIMIT_TOKENS}")
     assert f'"additionalContextLimit": {limit}' in page(), (
         "the snippet's bound is not the number the page prints")
+    tampered = page().replace(f'"additionalContextLimit": {limit}',
+                              f'"additionalContextLimit": {limit + 1}', 1)
+    assert tampered != page(), (
+        "the page does not print the bound in the form the snippet carries, so this "
+        "falsification has nothing to tamper with")
+    error = _brief_context_limit_error(tampered)
+    assert error, (
+        f"the assertions above stayed green over a snippet whose bound is {limit + 1}")
+    assert str(limit + 1) in error, (
+        f"the tampered bound was reported by a clause other than the pin: {error!r}")
+    assert not _brief_context_limit_error(page()), (
+        "the shipped page does not satisfy the assertions it is checked by")
 
 
 def test_the_per_turn_handler_bounds_its_own_timeout() -> None:

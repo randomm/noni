@@ -3,28 +3,27 @@
 ``integrations/codex/README.md`` is the whole adapter: one copyable
 ``.codex/hooks.json`` and the prose around it. There is no script beside it, so the
 snippet the page publishes is what Codex runs, and this module parses it out of the
-page rather than checking a copy of it. What is pinned, in short:
+page rather than checking a copy of it. What lives here is the snippet's shape:
 
 - one install target (``.codex/hooks.json``) and one ``json`` fence, so a reader has
   one thing to paste;
 - the snippet registers the two events and nothing else: ``SessionStart`` with a
   matcher over the four start sources that need a brief, and ``UserPromptSubmit``
   carrying the per-prompt reminder with no matcher (the event ignores one);
-- the brief command is the git-root-anchored ``noni brief --repo
-  "$(git rev-parse --show-toplevel)/.noni-state"``, and the per-turn command prints
-  only the reminder: it spawns nothing and has no failure arm;
+- the brief command is the git-root-anchored form the page rules, and the per-turn
+  command prints only the reminder: it spawns nothing and has no failure arm;
 - the reminder is read through the pi source reader's ``REMINDER``, not restated
   here, so the two adapter pages cannot drift apart;
-- the brief handler carries pi's 30 second bound explicitly, since Codex's own
-  default for a command hook is 600 seconds;
-- the page names both gates a hook must clear (the project trusted, the definition
-  reviewed at ``/hooks``), the state-root rule, the PATH rule, the fact that a
-  subagent gets the reminder and never the brief, the inert state root holding no
-  ``noni/``, the one command that proves the wiring, and the rule's own limit.
+- both handlers carry their bounds: the brief handler pi's 30 second timeout and a
+  positive ``additionalContextLimit`` (Codex's own defaults are 600 seconds and a
+  2500 token context cap), and the per-turn handler its own 5 seconds, because for
+  that event a non-zero exit blocks the operator's prompt.
 
-The page's live check (its "Verifying it", run against a real session) carries the
-behaviour; these assertions carry the shape. The readers live in
-``codex_hook_source.py`` so "the page's one json fence" has one definition.
+The page's prose -- the trust gates, the state-root rule, the PATH rule, what a
+wrong state root prints, and the commands "Verifying it" tells the reader to run --
+is ``test_codex_hook_page.py``, which reads the same bytes through
+``codex_hook_source``. The page's live check (its "Verifying it", run against a real
+session) carries the behaviour; these two modules carry the shape.
 """
 
 from __future__ import annotations
@@ -34,11 +33,12 @@ import shlex
 
 from _harness import REPO, _git
 from codex_hook_source import (
+    BRIEF_COMMAND,
+    BRIEF_CONTEXT_LIMIT_TOKENS,
     BRIEF_TIMEOUT_SECONDS,
-    EM_DASH,
     EVENTS,
-    HOOK_FILES,
     INSTALL_TARGET,
+    REMINDER_TIMEOUT_SECONDS,
     START_SOURCES,
     command_lines,
     command_value,
@@ -46,7 +46,6 @@ from codex_hook_source import (
     snippet,
 )
 from docs_commands import block_commands, fence_openers, fenced_pairs
-from docs_promises import section_body
 from pi_extension_source import string_literal
 from quickstart_page import flowed_text
 
@@ -57,31 +56,6 @@ HARNESS_WORD = re.compile(r"\bcodex\b", re.IGNORECASE)
 # The core, as the purity rule sees it: the skills, the docs, the readme. Tests are
 # excluded because this module is the check over the hook and names it.
 CORE_GLOBS = ("skills/*", "docs/*", "README.md")
-
-# The command the page hands Codex for the brief, in the one form the page rules:
-# anchored at the git root, because a hook command runs with the session's cwd and a
-# relative --repo would name a different directory from every subdirectory.
-BRIEF_COMMAND = 'noni brief --repo "$(git rev-parse --show-toplevel)/.noni-state"'
-
-# What the page owes a reader, each with the reason its absence is a gap. Phrases
-# that a paragraph may wrap are matched against the flowed page, so rewrapping a
-# sentence is a passing edit and dropping the clause it carries is not.
-PAGE_RULES = (
-    (INSTALL_TARGET, "the page does not name the file the snippet is copied into"),
-    ("trusted", "the page does not name the project trust gate"),
-    ("/hooks", "the page does not name where to review or check a hook"),
-    ("hash", "the page does not say trust is recorded against the definition"),
-    ("first on PATH", "the page does not say which `noni` the hook runs"),
-    ("docs/QUICKSTART.md#install-noni", "the page drops the quickstart's Install link"),
-    ("config.toml", "the page does not name the file that turns hooks off"),
-    ("hooks = false", "the page does not say hooks are on unless turned off"),
-    ("## Verifying it", "the page states no way to verify the hook"),
-    (BRIEF_COMMAND, "the page does not print the command to run by hand"),
-    ("no `noni/`", "the page does not say a state root with no noni/ is inert"),
-    ("exits nonzero", "the page does not say what a state root with no noni/ does"),
-    ("subagent", "the page does not say what a subagent gets"),
-    ("never the brief", "the page does not say a subagent gets no brief"),
-)
 
 
 def _handlers() -> dict[str, dict]:
@@ -112,23 +86,6 @@ def harness_lines(rels: list[str]) -> list[str]:
             if HARNESS_WORD.search(line)
         ]
     return found
-
-
-def _section(title: str) -> str:
-    """One ``##`` section of the page, so a claim is checked where it belongs.
-
-    A fact that only has to appear somewhere on the page can be satisfied by a
-    sentence in the wrong place: a reader looking for the trust step under Install
-    would still have to guess. So the gates, the state-root rule and the verification
-    steps are each located under their own heading, and a clause that wandered into
-    another section is a failure rather than a silent pass.
-    """
-    return section_body(page(), title)
-
-
-def _flowed(title: str) -> str:
-    """One section of the page with its line wrapping collapsed."""
-    return flowed_text(_section(title))
 
 
 def test_the_snippet_is_the_pages_one_json_fence() -> None:
@@ -210,6 +167,41 @@ def test_the_brief_command_is_the_ruled_git_rooted_form() -> None:
     assert block_commands([handler["command"]]) == [argv], "the command does not lex"
 
 
+def test_the_brief_handler_caps_the_context_it_hands_the_model() -> None:
+    """``additionalContextLimit`` is the page's one bound on the injected payload.
+
+    Codex caps a command hook's additional context at 2500 tokens with the key
+    absent, spills the whole of it to a file above whatever limit the handler names,
+    and takes ``0`` to mean "send all of it", so the number is the argument the
+    page's bounded-payload clause rests on. It is pinned the way the timeout is: a
+    handler that dropped it or raised it past the constant is a page whose reader
+    pastes an unbounded brief and stays green no other way.
+    """
+    handler = _handlers()["SessionStart"]
+    limit = handler.get("additionalContextLimit")
+    assert isinstance(limit, int) and not isinstance(limit, bool), (
+        f"the brief handler carries no additionalContextLimit: {limit!r}")
+    assert limit > 0, f"additionalContextLimit {limit} asks Codex to pass all of it"
+    assert limit == BRIEF_CONTEXT_LIMIT_TOKENS, (
+        f"additionalContextLimit is {limit}, not {BRIEF_CONTEXT_LIMIT_TOKENS}")
+    assert f'"additionalContextLimit": {limit}' in page(), (
+        "the snippet's bound is not the number the page prints")
+
+
+def test_the_per_turn_handler_bounds_its_own_timeout() -> None:
+    """The reminder's bound is checked too, so both handlers are bounded.
+
+    For ``UserPromptSubmit`` a non-zero exit blocks the prompt, so this handler is on
+    the operator's input path: the timeout is what turns a per-turn hook that stops
+    working into a short wait rather than a session that cannot type. Both handlers'
+    bounds are pinned, not just the slow one's.
+    """
+    handler = _handlers()["UserPromptSubmit"]
+    assert handler.get("timeout") == REMINDER_TIMEOUT_SECONDS, (
+        f"the per-turn handler's timeout is {handler.get('timeout')!r}, not "
+        f"{REMINDER_TIMEOUT_SECONDS} seconds")
+
+
 def reminder() -> str:
     """The standing reminder, read from the pi hook through the pi source reader.
 
@@ -287,70 +279,6 @@ def test_only_the_brief_handler_carries_a_status_message() -> None:
         "the per-turn handler announces itself every prompt")
 
 
-def _status_gate(section: str) -> bool:
-    """Whether the section names how to check a hook's status.
-
-    The bare token ``/hooks`` is carried by the filename ``.codex/hooks.json`` as
-    much as by the command that opens the hook browser, so the reader that pins this
-    fact cannot settle for the token somewhere in the section: it has to be the
-    command, quoted as the page writes it, or the words that name the browser.
-    """
-    return any(token in section for token in ("`/hooks`", "hooks browser",
-                                              "hook browser"))
-
-
-def test_the_page_names_the_trust_gates_the_state_root_and_the_path_rule() -> None:
-    """What a reader needs from the page, and nothing the snippet does not do.
-
-    Both gates a hook has to clear are named apart: the project has to be trusted and
-    the definition has to be reviewed and trusted, and a reader who satisfies only one
-    of them gets a hook that is skipped with no brief and no reminder, which reads
-    exactly like a hook that was never written. Each sits under the heading a reader
-    would look under, so a clause that wandered off into another section is caught.
-    """
-    text = page()
-    flowed = flowed_text(text)
-    for wanted, why in PAGE_RULES:
-        assert wanted in text or wanted in flowed, why
-    install = _flowed("Install")
-    for clause, why in (("project has to be trusted",
-                         "Install does not name the project trust gate"),
-                        ("reviewed and trusted",
-                         "Install does not name the hook review gate"),
-                        ("skipped: no brief and no reminder",
-                         "Install does not say what a skipped hook leaves the session"),
-                        (INSTALL_TARGET,
-                         "Install does not name where the snippet is copied")):
-        assert clause in install, why
-    assert _status_gate(install), (
-        "Install does not name where to check a hook's status")
-    verifying = _flowed("Verifying it")
-    for clause, why in ((BRIEF_COMMAND,
-                         "Verifying it does not print the command to run by hand"),
-                        ("exits nonzero",
-                         "Verifying it does not say what a state root holding no "
-                         "noni/ leaves the model")):
-        assert clause in verifying, why
-    assert _status_gate(verifying), (
-        "Verifying it gives no way to check whether the hook ran")
-    root = _flowed("Which state root it reads")
-    for clause, why in (("first on PATH",
-                         "the state-root section does not say which `noni` runs"),
-                        ("docs/QUICKSTART.md#install-noni",
-                         "the state-root section drops the quickstart's Install link"),
-                        ("git rev-parse --show-toplevel",
-                         "the state-root section does not name the git-root anchor")):
-        assert clause in root, why
-
-
-def test_the_page_never_names_the_deprecated_feature_key() -> None:
-    """Codex still parses the old key as an alias, which is exactly why printing it
-    here would be a slow leak: a page that names it teaches a reader a spelling the
-    harness is on its way to dropping.
-    """
-    assert "codex_hooks" not in page(), "the page names the deprecated feature key"
-
-
 def test_the_page_ships_no_script_and_the_directory_holds_only_the_page() -> None:
     """A copyable config and a README, nothing else.
 
@@ -359,13 +287,6 @@ def test_the_page_ships_no_script_and_the_directory_holds_only_the_page() -> Non
     """
     shipped = sorted(p.name for p in (REPO / "integrations" / "codex").iterdir())
     assert shipped == ["README.md"], f"integrations/codex/ holds {shipped}"
-
-
-def test_the_page_has_no_em_dash() -> None:
-    """The repo's plain-prose convention, gated for the adapter page itself."""
-    for path in HOOK_FILES:
-        assert path.is_file(), f"{path} is missing"
-        assert EM_DASH not in path.read_text(encoding="utf-8"), f"{path.name} has one"
 
 
 def test_the_hook_is_not_sold_as_a_tracker_adapter() -> None:

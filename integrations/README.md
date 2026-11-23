@@ -86,6 +86,14 @@ configuration and can never be committed.
   implements neither seam above, so `test_adapter_interface.py` does not speak
   for it either.
 
+Each harness hook resolves the state root its own way, and each page carries its
+own rule: the pi page reads `NONI_STATE_ROOT`, then `<cwd>/.noni-state`, then
+`<cwd>`, and names what it prints when none of those holds a `noni/`; the Codex page
+names the root in the `--repo` argument of the one command it ships, with no env-var
+rung and no failure arm. A reader comparing the two should read both sections rather
+than assume one convention. docs/PRODUCT.md section 7 is the rule they both answer
+to: `--repo` is the only flag that names a state root.
+
 Tracker adapters for any other tool live outside this repository and
 implement the same two seams. A directory such as `pi/` is not one of them:
 it is a hook on a harness, and it owes those seams nothing.

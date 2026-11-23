@@ -30,9 +30,10 @@ helper module beside it to name here. The one exception is
 ``pi_extension_source.py``, the readers that module imports for itself: same
 reason, no adapter module behind it, so it joins the exclusion set.
 
-test_codex_hook.py and its reader ``codex_hook_source.py`` join the set for the same
-reason: they are the suite over the Codex harness hook under ``integrations/codex/``,
-they read that directory's page, and neither imports an adapter module.
+test_codex_hook.py, its page suite ``test_codex_hook_page.py`` and their reader
+``codex_hook_source.py`` join the set for the same reason: they are the suite over
+the Codex harness hook under ``integrations/codex/``, they read that directory's
+page, and neither imports an adapter module.
 """
 
 from __future__ import annotations
@@ -71,8 +72,10 @@ ADAPTER_TEST_MODULES = {
     "test_pi_extension_failure_line.py",
     "test_pi_extension_falsifiability.py",
     # The suite over the Codex harness hook and its reader: same subject matter, the
-    # page under integrations/codex/, read as text.
+    # page under integrations/codex/, read as text. The page's checks split in two the
+    # way test_pi_extension.py did: the snippet's shape and the page's prose.
     "test_codex_hook.py",
+    "test_codex_hook_page.py",
     "codex_hook_source.py",
 }
 CORE_TEST_MODULES = sorted(

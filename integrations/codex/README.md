@@ -21,11 +21,23 @@ that survives being started from a subdirectory.
 Codex runs a hook command with the session's working directory as its cwd, so a
 relative `--repo` would name a different directory in every subdirectory the session
 happens to sit in. When the state lives inside the project, drop `/.noni-state` and
-run the command with `--repo "$(git rev-parse --show-toplevel)"`. Either way
-`noni` must be on your PATH: Codex runs whichever `noni` is first on PATH, so put
-the install you mean first. The quickstart's
-[Install noni](../../docs/QUICKSTART.md#install-noni) section owns those commands;
-this page does not reprint them.
+run the command with `--repo "$(git rev-parse --show-toplevel)"`.
+
+Two departures from the pi hook's rule are deliberate, and a reader who knows that
+page needs to know them. There is no `NONI_STATE_ROOT` rung: noni's core names no
+environment variable that selects a state root, and Codex builds a command hook's
+environment outside this page, so a snippet cannot read one. And there is no failure
+arm: the hook prints what `noni brief` printed and nothing else, so a wrong state
+root gives the model a brief over an empty page rather than the line the pi hook
+prints when it cannot read one. [docs/PRODUCT.md](../../docs/PRODUCT.md) section 7 is
+the rule both pages answer to, and this one resolves the root by argv alone.
+
+Either way `noni` must be on your PATH: Codex runs whichever `noni` is first on PATH,
+so the hook trusts whatever that resolves to. Before you trust the hook, run
+`command -v noni` and `noni --version` in the project and check both answers are the
+install you mean. The quickstart's
+[Install noni](../../docs/QUICKSTART.md#install-noni) section owns those commands and
+what each answer means; this page does not reprint them.
 
 ## When it runs
 
@@ -38,8 +50,10 @@ reminder reaches every user prompt, a subagent's included. A subagent gets that
 reminder and never the brief: the brief is registered only on `SessionStart`, which
 is the event of the session itself.
 
-Hooks are on unless your own config turns them off, which the file the same page
-calls `config.toml` does with `hooks = false` under `[features]`.
+Hooks are on by default. To turn them off, set `hooks = false` under `[features]` in
+your own `config.toml`; the Codex hooks reference ("Turn hooks off") is the page that
+names that key, so a reader who cannot find it should re-check that spelling before
+believing hooks are off.
 
 ## The limit of that rule
 
@@ -49,6 +63,25 @@ the reminder and no brief, because the two hooks are independent and neither wai
 for the other. The reminder is also the same sentence every turn, so it keeps the
 order in view without carrying it: the brief is the only thing that names what that
 order currently is.
+
+The brief itself is a bounded payload. Its handler carries `additionalContextLimit`
+(8000 tokens) because Codex caps a command hook's additional context at 2500 tokens
+without the key and spills the whole of it to a file above whatever limit the handler
+names, so the number the snippet ships is what bounds the context it injects.
+
+The two handlers fail differently, and the difference is the operator's, not the
+model's. A start hook that exits non-zero leaves the session with no brief, which is
+what the state-root check below looks for. A per-turn hook that exits non-zero has
+the worse end: for `UserPromptSubmit` a non-zero exit blocks the prompt itself, so
+the operator cannot type. That is why the per-turn command is a bare `echo` of one
+fixed sentence and nothing else, capped at 5 seconds: it spawns no `noni`, reads no
+state root, and has no failure arm to fire.
+
+Two things on this page run under the attached project's own state rather than
+noni's. The git substitution in the brief command is resolved by the shell with that
+tree's git config in force, so a config there can make session start wait for the
+30 second timeout. And the hook trusts whatever `noni` PATH resolves: `command -v
+noni` is the check that shows which binary that is.
 
 ## Install
 
@@ -102,14 +135,26 @@ Start Codex in the attached project and ask the model what noni's current order 
 it answers from the brief, which it was handed before its first reply. Run a
 compaction and ask again, and it answers from a fresh brief.
 
-Then run the hook's own command by hand from the project root:
+Then run these from the project root, the first two being what the hook itself runs:
 
 ```
 noni brief --repo "$(git rev-parse --show-toplevel)/.noni-state"
+command -v noni
+noni --version
 ```
 
-Exit 0 with the brief on stdout is the wiring working. A state root holding no
-`noni/` directory is not: the command exits nonzero, and a failed start hook gives
-the model no context at all, so the session runs as if nothing were wired up, with
-the reminder printed on top of an order that is not there. Fix the state root before
-trusting the hook, and `/hooks` is where you see whether the hook ever ran.
+The brief is the wiring: read what it printed, because the exit code is not the
+signal. A state root that holds no `noni/` directory still exits 0 and prints the
+standing rules over an empty page, so `Purpose: not readable`, `top 10: the order is
+empty` and a `recent decisions` block with no rows mean the hook is briefing the
+model on nothing. `summary: not-run; 0 finding(s); verdict fail` is the other
+sentence to look for: it is the brief's own way of saying the arbiter never judged
+the tree. Either way fix the state root, or run `noni census --repo
+"$(git rev-parse --show-toplevel)/.noni-state"` to see the whole report behind that
+one line.
+
+The last two commands say which `noni` the hook will exec and which version it
+carries, which is what tells a shadowed install apart from the one you meant. A
+failed start hook gives the model no context at all, so the session runs as if
+nothing were wired up, with the reminder printed on top of an order that is not
+there. `/hooks` is where you see whether the hook ever ran.

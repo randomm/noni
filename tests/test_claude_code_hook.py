@@ -26,7 +26,6 @@ from __future__ import annotations
 from _harness import REPO, _git
 from claude_code_hook_source import (
     BRIEF_COMMAND,
-    BRIEF_TIMEOUT_MS,
     HARNESS_WORD,
     HOOK_EVENTS,
     HOOK_FILES,
@@ -34,6 +33,7 @@ from claude_code_hook_source import (
     PAGE_RULES,
     SESSION_START,
     STATE_ROOT,
+    TIMEOUT_UNIT_DIVISOR,
     USER_PROMPT_SUBMIT,
     commands,
     fenced_json,
@@ -42,6 +42,8 @@ from claude_code_hook_source import (
     matcher,
     page,
     page_flowed,
+    pi_brief_timeout_ms,
+    pi_timeout_seconds,
     reminder,
     reminder_command,
     reminder_output,
@@ -125,14 +127,63 @@ def test_the_brief_command_is_anchored_at_the_project_directory() -> None:
     assert STATE_ROOT in BRIEF_COMMAND, "the pinned root is not in the command"
 
 
-def test_the_brief_hook_carries_the_ruled_timeout() -> None:
-    """30 000 ms, explicit (ruling 6), the same bound the pi fetch declares.
+def _brief_timeout_error(text: str) -> str:
+    """Why one page's brief timeout is not pi's bound in this file's units, or "".
 
-    A hook with no timeout is a hung ``noni`` holding a session open; the number is
-    compared against the constant in the reader, not a literal in the page.
+    The timeout check as one callable over page bytes, so the falsification below can
+    run it over a page it did not read from disk. It goes through the shipped readers:
+    the tampered bytes have to reach the same parse and the same unit conversion the
+    live check compares, and a reader of its own would prove nothing about either.
+    """
+    timeout = timeout_of(hook_entries(hooks_block(text), SESSION_START))
+    seconds = pi_timeout_seconds()
+    if timeout != seconds:
+        return (f"the brief hook's timeout is {timeout}, not {seconds} seconds "
+                f"(pi's bound, {pi_brief_timeout_ms()} ms)")
+    if f'"timeout": {timeout}' not in text:
+        return f"the snippet does not print the timeout it carries: {timeout}"
+    return ""
+
+
+def test_the_brief_hook_carries_the_ruled_timeout() -> None:
+    """30 seconds, explicit (ruling 6): pi's bound in this file's units.
+
+    The Claude Code hooks reference counts a command hook's ``timeout`` in seconds
+    ("Seconds before canceling"), so the block has to say 30 where pi's fetch says
+    30 000 ms: the same bound, converted, never a number copied across the two units.
+    A hook with no timeout is a hung ``noni`` holding a session open, and one that
+    carried pi's millisecond figure would sit at 30 000 seconds, about 8.3 hours, and
+    never cancel. The compare is against the converted constant in the reader, not a
+    literal in the page.
+
+    The tail proves the pin can fail. It edits the page's bytes in memory only, the
+    shipped file never written, and runs the same check over the old value: the clause
+    has to name the number it found, because a pin that stayed green whatever the
+    snippet said would read as coverage of a bound that was never checked.
     """
     block = hooks_block(page())
-    assert timeout_of(hook_entries(block, SESSION_START)) == BRIEF_TIMEOUT_MS
+    timeout = timeout_of(hook_entries(block, SESSION_START))
+    seconds = pi_timeout_seconds()
+    assert timeout == seconds, (
+        f"the brief hook's timeout is {timeout}, not {seconds} seconds "
+        f"(pi's bound, {pi_brief_timeout_ms()} ms)")
+    assert timeout * TIMEOUT_UNIT_DIVISOR == pi_brief_timeout_ms(), (
+        "the snippet's seconds and pi's milliseconds are not one bound")
+    assert f'"timeout": {timeout}' in page(), (
+        "the snippet's timeout is not the number the page prints")
+    tampered = page().replace(f'"timeout": {timeout}',
+                              f'"timeout": {timeout * TIMEOUT_UNIT_DIVISOR}', 1)
+    assert tampered != page(), (
+        "the page does not print the timeout in the form the snippet carries, so this "
+        "falsification has nothing to tamper with")
+    error = _brief_timeout_error(tampered)
+    assert error, (
+        f"the assertions above stayed green over a snippet whose timeout is "
+        f"{timeout * TIMEOUT_UNIT_DIVISOR}")
+    assert str(timeout * TIMEOUT_UNIT_DIVISOR) in error, (
+        f"the tampered timeout was reported by a clause other than the pin: {error!r}")
+    assert not _brief_timeout_error(page()), (
+        "the shipped page does not satisfy the assertions it is checked by")
 
 
 def test_the_per_turn_command_prints_pis_reminder_byte_for_byte() -> None:

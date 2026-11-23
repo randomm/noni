@@ -26,6 +26,12 @@ from pathlib import Path
 from docs_commands import fenced_pairs
 from pi_extension_source import REPO, string_literal
 
+# pi's own bound on one spawn of `noni brief`, read out of the hook rather than
+# copied: the Claude Code timeout is the same bound, and a copy here could disagree
+# with the number pi ships while both suites stayed green. Written as an
+# underscored literal because that is the form the pi suite pins in noni.ts.
+PI_TIMEOUT_DECL = "BRIEF_TIMEOUT_MS = 30_000"
+
 CLAUDE_DIR = REPO / "integrations" / "claude-code"
 HOOK_PAGE = CLAUDE_DIR / "README.md"
 # The page is the whole adapter: the issue rules out a script, a shipped
@@ -54,9 +60,10 @@ MATCHER = "startup|resume|clear|compact|fork"
 # to sit, and a relative root would resolve against that.
 STATE_ROOT = "$CLAUDE_PROJECT_DIR/.noni-state"
 BRIEF_COMMAND = f"noni brief --repo \"{STATE_ROOT}\""
-# The 30 second bound pi's fetch carries, declared here so the check compares
-# against a number rather than a literal in the page.
-BRIEF_TIMEOUT_MS = 30000
+# The Claude Code hooks reference counts a command hook's `timeout` in seconds, so
+# the block's number and pi's millisecond bound are the same bound in two units.
+# The conversion is explicit at the one place it happens, in :func:`pi_timeout_seconds`.
+TIMEOUT_UNIT_DIVISOR = 1000
 # The page states the absence of a script as its design (ruling 3), and this is
 # the sentence the ruling names.
 FAILURE_SENTENCE = "the session is not blocked"
@@ -98,6 +105,60 @@ def page_flowed() -> str:
     collapse :func:`quickstart_page.flowed_text` applies to the quickstart's page.
     """
     return re.sub(r"\s+", " ", page())
+
+
+def pi_brief_timeout_ms() -> int:
+    """The millisecond bound of pi's brief fetch, read out of ``integrations/pi/noni.ts``.
+
+    The pi hook is the one place this bound is written, so it is read from its source
+    through the pi reader module rather than copied: a bound pi changed (or wrote in a
+    form this reader does not recognise) stops this suite rather than leaving it
+    comparing a number pi no longer ships. The digits come from the declaration's own
+    text, so no second copy of the bound lives in this file.
+    """
+    declaration = pi_constant_declaration(pi_hook_source(), "BRIEF_TIMEOUT_MS")
+    assert PI_TIMEOUT_DECL in declaration, (
+        f"pi's brief timeout is not declared as {PI_TIMEOUT_DECL!r}: {declaration!r}")
+    digits = declaration.partition("=")[2].strip().rstrip(";").replace("_", "")
+    assert digits.isdigit(), f"pi's brief timeout is not a plain number: {declaration!r}"
+    return int(digits)
+
+
+def pi_constant_declaration(text: str, name: str) -> str:
+    """One ``const NAME = ...;`` declaration of the pi hook, head to semicolon.
+
+    The reader keeps the rule the shared pi reader keeps: locate the declaration by
+    its own head, and end it at the semicolon closing it, so a value can only reach
+    the end of its line and a missing terminator is a failure rather than a read of
+    the rest of the file. A quoted or templated value is refused: the bound this
+    reader exists for is one number, and a check over a string is not that check.
+    """
+    from pi_extension_source import QUOTED, TEMPLATE
+
+    head = f"const {name} ="
+    assert head in text, f"const {name} is not declared in the pi hook"
+    rest = text[text.index(head) + len(head):]
+    end = re.search(r";\s*$", rest[: rest.index("\n\n")], re.MULTILINE)
+    assert end, f"const {name} has no terminating semicolon"
+    body = TEMPLATE.sub("", rest[: end.end()])
+    assert not QUOTED.findall(body), (
+        f"const {name} is not a plain numeric declaration: {body.strip()!r}")
+    return head + rest[: end.end()]
+
+
+def pi_timeout_seconds() -> int:
+    """pi's bound expressed the way this settings file counts it: whole seconds.
+
+    The milliseconds-to-seconds conversion, named. The check compares the snippet
+    against this rather than a literal, so the page can only be right by agreeing with
+    pi, and a bound that does not divide into whole seconds is refused here rather than
+    rounded into an agreement with a page.
+    """
+    ms = pi_brief_timeout_ms()
+    assert ms % TIMEOUT_UNIT_DIVISOR == 0, (
+        f"pi's brief timeout of {ms} ms is not a whole number of seconds, so no "
+        "value in this file's units states that bound")
+    return ms // TIMEOUT_UNIT_DIVISOR
 
 
 def fenced_json(text: str) -> tuple[list[str], int]:
@@ -195,7 +256,13 @@ def matcher(entries: list[dict]) -> str:
 
 
 def timeout_of(entries: list[dict]) -> int:
-    """The explicit timeout on the brief hook, in milliseconds (ruling 6)."""
+    """The explicit timeout on the brief hook, in seconds (ruling 6).
+
+    Seconds, because that is the unit the Claude Code hooks reference gives the field
+    ("Seconds before canceling"). The check compares against :func:`pi_timeout_seconds`
+    rather than a literal, and the falsifier runs this same reader over a page it did
+    not read from disk, so an off-by-1000 snippet is reported rather than green.
+    """
     hooks = command_hooks(entries, SESSION_START)
     assert len(hooks) == 1, "the brief hook carries more than one command"
     value = hooks[0].get("timeout")

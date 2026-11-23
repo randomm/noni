@@ -32,7 +32,7 @@ scope and a different file: neither is touched by this.
           {
             "type": "command",
             "command": "noni brief --repo \"$CLAUDE_PROJECT_DIR/.noni-state\"",
-            "timeout": 30000
+            "timeout": 30
           }
         ]
       }

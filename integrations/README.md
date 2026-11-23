@@ -80,6 +80,11 @@ configuration and can never be committed.
   `noni brief` into a coding agent's main session and keeps one standing
   reminder in that agent's prompt. It implements neither seam above, so
   `test_adapter_interface.py` does not speak for it.
+- [`codex/`](codex/) — a harness hook too, not a tracker adapter: a copyable
+  project-local hook config that hands `noni brief` to a Codex session at start
+  and after compaction, and the same standing reminder each prompt. It
+  implements neither seam above, so `test_adapter_interface.py` does not speak
+  for it either.
 
 Tracker adapters for any other tool live outside this repository and
 implement the same two seams. A directory such as `pi/` is not one of them:

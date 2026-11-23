@@ -31,6 +31,7 @@ from _harness import (
     git_pin_date,
     subprocess_env,
 )
+from harness_git import assert_own_repo_top
 
 # decide.py's own record and the ledger path it lands under, and order.py's
 # artifact. All three are read back from HEAD by name, so each is a constant.
@@ -48,7 +49,15 @@ ORDER_ISSUE = "7"
 
 
 def _git_ok(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    """A checking git call in ``repo`` (the fixture-side git, not the writer's)."""
+    """A checking git call in ``repo`` (the fixture-side git, not the writer's).
+
+    The containment check is repeated here rather than left to the harness runner
+    below it because this is the second family of config writer (issue #220, PM
+    ruling 1): a call made with no ``-c`` identity that writes the tree's own
+    ``user.name``, and one that does not go through a harness runner at all is the
+    shape the leak came in through.
+    """
+    assert_own_repo_top(repo)
     proc = _git(repo, *args)
     assert proc.returncode == 0, f"git {args} failed: {proc.stderr}"
     return proc

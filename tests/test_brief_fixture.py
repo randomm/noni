@@ -30,6 +30,7 @@ import tarfile
 from pathlib import Path
 
 from _harness import REPO
+from harness_git import assert_own_repo_top
 
 FIXTURE_DIR = REPO / "tests" / "fixtures" / "brief"
 GENERATE = FIXTURE_DIR / "generate.py"
@@ -82,7 +83,14 @@ def _generate_into(target: Path) -> Path:
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    """One git call against an unpacked fixture, with the host's config kept out of it."""
+    """One git call against an unpacked fixture, with the host's config kept out of it.
+
+    The target is checked for its own repository first (issue #220): this is the
+    harness's fourth ``git -C`` shape, a runner of its own that reads the fixture's
+    ``.git/config`` back, and an unpack that landed in a directory inside an
+    enclosing repository would have asked that repository's config instead.
+    """
+    assert_own_repo_top(repo)
     return subprocess.run(["git", "-C", str(repo),
                            "-c", "core.hooksPath=" + os.devnull, *args],
                           capture_output=True, text=True)

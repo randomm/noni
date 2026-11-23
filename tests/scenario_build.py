@@ -78,7 +78,7 @@ def build_scenario(base: Path, faulted: bool = False) -> Scenario:
 
     # Build the bare origin.
     origin.mkdir(parents=True, exist_ok=True)
-    _git_ok(origin, "init", "-q", "--bare")
+    _git_ok(origin, "init", "-q", "--bare", bare=True)
 
     # Build clone_a from scratch.
     clone_a.mkdir(parents=True, exist_ok=True)
@@ -94,7 +94,11 @@ def build_scenario(base: Path, faulted: bool = False) -> Scenario:
     # check out git's own default (master) and clone-b's own commit would
     # land there, leaving nothing on main to push.
     clone_b.mkdir(parents=True, exist_ok=True)
-    _git_ok(base, "clone", "-q", "-b", "main", str(origin), str(clone_b))
+    # The runner is run from the scenario base, which is not a repository: the
+    # destination is the tree this call creates, and the after-the-fact check is what
+    # proves the clone left a repository there rather than nothing.
+    _git_ok(clone_b, "clone", "-q", "-b", "main", str(origin), str(clone_b),
+            creating=True)
     _ensure_branch(clone_b, "main")
 
     t_task = _ts(0)

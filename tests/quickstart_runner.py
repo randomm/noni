@@ -40,6 +40,7 @@ venv install (see :mod:`quickstart_topology`); the ``gh`` recipe is run through
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -415,10 +416,26 @@ def launch(world: World, argv: list[str],
 
 def _exec(program: str, argv: list[str], cwd: Path,
           env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    """One page command under the launch env, with a hang named as the command."""
+    """One page command under the launch env, with a hang named as the command.
+
+    The ceiling the launcher pins (issue #220, AC2) can name only one directory, and
+    the page's commands run from three trees at once -- the scratch project, its
+    state clone, and the materialised clone of this repository -- so a single
+    ancestor is not enough for a child that resolves a repository from its cwd: the
+    state clone lives *inside* the project and a clone of a clone sits under the
+    session root. The ceiling is therefore extended to this command's own working
+    directory, which stops the walk at the tree the page is acting in while leaving
+    everything below it reachable. The variable goes, not the value set upstream: a
+    caller that named no ceiling still gets the one that contains this run.
+    """
+    ceiling = str(Path(cwd).resolve())
+    previous = env.get("GIT_CEILING_DIRECTORIES")
+    if previous and previous not in ceiling.split(os.pathsep):
+        ceiling = ceiling + os.pathsep + previous
+    launched_env = {**env, "GIT_CEILING_DIRECTORIES": ceiling}
     try:
         return subprocess.run([program, *argv[1:]], cwd=cwd, capture_output=True,
-                              text=True, env=env, timeout=180)
+                              text=True, env=launched_env, timeout=180)
     except subprocess.TimeoutExpired as exc:  # pragma: no cover - a hung command
         pytest.fail(f"page command hung: {argv}\n{exc}")
 

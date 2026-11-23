@@ -14,6 +14,25 @@ from shutil import ignore_patterns as _ignore_patterns
 
 REPO = Path(__file__).resolve().parent.parent
 
+# The ceiling every subprocess the suite starts is given for git's upward
+# repository discovery (issue #220, AC2). A child that resolves a repository from
+# its working directory must not be able to walk out of the test's own tree and
+# find the checkout it is being run from; that is how a fixture's throwaway
+# identity ended up in the real repository's shared config, once a basetemp lived
+# under this tree's ignored ``tmp/``.
+#
+# The value is this harness's own root -- the one directory every tree the suite
+# builds is under, whatever ``--basetemp`` a developer passed (a basetemp under the
+# checkout, the platform default, or one named by a driver for a worktree). A ceiling
+# at an *ancestor* of the checkout would stop nothing at all, because the checkout is
+# below it and still discoverable, so naming the tmp root as a bare constant would
+# have been the weaker half of the pair and passed its own test by accident.
+#
+# Resolved, so a ``/tmp`` symlink cannot put a ceiling git would step straight over.
+# Where the suite is run from outside a repository, git's own ceiling rule is
+# unreachable from below and the top-level check is the half that contains it.
+TEST_TMP_CEILING = Path(__file__).resolve().parent.parent
+
 # The package's modules, measured by the gate and imported by the tests as
 # ``noni.<module>``. The package must be installed (``pip install -e ".[dev]"``
 # or the built wheel) or its ``src/`` put on ``PYTHONPATH``; conftest.py does the

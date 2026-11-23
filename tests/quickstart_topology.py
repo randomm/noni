@@ -38,6 +38,7 @@ from pathlib import Path
 from _harness import REPO, subprocess_env
 from conftest import NONI_ENV_VARS
 from docs_promises import STATE_DIR
+from harness_git import assert_own_repo_top
 from harness_paths import COVERAGE_PROCESS_START, SRC, scratch_ignore
 
 # What a page launch may not inherit: the harness's ``PYTHONPATH`` pin and
@@ -177,17 +178,67 @@ def checked(proc: subprocess.CompletedProcess[str], what: str) -> None:
 
 
 def git(repo: Path, *args: str, env: dict[str, str],
-        identity: bool = False) -> subprocess.CompletedProcess[str]:
+        identity: bool = False, _creating: bool = False) -> subprocess.CompletedProcess[str]:
     """One git command, with its output kept for the assertion messages.
 
     ``identity`` adds the harness's ``-c`` identity, for the trees the page does not
     ask the reader to configure (the seed commit that stands in for the forge). The
     page's own commands run without it: they set their identity with the config lines
     the page prints, and a harness identity would hide a page that forgot to set one.
+
+    The target is checked first (issue #220), under the launch env the call is about
+    to use: these run ``git config`` lines out of the page's own fences, and a bare
+    ``git -C <dir> config`` on a tree that is not its own repository is exactly how
+    the fixture identity reached the checkout's shared config.
+
+    The check takes its form from the target rather than from the caller. A bare
+    origin is asked for its common directory (it has no working tree to be the top of)
+    and the reader's private state clone -- the one fixture with a repository
+    legitimately nested in a repository, cloned into their project -- is asked whether
+    it owns its own ``.git``, because its ``--show-toplevel`` is the parent's and the
+    equality the ordinary form asserts could never hold. Neither form is a flag a
+    caller chooses.
+
+    ``_creating`` is the same single exception ``harness_git`` makes for ``init``: an
+    uninitialised directory is what a create call is for, so the two initialisers
+    below assert the precondition themselves, after their init ran. It is private and
+    taken only from those two, never from a page command's argv -- a caller cannot ask
+    for it, which is what keeps the exception from becoming a way around the guard.
     """
+    if not _creating:
+        assert_own_repo_top(repo, env, bare=_is_bare_tree(repo),
+                            sub_tree=_is_nested_repo(repo))
     args = (*_GIT_IDENTITY, *args) if identity else args
     return subprocess.run(["git", "-C", str(repo), *args], capture_output=True,
                           text=True, env=env, timeout=120)
+
+
+def _is_bare_tree(repo: Path) -> bool:
+    """Whether ``repo`` is a bare repository, read from git rather than assumed.
+
+    A fixture's origin is the only bare tree the quickstart builds, and asking git is
+    what keeps the question honest: a tree that merely looks bare (no working tree,
+    no ``HEAD``) is not one, and the containment check must not quietly take the
+    weaker form because of how a directory happens to be laid out.
+    """
+    shown = subprocess.run(["git", "-C", str(repo), "rev-parse", "--is-bare-repository"],
+                          capture_output=True, text=True, timeout=60)
+    return shown.returncode == 0 and shown.stdout.strip() == "true"
+
+
+def _is_nested_repo(repo: Path) -> bool:
+    """Whether ``repo`` owns a ``.git`` while its parent's git already answers.
+
+    Exactly the state the page's private state clone is in. A tree with no ``.git``
+    of its own is not the nested case but the leaking one, so this returns False and
+    the ordinary check refuses it.
+    """
+    if not (repo / ".git").exists():
+        return False
+    shown = subprocess.run(["git", "-C", str(repo), "rev-parse", "--show-toplevel"],
+                          capture_output=True, text=True, timeout=60)
+    return shown.returncode == 0 and bool(shown.stdout.strip()) and \
+        Path(shown.stdout.strip()).resolve() != repo.resolve()
 
 
 def init_repo(path: Path, env: dict[str, str], *,
@@ -199,9 +250,15 @@ def init_repo(path: Path, env: dict[str, str], *,
     suite's sandboxed HOME carries no gitconfig, so an unadorned ``init`` falls back
     to git's own default and a writer's commit lands on a branch origin never had
     (the reason ``tests/harness_git.build_bare_origin`` names ``-b main`` too).
+
+    Like :func:`harness_git._init_repo`, the containment check runs after ``init``:
+    an uninitialised directory is the normal state for this helper, and a tree whose
+    ``init`` failed must still not be able to answer for a repository above it.
     """
     path.mkdir(parents=True, exist_ok=True)
-    checked(git(path, "init", "-q", "-b", branch, env=env), f"git init {path.name}")
+    checked(git(path, "init", "-q", "-b", branch, env=env, _creating=True),
+            f"git init {path.name}")
+    assert_own_repo_top(path, env)
 
 
 def init_bare(path: Path, env: dict[str, str], branch: str) -> None:
@@ -213,10 +270,9 @@ def init_bare(path: Path, env: dict[str, str], branch: str) -> None:
     in this tree, so nothing pushes to its current branch.
     """
     path.mkdir(parents=True, exist_ok=True)
-    checked(git(path, "init", "-q", "--bare", "-b", branch, env=env),
+    checked(git(path, "init", "-q", "--bare", "-b", branch, env=env, _creating=True),
             f"git init --bare {path.name}")
-
-
+    assert_own_repo_top(path, env, bare=True)
 def seed_origin(origin: Path, env: dict[str, str],
                 branch: str = DEFAULT_BRANCH) -> None:
     """A bare origin holding one empty commit on ``branch``, as the forge would.

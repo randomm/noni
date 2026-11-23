@@ -66,6 +66,11 @@ ADAPTER_TEST_MODULES = {
     # hook's text, read as text.
     "test_pi_extension_failure_line.py",
     "test_pi_extension_falsifiability.py",
+    # The claude-code harness hook (issue #216): its page and the readers over that
+    # page. Same subject matter as the pi suite -- integrations/, read as text -- and
+    # no adapter module behind either.
+    "test_claude_code_hook.py",
+    "claude_code_hook_source.py",
 }
 CORE_TEST_MODULES = sorted(
     p for p in (REPO / "tests").glob("test_*.py") if p.name not in ADAPTER_TEST_MODULES

@@ -80,7 +80,12 @@ configuration and can never be committed.
   `noni brief` into a coding agent's main session and keeps one standing
   reminder in that agent's prompt. It implements neither seam above, so
   `test_adapter_interface.py` does not speak for it.
+- [`claude-code/`](claude-code/) — a harness hook, not a tracker adapter. It is
+  a copyable hooks block for a project's own `.claude/settings.json`: `noni
+  brief` at session start and after each compaction, one standing reminder
+  every turn. It ships no script, implements neither seam above, so
+  `test_adapter_interface.py` does not speak for it.
 
 Tracker adapters for any other tool live outside this repository and
-implement the same two seams. A directory such as `pi/` is not one of them:
-it is a hook on a harness, and it owes those seams nothing.
+implement the same two seams. A directory such as `pi/` or `claude-code/` is
+not one of them: it is a hook on a harness, and it owes those seams nothing.

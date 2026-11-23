@@ -100,6 +100,6 @@ than assume one convention. docs/PRODUCT.md section 7 is the rule they both answ
 to: `--repo` is the only flag that names a state root.
 
 Tracker adapters for any other tool live outside this repository and
-implement the same two seams. A directory such as `pi/`, `claude-code/` or
-`codex/` is not one of them: it is a hook on a harness, and it owes those seams
-nothing.
+implement the same two seams. A directory such as `pi/` or the two harness
+sections above is not one of them: it is a hook on a harness, and it owes those
+seams nothing.

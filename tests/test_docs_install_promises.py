@@ -50,6 +50,7 @@ from docs_precondition import (
     script_entry_points,
 )
 from docs_promises import QUICKSTART, section_body
+from harness_paths import in_scratch
 
 # The sentence the pages owe, as the gate reads it and as the fix writes it. Both
 # facts are required because the failure a reader meets names only one of them: a
@@ -290,10 +291,16 @@ def _verdicts(root: Path) -> tuple[list[str], list[str]]:
     The same three readers the page-set test calls, so the plant is evidence about that
     gate and not about a second implementation of it. Labels are paths relative to the
     tree the caller handed, the shape the real gate's labels take.
+
+    The walk uses the shared scratch rule (:func:`harness_paths.in_scratch`) with this
+    tree as its root, which is what the tree needs rather than what the real gate needs:
+    ``_init_repo`` ran ``git init`` here, so ``root.rglob("*.md")`` reaches a real
+    ``.git`` and a gate that read it would be judging git's own files. The real gate
+    gets the same skip from the same rule over ``REPO``.
     """
     offenders: list[str] = []
     unlinked: list[str] = []
-    for path in sorted(root.rglob("*.md")):
+    for path in sorted(p for p in root.rglob("*.md") if not in_scratch(root, p)):
         text = path.read_text(encoding="utf-8")
         if not script_entry_points(text):
             continue

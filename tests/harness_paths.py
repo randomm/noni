@@ -163,14 +163,23 @@ TOOL_WRAPPERS: tuple[tuple[str, Path], ...] = (
 # ``tmp`` is skipped only directly under the root the walk started from, which is what
 # the leading slash of ``.gitignore``'s ``/tmp/`` means: a tracked page nested below a
 # directory that happens to be named ``tmp`` is content, and a basename glob at any
-# depth would have hidden it. ``.worktrees`` is skipped by name wherever it appears,
-# exactly as both clone lists already did.
+# depth would have hidden it. ``.worktrees`` and ``.git`` are skipped by name wherever
+# they appear, exactly as both clone lists already did.
 SCRATCH_ROOT_NAME = "tmp"
 SCRATCH_DIR_NAME = ".worktrees"
 
+# The repository metadata folder. It is scratch for a walk for the same reason the two
+# folders above are: a planning driver keeps its base copy of the docs under the
+# checkout's own ``.git`` (``.git/pi-plan-base/<hash>/``), and a repo-rooted page scan
+# that walked into it counted those stale pages as tracked pages of this repository
+# (issue #231). One name here, consumed by both shapes below, so the predicate and the
+# copytree callable cannot disagree about it the way they did before this constant.
+GIT_DIR_NAME = ".git"
+
 # The build droppings the two clones drop on top of the scratch rule. Both copies held
-# byte-identical literals and nothing compared them; they are one tuple now.
-CLONE_IGNORE_NAMES = (".git", "__pycache__", ".venv", "*.pyc", ".pytest_cache",
+# byte-identical literals and nothing compared them; they are one tuple now. ``.git``
+# is spelled from the constant above, so the shared rule and this list name one folder.
+CLONE_IGNORE_NAMES = (GIT_DIR_NAME, "__pycache__", ".venv", "*.pyc", ".pytest_cache",
                       ".coverage", ".coverage.*", "noni.egg-info",
                       "noni_noni.egg-info")
 
@@ -182,14 +191,17 @@ def in_scratch(root: Path, path: Path) -> bool:
     against the caller's root and not against ``REPO``: the same predicate answers for
     a planted tree under ``tmp_path`` and for the real checkout, whatever path pytest
     resolved that to. An ancestor that is not under ``root`` carries no root-relative
-    claim, so only the ``.worktrees`` name half can apply to it.
+    claim, so only the ``.worktrees`` name half can apply to it: ``.worktrees`` names a
+    scratch layout wherever the path happens to carry it, while a ``.git`` or a ``tmp``
+    outside the caller's root says nothing about what that caller treats as scratch.
     """
     try:
         parts = path.relative_to(root).parts
     except ValueError:
         return SCRATCH_DIR_NAME in path.parts
     return bool(parts and (parts[0] == SCRATCH_ROOT_NAME
-                           or SCRATCH_DIR_NAME in parts))
+                           or SCRATCH_DIR_NAME in parts
+                           or GIT_DIR_NAME in parts))
 
 
 def scratch_ignore(root: Path):
@@ -200,7 +212,7 @@ def scratch_ignore(root: Path):
     :func:`in_scratch`: one rule in two shapes, pinned against itself by
     ``tests/test_scratch_walks.py``.
     """
-    by_name = _ignore_patterns(*CLONE_IGNORE_NAMES, SCRATCH_DIR_NAME)
+    by_name = _ignore_patterns(*CLONE_IGNORE_NAMES, SCRATCH_DIR_NAME, GIT_DIR_NAME)
 
     def ignore(directory: str, names: list[str]) -> set[str]:
         skipped = set(by_name(directory, names))
@@ -209,6 +221,8 @@ def scratch_ignore(root: Path):
             skipped.add(SCRATCH_ROOT_NAME)
         elif SCRATCH_DIR_NAME in names:
             skipped.add(SCRATCH_DIR_NAME)
+        if GIT_DIR_NAME in names:
+            skipped.add(GIT_DIR_NAME)
         return skipped
 
     return ignore

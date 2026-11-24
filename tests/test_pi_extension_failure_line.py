@@ -290,28 +290,28 @@ def test_the_scrub_pattern_is_one_both_engines_read_alike() -> None:
     path_token_is_portable(body)
 
 
-# Shapes the whitelist must refuse, each added by one of the tightenings. Each row breaks
-# only its own rule, so a loosening reddens the row that names it rather than a neighbour:
-# ``[^a\\u0041]`` compiles and is well formed, so only the escape token can refuse it, and the
-# old token accepted any non-alphanumeric; ``a[]b`` compiles and is well formed, so only the
-# class token's minimum can refuse it, and the old class token matched an empty body; a
-# non-compiling body would die in the compile step for the same reason whatever the whitelist
-# said, and that is why neither of those two is written as a bare ``[]`` or ``\u0041``.
-# Each row is refused by one tightening and by no earlier step, so a loosening reddens the row
-# that names it: ``abc\\d`` carries an escape the old token accepted for any non-alphanumeric,
-# and Python reads ``\d`` as a digit class while JavaScript reads it as a literal ``d``, which
-# is the divergence the escape whitelist exists to stop; ``[]`` has no member for the class
-# token to name (verified: the token walk finds no token for it), where the old class token
-# matched an empty body; ``a{2,5}`` is a counted repetition whose braces the old
-# plain-character class let through as ordinary text; the unbalanced group is the shape that
-# never reaches the token walk at all, and so proves the fourth tightening -- a body Python
-# cannot compile is reported as an ``AssertionError`` naming the compile error, not as a bare
-# ``re.error``. Two refusals need no row of their own because the engines settle them: ``[]``
-# above is rejected by Python's compiler a step before the walk, and ``[^]`` is a class of the
-# two literals ``^`` and ``]`` in JavaScript, so refusing it would be wrong in either engine.
+# Shapes the whitelist must refuse, each added by one of the tightenings. A row isolates its
+# rule only if it reaches that rule: a shape the compile step already kills proves the compile
+# error handling, not the whitelist, so each body below compiles under Python re and under
+# JavaScript and is stopped by the token walk alone.
+# The escape row is ``abc\.``: an escaped dot, which Python and JavaScript both read as a
+# literal dot, so the row pins nothing about meaning but the token that lets it through. The
+# old escape token accepted any non-alphanumeric and took it; the shipped ``\\[s/\\]`` refuses
+# it at ``'\.'``. The shape this row carried before, ``abc\\d``, was refused by the plain
+# character token, which excludes a backslash, and never by the escape token, so it did not
+# isolate the rule it was written for.
+# The class row is ``a[][ab]``: the leading ``a`` is what gets the body past the compiler,
+# which is where the bare shapes die -- ``[]`` and ``[^]`` both stop Python re with an
+# unterminated character set, so neither ever reaches the walk and the compile error handling
+# owns them. Here the walk is what refuses the body, at ``[][ab]``, because the class token
+# demands at least one member where the old class token matched an empty body.
+# ``a{2,5}`` is a counted repetition whose braces the old plain-character class let through as
+# ordinary text; the unbalanced group is the shape that never reaches the token walk at all,
+# and so proves the fourth tightening -- a body Python cannot compile is reported as an
+# ``AssertionError`` naming the compile error, not as a bare ``re.error``.
 REFUSED_PATTERNS = (
-    ("non-whitelisted-escape", "abc" + BS + "d", "outside the shared subset"),
-    ("empty-class", "[" + "]", "the pattern"),
+    ("non-whitelisted-escape", "abc" + BS + ".", "outside the shared subset"),
+    ("class-needs-a-member", "a" + "[" + "]" + "[ab]", "the pattern"),
     ("counted-repetition", "a{2,5}", "outside the shared subset"),
     ("unbalanced-group", "(?:a", "does not compile"),
 )

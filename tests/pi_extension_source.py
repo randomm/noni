@@ -41,6 +41,37 @@ FAILURE_LINE = re.compile(r"(?:return|const \w+ =)\s*(`noni: could not read[^`]*
 # the plus. A check rebuilds the line from these parts and from the template literal,
 # so neither the bound's value nor its arithmetic is copied here.
 CLIP = re.compile(r"line\.length <= (\w+) \? (\w+) : (\w+)\.slice\(0, ([^)]+)\) \+ ([^;]+);")
+# The scrub's declaration, as one pattern: the constant's name, the body of its regex
+# literal, and the global flag that ends it. The body is a run of escape pairs and ordinary
+# characters, so the closing slash of the literal is the first unescaped one and an escaped
+# slash inside the pattern cannot end the span early. The escape pair has to come first in
+# the alternation: read the other way round, the two characters of a doubled backslash are
+# two ordinary characters, the class swallows the slash that closes the literal, and a real
+# declaration reads as a missing one.
+PATH_TOKEN = re.compile("const PATH_TOKEN = /((?:\\\\.|[^/])+)/g;")
+# The syntax the scrub's pattern is allowed to be built from, token by token. A pattern
+# that compiles under Python re while meaning something else in JavaScript lets the suite
+# pass and the hook leak, so the subset is stated positively rather than as a list of
+# named bans: an escape pair, a character class, the opening of a non-capturing group, a
+# repetition operator, or one character with no special meaning in either engine.
+# Lookahead, lookbehind, atomic groups, named groups, inline-flag groups, alternation,
+# capturing groups, anchors, braces and ``\p`` classes have no token here, so a pattern
+# that used one could not be read as the subset. Each token's own metacharacters are kept
+# out of the plain-character class, so a construct cannot hide inside a literal run.
+SUBSET_TOKENS = re.compile(
+    "(?:"
+    + r"\\[^A-Za-z0-9]"  # an escape pair: \s, \/, \\, \.
+    + "|"
+    + r"\[[^\]\n]*\]"  # a character class, negated or not
+    + "|"
+    + re.escape("(?:")  # the opening of a non-capturing group
+    + "|"
+    + re.escape(")")  # the close of the group it opened
+    + "|"
+    + r"[+*?]"  # a repetition operator
+    + "|"
+    + r"[^\\[(+*?^$*+.?|\])\s]"  # one character with no meaning in either engine
+    ")")
 # Every form of the spawn call, so the timeout rule reads the options object the
 # command actually carries rather than the word "timeout" somewhere in the file.
 SPAWN_CALL = re.compile(r"pi\.exec\((.*?)\)", re.DOTALL)
@@ -148,6 +179,41 @@ def template_parts(text: str) -> tuple[str, str]:
     assert gap == hole and tail == ")", (
         f"the template is not head, reason, close: {literal.group(0)!r}")
     return head, tail
+
+
+def path_token(text: str, expected: str | None = None) -> str:
+    """The body of the hook's ``PATH_TOKEN`` literal, read out of the hook's own text.
+
+    ``expected``, when given, is the pattern text the caller believes is declared, and the
+    read-back must equal it character for character. Without that second look a mutation
+    that never applied would leave the real pattern in place and its check would still
+    pass, which is the opposite of what a mutation is for. A declaration that is missing,
+    empty or malformed fails the read rather than leaving a check to scrub with nothing.
+    """
+    found = PATH_TOKEN.search(text)
+    assert found, "the path pattern is missing from the hook"
+    body = found.group(1)
+    assert body, "the path pattern is empty"
+    if expected is not None:
+        assert body == expected, f"the hook declares {body!r}, not {expected!r}"
+    return body
+
+
+def path_token_is_portable(body: str) -> None:
+    """Reject a pattern built from syntax the two engines do not read alike.
+
+    JavaScript runs the pattern in the hook and Python re runs the same text in the
+    suite. ``body`` must compile and every token of it must be one the whitelist names,
+    so a construct only one engine understands stops the check by name at the position
+    where it stands instead of being tested as if both engines agreed.
+    """
+    re.compile(body)
+    position = 0
+    while position < len(body):
+        token = SUBSET_TOKENS.match(body, position)
+        assert token, (
+            f"the pattern uses syntax outside the shared subset at {body[position:]!r}")
+        position = token.end()
 
 
 def string_literal(text: str, name: str) -> str:

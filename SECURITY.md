@@ -22,6 +22,22 @@ problem.** A public report discloses the flaw to everyone before a fix exists.
 The repository's own CI, and any tool you run noni beside. If a finding needs
 the tracker or the forge, report it to that service instead.
 
+## What noni reads and runs
+
+- State under the state root: `noni/decisions/*.json`, `noni/direction/order.json`,
+  `noni/direction/intent.md`; files you name too: `--ledger`, `--ordering`,
+  `--intent`, `--issue-state`, `--from`; the scrub deny-list `.noni-scrub-denylist`
+  or `NONI_SCRUB_DENYLIST`, and the tracked `.noni-scrub-allowlist`.
+- The public-hygiene check reads the content of every git-tracked file, not only
+  `noni/`, size-capped; one it cannot read is a finding.
+- No code opens `.env`, `.netrc`, `.ssh/*` or `.git-credentials`, and none makes
+  a network call.
+- The only program it runs is `git`, always as `git -C <path>`, with hooks, external
+  protocols and fsmonitor off and a time limit. Writer calls drop every `GIT_` name
+  but identity, config-pin and transport; `HOME` and the rest pass through, so git
+  reads its own config and helpers as usual, and census reads pin global and system
+  config to null. The adapter under `integrations/` is outside this statement.
+
 ## What helps
 
 The command you ran, with its flags, the shape of the repository it ran in, and

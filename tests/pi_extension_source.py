@@ -57,12 +57,19 @@ PATH_TOKEN = re.compile("const PATH_TOKEN = /((?:\\\\.|[^/])+)/g;")
 # Lookahead, lookbehind, atomic groups, named groups, inline-flag groups, alternation,
 # capturing groups, anchors, braces and ``\p`` classes have no token here, so a pattern
 # that used one could not be read as the subset. Each token's own metacharacters are kept
-# out of the plain-character class, so a construct cannot hide inside a literal run.
+# out of the plain-character class, so a construct cannot hide inside a literal run. The
+# escape pair names its three escapes rather than any non-alphanumeric, so ``\u0041`` and
+# ``\p{L}`` are refused. The class token admits only class members, and a class member is a
+# plain character or one of those three escapes: ``]`` closes a class, so the body cannot
+# hold it, and every other escape is outside the subset. An empty class has a body shorter
+# than one member (``[]`` holds nothing, ``[^]`` holds only the negation), so both are refused.
+# No token covers a brace, so a counted repetition is refused rather than read as a run of
+# plain characters, and a brace may not stand as a literal either.
 SUBSET_TOKENS = re.compile(
     "(?:"
-    + r"\\[^A-Za-z0-9]"  # an escape pair: \s, \/, \\, \.
+    + r"\\[s/\\]"  # an escape pair: the three the scrub can carry, and no other
     + "|"
-    + r"\[[^\]\n]*\]"  # a character class, negated or not
+    + r"\[\^?(?:[^\]\\\n]|\\[s/\\]){1,}\]"  # a class, negated or not, over at least one member (an escape may be a member; a body of none is refused)
     + "|"
     + re.escape("(?:")  # the opening of a non-capturing group
     + "|"
@@ -70,7 +77,7 @@ SUBSET_TOKENS = re.compile(
     + "|"
     + r"[+*?]"  # a repetition operator
     + "|"
-    + r"[^\\[(+*?^$*+.?|\])\s]"  # one character with no meaning in either engine
+    + r"[^\\[(+*?^$*+.?|\])\s{}]"  # one character with no meaning in either engine
     ")")
 # Every form of the spawn call, so the timeout rule reads the options object the
 # command actually carries rather than the word "timeout" somewhere in the file.
@@ -199,15 +206,34 @@ def path_token(text: str, expected: str | None = None) -> str:
     return body
 
 
+def path_token_flags(text: str) -> str:
+    """The flags on the hook's ``PATH_TOKEN`` literal, read from after its closing slash.
+
+    ``path_token`` returns the body alone, so nothing it hands back can say whether the
+    scrub replaces every path in a line or the first one only. The reader requires the same
+    ``/g;`` the body reader does, so a declaration that lost the flag fails the read rather
+    than answering with an empty flag string.
+    """
+    found = PATH_TOKEN.search(text)
+    assert found, "the path pattern is not declared with the global flag"
+    end = text.index("/", found.end(1))
+    return text[end + 1: found.end() - 1]
+
+
 def path_token_is_portable(body: str) -> None:
     """Reject a pattern built from syntax the two engines do not read alike.
 
     JavaScript runs the pattern in the hook and Python re runs the same text in the
     suite. ``body`` must compile and every token of it must be one the whitelist names,
     so a construct only one engine understands stops the check by name at the position
-    where it stands instead of being tested as if both engines agreed.
+    where it stands instead of being tested as if both engines agreed. A body Python
+    cannot compile is reported the same way: a bare ``re.error`` escaping the reader
+    would look like a broken suite rather than like a pattern the hook may not declare.
     """
-    re.compile(body)
+    try:
+        re.compile(body)
+    except re.error as error:
+        raise AssertionError(f"the pattern does not compile under Python re: {error}") from error
     position = 0
     while position < len(body):
         token = SUBSET_TOKENS.match(body, position)

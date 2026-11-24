@@ -30,8 +30,8 @@ the tracker or the forge, report it to that service instead.
   or `NONI_SCRUB_DENYLIST`, and the tracked `.noni-scrub-allowlist`.
 - The public-hygiene check reads the content of every git-tracked file, not only
   `noni/`, size-capped; one it cannot read is a finding.
-- No code opens `.env`, `.netrc`, `.ssh/*` or `.git-credentials`, and none makes
-  a network call.
+- No code looks for `.env`, `.netrc`, `.ssh/*` or `.git-credentials` by name (a
+  tracked one is read only by the scan above), and none makes a network call.
 - The only program it runs is `git`, always as `git -C <path>`, with hooks, external
   protocols and fsmonitor off and a time limit. Writer calls drop every `GIT_` name
   but identity, config-pin and transport; `HOME` and the rest pass through, so git

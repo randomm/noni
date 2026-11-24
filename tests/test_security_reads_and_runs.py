@@ -189,6 +189,10 @@ def test_the_section_says_no_credential_file_and_no_network_call() -> None:
     body = _section().lower()
     for token in (".env", ".netrc", ".ssh", ".git-credentials"):
         assert token in body, f"the section does not name {token} as unopened"
+    assert "by name" in body, (
+        "the section does not say the search is by name: the hygiene check above "
+        "reads any tracked file, so an unqualified claim is false"
+    )
     assert "network" in body, "the section does not state the absence of a network call"
     banned = ("import socket", "import urllib", "import http", "import smtplib",
               "import ftplib", "import ssl")

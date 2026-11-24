@@ -50,6 +50,17 @@ def _over_cap() -> str:
     return GOOD_INTENT + "filler\n" * 200
 
 
+def non_ascii_day(day: str = "2026-10-01") -> str:
+    """``day`` with every digit replaced by its Arabic-Indic form.
+
+    A digit to ``\\d`` and to ``str.isdigit``, and one ``int`` refuses: this is the
+    value the stamp-date shape must not accept, spelled by code points rather than
+    by the character itself so no tracked file carries a non-ASCII digit.
+    """
+    digits = {str(index): chr(0x0660 + index) for index in range(10)}
+    return "".join(digits.get(char, char) for char in day)
+
+
 def _unclosed_fence() -> str:
     """The good intent followed by an opener that is never closed.
 
@@ -76,6 +87,15 @@ INTENT_REFUSAL_SHAPES = [
      "section-missing"),
     ("twice-stamped",
      GOOD_INTENT.replace("## Purpose", "Last-confirmed: 2026-09-30\n## Purpose"),
+     "section-missing"),
+    # A stamp whose date is spelled with a digit from another script is no stamp
+    # line: the shape asks for ASCII digits, so the file reads as having none and
+    # takes the sentence ``no-stamp-line`` already earns. ``\d`` matched an
+    # Arabic-Indic digit and the writer restamped around a line it should not
+    # have recognised (issue #224).
+    ("stamp-with-a-non-ascii-digit",
+     GOOD_INTENT.replace("Last-confirmed: 2026-10-01",
+                        f"Last-confirmed: {non_ascii_day()}"),
      "section-missing"),
     ("over-cap", _over_cap(), "over-cap"),
     ("unclosed-fence", _unclosed_fence(), "section-missing"),

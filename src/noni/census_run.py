@@ -200,7 +200,7 @@ def _run(argv: list[str] | None = None) -> int:
         )
         return EXIT_USAGE
     days = int(raw_days.rstrip("dD"))
-    if days <= 0:
+    if not 0 < days <= timedelta.max.days:
         print(
             f"error: --stale-after {args.stale_after!r} must be positive whole days (e.g. 7 or 7d)",
             file=sys.stderr,

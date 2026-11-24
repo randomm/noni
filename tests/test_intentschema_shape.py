@@ -117,11 +117,44 @@ def test_the_fences_that_balance_are_never_a_problem_however_many():
     ("2026-02-30", None),        # a day that month does not
     ("2026-10-01T00:00:00", None),  # a timestamp is not a day
     ("", None),
+    # A digit is an ASCII digit or nothing: ``\d`` matched an Arabic-Indic one and
+    # ``strptime`` converted it, so ``parse_stamp`` returned a real day for a stamp
+    # the writer can never write (the same rule issue #184 closed for ``--date``).
+    ("\u0662\u0660\u0662\u0666-10-01", None),   # Arabic-Indic 2026-10-01
+    ("202\u0666-10-01", None),                 # one mixed ASCII/Unicode year
+    ("\u00b2\u00b2\u00b2\u00b2-10-01", None),   # superscript digits, a digit to isdigit()
 ])
 def test_parse_stamp_accepts_only_a_day_the_calendar_has(value, expected):
     """fromisoformat accepts shapes the contract does not, so the parsed value has
     to re-spell itself as the digits the line carries or it is refused."""
     assert intentschema.parse_stamp(value) == expected
+
+
+def test_the_stamp_shape_is_ascii_digits_stated_once():
+    """The stamp date's shape is pinned by its literal text, in the module that owns it.
+
+    ``is_stamp_line`` decides what the writer restamps and what the census counts as
+    the one stamp line, and both read it off this pattern -- so the class is asserted
+    on the constant (through both readers) and on the shipped source, the way the
+    ``--date`` shape is.
+    """
+    from _harness import REPO
+
+    shape = intentschema.DATE_RE
+    assert shape.pattern == r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$", shape.pattern
+    assert shape.fullmatch("2026-13-45"), "the shape must not consult the calendar"
+    for stamped in ("\u0662\u0660\u0662\u0666-10-01", "202\u0666-10-01",
+                    "\u00b2\u00b2\u00b2\u00b2-10-01"):
+        assert not shape.fullmatch(stamped), f"the shape matches {stamped!r}"
+        line = f"{intentschema.LAST_CONFIRMED_PREFIX} {stamped}"
+        assert not intentschema.is_stamp_line(line), f"{line!r} read as the stamp"
+        assert intentschema.parse_stamp(stamped) is None, stamped
+
+    source = (REPO / "src" / "noni" / "intentschema.py").read_text(encoding="utf-8")
+    assert source.count('r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"') == 1, (
+        "the stamp shape is spelled more than once in the module that owns it")
+    assert 'r"^\\d{4}-\\d{2}-\\d{2}$"' not in source, (
+        "the stamp shape still matches Unicode digits")
 
 
 def test_the_line_cap_is_counted_and_named():

@@ -233,3 +233,23 @@ def test_the_ordering_group_reads_no_class_but_the_ordering_ones(tmp_path):
     assert {r["check"] for r in rows_without_unasked_closed(rows)} == {
         "ordering-malformed"}, rows
     assert code == 15, code
+
+
+def test_a_threshold_beyond_the_range_refuses_the_whole_run_in_human_mode(tmp_path):
+    """The out-of-range ``--stale-after`` refusal reaches a human terminal intact.
+
+    The in-process pin lives in ``tests/test_census_exit_codes_usage.py``; this is
+    the launched run, so the sentence is checked on the real stderr of the script:
+    one line, the tool's exit 2, no traceback and no partial report on stdout.
+    """
+    repo = _repo(tmp_path)
+    _seed(repo, _entry(7, BASELINE_ID))
+    code, out, err = _human(repo, "--stale-after", "1000000001")
+    assert code == 2, (code, out, err)
+    assert [line for line in err.splitlines()
+            if "must be positive whole days" in line] == [
+        "error: --stale-after '1000000001' must be positive whole days "
+        "(e.g. 7 or 7d)"], err
+    assert "Traceback" not in out + err and "OverflowError" not in out + err, (
+        out + err)[-2000:]
+    assert out == "", "a refused threshold still printed a report"

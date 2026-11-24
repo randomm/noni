@@ -357,6 +357,31 @@ def test_a_supersede_with_a_malformed_date_exits_two(tmp_path):
     ]
 
 
+def test_a_supersede_id_that_is_not_ascii_digits_exits_two(tmp_path):
+    """The same run refuses a ``--supersedes`` whose digits are not ASCII.
+
+    The date rule above and this one are one rule about digits stated twice in
+    the same assembly: ``ID_RE`` was ``\\d``, so ``٢٠٢٦-10-01-baseline`` matched the
+    record-id shape and the run went on looking for a file named after it. The
+    refusal is the shape refusal (exit 2, "is not a record id"), not the missing-
+    target exit 4 the run above drives: a name this writer can never produce is
+    bad usage, and it stops before the ledger is read.
+    """
+    repo = _baseline_repo(tmp_path)
+    for superseded in ("\u0662\u0660\u0662\u0666-10-01-baseline",  # Arabic-Indic 2026
+                       "202\u0666-10-01-baseline",  # one mixed ASCII/Unicode year
+                       "\u00b2\u00b2\u00b2\u00b2-10-01-baseline"):  # superscript
+        proc = _decide(repo, *ANSWERED, "--supersedes", superseded)
+        assert proc.returncode == 2, f"{superseded!r}: {proc.returncode} {proc.stderr}"
+        assert f"--supersedes {superseded!r} is not a record id" in proc.stderr, (
+            proc.stderr)
+        assert "Traceback" not in proc.stderr, proc.stderr
+    assert _porcelain(repo, "noni/decisions") == ""
+    assert sorted(p.name for p in (repo / "noni" / "decisions").glob("*.json")) == [
+        f"{BASELINE_ID}.json"
+    ]
+
+
 # --- refusals: input, identity, collision -------------------------------------
 
 

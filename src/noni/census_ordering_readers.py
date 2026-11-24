@@ -46,7 +46,7 @@ from .census_text import fault_text
 # lowercase letters, digits and dashes. The same shape the writer refuses a
 # name outside of, so a name that could escape the ledger directory is refused
 # here too, before a path is built from it.
-RECORD_ID_RE = re.compile(r"\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]*")
+RECORD_ID_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9][a-z0-9-]*")
 
 # The offset a stamp must carry to name an instant: a trailing Z, or a +hh:mm
 # (or +hh, or +hhmm) at the end of the string. Checked on the text rather than

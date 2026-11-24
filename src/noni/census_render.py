@@ -27,7 +27,7 @@ from .census_report import (
     SCHEMA_VERSION,
 )
 
-STALE_AFTER_RE = re.compile(r"^\d+d?$")
+STALE_AFTER_RE = re.compile(r"^[0-9]+d?$")
 
 # One threshold flag and one threshold: --stale-after pins the class to the number the
 # caller named, and without it the class gets the default that belongs to it (see the

@@ -126,6 +126,15 @@ MALFORMED_SHAPES: dict[str, tuple[str, str]] = {
         "decision is neither a record id nor null"),
     "decision absent": (_entries(
         '[{"issue": 1, "confirmed": "2026-10-26T00:00:00Z"}]'), "missing field"),
+    # A date spelled with a digit from another script. The shape rules of both
+    # readers ask for a non-blank string and leave the id's shape to the two
+    # record-id patterns (``orderstate.DECISION_ID_RE`` and the census's own
+    # ``RECORD_ID_RE``), so this row cannot carry a shared needle: what it pins is
+    # that a non-ASCII digit cannot name a record on either side, and the two
+    # sentences it earns are pinned by the suites that read this table.
+    "decision with a non-ascii digit": (_entries(
+        '[{"issue": 1, "decision": "\\u0662\\u0660\\u0662\\u0666-10-01-baseline", '
+        '"confirmed": "2026-10-26T00:00:00Z"}]'), None),
     "confirmed not a timestamp": (_entries(
         '[{"issue": 1, "decision": "2026-10-01-baseline", "confirmed": "yesterday"}]'),
         "not a UTC timestamp"),
@@ -321,6 +330,25 @@ def _deep_artifact(confirmed: str) -> str:
         raise TypeError("confirmed must be a timestamp string")
     return ('{"schema": "noni.order/1", "entries": [{"issue": 7, "decision": null, '
             '"confirmed": "' + confirmed + '", "x": ' + _deep() + "}]}")
+
+
+# The record-id shape, spelled once here so the writer's pattern, the census's copy
+# of it, and every table row that states an id are held to one text. A ``\\d`` in
+# either of them matched a Unicode decimal digit, so an id no writer can produce
+# passed the shape and a path was built from it (issue #224).
+RECORD_ID_PATTERN = r"[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9][a-z0-9-]*"
+
+
+def non_ascii_record_id(day: str = "2026-10-01", slug: str = "baseline") -> str:
+    """The baseline's id with its date spelled in Arabic-Indic digits.
+
+    A digit to ``\\d`` and to ``str.isdigit``, and one ``int`` refuses: the shape
+    rules that spelled their digits with ``\\d`` admitted it, so this is the value
+    every id validator in the product must refuse.
+    """
+    digits = {"0": "\u0660", "1": "\u0661", "2": "\u0662", "6": "\u0666"}
+    dated = "".join(digits[c] if c in digits else c for c in day)
+    return f"{dated}-{slug}"
 
 
 # The table, spelled as a value so a suite reads the set it drives rather than

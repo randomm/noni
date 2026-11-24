@@ -52,7 +52,7 @@ from .census_intent_readers import read_record as _read_record
 # refuses a name outside of, kept here rather than imported from the writer's
 # module: the census does not read through the order writer's helpers, and a name
 # that could escape the ledger directory is refused before a path is built from it.
-RECORD_ID_RE = re.compile(r"\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]*")
+RECORD_ID_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9][a-z0-9-]*")
 
 # The commit subject the writer produces, and the one word the uncited row looks
 # for at its head.

@@ -8,6 +8,12 @@ rebuilt here the way the hook builds it, from the hook's own text: the template 
 the cap's name, the value it declares, the expression it shortens by, the marker it
 appends. No literal the hook already owns is copied here as a second truth.
 
+The scrub takes its pattern from its caller. That is deliberate: a check that asked this
+module for the pattern and then asserted the path had gone would be measuring the hook's
+own regex against itself, and three broken patterns (slashes only, a literal word,
+nothing at all) pass such a suite. The caller hands over the pattern text it means to
+test, which is what lets a check run the same assertions over a weakened copy of the hook.
+
 A helper module: never named ``test_*``. The checks that use it are in
 ``test_pi_extension_failure_line.py``.
 """
@@ -16,7 +22,14 @@ from __future__ import annotations
 
 import re
 
-from pi_extension_source import CLIP, ELLIPSIS, LINE_LIMIT, function_body, template_parts
+from pi_extension_source import (
+    CLIP,
+    ELLIPSIS,
+    LINE_LIMIT,
+    function_body,
+    path_token,
+    template_parts,
+)
 
 # How the hook spells the character that marks a clipped line: its own name and its own
 # escape, so a cap that appends any other text or none fails the read rather than the
@@ -37,15 +50,14 @@ FAILURE_ARMS = (
 HOLE = chr(36) + "{scrubbed}"
 
 
-def scrub(reason: str, text: str) -> str:
+def scrub(reason: str, pattern: str) -> str:
     """The reason as the hook hands it to the template: head line, trimmed, paths gone.
 
-    The path pattern is the hook's own, compiled from its own source, so a check cannot
-    scrub a path the hook would have left in place.
+    ``pattern`` is the pattern text, applied the way the hook applies it. The caller reads
+    it out of the hook with ``path_token`` when it wants the shipped behaviour, and hands
+    over something else when it wants to know what a weaker pattern would have leaked.
     """
-    token = re.search(r"const PATH_TOKEN = /(.+)/g;", text)
-    assert token, "the path pattern is missing from the hook"
-    return re.sub(token.group(1), "state root", reason.split("\n")[0].strip())
+    return re.sub(pattern, "state root", reason.split("\n")[0].strip())
 
 
 def clip_parts(text: str) -> tuple[str, str, str]:
@@ -78,13 +90,16 @@ def bound(text: str) -> int:
     return limit
 
 
-def rebuild(text: str, reason: str) -> str:
+def rebuild(text: str, reason: str, pattern: str | None = None) -> str:
     """The failure line the hook would build for ``reason``, read from the hook.
 
     Raising the bound, dropping the marker, or appending anything else fails here,
-    because the returned line is assembled from the parts the source declares.
+    because the returned line is assembled from the parts the source declares. The
+    pattern is read out of ``text`` when the caller names none, so a check over the
+    shipped hook needs no third argument and a check over a mutated copy supplies the
+    pattern it believes that copy declares.
     """
     head, tail = template_parts(text)
-    line = head + scrub(reason, text) + tail
+    line = head + scrub(reason, path_token(text) if pattern is None else pattern) + tail
     limit = bound(text)
     return line if len(line) <= limit else line[: limit - 1] + ELLIPSIS

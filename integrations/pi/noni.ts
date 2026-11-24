@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const BRIEF_TIMEOUT_MS = 30_000;
 const LINE_LIMIT = 300;
-const PATH_TOKEN = /(?:[^\s"'`]+\/)+[^\s"'`]+/g;
+const PATH_TOKEN = /(?:[^\s"'`]+[\\/])+[^\s"'`]+/g;
 const REMINDER =
   "noni holds this project's product direction and decisions. Work in the " +
   "order it gives and follow its recorded decisions; do not invent direction. " +

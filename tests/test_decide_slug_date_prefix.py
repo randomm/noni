@@ -110,7 +110,7 @@ UNICODE_IDS = {date: f"{date}-scheduler" for date in UNICODE_DATES}
 # The two patterns decide.py hands both validators, spelled here so a direct call to
 # either helper is driven with the same patterns the writer uses.
 SLUG_PATTERN = r"[a-z0-9-]+"
-ID_PATTERN = r"\d{4}-\d{2}-\d{2}-[a-z0-9-]+"
+ID_PATTERN = r"[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9-]+"
 
 
 def _fail_recorder() -> tuple[list[tuple[int, str, str]], object]:

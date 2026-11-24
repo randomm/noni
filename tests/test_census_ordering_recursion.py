@@ -25,7 +25,7 @@ from ordering_fixtures import (
     _seed,
     rows_without_unasked_closed,
 )
-from ordering_shapes import DEEP, _deep, _deep_artifact
+from ordering_shapes import DEEP, RECORD_ID_PATTERN, _deep, _deep_artifact, non_ascii_record_id
 
 BASELINE_ID = "2026-10-01-baseline"
 
@@ -324,3 +324,52 @@ def test_the_state_row_bounds_the_whole_composed_message(tmp_path):
             f"{index}: {len(rows[0]['message'])} chars: {rows[0]['message'][:80]}"
         assert "x" * 5000 not in rows[0]["message"], rows[0]
         assert "y" * 5000 not in rows[0]["message"], rows[0]
+
+
+def test_the_successor_gate_refuses_a_record_id_written_in_non_ascii_digits():
+    """AC1: the census's own copy of the record-id shape is ASCII digits only.
+
+    ``RECORD_ID_RE`` here is the census's deliberate duplicate of the writer's
+    shape (this module does not import the writer), and it gates the successor the
+    superseded row names. A chain whose newest link carries a date written in
+    Arabic-Indic digits used to name that link as the successor -- a record no
+    writer can produce, quoted back to the operator as the id to cite next. The
+    row now says the chain moved past the entry and names no successor, and the
+    pattern is pinned on the live constant, on the shipped source, and against the
+    writer's own copy, so the two cannot disagree about which ids exist.
+    """
+    from noni import orderstate
+
+    readers = importlib.import_module("noni.census_ordering_readers")
+    forged = non_ascii_record_id()
+    statuses = ("decided", "open", "superseded")
+    records = {
+        BASELINE_ID: {"status": "superseded", "supersedes": None},
+        forged: {"status": "decided", "supersedes": BASELINE_ID},
+    }
+
+    def answer(stems):
+        return readers.decision_problem(BASELINE_ID, {s: records[s] for s in stems},
+                                        frozenset(), statuses, "superseded")
+
+    without = answer((BASELINE_ID,))
+    with_forged = answer((BASELINE_ID, forged))
+    assert without == with_forged, (
+        f"a forged id was named as the successor: {with_forged!r}")
+    assert "is superseded, so its order no longer stands" in without, without
+    assert forged not in with_forged, with_forged
+
+    # The control: a real successor is still named, so the gate did not simply
+    # stop answering the question it exists to answer.
+    live = "2026-10-20-scheduler"
+    records[live] = {"status": "decided", "supersedes": BASELINE_ID}
+    assert f"superseded by {live}" in answer((BASELINE_ID, forged, live)), records
+
+    assert readers.RECORD_ID_RE.pattern == RECORD_ID_PATTERN
+    assert orderstate.DECISION_ID_RE.pattern == RECORD_ID_PATTERN, (
+        "the census's copy and the writer's shape no longer spell one rule")
+    source = (SCRIPTS / "census_ordering_readers.py").read_text(encoding="utf-8")
+    assert source.count(f'r"{RECORD_ID_PATTERN}"') == 1, (
+        "the id shape is spelled more than once in the module that owns it")
+    assert 'r"\\d{4}-\\d{2}-\\d{2}-[a-z0-9][a-z0-9-]*"' not in source, (
+        "the id shape still matches Unicode digits")

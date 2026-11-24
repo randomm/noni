@@ -109,7 +109,7 @@ EXIT_COMMIT_FAILED: int = 5
 # A slug is half the record id and half its filename, so it is held to what the
 # census accepts as a plain path segment. Dashes only: the split is not ambiguous.
 SLUG_RE = re.compile(r"[a-z0-9-]+")
-ID_RE = re.compile(r"\d{4}-\d{2}-\d{2}-[a-z0-9-]+")
+ID_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9-]+")
 # Status is derived from the answers; it is the one field of an existing record this
 # writer may change. STATUSES, the census's set, goes to the target check.
 STATUS_DECIDED = "decided"

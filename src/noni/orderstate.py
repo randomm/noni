@@ -36,7 +36,7 @@ from . import _path_kind, labels, orderschema
 # lowercase letters, digits and dashes. The same shape both directions, so a
 # name that could escape the ledger directory is refused before any path is
 # built from it.
-DECISION_ID_RE = re.compile(r"\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]*")
+DECISION_ID_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9][a-z0-9-]*")
 DECISIONS_DIR = "noni/decisions"
 STATUS_SUPERSEDED = "superseded"
 

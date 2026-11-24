@@ -44,7 +44,7 @@ LAST_CONFIRMED_PREFIX = "Last-confirmed:"
 # the words a refusal and a row both print, so neither can be renamed alone.
 SUBJECT_OVER_CAP = "over-cap"
 SUBJECT_SECTION_MISSING = "section-missing"
-DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 # One fence delimiter: three or more backticks or tildes, and nothing but an
 # optional info string after it. Same shape the docs readers of this repository
 # accept, so a template nobody could write is not what the rule checks.

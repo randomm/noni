@@ -91,13 +91,22 @@ def test_the_malformed_shapes_are_all_reported(tmp_path):
     """The whole set the class owns, one repo each: a shape the census does not
     report is a shape that would rot unnoticed in a committed artifact. The
     table is the shared one (``tests/ordering_shapes.py``), so the writer's
-    mirror of it cannot drift from this side without a failure here."""
+    mirror of it cannot drift from this side without a failure here.
+
+    Rows whose needle is None reach the defect by different routes on the two
+    sides, so only the exit code and the class are required of them here: each has
+    its own case beside this one that pins the words (the non-finite literals, the
+    ghost citation). A needle, on the other hand, is a fragment the refusal and the
+    row must both carry, so it is asserted on the leading row.
+    """
     for index, (label, (body, needle)) in enumerate(sorted(SHAPES.items())):
         repo = _repo(tmp_path, f"malformed-{index}")
         _order(repo, body)
         code, rows, out, err = _run(repo)
         assert code == 15, f"{label}: exit {code} rows={rows} err={err}"
-        assert rows and rows[0]["check"] == "ordering-malformed", f"{label}: {rows}"
+        malformed = rows_without_unasked_closed(rows)
+        assert [r["check"] for r in malformed] == ["ordering-malformed"], (
+            f"{label}: {rows}")
         if needle:
             assert needle in rows[0]["message"], f"{label}: {rows[0]}"
 

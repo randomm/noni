@@ -226,3 +226,32 @@ def test_no_source_file_spells_the_hint_a_second_time():
     writer = _order_source()
     assert "orderstate.RECORD_FIRST_HINT" in writer, (
         "order.py's own refusal site must name the constant")
+
+
+def test_a_decision_written_in_non_ascii_digits_takes_the_shape_arm(tmp_path):
+    """AC1: the id-shape arm is what refuses a Unicode digit, not the file lookup.
+
+    ``decision_problems`` is the one reader of the citation contract that three
+    launched routes reach (``order add``, ``order move --decision`` and ``intent
+    set``), and it has two arms behind one exit code. A date spelled with a digit
+    from another script must be refused by ``DECISION_ID_RE`` before a path is built
+    from it, so its sentence is the one that names the form a record id takes -- not
+    the missing-record sentence, which would send the caller off looking for a file
+    that this writer could never have written. The ghost id beside it is the
+    contrast: same code, different arm, different words.
+    """
+    from ordering_shapes import non_ascii_record_id
+
+    from noni import orderstate
+
+    forged = non_ascii_record_id()
+    assert not orderstate.DECISION_ID_RE.fullmatch(forged), (
+        "the shape let a Unicode digit through, so the arms below are the wrong pair")
+
+    shape = orderstate.decision_problems(tmp_path, forged, 3, 4)
+    absent = orderstate.decision_problems(tmp_path, "2026-01-01-ghost", 3, 4)
+    assert shape is not None and absent is not None
+    assert shape[0] == absent[0] == 4, (shape, absent)
+    assert "matches no record" in shape[1] and "YYYY-MM-DD-<slug>" in shape[2], shape
+    assert "is in the ledger" in absent[1], absent
+    assert shape[1] != absent[1], "the two arms print one sentence"

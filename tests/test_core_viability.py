@@ -34,6 +34,11 @@ test_codex_hook.py, its page suite ``test_codex_hook_page.py`` and their reader
 ``codex_hook_source.py`` join the set for the same reason: they are the suite over
 the Codex harness hook under ``integrations/codex/``, they read that directory's
 page, and neither imports an adapter module.
+
+test_claude_code_hook.py and its reader ``claude_code_hook_source.py`` join the set
+for the same reason: they are the suite over the Claude Code harness hook under
+``integrations/claude-code/``, they read that directory's page, and neither imports
+an adapter module.
 """
 
 from __future__ import annotations
@@ -71,6 +76,11 @@ ADAPTER_TEST_MODULES = {
     # hook's text, read as text.
     "test_pi_extension_failure_line.py",
     "test_pi_extension_falsifiability.py",
+    # The claude-code harness hook (issue #216): its page and the readers over that
+    # page. Same subject matter as the pi suite -- integrations/, read as text -- and
+    # no adapter module behind either.
+    "test_claude_code_hook.py",
+    "claude_code_hook_source.py",
     # The suite over the Codex harness hook and its reader: same subject matter, the
     # page under integrations/codex/, read as text. The page's checks split in two the
     # way test_pi_extension.py did: the snippet's shape and the page's prose.

@@ -360,9 +360,9 @@ In `--json` mode no such line goes to stdout — that stream stays findings and 
 and the sentence is carried on the summary row as its `not_evaluated` field, a list of the
 classes the run did not evaluate and why. The row is the report's verdict on the unasked
 question and the field is the machine's record of it: both are present, and a consumer that
-reads only the summary row still sees the class. Keep the ordering group in the run either way
-(`--only` must name an ordering class, or name none), or skip it by name
-(`--skip ordering-closed`). The census ships no producer; a tracker with a command line and
+reads only the summary row still sees the class. Keep the ordering group in the run: only naming `--only ordering-closed`, or no `--only` at all, keeps the closed-state
+question in the run; naming any other ordering class reports nothing about the closed state, so a clean result there does not mean every ordered issue is open, because a run
+that never reached the class reports nothing about it. Skip it by name with `--skip ordering-closed`. The census ships no producer; a tracker with a command line and
 `jq` produce one:
 
 ```bash

@@ -46,7 +46,9 @@ _JSON_CONTRACT: tuple[tuple[str, tuple[str, ...], str], ...] = (
         ("--skip", "hygiene", "--only", "ordering-closed", "--now", NOW),
         # Re-pinned for issue #148, which gave this run its own row of the class: the
         # summary row's ``not_evaluated`` field is unchanged and the run still exits 0.
-        "bf33523c8d478eada62eef1a636b9d9db6a84595fd487825e7d0ddceb5ce8936",
+        # Re-pinned again for #235, which named the silencer in the row and the note;
+        # the field's shape, ``ok`` and ``exit`` are unchanged from the bytes above.
+        "69edc027f2dc7acd16838df11aec05540fde2a8a6b8b947da0f7894129c2dab1",
     ),
     (
         "the whole run, hygiene included",
@@ -54,8 +56,9 @@ _JSON_CONTRACT: tuple[tuple[str, tuple[str, ...], str], ...] = (
         # Re-pinned for issue #194, which moved the absent deny-list out of the
         # rows and onto the summary's ``not_evaluated`` list: the run loses its
         # deny-list finding row and gains the note. The other two cases are
-        # unchanged, both because they skip the hygiene class.
-        "39fb3c91b19834be7b57eb6ea75b994060e9285985dc1ddce5103dece64eaa71",
+        # unchanged, both because they skip the hygiene class. Re-pinned again for
+        # #235, which named the silencer in the row and in the note this run carries.
+        "db55834af11eca2d5bd47ca2bfe71c43d4d221f9004f9a9a1308b0a946b410eb",
     ),
 )
 

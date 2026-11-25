@@ -206,6 +206,29 @@ def test_the_row_is_an_ordinary_finding_of_its_class(tmp_path):
     assert named[0] == 0, (named[0], named[1])
 
 
+def test_the_row_names_the_flag_that_silences_it(tmp_path):
+    """The row's own prose names the silencer this file demonstrates (#235).
+
+    The row is the report's only account of the unasked question for a reader who never
+    reaches a manual, and the flag that takes it away is the thing such a reader wants.
+    A wording change that dropped the clause would leave the flag documented only outside
+    the product, so it is pinned to the row's own bytes here, beside the test above that
+    pins the flag's behaviour: wording and filter cannot drift apart quietly.
+    """
+    repo = _tree(tmp_path, "silencer", ISSUE)
+    code, rows, out, err = _run(repo)
+    assert code == 0, (code, rows, err)
+    message = _unasked(rows)[0]["message"]
+    assert "--skip ordering-closed" in message, message
+
+    # The note says the same thing, so a reader of either half learns the flag.
+    code, out, err = _human(repo)
+    assert code == 0, (code, out, err)
+    note = [line for line in out.splitlines() if line.startswith("note: ")]
+    assert len(note) == 1, out
+    assert "--skip ordering-closed" in note[0], note
+
+
 def test_the_headline_separates_the_clause_from_the_counts_it_qualifies(tmp_path):
     """The clause is appended to a count, so it has to open with a separator.
 

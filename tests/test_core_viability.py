@@ -81,6 +81,11 @@ ADAPTER_TEST_MODULES = {
     # no adapter module behind either.
     "test_claude_code_hook.py",
     "claude_code_hook_source.py",
+    # The suite that runs the Claude Code page's own hand check in a shell (issue
+    # #238): same subject matter, that page under integrations/, but launched
+    # rather than read, so it lives apart from the checks over the block's text.
+    # It is not named by test_claude_code_hook.py, so the scan cannot find it.
+    "test_claude_code_hand_check.py",
     # The suite over the Codex harness hook and its reader: same subject matter, the
     # page under integrations/codex/, read as text. The page's checks split in two the
     # way test_pi_extension.py did: the snippet's shape and the page's prose.

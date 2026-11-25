@@ -80,3 +80,12 @@ is: it answers from the brief, which it was handed before its first reply. Run
 `/compact` and ask again, and it answers from a fresh brief. Then set
 `NONI_STATE_ROOT` to a directory holding no `noni/` directory and start again:
 the model reports that the brief could not be read, and the session runs.
+
+With no interactive session, as when pi runs headless, the hook fetches no
+brief, so the check is the same command run by hand from the project root:
+`noni brief --repo <root>`, where `<root>` is `NONI_STATE_ROOT` when it is set, else the `.noni-state` directory in the project, else the
+project root. A state root kept elsewhere needs `NONI_STATE_ROOT` exported into
+the pi process, or the hook reads a root you did not mean. The first line of
+what it prints is the standing rules; a page that answers `Purpose: not readable`
+or `the order is empty` means the root is wrong, not that the project has no
+direction.

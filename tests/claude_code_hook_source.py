@@ -11,19 +11,26 @@ rather than a synonym a page could paraphrase around.
 
 A helper module: never named ``test_*``. The checks that use it live in
 ``test_claude_code_hook.py``, and the page claims they read are ``PAGE_RULES`` here.
+
+The bottom half reads the one ```bash``` fence the page's "Verifying it" section
+prints -- the hand check a reader runs -- as its raw shell lines, its argv, and the
+empty-state-root form of its ``--repo`` argument. The lines are run, not compared, so
+the page's own command is the thing under test; the argv reader refuses a fence that
+would run anything else.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-from docs_commands import fenced_pairs
+from docs_commands import block_commands, fenced_pairs
 from pi_extension_source import REPO, string_literal
 
 # pi's own bound on one spawn of `noni brief`, read out of the hook rather than
@@ -67,6 +74,20 @@ TIMEOUT_UNIT_DIVISOR = 1000
 # The page states the absence of a script as its design (ruling 3), and this is
 # the sentence the ruling names.
 FAILURE_SENTENCE = "the session is not blocked"
+
+# The heading the hand check publishes under, and the fence tag it prints its
+# command in. Both are the page's own spellings: the section is what the empty-page
+# and headless clauses are pinned inside, and the tag is what the fence is read by,
+# so a retagged block is a missing hand check rather than a block a positional
+# reader happened to pick up.
+VERIFY_HEADING = "Verifying it"
+BASH_FENCE = "bash"
+
+# The first line of the hand-check fence as argv: the export that makes the second
+# line's expansion see a value. A shell expands the whole of a command line before
+# an inline assignment written on that line takes effect, which is the bug this
+# spelling closes, so the assignment has to be a line of its own.
+EXPORT_COMMAND = ["export", "CLAUDE_PROJECT_DIR=$PWD"]
 
 # What the page owes a reader, each with the reason its absence is a gap (ruling
 # 10). Every entry is text a reader meets on the page, in the page's own words.
@@ -159,6 +180,137 @@ def pi_timeout_seconds() -> int:
         f"pi's brief timeout of {ms} ms is not a whole number of seconds, so no "
         "value in this file's units states that bound")
     return ms // TIMEOUT_UNIT_DIVISOR
+
+
+def verifying_body(text: str) -> str:
+    """The page's "Verifying it" section, from its own heading to the next one.
+
+    Located by the heading's own words rather than by line number, so the hand-check
+    claims are checked under the heading a reader would look under: a clause that
+    wandered into another section is a failure rather than a pass earned from prose
+    somewhere else on the page.
+    """
+    start = text.find(f"## {VERIFY_HEADING}")
+    assert start >= 0, f"the page has no '## {VERIFY_HEADING}' section"
+    rest = text[start:]
+    following = re.search(r"\n## ", rest[1:])
+    return rest if following is None else rest[:following.start() + 1]
+
+
+def verify_fence_lines(text: str) -> list[str]:
+    """The raw lines of the one fence under "Verifying it", in the page's own bytes.
+
+    Raw, and not :func:`docs_commands.block_commands`: the check that runs the hand
+    check has to run what the page printed, and a two-line fence whose first line is
+    ``export`` is one shell script and two argv lists. The fence is found by its own
+    info string within the section, so a bash block anywhere else on the page cannot
+    answer for the hand check, and a section that prints none is a missing check
+    rather than an empty run.
+    """
+    section = verifying_body(text)
+    blocks = [lines for info, lines in fenced_pairs(section) if info == BASH_FENCE]
+    assert len(blocks) == 1, (
+        f"the Verifying it section prints {len(blocks)} {BASH_FENCE} fences, not one")
+    lines = [line for line in blocks[0] if line.strip()]
+    assert lines, "the Verifying it fence is empty"
+    return lines
+
+
+def verify_argv(text: str) -> list[list[str]]:
+    """The fence's commands as argv, through the shared reader, with a census of them.
+
+    :func:`docs_commands.block_commands` is what every other page test of this
+    repository splits a fence with, so a hand check the shared reader cannot lex is
+    refused here rather than run by a private parser. The census is what makes the
+    executing test mean the hand check: the fence has to be the export of the
+    project directory followed by the block's own brief command, so an empty
+    assertion over no commands, or a fence that quietly grew a second command, fails
+    at the read rather than leaving the run asserting about something nobody wrote.
+    """
+    commands = block_commands(verify_fence_lines(text))
+    assert commands == [EXPORT_COMMAND, shlex.split(BRIEF_COMMAND)], (
+        f"the Verifying it fence is not the export and the block's own brief "
+        f"command: {commands}")
+    return commands
+
+
+def hand_check_script(text: str) -> str:
+    """The fence's lines as one shell script: the page's hand check, verbatim.
+
+    Joined rather than retyped, so what the executing check runs is the bytes the
+    reader copies. A trailing newline is added because a shell reading a script from
+    a string is happier with one, and it changes no command.
+    """
+    return "\n".join(verify_fence_lines(text)) + "\n"
+
+
+def empty_state_root_script(text: str) -> str:
+    """The fence's own lines, with only the page's ``--repo`` argument swapped.
+
+    The hand check for the state root that exists and holds no direction. One token
+    of the fence's second line changes, and it is the page's own token that changes:
+    the reader locates the line by the pinned brief command and its argument by the
+    pinned root, so a page that spelled either another way fails the read rather than
+    running a command the page never printed. Every other byte of the fence stands,
+    which is the point: the empty-page claim is a claim about *this* command, and the
+    project directory the caller hands over is what ``$PWD`` expands to -- so the
+    root under test sits where the page says a project's state root sits.
+    """
+    lines = verify_fence_lines(text)
+    assert lines[0].strip() == 'export CLAUDE_PROJECT_DIR="$PWD"', (
+        f"the hand check does not export the project directory first: {lines[0]!r}")
+    printed = lines[1].strip()
+    assert printed == BRIEF_COMMAND, (
+        f"the hand check's second line is not the block's own command: {printed!r}")
+    quoted = f'"{STATE_ROOT}"'
+    assert printed.endswith(quoted), (
+        f"the hand check's argument is not the pinned root in the printed quotes: "
+        f"{printed!r}")
+    suffix = STATE_ROOT[len("$CLAUDE_PROJECT_DIR/"):]
+    assert suffix, "the pinned root names no directory under the project"
+    # Swap the printed argument for the same path anchored at ``$PWD``, the one
+    # variable the page's own export puts in the environment. Everything else about
+    # the line stands, which is the point: the empty-page claim is a claim about
+    # *this* command, and the project directory the caller hands over is what ``$PWD``
+    # expands to, so the root under test sits where the page says a project's state
+    # root sits.
+    head = printed[: -len(quoted)]
+    return "\n".join([lines[0], f'{head}"$PWD/{suffix}"']) + "\n"
+
+
+def not_a_directory_script(text: str, missing: str) -> str:
+    """The fence's own lines, with the ``--repo`` argument pointed at ``missing``.
+
+    The form that asks the page's exit-2 claim: a root that is no directory at all.
+    As in :func:`empty_state_root_script` exactly one token of the fence changes, and
+    it is the token the page's own sentence names, so what runs is still the page's
+    command -- export included -- asked about the one state the page reserves a
+    refusal for. The path is passed as a string rather than built here because the
+    caller is the test that owns the scratch directory.
+    """
+    lines = verify_fence_lines(text)
+    printed = lines[1].strip()
+    assert printed == BRIEF_COMMAND, (
+        f"the hand check's second line is not the block's own command: {printed!r}")
+    quoted = f'"{STATE_ROOT}"'
+    assert printed.endswith(quoted), (
+        f"the hand check's argument is not the pinned root in the printed quotes: "
+        f"{printed!r}")
+    head = printed[: -len(quoted)]
+    return "\n".join([lines[0], f'{head}"{missing}"']) + "\n"
+
+
+def broken_hand_check_script() -> str:
+    """The form the page carried when the issue found it, for falsification.
+
+    Kept here as one literal string rather than assembled from the constants above,
+    so it cannot drift into being the page's current command: an assignment prefixed
+    to the brief command, which is what a shell sets too late to expand in the very
+    word that names the variable. A test asserts this form prints the empty page, so
+    the check that the export line matters is in the suite and not in the prose.
+    """
+    return ('CLAUDE_PROJECT_DIR="$PWD" noni brief --repo '
+            '"$CLAUDE_PROJECT_DIR/.noni-state"\n')
 
 
 def fenced_json(text: str) -> tuple[list[str], int]:

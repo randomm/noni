@@ -38,8 +38,13 @@ SKEW_FIELD = "decided_by_next_era"
 # Stated rather than read back from the run: the claim the tests make is "no NEW
 # note", and a list built from the same run could not show a new sentence had joined
 # it. An attached project holds ``noni/``, so it is not the no-state-root case and the
-# ordering-closed note (no ``--issue-state`` file is passed) is the sole occupant.
-KNOWN_NOTES = ("ordering-closed was not evaluated",)
+# ordering-closed note (no ``--issue-state`` file is passed) is the sole occupant. The
+# clause naming ``--skip ordering-closed`` is the silencer #235 named, and belongs to this
+# sentence: a run carrying the note without it is a note this file does not know.
+KNOWN_NOTES = ("ordering-closed was not evaluated: no --issue-state FILE was given, "
+               "so whether an ordered issue is closed is not asked (the census never "
+               "contacts a tracker; pass --skip ordering-closed to say you do not want "
+               "it asked)",)
 
 # The wording the census's cause clause adds, and nothing else. The "unknown
 # field(s)" fault has to survive beside it, so a rewording that dropped the fault and

@@ -344,25 +344,26 @@ checked. Without `--strict` it is a `warn` and the exit code stays 0; under `--s
 promoted and earns its own 46, so a CI step that gates on the exit code cannot stay green
 over an order whose issues have all been closed. An empty order, an absent order, or a run
 that skipped the class by name prints no row and no code, because nothing was left unasked.
+Pass `--skip ordering-closed` to say you do not want the question asked at all: it drops the
+row and the note alike.
 
 In human-readable mode the report also says it in its first line and in one `note:`
-line. The two lines branch on the row: a run that carries it names the class on the count
-line and on the summary line in place of `clean`; a run that owes none keeps the verdict
-word its rows earned (`clean` when it printed no row at all) and opens `census: no
-findings; ordering-closed did not run`:
+line. A run carrying the row names the class on the count line and the summary line in
+place of `clean`; one that owes none keeps the verdict its rows earned (`clean` when it
+printed no row) and opens `census: no findings; ordering-closed did not run`:
 
 ```text
 note: ordering-closed was not evaluated: no --issue-state FILE was given, so whether an ordered issue is closed is not asked (the census never contacts a tracker)
 ```
 
 In `--json` mode no such line goes to stdout — that stream stays findings and one summary —
-and the same sentence is carried on the summary row as its `not_evaluated` field, a list of the
-classes the run did not evaluate and why. The field is the machine's record of the unasked
-question and the row is the report's verdict on it: both are present, and a consumer that reads
-only the summary row still sees the class. Keep the ordering group in the run either way
-(`--only` must name an ordering class, or name none), because a run that never reached the class
-reports nothing about it. The census ships no producer; a tracker with a command line and `jq`
-produce one:
+and the sentence is carried on the summary row as its `not_evaluated` field, a list of the
+classes the run did not evaluate and why. The row is the report's verdict on the unasked
+question and the field is the machine's record of it: both are present, and a consumer that
+reads only the summary row still sees the class. Keep the ordering group in the run either way
+(`--only` must name an ordering class, or name none), or skip it by name
+(`--skip ordering-closed`). The census ships no producer; a tracker with a command line and
+`jq` produce one:
 
 ```bash
 gh issue list --state all --json number,state --jq \
@@ -397,4 +398,3 @@ Two things outside noni decide whether a first run works:
   defaults to `python3`. That interpreter also has to import the package, so the wrappers need
   the install above or `PYTHONPATH=<clone>/src`, whichever route you took. A wrapper whose
   interpreter or package is missing names the fault on one plain line and exits 3 rather than
-  printing a traceback. The shim needs no `jq`: the unified census is the one arbiter of both.

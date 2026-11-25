@@ -35,6 +35,11 @@ from ordering_fixtures import _entry, _repo, _seed
 # argv of each case is fixed here rather than assembled by the caller, so the
 # bytes a digest names are always the bytes of the run this table describes.
 NOW = "2026-10-02T00:00:00Z"
+# The whole-run case scans hygiene, so it needs a now of its own: without --now it
+# reads the real clock and the fixture's confirmed date goes past the 30 day stale
+# threshold, embedding a daily age in a row, so the digest rots every day. Keep this
+# date before the fixture's confirmed date plus 30 days.
+WHOLE_RUN_NOW = "2026-11-10T00:00:00Z"
 _JSON_CONTRACT: tuple[tuple[str, tuple[str, ...], str], ...] = (
     (
         "every check ran and nothing was found",
@@ -46,16 +51,21 @@ _JSON_CONTRACT: tuple[tuple[str, tuple[str, ...], str], ...] = (
         ("--skip", "hygiene", "--only", "ordering-closed", "--now", NOW),
         # Re-pinned for issue #148, which gave this run its own row of the class: the
         # summary row's ``not_evaluated`` field is unchanged and the run still exits 0.
-        "bf33523c8d478eada62eef1a636b9d9db6a84595fd487825e7d0ddceb5ce8936",
+        # Re-pinned again for #235, which named the silencer in the row and the note;
+        # the field's shape, ``ok`` and ``exit`` are unchanged from the bytes above.
+        "69edc027f2dc7acd16838df11aec05540fde2a8a6b8b947da0f7894129c2dab1",
     ),
     (
         "the whole run, hygiene included",
-        ("--json",),
+        ("--json", "--now", WHOLE_RUN_NOW),
         # Re-pinned for issue #194, which moved the absent deny-list out of the
         # rows and onto the summary's ``not_evaluated`` list: the run loses its
         # deny-list finding row and gains the note. The other two cases are
-        # unchanged, both because they skip the hygiene class.
-        "39fb3c91b19834be7b57eb6ea75b994060e9285985dc1ddce5103dece64eaa71",
+        # unchanged, both because they skip the hygiene class. Re-pinned again for
+        # #235, which named the silencer in the row and in the note this run carries.
+        # Measured with the fixed --now above, so these bytes do not move with the
+        # wall clock.
+        "f133cb2e55f7335840d4fc44d18eca3f0cc128f4f43b06531f406bd4ac7bae7e",
     ),
 )
 
@@ -98,6 +108,19 @@ def test_json_bytes_are_the_pinned_contract(tmp_path) -> None:
             f"{expected}\n{out!r}\n{err}"
         )
         assert rc == 0, f"a warn-bearing run exits 0, got {rc}:\n{out}\n{err}"
+
+
+def test_every_contract_case_pins_its_now() -> None:
+    """Every digest case names its own ``--now``.
+
+    A case without it reads the real clock, so a time-based row can change with
+    the date and the pinned bytes rot on their own. Structural check, no run.
+    """
+    for state, argv, _ in _JSON_CONTRACT:
+        assert "--now" in argv, (
+            f"the digest case {state!r} passes no --now, so its bytes depend on the "
+            f"real clock: {argv}"
+        )
 
 
 def test_json_verdict_fields_survive_the_human_wording(tmp_path) -> None:

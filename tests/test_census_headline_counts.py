@@ -45,7 +45,9 @@ def _unasked_closed_row() -> dict:
     return {"check": "ordering-closed", "severity": "warn",
             "subject": "noni/direction/order.json",
             "artifact": "noni/direction/order.json",
-            "message": "closed state not checked: no --issue-state FILE was given"}
+            "message": "closed state not checked: no --issue-state FILE was given, so no "
+                       "entry's closed state was asked (pass --skip ordering-closed to say "
+                       "you do not want it asked)"}
 
 
 def _counted(findings: list[dict]) -> dict[str, int]:

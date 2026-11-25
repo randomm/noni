@@ -29,7 +29,7 @@ CLOSED_STATE_UNASKED = (
     "closed state not checked: the order holds entries and no --issue-state FILE was "
     "given, so no entry's closed state was asked and a dead order reads as a live one "
     "(the census never contacts a tracker: produce the map with an adapter, or pass "
-    "--issue-state)"
+    "--issue-state; pass --skip ordering-closed to say you do not want it asked)"
 )
 
 

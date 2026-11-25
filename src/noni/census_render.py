@@ -51,7 +51,8 @@ ORDERING_STALE_AFTER_DEFAULT = "30d"
 ORDERING_CLOSED_CHECK = "ordering-closed"
 ORDERING_CLOSED_NOT_EVALUATED = (
     "ordering-closed was not evaluated: no --issue-state FILE was given, so whether "
-    "an ordered issue is closed is not asked (the census never contacts a tracker)")
+    "an ordered issue is closed is not asked (the census never contacts a tracker; "
+    "pass --skip ordering-closed to say you do not want it asked)")
 
 # The one sentence a run prints when the tree --repo names holds no ``noni/`` at all:
 # the shape a caller reaches by pointing the census at a code repository instead of a

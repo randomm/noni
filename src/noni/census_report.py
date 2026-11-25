@@ -131,6 +131,27 @@ CHECKS: dict[str, tuple[int, str, str]] = {
     ),
 }
 
+# The remedy of the one hygiene row that reports an inactive deny-list (issue
+# #237). It is a row of the hygiene class whose cause is not a finding in a file:
+# nothing was found anywhere, and no deny-list is configured, so the class never
+# ran its name half. The per-class hint above answers a finding and tells the
+# reader to remove a path and rewrite history, which is advice nobody on this tree
+# can act on. So this row gets its own remedy, and it is not a row of the class
+# table: the table is the contract of a class, and the class's contract is its
+# finding. Both renderers read it through ``census_render._row_fix``, so ``--json``
+# and the human report cannot disagree about which row got which hint.
+#
+# It carries the two routes the default-mode note spells (``census_hygiene
+# .HYGIENE_DENYLIST_NOTE``) in that note's own spelling, and none of the note's
+# other half: what went unchecked is the row's own sentence, not the fix's, and
+# tests/test_census_ordering_json_note.py refuses a fix hint that repeats a note.
+# No path here is machine-local: the file route is named as the tree-relative name
+# the note uses.
+HYGIENE_DENYLIST_INACTIVE_FIX = (
+    "configure the deny-list the check reads: point NONI_SCRUB_DENYLIST at a "
+    "deny-list file, or leave an untracked .noni-scrub-denylist at the root of "
+    "the audited tree; the class checked no entry without one")
+
 # Derived views of CHECKS — never edited by hand.
 CLASS_CODE = {name: code for name, (code, _sev, _fix) in CHECKS.items()}
 CLASS_SEVERITY = {name: sev for name, (_code, sev, _fix) in CHECKS.items()}

@@ -21,9 +21,11 @@ import sys
 from datetime import timedelta
 
 from ._safe_text import safe_path
+from .census_hygiene import DENYLIST_INACTIVE_MESSAGE
 from .census_report import (
     CLASS_FIX,
     CLASS_SEVERITY,
+    HYGIENE_DENYLIST_INACTIVE_FIX,
     SCHEMA_VERSION,
 )
 
@@ -248,6 +250,40 @@ def _finding_sort_key(f: dict) -> tuple[str, str, str]:
     return (f["artifact"], f["check"], f["subject"])
 
 
+# The opening of the row naming an inactive deny-list, read off the constant that
+# row is built from (``census_hygiene.DENYLIST_INACTIVE_MESSAGE``) rather than
+# typed here: the row text is the product's and has its own pins, so a copy in the
+# renderer would go quietly stale the first time that sentence was reworded and
+# leave the row holding the wrong remedy.
+DENYLIST_INACTIVE_PREFIX = DENYLIST_INACTIVE_MESSAGE.split("{state}", 1)[0]
+
+
+def _row_fix(f: dict) -> str:
+    """The remedy this run prints for one finding row, in either mode.
+
+    The one reader of both questions -- which class, and which row of it -- so the
+    ``fix`` field of the NDJSON branch and the ``fix:`` line of the human branch
+    are the same value for the same row by construction, not by two agreements.
+
+    A row is handed the class table's hint, which is what every row of every class
+    has always printed, except the hygiene row that reports an inactive deny-list.
+    That one is recognised by its subject and by the prefix above, and gets the
+    remedy naming what is missing and how to switch the check on.
+
+    ``docs/HYGIENE.md`` tells consumers of the report to branch on ``subject``
+    rather than match message prose, and this is not that: it is the census's own
+    renderer choosing a remedy for a row its own hygiene module wrote, keyed on the
+    only form that identifies the row exactly (its subject, plus the row text read
+    from the constant that text is formatted from). A subject test alone would not
+    do: the ``hygiene scan`` not-run rows are the class's other whole-artifact rows
+    and they keep the class hint.
+    """
+    if (f["check"] == "hygiene" and f["subject"] == "deny-list"
+            and f["message"].startswith(DENYLIST_INACTIVE_PREFIX)):
+        return HYGIENE_DENYLIST_INACTIVE_FIX
+    return CLASS_FIX[f["check"]]
+
+
 def _render(
     findings: list[dict], counts: dict[str, int], ok: bool, exit_code: int,
     json_out: bool, notes: tuple[str, ...] = (),
@@ -321,7 +357,7 @@ def _render_json(findings: list[dict], counts: dict[str, int], ok: bool,
             "subject": f["subject"],
             "artifact": f["artifact"],
             "message": f["message"],
-            "fix": CLASS_FIX[f["check"]],
+            "fix": _row_fix(f),
         }
         print(json.dumps(row, sort_keys=True))
     counts_row = {k: v for k, v in counts.items() if v}
@@ -369,7 +405,7 @@ def _render_human(findings: list[dict], counts: dict[str, int], ok: bool,
         for f in sorted(findings, key=_finding_sort_key):
             tag = {"fail": "FAIL", "warn": "WARN"}.get(f["severity"], "?")
             print(f"{f['check']:<16} {tag:<4} {f['subject']}: {f['message']}")
-            print(f"{'':<16} fix: {CLASS_FIX[f['check']]}")
+            print(f"{'':<16} fix: {_row_fix(f)}")
     for note in notes:
         # Reprinting the state-root note would say the same sentence twice in one
         # report; the ordering-closed note and any other still print here, below

@@ -65,6 +65,15 @@ _JSON_CONTRACT: tuple[tuple[str, tuple[str, ...], str], ...] = (
         # #235, which named the silencer in the row and in the note this run carries.
         # Measured with the fixed --now above, so these bytes do not move with the
         # wall clock.
+        #
+        # NOT re-pinned for #237, and that is the point of writing it down: #237
+        # changed the ``fix`` value of the deny-list row, and this run's bytes did
+        # not move, because the case says `--json` without `--strict` and an absent
+        # deny-list outside --strict is the note on the summary row that issue #194
+        # put there -- there is no deny-list finding row in this stream for the new
+        # hint to sit on. The row #237 changed is pinned by value in
+        # tests/test_census_hygiene_denylist_fix_hint.py; had this digest moved, the
+        # run below would have said so and the bytes here would have been re-measured.
         "f133cb2e55f7335840d4fc44d18eca3f0cc128f4f43b06531f406bd4ac7bae7e",
     ),
 )
@@ -108,6 +117,34 @@ def test_json_bytes_are_the_pinned_contract(tmp_path) -> None:
             f"{expected}\n{out!r}\n{err}"
         )
         assert rc == 0, f"a warn-bearing run exits 0, got {rc}:\n{out}\n{err}"
+
+
+def test_the_whole_run_case_owes_the_note_and_not_a_deny_list_row(tmp_path):
+    """Why the whole-run digest survived #237, asserted rather than assumed.
+
+    That case is the only pinned one that audits hygiene, and #237 changed a hygiene
+    ``fix`` value without moving its bytes. The reason is in the fixture, not in a
+    hole in the digest: the case passes ``--json`` without ``--strict``, and an absent
+    deny-list outside ``--strict`` is the summary's ``not_evaluated`` sentence
+    (issue #194) rather than a finding row, so the row whose hint moved is not in the
+    stream at all. A digest that let a change to a row it *does* print pass unnoticed
+    is the failure this module exists to catch, so the absence is pinned here rather
+    than left as an accident of the fixture.
+    """
+    import json
+
+    from census_hygiene import HYGIENE_DENYLIST_NOTE
+
+    repo = _json_tree(tmp_path, "whole-run-note")
+    rc, out, err = _run_census(repo, "--now", WHOLE_RUN_NOW, json_out=True)
+    assert rc == 0, f"{rc}\n{out}{err}"
+    rows = [json.loads(line) for line in out.splitlines() if line]
+    subjects = [r.get("subject") for r in rows if r.get("kind") == "finding"]
+    assert "deny-list" not in subjects, (
+        f"a deny-list finding row would put the #237 hint into the pinned digest: "
+        f"{subjects}")
+    summary = [r for r in rows if r["kind"] == "summary"][0]
+    assert HYGIENE_DENYLIST_NOTE in summary["not_evaluated"], summary
 
 
 def test_every_contract_case_pins_its_now() -> None:

@@ -2,7 +2,7 @@
 measurements a case states rather than recomputes.
 
 Every part of the suite parses the page through these, so "what a block holds" means
-one thing across the six files -- including the budget's own ``dropped:`` line, which the
+one thing across the brief files -- including the budget's own ``dropped:`` line, which the
 tool prints as the last line of the blocks and which :func:`rows` therefore keeps out of
 a block's rows and :func:`dropped_line` reports on its own.
 """
@@ -17,6 +17,7 @@ from brief_fixtures import NOW, census_stdout
 from harness_runners import subprocess_env
 
 from noni import brief as brief_module
+from noni import brief_page as brief_page_module
 from noni import labels as labels_module
 
 # The three block headers, in print order, and the prefix of the line the tool appends when
@@ -115,6 +116,21 @@ def rows(page: str, header: str) -> list[str]:
     """
     return [row for row in stripped(sections(page), header)
             if not row.startswith(DROPPED_PREFIX)]
+
+
+def order_entries(page: str, header: str) -> list[str]:
+    """The ``top 10`` block's entry rows: one row per order entry, and nothing else.
+
+    Two lines the block prints are not entries and every caller of this is about entries: the
+    budget's count line, which :func:`rows` already keeps out, and the tool's own notice that the
+    queue was never checked for closed issues. That notice is a line of the block and counts
+    against the budget like any other; a case that counts the rows the queue holds must not have
+    it counted among them. A case about the notice itself reads the block's body
+    (:func:`stripped`) or the constant directly, so setting it aside here cannot hide its absence
+    from the suite.
+    """
+    return [row for row in rows(page, header)
+            if row != brief_page_module.NOT_CHECKED_CLOSED]
 
 
 def is_refusal(err: str) -> bool:

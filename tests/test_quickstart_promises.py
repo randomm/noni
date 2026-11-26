@@ -61,6 +61,13 @@ from noni import public_safety
 # the page rewraps, the contract does not.
 _STALE_INSTALL_START = "Before you run anything, check what you are about to run."
 
+# The two ends of the sentence that tells a reader which ``--only`` filter keeps the
+# ``ordering-closed`` question in the run. Located by phrase rather than line number,
+# like the route-choice clause above, and by its two ends rather than a whole sentence:
+# a page that lost the clause fails, and a page that kept only its neighbours fails too.
+_ORDERING_FILTER_START = "Keep the ordering group in the run"
+_ORDERING_FILTER_CLOSE = "because a run that never reached the class reports nothing about it"
+
 
 def _page() -> str:
     return page_text()
@@ -141,6 +148,41 @@ def test_the_page_says_what_is_skipped_without_the_state_file() -> None:
     assert "ordering-closed was not evaluated" in text, "the page does not name the note"
     assert "never contacts a tracker" in text, "the page does not say why"
     assert "json" in text.lower(), "the page does not say the note is human-mode only"
+
+
+def test_the_page_names_the_filter_that_keeps_the_closed_state_question_in_the_run() -> None:
+    """The page names the one ``--only`` filter that keeps closed state in the run.
+
+    The row and the note for the unasked closed-state question are emitted only
+    when the class ``ordering-closed`` itself is named, so ``--only`` of another
+    ordering class runs the group and prints nothing about it, and a reader told
+    merely to "name an ordering class" reads a clean ``--only ordering-stale`` run
+    as evidence that every ordered issue is open. The claim is located inside its
+    own section rather than over the page, so a neighbouring heading cannot satisfy
+    it, and the old wording is asserted absent so a revert reddens this test.
+    """
+    section = flowed_section("The --issue-state map")
+    assert "must name an ordering class, or name none" not in section, (
+        "the page is back to telling a reader that any ordering class keeps the "
+        "closed-state question in the run")
+    start = section.find(_ORDERING_FILTER_START)
+    assert start >= 0, (
+        "the page no longer tells the reader to keep the ordering group in the run, "
+        f"in the words this test pins ({_ORDERING_FILTER_START!r})")
+    clause = section[start:]
+    close = clause.find(_ORDERING_FILTER_CLOSE)
+    assert close >= 0, (
+        f"the filter clause no longer carries its reason clause "
+        f"({_ORDERING_FILTER_CLOSE!r}): {clause!r}")
+    # Everything the clause says between its two pinned ends: the two filters that
+    # keep the question in the run, and what any other filter owes the reader.
+    between = clause[:close]
+    for phrase in ("`--only ordering-closed`", "no `--only` at all",
+                   "reports nothing about the closed state",
+                   "does not mean every ordered issue is open"):
+        assert phrase in between, (
+            f"the filter clause omits {phrase!r}, which is the fact a gating CI "
+            f"job reads off this sentence: {between!r}")
 
 
 def test_the_page_names_the_deny_list_a_strict_run_needs() -> None:

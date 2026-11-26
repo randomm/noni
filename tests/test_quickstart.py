@@ -298,7 +298,10 @@ def test_the_ordering_note_appears_in_human_mode_and_not_in_json(world: World) -
         f"--json mode prints the note the page says it never prints: "
         f"{as_json.stdout!r}")
     # The page's third claim, in the same run: the sentence is not lost to the
-    # mode, it moves to the summary row (issue #97).
+    # mode, it moves to the summary row (issue #97). The pins just below hold the
+    # sentence that tells the reader which ``--only`` filter keeps the closed-state
+    # question in the run (issue #236): naming ``ordering-closed``, or no ``--only``
+    # at all.
     rows = [json.loads(line) for line in as_json.stdout.splitlines() if line.strip()]
     assert rows, f"--json mode printed no stream at all: {as_json.stdout!r}"
     summaries = [row for row in rows if row.get("kind") == "summary"]
@@ -311,15 +314,16 @@ def test_the_ordering_note_appears_in_human_mode_and_not_in_json(world: World) -
     assert summary.get("exit") == 0 and summary.get("ok") is True, summary
     assert all(row.get("schema") == rows[0]["schema"] for row in rows), rows
     # The payload has to answer for the ordering group, not just be well-formed:
-    # the page tells the reader to keep the group in the run ("``--only`` must
-    # name an ordering class, or name none"), and this tree holds no ordering
+    # the page tells the reader to keep the group in the run ("Keep the ordering
+    # group in the run", "only naming ``--only ordering-closed``, or no ``--only``
+    # at all"), and this tree holds no ordering
     # artifact, which the page itself says earns no ordering rows at all. So the
     # honest positive half is the group's own count, present and zero -- a run
     # that had read nothing, or had dropped the class from the run, prints a
     # summary with no such entry, and the absence asserted above would then be
     # true of a stream that never asked the question.
     page = read(QUICKSTART)
-    assert "name an ordering class" in page, (
+    assert "Keep the ordering group in the run" in page, (
         "the page no longer says the ordering group must stay in the run, so the "
         "count asserted below is unpinned")
     assert "ordering rows at all" in page, (

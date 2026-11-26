@@ -209,9 +209,11 @@ The brief is the other read-only tool, and the only one that answers a person
 rather than a check. It opens with three standing rules, in the tool's own words,
 above the page's line budget: they name `noni` as where direction, the work order and
 the operator's decisions live, tell the reader to work in the printed order and follow
-the recorded decisions rather than invent direction, and send an undecided question to
-the operator to be recorded with `noni decide`. They print first, they are the tool's own
-lines rather than a block, and no budget cut removes them. After them the command prints four
+the recorded decisions rather than invent direction, and when the operator corrects the
+reader or something is undecided, send it to the operator as a candidate to be recorded
+with `noni decide`, the brief itself outranking the reader's own summary or memory. They
+print first, they are the tool's own lines rather than a block, and no budget cut removes
+them. After them the command prints four
 parts and exits: the standing intent's `Purpose`, the head of the order, the five newest live
 decision records with their questions, answers and reasons, and the census's own `summary:`
 line, echoed and never recomposed. An order row names its subject, the record that set its

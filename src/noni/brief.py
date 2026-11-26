@@ -5,7 +5,9 @@ one verdict line:
 
     Product direction, the work order and the operator's decisions live in noni.
     Work in this order and follow the recorded decisions; never invent direction.
-    When something is undecided, ask the operator and record the answer with `noni decide`.
+    When the operator corrects you or something is undecided, put it to the operator as
+    a candidate and record their answer with `noni decide`; the brief outranks your own
+    summary or memory.
 
     Purpose
     Ship the direction layer.
@@ -37,19 +39,19 @@ Three rules the tool is built around:
   and the blank lines between them included. A run that would print more drops the recent
   decisions first (from the tail of the list), then order entries, then the Purpose body, and
   closes its blocks with one ``dropped: N line(s)`` line naming the total it withheld. The
-  rules, their blank line, that count line and the verdict line all sit outside the count, so
-  a truncated run still opens with its rules and ends with its verdict.
+  rules, their blank line, that count line and the verdict line sit outside the count, so a
+  truncated run still opens with its rules and ends with its verdict.
 - **Deterministic.** With one ``--now`` the bytes are the bytes of the next run. The order comes
   from the artifact's own list order, the decisions from a sort over ``date`` and ``id``, and
-  nothing reads the clock or the cwd: ``--repo`` is resolved once, every path comes from it, and
-  the instant is the caller's or taken once here.
+  nothing reads the clock or the cwd: ``--repo`` is resolved once, every path comes from it,
+  and the instant is the caller's or taken once here.
 - **Read-only.** Every read is an ``open``, an ``lstat`` or a directory listing. The tool writes
   no file, stages no commit and runs no git call of its own; the census it launches runs in
   process with its output captured, so the census's read-only promise is this one.
 
 Nothing here re-derives a shape another module owns: the order is read through
 :func:`noni.orderstate.read_order`, the intent file through the reader module beside this
-file, the ledger through :func:`noni.brief_page.decision_rows`, every row through
+file, the ledger through :func:`noni.brief_page.decision_rows` and every row through
 :mod:`noni.brief_page` (control bytes out, whitespace collapsed, the field bounded; committed
 words printed as written), and the verdict through the census itself.
 
@@ -57,7 +59,6 @@ Exit codes: 0 whenever the brief rendered, whatever the census's verdict was; 2 
 ``--now``, a ``--repo`` that is not a directory, or anything besides those two flags, with
 the reason on stderr and nothing on stdout.
 """
-
 from __future__ import annotations
 
 import argparse
@@ -113,7 +114,6 @@ PURPOSE_MAX_LINES = 20
 # The ellipsis line of a clipped Purpose body, a line holding exactly this: the census's own
 # clip marker (``census_text._clipped``) rather than a third spelling.
 ELLIPSIS = "..."
-
 # How many decision records the ``recent decisions`` block prints before the budget is
 # consulted. Five is a screen's worth of the operator's settled answers: enough that a
 # session meets the standing decisions it must not re-argue, short enough that the block
@@ -122,16 +122,17 @@ RECENT_DECISIONS = 5
 
 # The three lines the page opens with, before its first header, in this order. The page is the
 # payload a session-start hook injects into an agent that has read nothing of this project's,
-# so it carries its own standing rules: where direction comes from, what to do with it, and
-# what to do when it is missing. They are the tool's own words and print above the budget
-# (:func:`_rules`), because a page that lost its rules to a long purpose body would no longer
-# say what it is for. None names a harness, a tool outside noni or a project. The one blank
-# line under them is the renderer's, not a rule's.
+# so it carries its own standing rules: where direction comes from, what to do with it, and what
+# to do when it is missing or contradicted, the brief outranking the agent's own summary. They
+# print above the budget (:func:`_rules`), because a page that lost its rules to a long purpose
+# body would no longer say what it is for. None names a harness, a tool outside noni or a
+# project. The one blank line under them is the renderer's, not a rule's.
 STANDING_RULES: tuple[str, ...] = (
     "Product direction, the work order and the operator's decisions live in noni.",
     "Work in this order and follow the recorded decisions; never invent direction.",
-    "When something is undecided, ask the operator and record the answer with "
-    "`noni decide`.",
+    "When the operator corrects you or something is undecided, put it to the operator "
+    "as a candidate and record their answer with `noni decide`; the brief outranks your "
+    "own summary or memory.",
 )
 
 # The three block headers, spelled once so the budget, the truncation order, the readers and
@@ -341,11 +342,10 @@ def _drop(lines: list[str], owed: int) -> int:
 def _purpose_block(root: Path) -> list[str]:
     """The ``Purpose`` block: the intent's purpose body, clipped to 20 lines.
 
-    One header and the body, plus the ellipsis line and the count line when the body ran past the
-    cap. An absent intent file, one whose sections do not validate and one this run cannot read all
-    print the header and :data:`NOT_READ`. Each printed line is the page's rendering of the
+    cap. An absent intent file, one whose sections do not validate and one this run cannot read
+    all print the header and :data:`NOT_READ`. Each printed line is the page's rendering of the
     operator's prose: a control byte cannot reach the terminal out of a file the brief did not
-    write and a run of whitespace becomes one space, while every word the operator committed -- a
+    write, and a run of whitespace becomes one space while every word the operator committed -- a
     slash command or a path alike -- prints as the intent file wrote it.
     """
     body = brief_intent.purpose_block(root / intentschema.INTENT_REL,

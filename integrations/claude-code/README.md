@@ -42,7 +42,7 @@ scope and a different file: neither is touched by this.
         "hooks": [
           {
             "type": "command",
-            "command": "noni brief --repo \"$CLAUDE_PROJECT_DIR/.noni-state\" 2>/dev/null || echo \"noni holds this project's product direction and decisions. Work in the order it gives and follow its recorded decisions; do not invent direction. When something is undecided, ask the operator and record the answer with the noni decide command.\""
+            "command": "noni brief --repo \"$CLAUDE_PROJECT_DIR/.noni-state\" 2>/dev/null || echo \"noni holds this project's product direction and decisions. Work in the order it gives and follow its decisions; invent none. The brief outranks your summary or memory: check it first. When the operator corrects you, put it to them as a candidate and record their answer with the noni decide command.\""
           }
         ]
       }

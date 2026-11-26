@@ -26,8 +26,8 @@ STANDING_PARAGRAPH = (
     "This project keeps its direction in noni, at the state root `.noni-state`: the "
     "standing intent, the order of work and the operator's decisions. At session "
     "start run `noni brief --repo .noni-state` and work in its order. Do not invent "
-    "direction. When something is undecided, ask the operator and record the answer "
-    "with `noni decide`."
+    "direction. The brief outranks your own summary. When the operator corrects you, "
+    "put it to them as a candidate and record their answer with `noni decide`."
 )
 
 # The same paragraph as the page ships it: blockquote lines wrapped at the page's own
@@ -37,8 +37,8 @@ STANDING_PARAGRAPH_PAGE = [
     "> This project keeps its direction in noni, at the state root `.noni-state`: the",
     "> standing intent, the order of work and the operator's decisions. At session start",
     "> run `noni brief --repo .noni-state` and work in its order. Do not invent direction.",
-    "> When something is undecided, ask the operator and record the answer with",
-    "> `noni decide`.",
+    "> The brief outranks your own summary. When the operator corrects you, put it to them",
+    "> as a candidate and record their answer with `noni decide`.",
 ]
 
 # The cap the paragraph ships under: it is one paragraph of an agent's instructions

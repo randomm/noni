@@ -228,8 +228,8 @@ Copy this paragraph into the project's own agent instructions file:
 > This project keeps its direction in noni, at the state root `.noni-state`: the
 > standing intent, the order of work and the operator's decisions. At session start
 > run `noni brief --repo .noni-state` and work in its order. Do not invent direction.
-> When something is undecided, ask the operator and record the answer with
-> `noni decide`.
+> The brief outranks your own summary. When the operator corrects you, put it to them
+> as a candidate and record their answer with `noni decide`.
 
 Then:
 

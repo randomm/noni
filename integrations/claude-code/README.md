@@ -95,10 +95,14 @@ that is affordable.
 ## When the brief cannot be read
 
 There is no script here, so there is no failure line either. When `noni` is
-missing, or the state root holds no `noni/`, the brief command exits non-zero,
-prints nothing on stdout, and the model gets no brief: the session is not
-blocked. Claude Code shows the user its own notice that the hook failed, which
-is where a reader looks, and the reminder still arrives every turn.
+missing, the brief command exits non-zero, prints nothing on stdout, and the
+model gets no brief: the session is not blocked. A state root that does exist
+but holds no `noni/` is the quieter case: the command still exits 0 and prints
+the standing rules over an empty page, so the hook succeeds and briefs the model
+on nothing. Only a `--repo` that is no directory at all exits 2. Claude Code
+shows the user its own notice that the hook failed, which is where a reader
+looks in an interactive session and has no reader at all in a headless run, and
+the reminder still arrives every turn.
 
 Hook stdout is capped at 10,000 characters; above it the harness replaces the
 text with a path and a preview. `noni brief` bounds its own page, so on a
@@ -107,15 +111,33 @@ healthy state root the cap is never met.
 ## Verifying it
 
 From the project root, run the brief command the block carries, with
-`$CLAUDE_PROJECT_DIR` set to that root:
+`$CLAUDE_PROJECT_DIR` exported as that root first. Export it on its own line:
+a shell expands the rest of a command line before an assignment written on
+that same line takes effect, so a one-line form reads an empty variable and
+reaches `--repo /.noni-state`:
 
 ```bash
-CLAUDE_PROJECT_DIR="$PWD" noni brief --repo "$CLAUDE_PROJECT_DIR/.noni-state"
+export CLAUDE_PROJECT_DIR="$PWD"
+noni brief --repo "$CLAUDE_PROJECT_DIR/.noni-state"
 ```
 
-Exit 0 with a page of output means the wiring can work. Then start Claude Code
-in the project and ask the model what noni's current order is: it answers from
-the brief, which it was handed before its first reply. Run `/compact` and ask
-again, and it answers from a fresh brief. Point the same command at a directory
-that holds no `noni/` and it exits 2, which is the case above: no brief, and the
-session runs.
+Exit 0 with a page of output means the wiring can work. When the state lives
+inside the project, the state root is `.`, so run the second line as
+`noni brief --repo .`.
+
+Do not read the exit code as the signal. A state root that exists but holds no
+`noni/` directory still exits 0 and prints the standing rules over an empty
+page, so `Purpose: not readable`, `the order is empty` and `summary: not-run`
+mean the hook is briefing the model on nothing; only a `--repo` that is no
+directory at all exits 2. Either way fix the state root rather than trusting
+the code.
+
+Then start Claude Code in the project and ask the model what noni's current
+order is: it answers from the brief, which it was handed before its first reply.
+Run `/compact` and ask again, and it answers from a fresh brief.
+
+With no interactive session, as in `claude -p`, the check is the same
+`noni brief --repo <root>` command run by hand from the project root, because
+Claude Code's own notice that a hook failed has no reader there. A good first
+line is the page of standing rules; a page that says `Purpose: not readable` or
+`the order is empty` means the root is wrong.

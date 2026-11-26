@@ -86,6 +86,14 @@ PAGE_RULES = (
     ('"tui"', "the page does not name the run mode the gate reads"),
     ("newest brief wins", "the page does not say the newest brief wins"),
     ("## Verifying it", "the page states no way to verify the hook"),
+    # The hook fetches only in run mode "tui", so a headless pi run has no check of
+    # its own at all. The page owes such a reader the command to run by hand, the
+    # three roots it can name, and the words that tell them the root is wrong. Pinned
+    # as two entries: one for the paragraph, one for the command it names.
+    ("With no interactive session", "the page gives a headless run no way to verify "
+                                    "the hook"),
+    ("noni brief --repo <root>",
+     "a headless run is given no check to run by hand"),
 )
 
 

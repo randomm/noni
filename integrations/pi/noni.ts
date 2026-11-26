@@ -8,9 +8,9 @@ const LINE_LIMIT = 300;
 const PATH_TOKEN = /(?:[^\s"'`]+[\\/])+[^\s"'`]+/g;
 const REMINDER =
   "noni holds this project's product direction and decisions. Work in the " +
-  "order it gives and follow its recorded decisions; do not invent direction. " +
-  "When something is undecided, ask the operator and record the answer with " +
-  "the noni decide command.";
+  "order it gives and follow its decisions; invent none. The brief outranks " +
+  "your summary or memory: check it first. When the operator corrects you, " +
+  "put it to them as a candidate and record their answer with the noni decide command.";
 const CANDIDATES = [".noni-state", ""]; // pilot's dir first, then the bare cwd
 // The state root: the env var, else the first candidate holding a noni/ directory.
 function stateRoot(env: Record<string, string | undefined>, cwd: string) {

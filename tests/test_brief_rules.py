@@ -322,7 +322,8 @@ def _rule_tokens(rule: str) -> tuple[str, ...]:
 _RULE_TOKEN_MAP: dict[str, tuple[str, ...]] = {
     brief_module.STANDING_RULES[0]: ("noni", "direction", "order", "decisions"),
     brief_module.STANDING_RULES[1]: ("order", "decisions", "invent direction"),
-    brief_module.STANDING_RULES[2]: ("operator", "noni decide"),
+    brief_module.STANDING_RULES[2]: ("operator", "noni decide", "candidate",
+                                     "outranking", "summary or memory"),
 }
 
 

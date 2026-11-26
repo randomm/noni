@@ -1,7 +1,7 @@
 """The brief fixture's committed tar is the tree its builder claims to produce.
 
 The fixture is the ground the whole brief suite stands on: eleven order entries, one intent
-file, one decided record, and a last commit whose subject cites it. Every case in the six ``test_brief_*.py`` files asserts against it, and a
+file, one decided record, and a last commit whose subject cites it. Every case in the ``test_brief_*.py`` files asserts against it, and a
 case that quietly ran against a different tree would be a green run about a fixture nobody
 wrote.
 
@@ -37,7 +37,7 @@ GENERATE = FIXTURE_DIR / "generate.py"
 ARCHIVE = REPO / "tests" / "fixtures" / "brief.tar"
 
 # The committed fixture's shape, as the brief spec states it. Counted here rather than trusted
-# from the tar: these are the numbers the six brief suites' assertions are built on, and a fixture
+# from the tar: these are the numbers the brief suites' assertions are built on, and a fixture
 # that lost an entry would otherwise be discovered by ten unrelated failures instead of one.
 ORDER_ENTRIES = 11
 INTENT_SECTIONS = 4

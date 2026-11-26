@@ -21,6 +21,7 @@ from pathlib import Path
 
 from . import ledger_schema, orderschema, orderstate
 from ._safe_text import safe_text
+from .census_ordering_closed import owed as _closed_check_owed
 from .census_text import _clipped
 
 # The text of the one question the decisions block asks of every record it reads. Like
@@ -87,11 +88,9 @@ def _rendered(value: object) -> str:
     """A foreign field as it may be printed, or ``""`` for a field that renders to nothing.
 
     Two questions rather than one test of the field: it must be a string with something in it, and
-    it must survive the page's own rules with something in it. A field of spaces passes the first
-    and fails the second, and so does a field made only of what the renderer deletes (a category-C
-    character, say), which is the shape a hand-edited artifact reaches when a reason is deleted
-    and its quotes left behind. Asking the page's renderer is what makes a mark stand or fall on
-    the same answer the row gets.
+    must survive the page's rules with something in it. A field of spaces passes the first, and so
+    does one of what the renderer deletes whole (a category-C character, say): a hand-edited
+    artifact holding a reason's quotes and no reason.
     """
     if not isinstance(value, str) or not value.strip():
         return ""
@@ -128,12 +127,9 @@ def decision_rows(ledger: Path, cap: int) -> tuple[list[str], int]:
 def _live_records(ledger: Path) -> list[dict]:
     """The records the ledger directory holds whose ``status`` is ``decided``.
 
-    Live is one predicate and it is the record's own word: :func:`noni.orderstate`'s reader
-    already treats a record whose ``status`` is ``superseded`` as dead, and the census's chain
-    class is what reports a chain holding two live records. Re-deriving liveness from the
-    ``supersedes`` fields here would make the page a second arbiter that can disagree with the
-    one the same command runs a moment later, so this reads one field and asks nothing of the
-    rest of the chain.
+    Live is one predicate and it is the record's own word: :func:`noni.orderstate`'s reader treats a
+    ``superseded`` record as dead, and the census's chain class reports the chain holding two. This
+    would be a second arbiter beside the census the same command runs a moment later.
 
     Nothing is opened before the path has been classified. The ledger and every name in it go
     through :func:`noni.orderstate.file_kind`, which asks ``lstat``: :meth:`pathlib.Path.is_file`
@@ -290,7 +286,7 @@ def _bounded_row(head: str, reason: str) -> str | None:
     read it. One rule bounds the row: the head is clipped around the reason and the finished line
     is bounded by :func:`page_line`. A reason is capped at :data:`noni._why.WHY_MAX`, which leaves
     the head room to clip in every case a writer, a census or a hand-edited artifact can hand this
-    reader, so there is no second branch to keep.
+    reader.
     """
     reason = _rendered(reason)
     if not reason:
@@ -359,6 +355,29 @@ NOT_READ = "not readable"
 # sentence whether the lines went missing to the cap or to the page's shape test.
 DROPPED_PREFIX = "dropped: "
 
+# What the ``top 10`` block says over its rows when the order leaves the closed question unasked:
+# a reader must not read entries the census never checked against closed issues as a live queue.
+# The census words that fact in its own ``ordering-closed`` row; this is the brief's sentence,
+# naming the check's flag and no path or project. Not a note: a budgeted line.
+NOT_CHECKED_CLOSED = ("the order was not checked for closed issues; the census checks them "
+                      "with an --issue-state map")
+
+
+def order_owes_closed_check(entries: object) -> bool:
+    """Whether the ``top 10`` block owes the reader the not-checked-for-closed line.
+
+    The predicate is the census's own, from :mod:`noni.census_ordering_closed`, never retyped: a
+    page with its own reading would be a second arbiter beside the census it echoes moments later.
+    The brief runs that command with ``--repo`` and ``--now``, so the check is never asked.
+    """
+    return _closed_check_owed(entries if isinstance(entries, list) else None)
+
+
+def notice_line(entries: object) -> list[str]:
+    """The block's notice line over its rows, or nothing, to join under its header."""
+    return [NOT_CHECKED_CLOSED] if order_owes_closed_check(entries) else []
+
+
 # The words a body line must never be, as a rule over a set the caller hands in: the caller's
 # block headers, its ellipsis, and its verdict prefix.
 #
@@ -378,14 +397,11 @@ def page_line(text: str, limit: int, reserved: frozenset[str]) -> str | None:
     """One body line of the page, or None when the text would not be a body line.
 
     Three rules, answering three different questions. A run of whitespace becomes one space, which
-    is what makes a row one row. Then :func:`noni._safe_text.safe_text` drops every Unicode
-    category-C character, which is what stops an ANSI or OSC sequence reaching the terminal. The
-    collapse runs both before and after the renderer, so neither a tab nor a byte the renderer
-    deleted leaves a gap or padding behind: a tab is itself a control character, so a renderer run
-    over the text first would delete it and leave ``two\tcandidates`` as one word, and a byte at a
-    field's edge or between spaces would leave padding that made a reserved word read as something
-    else. Neither rule rewrites a word the operator committed: the census's path arms belong to a
-    row built from an ``OSError``, not to a page line.
+    makes a row one row. Then :func:`noni._safe_text.safe_text` drops every Unicode category-C
+    character, stopping an ANSI or OSC sequence reaching the terminal. The collapse runs both before
+    and after the renderer, so neither a tab (a control character, so a first run welds it into one
+    word) nor a deleted byte leaves a gap or padding. Neither rule rewrites committed text: the
+    census's path arms belong to an ``OSError`` row.
 
     The line is bounded last, by the page's own clip: :func:`noni.census_text._clipped` cuts the
     finished line to ``limit`` and marks the cut, so a line can never leave this function longer
@@ -397,9 +413,7 @@ def page_line(text: str, limit: int, reserved: frozenset[str]) -> str | None:
     The two shape tests: the line must survive all three rules as something with content in it, and
     must not be one of the words the page is read by. ``None`` is the caller's signal to drop the
     row, and the callers are the places that print foreign text -- a purpose line, an order row's
-    subject. ``reserved`` is the set those words are, named by the caller rather than built here from
-    ``brief``'s headers: the headers are the tool's vocabulary and belong with the tool, while the
-    rule here is about a set of words, whatever spells them.
+    subject. ``reserved`` is named by the caller rather than built here from ``brief``'s headers.
     """
     collapsed = " ".join(text.split())
     line = _clipped(" ".join(safe_text(collapsed, len(collapsed)).split()), limit)

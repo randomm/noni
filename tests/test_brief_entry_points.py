@@ -26,8 +26,7 @@ from brief_fixtures import (
 )
 from brief_support import (
     is_refusal,
-    sections,
-    stripped,
+    order_entries,
 )
 from harness_runners import run_noni
 
@@ -150,7 +149,7 @@ def test_brief_the_repo_is_read_at_the_path_it_was_given(tmp_path: Path) -> None
     out = run_brief_from(elsewhere, root, "--now", NOW)[1]
     assert "Belongs to the other tree" not in out
     assert "#4242" not in out
-    assert len(stripped(sections(out), brief_module.ORDER_HEADER)) == \
+    assert len(order_entries(out, brief_module.ORDER_HEADER)) == \
         brief_module.TOP_ENTRIES
 
 

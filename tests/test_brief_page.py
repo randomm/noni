@@ -33,7 +33,7 @@ from brief_support import (
     DROPPED_PREFIX,
     HEADERS,
     dropped_of,
-    rows,
+    order_entries,
     sections,
     stripped,
     summary_line,
@@ -46,6 +46,21 @@ from noni import brief_page, orderschema
 # pinned line position in this file is measured from the blocks alone and sits this many
 # lines further down: three rule lines and the separator that keeps them off the header.
 _RULES = len(brief_module.STANDING_RULES) + 1
+
+# The one line the ``top 10`` block prints above its rows over an order of issues, saying the
+# queue was never checked for closed issues. Every line position below that sits past the order
+# block counts it: it is a line of the block like the rows it leads.
+_NOTICE = 1
+
+
+def _rows(page: str) -> list[str]:
+    """The ``top 10`` block's entry rows: the queue's rows, nothing else.
+
+    Every case here is about a row the block built from an order entry, so the tool's own
+    notice line and its count line are left out. The notice still reaches
+    :func:`test_brief_the_order_block_notice_leads_the_rows`, which asserts it as printed.
+    """
+    return order_entries(page, brief_module.ORDER_HEADER)
 
 
 def test_brief_renders_the_three_blocks_and_nothing_else(tmp_path: Path) -> None:
@@ -90,7 +105,7 @@ def test_brief_top_ten_lists_the_first_ten_positions(tmp_path: Path) -> None:
     """
     code, out, _ = run_brief(plant_brief_tree(tmp_path), "--now", NOW)
     assert code == 0
-    body = stripped(sections(out), brief_module.ORDER_HEADER)
+    body = _rows(out)
     assert len(body) == brief_module.TOP_ENTRIES
     # The fixture's head of the queue carries a reason and every other entry does not, so the
     # two shapes of the row are both the committed tree's: the head shows the reason after the
@@ -115,7 +130,7 @@ def test_brief_an_order_row_carries_the_why_the_entry_holds(tmp_path: Path) -> N
         orderschema.entry(issue=7, decision=RECORD_ID, confirmed=CONFIRMED,
                          why="the release train leaves Friday"),
         orderschema.entry(issue=9, decision=RECORD_ID, confirmed=CONFIRMED)])
-    body = rows(run_brief(root, "--now", NOW)[1], brief_module.ORDER_HEADER)
+    body = _rows(run_brief(root, "--now", NOW)[1])
     assert body == [f"1. #7 ({RECORD_ID}) \u2014 the release train leaves Friday",
                     f"2. #9 ({RECORD_ID})"]
 
@@ -129,8 +144,7 @@ def test_brief_an_order_row_without_a_why_prints_no_mark(tmp_path: Path) -> None
     root = plant_brief_tree(tmp_path)
     write_order_entries(root, [
         orderschema.entry(issue=3, decision=RECORD_ID, confirmed=CONFIRMED)])
-    assert rows(run_brief(root, "--now", NOW)[1],
-                brief_module.ORDER_HEADER) == [f"1. #3 ({RECORD_ID})"]
+    assert _rows(run_brief(root, "--now", NOW)[1]) == [f"1. #3 ({RECORD_ID})"]
 
 
 def test_brief_an_order_why_of_nothing_prints_no_mark(tmp_path: Path) -> None:
@@ -147,7 +161,7 @@ def test_brief_an_order_why_of_nothing_prints_no_mark(tmp_path: Path) -> None:
     write_order_entries(root, [
         orderschema.entry(issue=n, decision=RECORD_ID, confirmed=CONFIRMED, why=why)
         for n, why in ((1, "\u200b"), (2, " \u200b \u00ad "), (3, "\u00ad\u200b\ufeff"))])
-    body = rows(run_brief(root, "--now", NOW)[1], brief_module.ORDER_HEADER)
+    body = _rows(run_brief(root, "--now", NOW)[1])
     assert len(body) == 3
     for row in body:
         assert not row.rstrip().endswith("\u2014")
@@ -157,7 +171,7 @@ def test_brief_an_order_why_of_nothing_prints_no_mark(tmp_path: Path) -> None:
     write_order_entries(root, [orderschema.entry(
         issue=5, decision=RECORD_ID, confirmed=CONFIRMED,
         why="  the release train leaves Friday  ")])
-    assert rows(run_brief(root, "--now", NOW)[1], brief_module.ORDER_HEADER) == [
+    assert _rows(run_brief(root, "--now", NOW)[1]) == [
         f"1. #5 ({RECORD_ID}) \u2014 the release train leaves Friday"]
 
 
@@ -178,7 +192,7 @@ def test_brief_an_order_row_is_scrubbed_and_bounded(tmp_path: Path) -> None:
                           why=f"ship \x1b[2J from {path} \x07 now")])
     out = run_brief(root, "--now", NOW)[1]
     assert "\x1b" not in out and "\x07" not in out
-    row = rows(out, brief_module.ORDER_HEADER)[0]
+    row = _rows(out)[0]
     # Retargeted for #202: the committed path prints as written rather than as a scrub marker.
     assert path in row
     assert "<path>" not in row
@@ -220,7 +234,7 @@ def test_brief_an_order_row_keeps_a_reason_that_fills_the_row(tmp_path: Path) ->
     write_order_entries(root, [
         orderschema.entry(issue=21, decision=RECORD_ID, confirmed=CONFIRMED,
                           why=reason)])
-    body = rows(run_brief(root, "--now", NOW)[1], brief_module.ORDER_HEADER)
+    body = _rows(run_brief(root, "--now", NOW)[1])
     assert len(body) == 1
     row = body[0]
     assert len(row) <= brief_page.TEXT_LIMIT
@@ -240,7 +254,7 @@ def test_brief_an_order_why_with_a_slash_word_prints_it_as_committed(
     write_order_entries(root, [
         orderschema.entry(issue=31, decision=RECORD_ID, confirmed=CONFIRMED,
                           why="ship the /deploy job before the freeze")])
-    row = rows(run_brief(root, "--now", NOW)[1], brief_module.ORDER_HEADER)[0]
+    row = _rows(run_brief(root, "--now", NOW)[1])[0]
     assert row == (f"1. #31 ({RECORD_ID}) \u2014 ship the /deploy job before the freeze")
     assert "<path>" not in row
 
@@ -257,7 +271,7 @@ def test_brief_an_order_why_of_tabs_and_spaces_collapses_to_one_line(
     write_order_entries(root, [
         orderschema.entry(issue=32, decision=RECORD_ID, confirmed=CONFIRMED,
                           why="ship   two\tcandidates   now")])
-    row = rows(run_brief(root, "--now", NOW)[1], brief_module.ORDER_HEADER)[0]
+    row = _rows(run_brief(root, "--now", NOW)[1])[0]
     assert row == f"1. #32 ({RECORD_ID}) \u2014 ship two candidates now"
 
 
@@ -296,15 +310,32 @@ def test_brief_one_block_per_header_separated_by_one_blank_line(tmp_path: Path) 
     code, out, _ = run_brief(plant_brief_tree(tmp_path), "--now", NOW)
     assert code == 0
     # The rules' blank, then the two separators: after the 22-line purpose block and after
-    # the ten order rows. A blank line inside a body would add a fourth index, which is how
-    # this case tells a separator from content that happens to be empty. The page opens with
+    # the notice line and the ten order rows. A blank line inside a body would add a fourth
+    # index, which is how this case tells a separator from content that happens to be empty.
+    # The page opens with
     # the standing rules and one blank below them, so all three indices sit four lines
     # further down than the blocks alone would put them: 3 rule lines and their separator
     # ahead of line 0.
     assert [index for index, line in enumerate(out.splitlines())
-            if not line.strip()] == [_RULES - 1, _RULES + 23, _RULES + 35]
+            if not line.strip()] == [_RULES - 1, _RULES + 23, _RULES + 35 + _NOTICE]
     assert out.endswith("\n")
     assert not out.endswith("\n\n")
+
+
+def test_brief_the_order_block_notice_leads_the_rows(tmp_path: Path) -> None:
+    """The queue's own notice is the first line under ``top 10``, above the rows.
+
+    The reader of the order is the audience of the line: it says the entries below it were
+    never read against closed issues. It is the tool's own sentence (so it is the constant,
+    never a retyped copy), it is the only one of its kind on the page, and it sits where a
+    cut from the tail cannot reach it before the rows it qualifies.
+    """
+    code, out, _ = run_brief(plant_brief_tree(tmp_path), "--now", NOW)
+    assert code == 0
+    body = stripped(sections(out), brief_module.ORDER_HEADER)
+    assert body[0] == brief_page.NOT_CHECKED_CLOSED
+    assert body[1] == f"1. #1 ({RECORD_ID}) \u2014 {ORDER_WHY}"
+    assert out.count(brief_page.NOT_CHECKED_CLOSED) == 1
 
 
 def test_brief_two_runs_one_tree_one_instant_are_equal_bytes(tmp_path: Path) -> None:

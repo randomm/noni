@@ -36,11 +36,12 @@ holds the prose of what each one is about.
 Three rules the tool is built around:
 
 - **Bounded.** :data:`BRIEF_MAX_LINES` caps the lines the brief's own blocks print, headers
-  and the blank lines between them included. A run that would print more drops the recent
-  decisions first (from the tail of the list), then order entries, then the Purpose body, and
-  closes its blocks with one ``dropped: N line(s)`` line naming the total it withheld. The
-  rules, their blank line, that count line and the verdict line sit outside the count, so a
-  truncated run still opens with its rules and ends with its verdict.
+  and the blank lines between them included, the ``top 10`` block's closed-state notice among
+  them. A run that would print more drops the recent decisions first (from the tail of the list),
+  then order entries, then the Purpose body, and closes its blocks with one ``dropped: N line(s)``
+  line naming the total it withheld. The rules, their blank line, that count line and the verdict
+  line sit outside the count, so a truncated run still opens with its rules and ends with its
+  verdict.
 - **Deterministic.** With one ``--now`` the bytes are the bytes of the next run. The order comes
   from the artifact's own list order, the decisions from a sort over ``date`` and ``id``, and
   nothing reads the clock or the cwd: ``--repo`` is resolved once, every path comes from it,
@@ -79,11 +80,13 @@ from . import (
 from ._safe_text import safe_path
 from .brief_page import (
     DROPPED_PREFIX,
+    NOT_CHECKED_CLOSED,
     NOT_READ,
     TEXT_LIMIT,
     block_rows,
     close_block,
     decision_rows,
+    notice_line,
     page_lines,
 )
 
@@ -91,15 +94,15 @@ from .brief_page import (
 # (docs/PRODUCT.md 7 gives ``brief`` 2 for a wrong command line, beside ``intent``, ``order``,
 # ``register`` and the census). There is no third: a census verdict is reported in the summary
 # line rather than copied into the brief's exit code, because the brief's job is to render and
-# the census's to judge. Only the refusal code is named: a run that rendered returns 0 from the
-# returns that end :func:`main`, and a name for it would be a second place to look.
+# the census's to judge. Only the refusal is named: a run that rendered returns 0 from the
+# returns ending :func:`main`, and a name for that would be a second place to look.
 EXIT_USAGE: int = 2
 
 # The cap on the lines the brief's own blocks print -- the three blocks together, each header,
 # its rows and the blank line separating one block from the next -- not per block: a 200-entry
-# order would otherwise crowd the other blocks off the screen the brief exists to fit on. The
-# standing rules, their blank line, the dropped-count line and the census's verdict line are
-# outside the count, so a truncated run still opens with its rules.
+# order would otherwise crowd the other blocks off the screen the brief exists to fit on. The rules,
+# their blank line, the dropped-count line and the verdict line are outside the count, so a
+# truncated run still opens with its rules.
 BRIEF_MAX_LINES = 200
 
 # How many order entries the ``top 10`` block prints before the budget is consulted. It is a
@@ -161,11 +164,11 @@ NOT_RUN_SUMMARY = "summary: not-run; 0 finding(s); verdict fail"
 # the vocabulary it is handed. A reader splits the page on the headers, so a purpose line of
 # exactly ``top 10`` would make the reader count a block that is not there; the ellipsis and
 # the verdict prefix are in the set for the mirror reason -- a body line shaped like one of the
-# tool's own lines could be read as one of them. The empty-order line joins them because it is
-# the tool's own sentence under its own header: a foreign row that rendered to the same words
-# would put that verdict about the queue on the screen.
+# tool's own lines could be read as one of them. The empty-order line and the closed-state notice
+# join them because each is the tool's own sentence under its own header: a foreign row that
+# rendered to the same words would put that verdict about the queue on the screen.
 PAGE_RESERVED = frozenset({PURPOSE_HEADER, ORDER_HEADER, RECENT_DECISIONS_HEADER,
-                           ELLIPSIS, SUMMARY_PREFIX.strip(), EMPTY_ORDER})
+                           ELLIPSIS, SUMMARY_PREFIX.strip(), EMPTY_ORDER, NOT_CHECKED_CLOSED})
 
 def _refuse(headline: str, hint: str) -> int:
     """The exit-2 refusal: two lines on stderr, nothing on stdout, code 2.
@@ -190,11 +193,10 @@ def main(argv: list[str] | None = None) -> int:
     below is a question the process's own state can answer:
 
     - ``--repo`` has no default and gets no ``~`` expansion (docs/PRODUCT.md 7 grants that
-      expansion to the census's six path overrides and nowhere else, and the brief runs the
-      census with two flags, neither of them an override). The string is resolved once and every
-      path the brief reads and the path it hands the census come from that one resolved
-      directory, so a relative ``--repo`` cannot make the two audit different trees, and the cwd
-      of the run is not an input to anything.
+      expansion to the census's six path overrides and nowhere else, and the brief runs the census
+      with two flags, neither of them an override). The string is resolved once and every path the
+      brief reads and the one it hands the census come from that directory, so a relative
+      ``--repo`` cannot make the two audit different trees and the cwd is no input to anything.
     - ``--now`` has no default either: absent means the current UTC instant, and a run that fixed
       no instant makes no determinism claim. It is validated by :func:`noni.orderstate.now_iso`,
       the writer's rule, which refuses a stamp carrying no UTC offset -- a stricter accepted set
@@ -252,8 +254,8 @@ def _rules() -> str:
     """The standing rules and the blank that separates them from the first block.
 
     The page a hook injects always opens with the rules: they print after the budget has run and
-    are counted by nothing, being three lines of the tool's own prose rather than a block, so no
-    debt, truncation order or withheld-count line reaches them.
+    are counted by nothing, being the tool's own prose rather than a block, so no debt, truncation
+    order or withheld-count line reaches them.
     """
     return "\n".join(STANDING_RULES) + "\n\n"
 
@@ -266,13 +268,11 @@ def _render(blocks: list[list[str]]) -> str:
     tool's positional rule: the last block gives way first, so the recent decisions go first,
     then the order entries, then the Purpose body, and a run that still owes lines after all
     three has nothing left to give (only reachable if the headers alone were past the cap, which
-    the constants above make impossible). The order of the first two is the spec's decision and
-    it outranks the reading of that rule which would empty the head of the order first: that head
-    is what to work on next, the question the screen is for, so the queue outlasts the decisions
-    block even though the block prints newest-first and its tail is its oldest record. A run
+    the constants above make impossible). The order of the first two is the spec's decision over
+    the reading that would empty the head of the order first: that head is what to work on next,
+    so the queue outlasts a block whose tail is its oldest record. A run
     whose blocks total at most the cap prints no dropped-count line; a run past it prints exactly
-    one, naming the lines the reader does not see -- rows and the separators that went with them,
-    not the debt alone.
+    one, naming what the reader does not see -- rows and their separators, not the debt alone.
     """
     # A copy per block: the budget trims tails, and the blocks the caller holds are the census's
     # own reads rather than this function's to change.
@@ -291,17 +291,15 @@ def _render(blocks: list[list[str]]) -> str:
     for lines in kept:
         # A blank line between two blocks that printed something: none before the first, and none
         # before one the budget left as its header alone. A reader counts these to find the next
-        # section, and a page whose last block was cut to a header must not end in a run of blanks
-        # before the verdict.
+        # section, and a page cut to a trailing header must not end in blanks before the verdict.
         if out and len(lines) > 1:
             out.append("")
         out.extend(lines)
-    # The count is what the reader looks for on the screen and does not find, so it is read
-    # off the page rather than off the arithmetic of the debt. The two differ by the
-    # separator: the budget charges a block's blank line as a line of the page, and a cut
-    # that empties a block takes that separator away with the last of its rows, so at the cut
-    # where the order block goes the reader misses twelve lines -- its header, its ten rows
-    # and the separator above them -- where the debt named eleven.
+    # The count is what the reader looks for on the screen and does not find, so it is read off
+    # the page rather than off the arithmetic of the debt. The two differ by the separator: the
+    # budget charges a block's blank line as a line of the page, and a cut that empties a block
+    # takes that separator with its last rows, so where the order block goes the reader misses
+    # twelve lines -- header, ten rows and the separator above -- where the debt named eleven.
     withheld = before - len(out)
     if withheld > 0:
         out.append(f"{DROPPED_PREFIX}{withheld} line(s)")
@@ -311,11 +309,10 @@ def _render(blocks: list[list[str]]) -> str:
 def _page_lines(blocks: list[list[str]]) -> int:
     """What the page costs for these blocks: every line they hold, and their separator.
 
-    The one rule the budget and the dropped-count line share, stated once so the two cannot
-    disagree about what a line is: a block prints its lines, and the page puts one blank line
-    between two blocks that both hold something. A block the budget cut to its header alone holds
-    nothing, so the separator goes with its last row -- which is why the count line cannot be read
-    off the arithmetic of the debt and is read off the page instead.
+    The rule the budget and the count line share: a block prints its lines, and the page puts one
+    blank line between two blocks that both hold something. A block cut to its header holds nothing,
+    so its separator goes with its last row -- which is why the count line reads off the page and
+    not off the arithmetic of the debt.
     """
     return sum(len(lines) for lines in blocks) + (
         1 if sum(1 for lines in blocks if len(lines) > 1) > 1 else 0)
@@ -324,29 +321,33 @@ def _page_lines(blocks: list[list[str]]) -> int:
 def _drop(lines: list[str], owed: int) -> int:
     """Remove up to ``owed`` lines from the tail of one block; the lines still owed.
 
-    A block's tail is what goes, so the head of every list stays on the screen: the head of the
-    order is what to work on next, the question the screen is for, and the recent decisions -- the
-    block that gives way first -- are the oldest of the five newest answers at their tail. The
-    header line stays too: a reader who cannot tell which block went missing has lost more than
-    one who sees an empty block under its own name. When a block reaches its header the remaining
-    debt moves on to the next block rather than being forgiven, which is what makes a whole-block
-    drop cost exactly the lines it printed.
+    A block's tail is what goes, so the head of every list stays: the head of the order is what to
+    work on next. The header stays, and so does a block's notice line (:func:`_keeps_notice`). Past
+    what a block must keep the debt moves to the next block rather than being forgiven, which is
+    what makes a whole-block drop cost exactly the lines it printed.
     """
     remaining = owed
-    while remaining and len(lines) > 1:
+    while remaining and len(lines) > 1 and _keeps_notice(lines):
         lines.pop()
         remaining -= 1
     return remaining
 
+
+def _keeps_notice(lines: list[str]) -> bool:
+    """Whether a block may give up its last line: never its own notice line.
+
+    The notice speaks for the whole queue, so it is no more a list item to spend than the header.
+    """
+    return bool(lines) and lines[-1] != NOT_CHECKED_CLOSED
 
 def _purpose_block(root: Path) -> list[str]:
     """The ``Purpose`` block: the intent's purpose body, clipped to 20 lines.
 
     cap. An absent intent file, one whose sections do not validate and one this run cannot read
     all print the header and :data:`NOT_READ`. Each printed line is the page's rendering of the
-    operator's prose: a control byte cannot reach the terminal out of a file the brief did not
-    write, and a run of whitespace becomes one space while every word the operator committed -- a
-    slash command or a path alike -- prints as the intent file wrote it.
+    operator's prose: no control byte reaches the terminal out of a file the brief did not write,
+    a run of whitespace becomes one space, and every word the operator committed -- a slash command
+    or a path alike -- prints as the intent file wrote it.
     """
     body = brief_intent.purpose_block(root / intentschema.INTENT_REL,
                                       PURPOSE_MAX_LINES)
@@ -376,7 +377,9 @@ def _order_block(root: Path) -> list[str]:
     for. ``confirmed`` is not printed: this is a screen, and the order writer's own listing is the
     tool that shows the provenance of a position. A refusal or a fault of the read prints the
     header and :data:`NOT_READ`, since the artifact is the census's to report on, and an order that
-    holds no entry prints its header over :data:`EMPTY_ORDER`.
+    holds no entry prints its header over :data:`EMPTY_ORDER`. An order whose entries name issues
+    prints :data:`noni.brief_page.NOT_CHECKED_CLOSED` as its first body line, over the predicate
+    the census itself uses to decide that row (imported, never retyped).
     """
     read = orderstate.read_order(root / orderschema.ORDER_REL)
     if not isinstance(read, orderstate.OrderOk):
@@ -391,7 +394,8 @@ def _order_block(root: Path) -> list[str]:
     rows, withheld = block_rows(
         (_entry_row(position, entry)
          for position, entry in enumerate(entries, 1)), TOP_ENTRIES)
-    return close_block([ORDER_HEADER, *rows], withheld)
+    # The notice leads, so a cut from the tail takes rows before it and keeps it when they go.
+    return close_block([ORDER_HEADER, *notice_line(entries), *rows], withheld)
 
 
 def _decisions_block(root: Path) -> list[str]:
@@ -407,10 +411,10 @@ def _decisions_block(root: Path) -> list[str]:
 
     Every state of the ledger that yields no row prints the header alone: absent, empty, not a
     directory, a symlink, an unlistable directory, and records this run could not read. The brief
-    has no verdict of its own about a ledger it cannot read (the census's ``ledger-*`` classes run
-    a moment later in this same process and are what words such a fault), so unlike the order block
-    this one has no :data:`NOT_READ` arm: there is no half-read ledger this page can show rows
-    from, and one answer for every unreadable state is the honest one here.
+    has no verdict of its own about a ledger it cannot read -- the census's ``ledger-*`` classes
+    word such a fault a moment later in this same process -- so unlike the order block this one has
+    no :data:`NOT_READ` arm: no half-read ledger exists to show rows from, and one answer for every
+    unreadable state is the honest one.
     """
     rows, withheld = decision_rows(root / orderstate.DECISIONS_DIR, RECENT_DECISIONS)
     return close_block([RECENT_DECISIONS_HEADER, *rows], withheld)
@@ -438,22 +442,19 @@ def _summary_line(root: Path, stamp: str) -> str:
     and nothing else, under both :func:`contextlib.redirect_stdout` and
     :func:`contextlib.redirect_stderr` (a census that fails writes a sentence to stderr, and the
     brief owns that stream: its refusals print there and nothing may arrive from a captured run).
-    The capture is the whole of the brief's relationship to the arbiter: no flag is added, no
-    signature changed and no parser touched, and the line is the bytes
-    ``census_render._render_human`` printed. A brief that rebuilt a verdict word would be a second
-    report to keep in step with the first.
+    The capture is the whole of the brief's relationship to the arbiter: no flag added, no
+    signature changed, no parser touched, and the line is the bytes the census's own renderer
+    printed -- a brief that rebuilt a verdict word would be a second report to keep in step.
 
-    The line is the LAST captured line opening with the summary prefix: ``_render_human`` prints
-    its ``note:`` lines above the verdict and its non-ok sentence on stderr, so the verdict is
-    what the search finds first, and the search from the end keeps a report that somehow printed
-    twice from being read from the top.
+    The line is the LAST captured line opening with the summary prefix: ``_render_human`` puts its
+    ``note:`` lines above the verdict and its non-ok sentence on stderr, so searching from the end
+    finds the verdict first and cannot read a doubled report from the top.
 
     Two states answer :data:`NOT_RUN_SUMMARY`, both without an exception reaching the caller: a
-    census that printed no summary line at all (a usage refusal, a missing ``git``, or any run
-    that returned after writing only to stderr), and a census that raised on the way there -- the
-    exceptional case, given the arbiter's own fault arms, but a tool that died with a traceback
-    where a verdict was promised is worse than one that says it could not get one. The brief
-    still printed its own blocks and still exits 0.
+    census that printed no summary line at all (a usage refusal, a missing ``git``, or any run that
+    wrote only to stderr), and one that raised on the way there. A tool that died with a traceback
+    where a verdict was promised is worse than one that says it could not get one, and the page it
+    already printed still exits 0.
     """
     out = io.StringIO()
     err = io.StringIO()
@@ -461,13 +462,12 @@ def _summary_line(root: Path, stamp: str) -> str:
         with redirect_stdout(out), redirect_stderr(err):
             census_run._run(["--repo", str(root), "--now", stamp])
     except (Exception, SystemExit):
-        # One guard for the whole capture: a census fault is a missing verdict here, not a
-        # crash of the brief. The arbiter's own fault arms make this the rare path, and the one
-        # the caller must not meet as a traceback. ``SystemExit`` is named because it is no kind
-        # of ``Exception``: a census that decided to leave the process (a parser refusal, a
-        # ``sys.exit`` reached through a seam) would otherwise end the brief with the code it was
-        # handed, and the brief's contract is that a rendered page exits 0 and says what it could
-        # not get a verdict for.
+        # One guard for the whole capture: a census fault is a missing verdict here, not a crash
+        # of the brief. The arbiter's own fault arms make this the rare path, and the one the
+        # caller must not meet as a traceback. ``SystemExit`` is named because it is no kind
+        # of ``Exception``: a census that left the process (a parser refusal, a ``sys.exit``
+        # reached through a seam) would otherwise end the brief with the code it was handed, and
+        # the contract here is that a rendered page exits 0 and says it got no verdict.
         return NOT_RUN_SUMMARY
     lines = out.getvalue().splitlines()
     # The last non-blank line the census printed, which is its verdict: ``_render_human`` puts
@@ -488,9 +488,8 @@ def _summary_line(root: Path, stamp: str) -> str:
 def _is_summary(line: str) -> bool:
     """Whether ``line`` is the census's verdict line: the prefix and then something.
 
-    Two questions rather than one ``startswith``: a line that is only the prefix earns the
-    stand-in sentence, not the captured line, because a verdict with nothing after its label is the
-    same absence of a verdict as no line at all.
+    Two questions rather than one ``startswith``: a line that is only the prefix is the same
+    absence of a verdict as no line at all, and earns the stand-in rather than being echoed.
     """
     return line.startswith(SUMMARY_PREFIX) and bool(line[len(SUMMARY_PREFIX):].strip())
 

@@ -229,7 +229,14 @@ absent prints empty;
 an order that holds no entries prints its `top 10` heading followed by one line saying
 `the order is empty`, never that heading with nothing under it;
 one whose artifact is there and unreadable prints `not readable`, and the census, run a
-moment later in the same command, is what words the fault. Its exit codes
+moment later in the same command, is what words the fault. An order whose entries name
+issues prints one more line, as the first line under `top 10` and above the rows:
+`the order was not checked for closed issues; the census checks them with an --issue-state
+map`. The census says the same thing in its own `ordering-closed` row, and the brief
+launches it with no map of its own, so the bare warning count in the summary line is not
+how the screen tells a reader that the queue it lists was never read against closed issues;
+this line is. It is charged to the budget like any other line of the block, and it leads
+the rows so a cut from the tail takes rows before it. Its exit codes
 are the fail-closed pair: 0 whenever the page rendered, whatever it said about the
 tree, and 2 for a command line it will not act on (no `--repo`, a `--repo` that is
 not a directory, or an `--now` that is not a UTC instant), with the report on

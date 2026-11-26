@@ -24,6 +24,7 @@ from brief_fixtures import (
 from brief_support import (
     HEADERS,
     census_summary,
+    order_entries,
     rows,
     sections,
     stripped,
@@ -45,7 +46,7 @@ def test_brief_intent_absent_prints_not_readable(tmp_path: Path) -> None:
     code, out, _ = run_brief(root, "--now", NOW)
     assert code == 0
     assert stripped(sections(out), brief_module.PURPOSE_HEADER) == [NOT_READ]
-    assert len(stripped(sections(out), brief_module.ORDER_HEADER)) == \
+    assert len(order_entries(out, brief_module.ORDER_HEADER)) == \
         brief_module.TOP_ENTRIES
 
 
@@ -200,7 +201,7 @@ def test_brief_ledger_absent_prints_an_empty_decisions_block(tmp_path: Path) -> 
     assert code == 0
     assert stripped(sections(out), brief_module.RECENT_DECISIONS_HEADER) == []
     assert NOT_READ not in out
-    assert len(stripped(sections(out), brief_module.ORDER_HEADER)) == \
+    assert len(order_entries(out, brief_module.ORDER_HEADER)) == \
         brief_module.TOP_ENTRIES
 
 

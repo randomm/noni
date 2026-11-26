@@ -33,7 +33,13 @@ from brief_fixtures import (
     write_order_entries,
     write_record,
 )
-from brief_support import HEADERS, page_owed_lines, rows, sections, stripped
+from brief_support import (
+    HEADERS,
+    page_owed_lines,
+    rows,
+    sections,
+    stripped,
+)
 from quickstart_page import product_section_7
 
 from noni import brief as brief_module
@@ -102,10 +108,11 @@ def test_brief_the_standing_rules_survive_the_deepest_cut(tmp_path: Path) -> Non
     assert out.splitlines()[:3] == list(brief_module.STANDING_RULES)
     assert out.splitlines()[3] == ""
     assert out.splitlines()[4] == brief_module.PURPOSE_HEADER
-    # The cut reached everything the budget can take: the decisions block and the queue
-    # are down to their headers, and the debt went into the purpose prose.
+    # The cut reached everything the budget can take: the decisions block is down to its
+    # header, the queue is down to its header and its one notice line, and the debt went
+    # into the purpose prose.
     assert rows(out, brief_module.RECENT_DECISIONS_HEADER) == []
-    assert rows(out, brief_module.ORDER_HEADER) == []
+    assert rows(out, brief_module.ORDER_HEADER) == [brief_page.NOT_CHECKED_CLOSED]
     assert len(rows(out, brief_module.PURPOSE_HEADER)) < brief_module.PURPOSE_MAX_LINES
 
 
@@ -120,6 +127,16 @@ def test_brief_the_empty_order_line_is_reserved() -> None:
     the tool's verdict about the queue.
     """
     assert brief_module.EMPTY_ORDER in brief_module.PAGE_RESERVED
+
+
+def test_brief_the_not_checked_closed_line_is_reserved() -> None:
+    """The tool's own notice about the closed check cannot be impersonated by the order.
+
+    The same rule as the empty-order line, on the other line the tool prints under its own
+    header: an entry whose rendered row equalled this sentence would put the tool's verdict
+    about the queue on the screen and no reader could tell the two apart.
+    """
+    assert brief_page.NOT_CHECKED_CLOSED in brief_module.PAGE_RESERVED
 
 
 def test_brief_the_empty_order_prints_one_line(tmp_path: Path) -> None:
@@ -169,6 +186,22 @@ def test_brief_an_entry_rendering_to_the_empty_line_cannot_impersonate_it(
     out = run_brief(root, "--now", NOW)[1]
     body = stripped(sections(out), brief_module.ORDER_HEADER)
     assert brief_module.EMPTY_ORDER not in body
+
+
+def test_brief_an_entry_rendering_to_the_notice_line_cannot_impersonate_it(
+        tmp_path: Path) -> None:
+    """A foreign body line shaped like the tool's closed-state notice is refused.
+
+    The same rule the empty-order line answers to, on the other sentence the tool prints under
+    its own header: :func:`noni.brief_page.page_line` is the rule and the notice is a member of
+    the set the brief hands it, so a line that renders to the notice comes back as no line at all
+    and the caller drops it. Driven at the rule, as the empty order's own impersonation case is:
+    a row is ``{position}. #{issue} ({decision})`` plus its reason, so the notice's bare words are
+    reachable only from a body line the page is asked about, never from a whole row.
+    """
+    assert brief_page.page_line(brief_page.NOT_CHECKED_CLOSED,
+                                brief_page.TEXT_LIMIT,
+                                brief_module.PAGE_RESERVED) is None
 
 
 def test_brief_the_empty_order_line_survives_the_budget(tmp_path: Path) -> None:
@@ -257,8 +290,14 @@ def test_brief_a_clipped_head_on_a_launched_order_row_ends_on_a_word(
     assert not reason.endswith(" ")
     write_order_entries(root, [orderschema.entry(
         issue=21, decision=RECORD_ID, confirmed="2026-10-26T00:00:00Z", why=reason)])
-    row = rows(run_brief(root, "--now", NOW)[1], brief_module.ORDER_HEADER)[0]
+    entry_rows = [row for row in rows(run_brief(root, "--now", NOW)[1],
+                                      brief_module.ORDER_HEADER)
+                  if row != brief_page.NOT_CHECKED_CLOSED]
+    assert len(entry_rows) == 1
+    row = entry_rows[0]
     assert len(row) <= brief_page.TEXT_LIMIT
+    # The clip is what this case is for: the head yields at a word, the mark stays, and the
+    # operator's reason keeps its whole end.
     assert brief_module.ELLIPSIS in row
     assert row.endswith(brief_page.REASON_SEPARATOR + reason)
 
@@ -305,6 +344,11 @@ def test_product_section_7_states_the_rules_and_the_empty_order_line() -> None:
     # The unreadable arm is still worded as its own answer, and the clip mark is named.
     assert brief_page.NOT_READ in section
     assert brief_module.ELLIPSIS in section
+    # The closed-state notice: the tool's own sentence, and the flag it names as the way to
+    # turn the check on. The brief's verdict line is a count, so this line is the screen's
+    # only statement that the queue it lists was never read against closed issues.
+    assert brief_page.NOT_CHECKED_CLOSED in section
+    assert "--issue-state" in section
 
 
 def _rule_tokens(rule: str) -> tuple[str, ...]:

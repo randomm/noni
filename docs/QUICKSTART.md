@@ -48,7 +48,7 @@ missing the venv is built without `pip` at all, so only the `PYTHONPATH` fallbac
 works: install the distro's venv and pip packages, which carry `ensurepip` — what puts
 `pip` in a new venv — delete the pip-less `.venv`, and run the two lines again. Either
 route installs the same code the clone carries: no package index sits between you and it,
-and the only published ref is the tag v0.2.3.
+and the only published ref is the tag v0.2.4.
 
 Before you run anything, check what you are about to run. An older noni already on your
 PATH shadows the install you just made. `noni --version` prints the version it carries,

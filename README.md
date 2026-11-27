@@ -68,7 +68,7 @@ python3 ../noni/skills/census/scripts/census.py --repo .
 named by mistake. A tree that already holds a `noni/` is a state root and needs no
 flag, so omit it there.
 
-Run these from a release of noni you trust: the tagged release v0.2.3 is the
+Run these from a release of noni you trust: the tagged release v0.2.4 is the
 thing to pin, and remember they run noni's scripts.
 
 Installing is the other route, and the same code either way. Those scripts import
